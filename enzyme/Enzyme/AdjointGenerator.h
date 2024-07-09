@@ -1627,7 +1627,6 @@ public:
       Value *orig_vec = EEI.getVectorOperand();
 
       if (!gutils->isConstantValue(orig_vec)) {
-        Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
 
         size_t size = 1;
         if (EEI.getType()->isSized())
@@ -1636,9 +1635,22 @@ public:
                    EEI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
-                         TR.addingType(size, &EEI), sv);
+        auto diff = diffe(&EEI, Builder2);
+        if (gutils->getWidth() == 1) {
+          Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_vec, diff, Builder2, TR.addingType(size, &EEI),
+                           sv);
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {nullptr,
+                           gutils->getNewFromOriginal(EEI.getIndexOperand())};
+            sv[0] = ConstantInt::get(sv[1]->getType(), i);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_vec, gutils->extractMeta(Builder2, diff, i),
+                             Builder2, TR.addingType(size, &EEI), sv);
+          }
+        }
       }
       setDiffe(&EEI,
                Constant::getNullValue(gutils->getShadowType(EEI.getType())),
@@ -1692,19 +1704,46 @@ public:
              7) /
             8;
 
-      if (!gutils->isConstantValue(orig_op0))
-        addToDiffe(
-            orig_op0,
-            Builder2.CreateInsertElement(
-                dif1,
-                Constant::getNullValue(gutils->getShadowType(op1->getType())),
-                lookup(op2, Builder2)),
-            Builder2, TR.addingType(size0, orig_op0));
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(
+              orig_op0,
+              Builder2.CreateInsertElement(
+                  dif1,
+                  Constant::getNullValue(gutils->getShadowType(op1->getType())),
+                  lookup(op2, Builder2)),
+              Builder2, TR.addingType(size0, orig_op0));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0,
+                             Builder2.CreateInsertElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 Constant::getNullValue(op1->getType()),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size0, orig_op0), sv);
+          }
+        }
+      }
 
-      if (!gutils->isConstantValue(orig_op1))
-        addToDiffe(orig_op1,
-                   Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
-                   Builder2, TR.addingType(size1, orig_op1));
+      if (!gutils->isConstantValue(orig_op1)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(orig_op1,
+                     Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
+                     Builder2, TR.addingType(size1, orig_op1));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op1,
+                             Builder2.CreateExtractElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size1, orig_op1), sv);
+          }
+        }
+      }
 
       setDiffe(&IEI,
                Constant::getNullValue(gutils->getShadowType(IEI.getType())),
@@ -1751,8 +1790,6 @@ public:
       for (size_t idx : SVI.getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
-        Value *sv[] = {
-            ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
 
         if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
           size_t size = 1;
@@ -1762,10 +1799,25 @@ public:
                         .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
                     7) /
                    8;
-          Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
-                           TR.addingType(size, SVI.getOperand(opnum)), sv);
+          if (gutils->getWidth() == 1) {
+            Value *sv[] = {
+                ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+            Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                             TR.addingType(size, SVI.getOperand(opnum)), sv);
+          } else {
+            for (size_t i = 0; i < gutils->getWidth(); i++) {
+              Value *sv[] = {
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), i),
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+              Value *toadd = Builder2.CreateExtractElement(
+                  GradientUtils::extractMeta(Builder2, loaded, i), instidx);
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                               TR.addingType(size, SVI.getOperand(opnum)), sv);
+            }
+          }
         }
         ++instidx;
       }
