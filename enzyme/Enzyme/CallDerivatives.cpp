@@ -2506,8 +2506,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             nullptr,
             nullptr};
 
-        Value *tmp = CreateAllocation(Builder2, types[2], args[1]);
-        Value *dtmp = CreateAllocation(Builder2, types[2], args[1]);
+        Type *typesS[] = {args[1]->getType()};
+        FunctionType *FTS =
+            FunctionType::get(args[1]->getType(), typesS, false);
+        auto FS = called->getParent()->getOrInsertFunction(
+            "gsl_sf_legendre_array_n", FTS);
+        Value *alSize = Builder2.CreateCall(FS, args[1]);
+        Value *tmp = CreateAllocation(Builder2, types[2], alSize);
+        Value *dtmp = CreateAllocation(Builder2, types[2], alSize);
         Builder2.CreateLifetimeStart(tmp);
         Builder2.CreateLifetimeStart(dtmp);
 
