@@ -10,19 +10,29 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
+#include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+
+#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 
+#include "llvm/Support/Host.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cerrno>
 #include <cmath>
@@ -34,6 +44,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "Herbie.h"
 #include "Utils.h"
@@ -738,7 +749,7 @@ InstructionCost getValueTreeCost(Value *output,
                                  const SetVector<Value *> &inputs,
                                  const TargetTransformInfo &TTI) {
   SmallPtrSet<Value *, 8> seen;
-  SmallVector<Value *> todo;
+  SmallVector<Value *, 8> todo;
   InstructionCost cost = 0;
 
   todo.push_back(output);
@@ -769,6 +780,78 @@ InstructionCost getValueTreeCost(Value *output,
   }
 
   return cost;
+}
+
+bool getErrorsWithJIT(const Value *oldOutput, const Value *newOutput,
+                      const Function *F, double &oldError, double &newError) {
+  // LLVMContext &Context = oldOutput->getContext();
+
+  std::string errStr;
+  InitializeNativeTarget();
+  InitializeNativeTargetAsmPrinter();
+
+  std::unique_ptr<Module> M = CloneModule(*F->getParent());
+  if (!M) {
+    llvm::errs() << "Failed to clone the module.\n";
+    return false;
+  }
+
+  Function *clonedFunction =
+      Function::Create(F->getFunctionType(), Function::ExternalLinkage,
+                       F->getName() + "_cloned", M.get());
+
+  ValueToValueMapTy VMap;
+  auto destArgIt = clonedFunction->arg_begin();
+  for (auto &arg : F->args()) {
+    VMap[&arg] = &*destArgIt++;
+  }
+
+  SmallVector<ReturnInst *, 8> Returns;
+  CloneFunctionInto(clonedFunction, F, VMap,
+                    CloneFunctionChangeType::DifferentModule, Returns);
+
+  assert(VMap.count(oldOutput) && "Old output not found in VMap");
+  VMap[oldOutput]->replaceAllUsesWith(VMap[newOutput]);
+
+  llvm::errs() << "Cloned module: \n";
+  M->print(llvm::errs(), nullptr);
+
+  auto JIT = orc::LLJITBuilder().create();
+  if (!JIT) {
+    llvm::errs() << "Failed to create LLJIT: " << toString(JIT.takeError())
+                 << "\n";
+    return false;
+  }
+
+  auto &J = *JIT;
+  J->getMainJITDylib().addGenerator(
+      cantFail(orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+          J->getDataLayout().getGlobalPrefix())));
+
+  auto TSM =
+      orc::ThreadSafeModule(std::move(M), std::make_unique<LLVMContext>());
+  if (auto Err = J->addIRModule(std::move(TSM))) {
+    llvm::errs() << "Failed to add module: " << toString(std::move(Err))
+                 << "\n";
+    return false;
+  }
+
+  llvm::errs() << "Looking up function\n";
+  auto Sym = J->lookup(clonedFunction->getName());
+  if (!Sym) {
+    llvm::errs() << "Failed to find symbol: " << toString(Sym.takeError())
+                 << "\n";
+    return false;
+  }
+
+  // TODO: Different for LLVM 15 and above
+  llvm::errs() << "JITting function\n";
+  auto *FP = (double (*)())(uintptr_t)Sym->getAddress();
+  double result = FP();
+
+  llvm::errs() << "Result of function: " << result << "\n";
+
+  return true;
 }
 
 // Run (our choice of) floating point optimizations on function `F`.
@@ -890,7 +973,7 @@ B2:
       if (EnzymePrintFPOpt)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
 
-      SmallVector<Value *, 1> todo;
+      SmallVector<Value *, 8> todo;
       SetVector<Value *> input_seen;
       SetVector<Value *> output_seen;
       SetVector<Instruction *> operation_seen;
@@ -1125,13 +1208,20 @@ B2:
       // TODO ponder fast math
       builder.setFastMathFlags(getFast());
 
-      // Convert the parsed expression to LLVM values/instructions
+      // Evaluate errors and costs of the original and new expression
       Value *newOutputValue = parsedNode->getValue(builder);
       InstructionCost oldCost = getValueTreeCost(output, component.inputs, TTI);
       llvm::errs() << "Cost of the original expression is: " << oldCost << "\n";
       InstructionCost newCost =
           getValueTreeCost(newOutputValue, component.inputs, TTI);
       llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
+
+      double oldError, newError;
+      if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
+        llvm::errs() << "Error of the original expression is: " << oldError
+                     << "\n";
+        llvm::errs() << "Error of the new expression is: " << newError << "\n";
+      }
 
       rewrites.emplace_back(component, output, newOutputValue, oldCost, newCost,
                             0, 0);
