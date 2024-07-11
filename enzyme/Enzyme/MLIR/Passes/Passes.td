@@ -85,6 +85,9 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect"
+  ];
   let options = [
     ListOption<
       /*C++ variable name=*/"funcsToAnalyze",
@@ -112,6 +115,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*type=*/"bool",
       /*default=*/"true",
       /*description=*/"Whether to use the new Dataflow activity analysis"
+    >,
+    Option<
+      /*C++ variable name=*/"relative",
+      /*CLI argument=*/"relative",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Use relative bottom-up activity analysis"
     >,
     Option<
       /*C++ variable name=*/"inactiveArgs",
