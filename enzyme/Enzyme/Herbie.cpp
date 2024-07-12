@@ -58,15 +58,35 @@ using namespace llvm;
 extern "C" {
 cl::opt<bool> EnzymeEnableFPOpt("enzyme-enable-fpopt", cl::init(false),
                                 cl::Hidden, cl::desc("Run the FPOpt pass"));
-cl::opt<bool> EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false),
-                               cl::Hidden,
-                               cl::desc("Enable Enzyme to print FPOpt info"));
-cl::opt<bool>
+static cl::opt<bool>
+    EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false), cl::Hidden,
+                     cl::desc("Enable Enzyme to print FPOpt info"));
+static cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
 static cl::opt<std::string>
     ErrorLogPath("error-log-path", cl::init(""), cl::Hidden,
                  cl::desc("Which error log to use in fp-opt pass"));
+static cl::opt<bool>
+    HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
+                        cl::desc("Disable Herbie's series expansion"));
+static cl::opt<bool> HerbieDisableSetupSimplify(
+    "herbie-disable-setup-simplify", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from pre-simplifying expressions"));
+static cl::opt<bool> HerbieDisableGenSimplify(
+    "herbie-disable-gen-simplify", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from simplifying expressions "
+             "during the main improvement loop"));
+static cl::opt<bool>
+    HerbieDisableRegime("herbie-disable-regime", cl::init(false), cl::Hidden,
+                        cl::desc("Stop Herbie from simplifying expressions "
+                                 "during the main improvement loop"));
+static cl::opt<bool> HerbieDisableBranchExpr(
+    "herbie-disable-branch-expr", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from branching on expressions"));
+static cl::opt<bool> HerbieDisableAvgError(
+    "herbie-disable-avg-error", cl::init(false), cl::Hidden,
+    cl::desc("Make Herbie choose the candidates with the least maximum error"));
 }
 
 class FPNode {
@@ -467,8 +487,46 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
   input.close();
 
   std::string Program = HERBIE_BINARY;
-  llvm::StringRef Args[] = {Program,     "improve", "--seed", "239778888",
-                            "--timeout", "60",      tmpin,    tmpout};
+  SmallVector<llvm::StringRef> Args = {
+      Program, "improve", "--seed", "239778888", "--timeout", "60",
+  };
+
+  Args.push_back("--disable");
+  Args.push_back("generate:proofs"); // We can't show HTML reports
+
+  if (HerbieDisableTaylor) {
+    Args.push_back("--disable");
+    Args.push_back("generate:taylor");
+  }
+
+  if (HerbieDisableSetupSimplify) {
+    Args.push_back("--disable");
+    Args.push_back("setup:simplify");
+  }
+
+  if (HerbieDisableGenSimplify) {
+    Args.push_back("--disable");
+    Args.push_back("generate:simplify");
+  }
+
+  if (HerbieDisableRegime) {
+    Args.push_back("--disable");
+    Args.push_back("reduce:regimes");
+  }
+
+  if (HerbieDisableBranchExpr) {
+    Args.push_back("--disable");
+    Args.push_back("reduce:branch-expressions");
+  }
+
+  if (HerbieDisableAvgError) {
+    Args.push_back("--disable");
+    Args.push_back("reduce:avg-error");
+  }
+
+  Args.push_back(tmpin);
+  Args.push_back(tmpout);
+
   std::string ErrMsg;
   bool ExecutionFailed = false;
 
@@ -762,8 +820,11 @@ InstructionCost getValueTreeCost(Value *output,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      auto instCost =
-          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+      // TODO: unfair to ignore branches when calculating cost
+      auto instCost = TTI.getInstructionCost(
+          I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
+      // auto instCost = TTI.getInstructionCost(
+      //     I, TargetTransformInfo::TCK_RecipThroughput);
 
       if (EnzymePrintFPOpt)
         llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
@@ -1216,12 +1277,13 @@ B2:
           getValueTreeCost(newOutputValue, component.inputs, TTI);
       llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
 
-      double oldError, newError;
-      if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
-        llvm::errs() << "Error of the original expression is: " << oldError
-                     << "\n";
-        llvm::errs() << "Error of the new expression is: " << newError << "\n";
-      }
+      // double oldError, newError;
+      // if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
+      //   llvm::errs() << "Error of the original expression is: " << oldError
+      //                << "\n";
+      //   llvm::errs() << "Error of the new expression is: " << newError <<
+      //   "\n";
+      // }
 
       rewrites.emplace_back(component, output, newOutputValue, oldCost, newCost,
                             0, 0);
