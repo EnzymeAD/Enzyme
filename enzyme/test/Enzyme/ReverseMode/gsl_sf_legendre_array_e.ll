@@ -26,10 +26,11 @@ declare double @__enzyme_autodiff(...)
 ; CHECK: define internal { double } @diffetester(i32 %a0, i32 %a1, double %x, double %a3, double* %a4, double* %"a4'") 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %c = call i32 @gsl_sf_legendre_array_e(i32 %a0, i32 %a1, double %x, double %a3, double* %a4)
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %a1, 8
+; CHECK-NEXT:   %[[as:.+]] = call i32 @gsl_sf_legendre_array_n(i32 %a1)
+; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %[[as]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
 ; CHECK-NEXT:   %[[i0:.+]] = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %a1, 8
+; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %[[as]], 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:   %[[i1:.+]] = bitcast i8* %malloccall2 to double*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 -1, i8* %malloccall)
