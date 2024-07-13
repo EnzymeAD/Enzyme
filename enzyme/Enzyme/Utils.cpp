@@ -3608,7 +3608,7 @@ void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
 
-void dumpBlock(llvm::Block *blk) { llvm::errs() << *blk << "\n"; }
+void dumpBlock(llvm::BasicBlock *blk) { llvm::errs() << *blk << "\n"; }
 
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
 
