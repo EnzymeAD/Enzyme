@@ -4123,8 +4123,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         Function *free = getOrInsertCheckedFree(
             *call.getModule(), &call, newfree->getType(), gutils->getWidth());
 
+        bool used = true;
+        if (auto instArg = dyn_cast<Instruction>(call.getArgOperand(0)))
+          used = unnecessaryInstructions.find(instArg) ==
+                 unnecessaryInstructions.end();
+
         SmallVector<Value *, 3> args;
-        args.push_back(newfree);
+        if (used)
+          args.push_back(newfree);
+        else
+          args.push_back(
+              Constant::getNullValue(call.getArgOperand(0)->getType()));
 
         auto rule = [&args](Value *tofree) { args.push_back(tofree); };
         applyChainRule(Builder2, rule, tofree);
@@ -4132,6 +4141,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
         frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 
+        eraseIfUnused(call);
         return true;
       }
       eraseIfUnused(call);
