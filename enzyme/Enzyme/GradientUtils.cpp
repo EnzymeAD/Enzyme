@@ -5890,13 +5890,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient:
       if (TR.query(arg)[{-1}].isFloat()) {
-        auto newv = getNewFromOriginal(arg);
-        IRBuilder<> bb(newv);
-        auto res =
-            applyChainRule(newv->getType(), bb, [&newv] { return newv; });
-        invertedPointers.insert(
-            std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
-        return res;
+        return Constant::getNullValue(getShadowType(arg->getType()));
       }
       break;
     default:
