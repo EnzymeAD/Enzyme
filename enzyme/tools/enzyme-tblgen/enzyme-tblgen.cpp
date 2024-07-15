@@ -1935,7 +1935,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    if (gutils->isConstantInstruction(op))\n";
       os << "      return success();\n";
     } else {
-      os << "    if (gutils->isConstantInstruction(&" << origName << "))\n";
+      os << "    if (gutils->isConstantInstruction(&" << origName
+         << ") && gutils->isConstantValue(&" << origName << "))\n";
       if (intrinsic == IntrDerivatives || intrinsic == CallDerivatives)
         os << "      return true;\n";
       else
