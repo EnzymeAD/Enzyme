@@ -256,7 +256,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    auto FD = cast<FunctionDecl>(D);
     if (Attr.getNumArgs() != 1) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
           DiagnosticsEngine::Error,
@@ -273,7 +272,13 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
-
+#if LLVM_VERSION_MAJOR >= 12
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, ("enzyme_function_like=" + Literal->getString()).str(),
+        nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+#else
+    auto FD = cast<FunctionDecl>(D);
     // if (FD->isLateTemplateParsed()) return;
     auto &AST = S.getASTContext();
     DeclContext *declCtx = FD->getDeclContext();
@@ -361,6 +366,7 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
+#endif
   }
 };
 
