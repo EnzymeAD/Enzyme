@@ -1052,7 +1052,7 @@ def : InstPattern<(Op $x), "Freeze", 10, 0,
                     [
                       (Freeze (DiffeRet)),
                     ],
-                    (ForwardFromSummedReverse)
+                    (Freeze (Shadow $x))
                   >;
 
 include "BlasDerivatives.td"                  
