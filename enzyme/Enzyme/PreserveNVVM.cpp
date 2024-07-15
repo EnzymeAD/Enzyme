@@ -372,6 +372,15 @@ bool preserveNVVM(bool Begin, Module &M) {
               continue;
             }
 
+            if (AS == "enzyme_shouldrecompute" && Func) {
+              Func->addAttribute(
+                  AttributeList::FunctionIndex,
+                  Attribute::get(Func->getContext(), "enzyme_shouldrecompute"));
+              changed = true;
+              replacements.push_back(Constant::getNullValue(CAOp->getType()));
+              continue;
+            }
+
             if (AS == "enzyme_inactive" && Glob) {
               Glob->setMetadata("enzyme_inactive",
                                 MDNode::get(Glob->getContext(), {}));
