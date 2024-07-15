@@ -1461,19 +1461,23 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                       Returns, "", nullptr);
 #endif
   }
-  if (mode == DerivativeMode::ForwardModeError) {
-    for (const auto &pair : VMap) {
-      if (auto *before = dyn_cast<Instruction>(pair.first)) {
-        if (!before->getType()->isFloatingPointTy()) {
-          continue;
+  if (mode == DerivativeMode::ForwardModeError ||
+      mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeGradient) {
+    if (getLogFunction(F->getParent(), mode)) {
+      for (const auto &pair : VMap) {
+        if (auto *before = dyn_cast<Instruction>(pair.first)) {
+          if (!before->getType()->isFloatingPointTy()) {
+            continue;
+          }
+          auto *after = cast<Instruction>(pair.second);
+          after->setMetadata(
+              "enzyme_preprocess_origin",
+              MDTuple::get(after->getContext(),
+                           {ConstantAsMetadata::get(ConstantInt::get(
+                               Type::getInt64Ty(after->getContext()),
+                               reinterpret_cast<std::uintptr_t>(before)))}));
         }
-        auto *after = cast<Instruction>(pair.second);
-        after->setMetadata(
-            "enzyme_preprocess_origin",
-            MDTuple::get(after->getContext(),
-                         {ConstantAsMetadata::get(ConstantInt::get(
-                             Type::getInt64Ty(after->getContext()),
-                             reinterpret_cast<std::uintptr_t>(before)))}));
       }
     }
   }
