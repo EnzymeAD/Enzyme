@@ -10,18 +10,14 @@ extern double __enzyme_autodiff(void *, ...);
 
 int errorLogCount = 0;
 
-void enzymeLogGrad(double res, double grad, const char *opcodeName,
-                   const char *calleeName, const char *moduleName,
-                   const char *functionName, unsigned blockIdx,
-                   unsigned instIdx, unsigned numOperands, double *operands) {
+void enzymeLogGrad(double grad, const char *opcodeName, const char *calleeName,
+                   const char *moduleName, const char *functionName,
+                   unsigned blockIdx, unsigned instIdx) {
   ++errorLogCount;
-  printf("Res = %e, Grad = %e, Op = %s, Callee = %s, Module = %s, Function = "
+  printf("Grad = %e, Op = %s, Callee = %s, Module = %s, Function = "
          "%s, BlockIdx = %u, InstIdx = %u\n",
-         res, grad, opcodeName, calleeName, moduleName, functionName, blockIdx,
+         grad, opcodeName, calleeName, moduleName, functionName, blockIdx,
          instIdx);
-  for (int i = 0; i < numOperands; ++i) {
-    printf("Operand[%d] = %e\n", i, operands[i]);
-  }
 }
 
 double fun(double x) {
