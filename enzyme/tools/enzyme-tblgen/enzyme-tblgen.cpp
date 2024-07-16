@@ -2269,9 +2269,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ".getContext()));\n"
          << "                Value *ptr = "
             "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
-            "{llvm::ConstantInt::get(Type::getInt32Ty("
-         << origName
-         << ".getContext()), 0), llvm::ConstantInt::get(Type::getInt32Ty("
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), operand.index())});\n"
          << "                Builder2.CreateStore(operandValue, ptr);\n"
          << "            }\n"
@@ -2405,9 +2404,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ".getContext()));\n"
          << "                Value *ptr = "
             "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
-            "{llvm::ConstantInt::get(Type::getInt32Ty("
-         << origName
-         << ".getContext()), 0), llvm::ConstantInt::get(Type::getInt32Ty("
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), operand.index())});\n"
          << "                Builder2.CreateStore(operandValue, ptr);\n"
          << "            }\n"
