@@ -1069,8 +1069,9 @@ void calculateUnusedValuesInFunction(
       },
       [&](const Instruction *inst, const Value *val) {
         if (isNoNeed(val)) {
-          if (isa<StoreInst>(inst))
-            return false;
+          if (auto SI = dyn_cast<StoreInst>(inst))
+            if (SI->getPointerOperand() == val)
+              return false;
 
           if (auto CI = dyn_cast<CallInst>(inst)) {
             if (isDeallocationCall(CI, TLI)) {
