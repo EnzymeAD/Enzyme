@@ -27,6 +27,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include <llvm/Support/JSON.h>
 
 #include "llvm/Pass.h"
 
@@ -463,7 +464,87 @@ parseHerbieExpr(const std::string &expr,
   return node;
 }
 
-bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
+struct RewriteCandidate {
+  // Only one rewrite candidate per output `llvm::Value` can be applied
+  // InstructionCost TTICost;
+  double herbieCost;
+  double accuracy;
+  std::string expr;
+
+  RewriteCandidate(double cost, double accuracy, std::string expression)
+      : herbieCost(cost), accuracy(accuracy), expr(std::move(expression)) {}
+};
+
+struct FPComponent {
+  SetVector<Value *> inputs;
+  SetVector<Value *> outputs;
+  SetVector<Instruction *> operations;
+  size_t outputs_rewritten = 0;
+
+  FPComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
+              SetVector<Instruction *> operations)
+      : inputs(std::move(inputs)), outputs(std::move(outputs)),
+        operations(std::move(operations)) {}
+};
+
+class ApplicableOutput {
+public:
+  FPComponent &component;
+  Value *oldOutput;
+  SmallVector<RewriteCandidate> candidates;
+
+  explicit ApplicableOutput(FPComponent &component, Value *oldOutput)
+      : component(component), oldOutput(oldOutput) {}
+
+  void apply(RewriteCandidate &candidate,
+             std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+             std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    // 4) parse the output string solution from herbieland
+    // 5) convert into a solution in llvm vals/instructions
+
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
+    FPNode *parsedNode =
+        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Parsed Herbie output: "
+    //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
+
+    Instruction *insertBefore = dyn_cast<Instruction>(oldOutput);
+    IRBuilder<> builder(insertBefore);
+    // TODO ponder fast math
+    builder.setFastMathFlags(getFast());
+
+    // Evaluate errors and costs of the original and new expression
+    // Value *newOutputValue = parsedNode->getValue(builder);
+    // InstructionCost oldCost =
+    //     getValueTreeCost(oldOutput, component.inputs, TTI);
+    // llvm::errs() << "Cost of the original expression is: " << oldCost <<
+    // "\n"; InstructionCost newCost =
+    //     getValueTreeCost(newOutputValue, component.inputs, TTI);
+    // llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
+
+    // double oldError, newError;
+    // if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
+    //   llvm::errs() << "Error of the original expression is: " << oldError
+    //                << "\n";
+    //   llvm::errs() << "Error of the new expression is: " << newError <<
+    //   "\n";
+    // }
+
+    Value *newOutput = parsedNode->getValue(builder);
+    assert(newOutput && "Failed to get value from parsed node");
+
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Applying Herbie rewrite: " << *oldOutput << " -> "
+                   << *newOutput << "\n";
+
+    oldOutput->replaceAllUsesWith(newOutput);
+    component.outputs_rewritten++;
+  }
+};
+
+bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
   SmallString<32> tmpin, tmpout;
 
   if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
@@ -472,9 +553,9 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
     return false;
   }
 
-  if (llvm::sys::fs::createUniqueFile("herbie_output_%%%%%%%%%%%%%%%%", tmpout,
-                                      llvm::sys::fs::perms::owner_all)) {
-    llvm::errs() << "Failed to create a unique output file.\n";
+  if (llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
+                                           tmpout)) {
+    llvm::errs() << "Failed to create a unique output directory.\n";
     return false;
   }
 
@@ -488,7 +569,7 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
 
   std::string Program = HERBIE_BINARY;
   SmallVector<llvm::StringRef> Args = {
-      Program, "improve", "--seed", "239778888", "--timeout", "60",
+      Program, "report", "--seed", "239778888", "--timeout", "60",
   };
 
   Args.push_back("--disable");
@@ -544,7 +625,7 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
     return false;
   }
 
-  std::ifstream output(tmpout.c_str());
+  std::ifstream output((tmpout + "/results.json").str());
   if (!output) {
     llvm::errs() << "Failed to open output file.\n";
     return false;
@@ -554,17 +635,56 @@ bool improveViaHerbie(const std::string &inputExpr, std::string &outputExpr) {
   output.close();
   std::remove(tmpout.c_str());
 
-  std::string token;
-  std::regex fpcoreRegex(":alt\\s*\\(\\)\\s*(.*)\\s*\\)");
-  std::smatch matches;
+  llvm::errs() << "Herbie output: " << content << "\n";
 
-  if (std::regex_search(content, matches, fpcoreRegex)) {
-    outputExpr = matches[1].str();
-    return outputExpr != "#f"; // Herbie failure
-  } else {
-    llvm::errs() << "Failed to extract Herbie output expression!\n";
+  Expected<json::Value> parsed = json::parse(content);
+  if (!parsed) {
+    llvm::errs() << "Failed to parse Herbie result!\n";
     return false;
   }
+
+  json::Object *obj = parsed->getAsObject();
+  json::Array &tests = *obj->getArray("tests");
+  StringRef bestExpr = tests[0].getAsObject()->getString("output").getValue();
+  double bits = tests[0].getAsObject()->getNumber("bits").getValue();
+  json::Array &costAccuracy =
+      *tests[0].getAsObject()->getArray("cost-accuracy");
+
+  json::Array &initial = *costAccuracy[0].getAsArray();
+  double initialCostVal = initial[0].getAsNumber().getValue();
+  double initialCost = 1.0;
+  double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
+
+  json::Array &best = *costAccuracy[1].getAsArray();
+  double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
+  double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+
+  AO.candidates.emplace_back(bestCost, bestAccuracy, bestExpr.str());
+
+  if (EnzymePrintHerbie) {
+    llvm::errs() << "Initial: Cost = " << initialCost
+                 << ", Accuracy = " << initialAccuracy << "\n";
+    llvm::errs() << "Best: Cost = " << bestCost
+                 << ", Accuracy = " << bestAccuracy
+                 << ", Expression = " << bestExpr << "\n";
+  }
+
+  json::Array &alternatives = *costAccuracy[2].getAsArray();
+
+  // Handle alternatives
+  for (size_t i = 2; i < alternatives.size(); ++i) {
+    json::Array &entry = *alternatives[i].getAsArray();
+    double cost = entry[0].getAsNumber().getValue() / initialCostVal;
+    double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
+    StringRef expr = entry[2].getAsString().getValue();
+    if (EnzymePrintHerbie)
+      llvm::errs() << "Alternative " << i << ": Cost = " << cost
+                   << ", Accuracy = " << accuracy << ", Expression = " << expr
+                   << "\n";
+    AO.candidates.emplace_back(cost, accuracy, expr.str());
+  }
+
+  return true;
 }
 
 std::string getHerbieOperator(const Instruction &I) {
@@ -762,44 +882,6 @@ std::string getPrecondition(
 
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
 }
-
-struct HerbieComponent {
-  SetVector<Value *> inputs;
-  SetVector<Value *> outputs;
-  SetVector<Instruction *> operations;
-  size_t outputs_rewritten = 0;
-
-  HerbieComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
-                  SetVector<Instruction *> operations)
-      : inputs(std::move(inputs)), outputs(std::move(outputs)),
-        operations(std::move(operations)) {}
-};
-
-class HerbieRewrite {
-public:
-  HerbieComponent &component;
-  Value *oldOutput;
-  Value *newOutput;
-  InstructionCost oldCost;
-  InstructionCost newCost;
-  double oldError;
-  double newError;
-
-  HerbieRewrite(HerbieComponent &component, Value *oldOutput, Value *newOutput,
-                InstructionCost oldCost, InstructionCost newCost,
-                double oldError, double newError)
-      : component(component), oldOutput(oldOutput), newOutput(newOutput),
-        oldCost(oldCost), newCost(newCost), oldError(oldError),
-        newError(newError) {}
-
-  void apply() {
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Applying Herbie rewrite: " << *oldOutput << " -> "
-                   << *newOutput << "\n";
-
-    oldOutput->replaceAllUsesWith(newOutput);
-  }
-};
 
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
 // (exclusive).
@@ -1013,7 +1095,7 @@ B2:
   }
 
   SmallSet<Value *, 1> component_seen;
-  SmallVector<HerbieComponent, 1> connected_components;
+  SmallVector<FPComponent, 1> connected_components;
   for (auto &BB : F) {
     for (auto &I : BB) {
       // Not a herbiable instruction, doesn't make sense to create graph node
@@ -1195,7 +1277,7 @@ B2:
     return false;
   }
 
-  SmallVector<HerbieRewrite, 1> rewrites;
+  SmallVector<ApplicableOutput> AOs;
 
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
@@ -1215,7 +1297,7 @@ B2:
     }
 
     assert(component.outputs.size() > 0 && "No outputs found for component");
-    for (const auto &output : component.outputs) {
+    for (auto &output : component.outputs) {
       // TODO: Herbie properties
       std::string expr =
           valueToNodeMap[output]->toFullExpression(valueToNodeMap);
@@ -1244,59 +1326,23 @@ B2:
         llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
       // 3) run fancy opts
-      std::string herbieOutput;
-      if (!improveViaHerbie(herbieInput, herbieOutput)) {
+      ApplicableOutput AO(component, output);
+      if (!improveViaHerbie(herbieInput, AO)) {
         if (EnzymePrintHerbie)
           llvm::errs() << "Failed to optimize an expression using Herbie!\n";
         continue;
       }
 
-      if (EnzymePrintHerbie)
-        llvm::errs() << "Herbie output: " << herbieOutput << "\n";
-
-      // 4) parse the output string solution from herbieland
-      // 5) convert into a solution in llvm vals/instructions
-      // if (EnzymePrintFPOpt)
-      //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
-      FPNode *parsedNode =
-          parseHerbieExpr(herbieOutput, valueToNodeMap, symbolToValueMap);
-      // if (EnzymePrintFPOpt)
-      //   llvm::errs() << "Parsed Herbie output: "
-      //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
-
-      Instruction *insertBefore = dyn_cast<Instruction>(output);
-      IRBuilder<> builder(insertBefore);
-      // TODO ponder fast math
-      builder.setFastMathFlags(getFast());
-
-      // Evaluate errors and costs of the original and new expression
-      Value *newOutputValue = parsedNode->getValue(builder);
-      InstructionCost oldCost = getValueTreeCost(output, component.inputs, TTI);
-      llvm::errs() << "Cost of the original expression is: " << oldCost << "\n";
-      InstructionCost newCost =
-          getValueTreeCost(newOutputValue, component.inputs, TTI);
-      llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
-
-      // double oldError, newError;
-      // if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
-      //   llvm::errs() << "Error of the original expression is: " << oldError
-      //                << "\n";
-      //   llvm::errs() << "Error of the new expression is: " << newError <<
-      //   "\n";
-      // }
-
-      rewrites.emplace_back(component, output, newOutputValue, oldCost, newCost,
-                            0, 0);
-
-      assert(newOutputValue && "Failed to get value from parsed node");
+      AOs.push_back(std::move(AO));
     }
   }
 
   // Perform rewrites
-  for (auto &rewrite : rewrites) {
+  for (auto &AO : AOs) {
     // TODO: Solver
-    rewrite.apply();
-    rewrite.component.outputs_rewritten++;
+
+    // FOR NOW: apply the rewrite considered optimal by herbie
+    AO.apply(AO.candidates[0], valueToNodeMap, symbolToValueMap);
 
     changed = true;
   }
