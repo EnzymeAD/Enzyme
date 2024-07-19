@@ -1422,26 +1422,36 @@ B2:
   }
 
   // Perform rewrites
-  for (auto &AO : AOs) {
-    // TODO: Solver
+  if (EnzymePrintFPOpt) {
+    for (auto &AO : AOs) {
+      // TODO: Solver
+      // Available Parameters:
+      // 1. gradients at the output llvm::Value
+      // 2. costs of the potential rewrites from Herbie (lower is preferred)
+      // 3. percentage accuracies of potential rewrites (higher is better)
+      // 4*. TTI costs of potential rewrites (TODO: need to consider branches)
+      // 5*. Custom error estimates of potential rewrites (TODO)
 
-    llvm::errs() << "AO: " << AO.oldOutput << "\n";
-    llvm::errs() << "Grad: " << AO.grad << "\n";
-    llvm::errs() << "Candidates:\n";
-    llvm::errs() << "Cost\tAccuracy\tExpression\n";
-    llvm::errs() << "--------------------------------\n";
-    for (const auto &candidate : AO.candidates) {
-      llvm::errs() << candidate.herbieCost << "\t" << candidate.accuracy << "\t"
-                   << candidate.expr << "\n";
+      llvm::errs() << "AO: " << *AO.oldOutput << "\n";
+      llvm::errs() << "Grad: " << AO.grad << "\n";
+      llvm::errs() << "Candidates:\n";
+      llvm::errs() << "Cost\tAccuracy\tExpression\n";
+      llvm::errs() << "--------------------------------\n";
+      for (const auto &candidate : AO.candidates) {
+        llvm::errs() << candidate.herbieCost << "\t" << candidate.accuracy
+                     << "\t" << candidate.expr << "\n";
+      }
     }
+  }
 
-    if (!FPOptEnableSolver) {
+  if (!FPOptEnableSolver) {
+    for (auto &AO : AOs) {
       AO.apply(0, valueToNodeMap, symbolToValueMap);
-    } else {
-      // TODO...
+      changed = true;
     }
-
-    changed = true;
+  } else {
+    // TODO: Solver
+    llvm_unreachable("Solver not implemented");
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
@@ -1450,13 +1460,14 @@ B2:
     delete node;
   }
 
+  // Cleanup
   for (auto &component : connected_components) {
     if (component.outputs_rewritten != component.outputs.size()) {
       if (EnzymePrintFPOpt)
         llvm::errs() << "Skip erasing a connect component: only rewrote "
                      << component.outputs_rewritten << " of "
                      << component.outputs.size() << " outputs\n";
-      continue; // Original intermediate operations cannot be erased safely
+      continue; // Intermediate operations cannot be erased safely
     }
     for (auto *I : component.operations) {
       if (EnzymePrintFPOpt)
