@@ -67,7 +67,10 @@ static cl::opt<bool>
                       cl::desc("Enable Enzyme to print Herbie expressions"));
 static cl::opt<std::string>
     ErrorLogPath("error-log-path", cl::init(""), cl::Hidden,
-                 cl::desc("Which error log to use in fp-opt pass"));
+                 cl::desc("Which error log to use in the FPOpt pass"));
+static cl::opt<std::string>
+    GradLogPath("grad-log-path", cl::init(""), cl::Hidden,
+                cl::desc("Which gradient log to use in the FPOpt pass"));
 static cl::opt<bool>
     HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
                         cl::desc("Disable Herbie's series expansion"));
@@ -88,6 +91,10 @@ static cl::opt<bool> HerbieDisableBranchExpr(
 static cl::opt<bool> HerbieDisableAvgError(
     "herbie-disable-avg-error", cl::init(false), cl::Hidden,
     cl::desc("Make Herbie choose the candidates with the least maximum error"));
+static cl::opt<bool> FPOptEnableSolver(
+    "fpopt-enable-solver", cl::init(false), cl::Hidden,
+    cl::desc("Use the solver to select desirable rewrite candidates; when "
+             "disabled, apply all Herbie's first choices"));
 }
 
 class FPNode {
@@ -95,6 +102,7 @@ public:
   std::string op;
   std::string symbol;
   SmallVector<FPNode *, 1> operands;
+  double grad;
 
   FPNode(const std::string &op) : op(op) {}
   virtual ~FPNode() = default;
@@ -113,6 +121,9 @@ public:
     expr += ")";
     return expr;
   }
+
+  void setGrad(double grad) { this->grad = grad; }
+  double getGrad() const { return grad; }
 
   virtual void updateBounds(double lower, double upper) {
     assert(0 && "Trying to update bounds of a non-input node!");
@@ -481,8 +492,8 @@ struct FPComponent {
   SetVector<Instruction *> operations;
   size_t outputs_rewritten = 0;
 
-  FPComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
-              SetVector<Instruction *> operations)
+  explicit FPComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
+                       SetVector<Instruction *> operations)
       : inputs(std::move(inputs)), outputs(std::move(outputs)),
         operations(std::move(operations)) {}
 };
@@ -491,12 +502,14 @@ class ApplicableOutput {
 public:
   FPComponent &component;
   Value *oldOutput;
+  double grad;
   SmallVector<RewriteCandidate> candidates;
 
-  explicit ApplicableOutput(FPComponent &component, Value *oldOutput)
-      : component(component), oldOutput(oldOutput) {}
+  explicit ApplicableOutput(FPComponent &component, Value *oldOutput,
+                            double grad)
+      : component(component), oldOutput(oldOutput), grad(grad) {}
 
-  void apply(RewriteCandidate &candidate,
+  void apply(size_t candidateIndex,
              std::unordered_map<Value *, FPNode *> &valueToNodeMap,
              std::unordered_map<std::string, Value *> &symbolToValueMap) {
     // 4) parse the output string solution from herbieland
@@ -504,8 +517,8 @@ public:
 
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
-    FPNode *parsedNode =
-        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
+    FPNode *parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
+                                         valueToNodeMap, symbolToValueMap);
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsed Herbie output: "
     //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
@@ -646,6 +659,11 @@ bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
   json::Object *obj = parsed->getAsObject();
   json::Array &tests = *obj->getArray("tests");
   StringRef bestExpr = tests[0].getAsObject()->getString("output").getValue();
+
+  if (bestExpr == "#f") {
+    return false;
+  }
+
   double bits = tests[0].getAsObject()->getNumber("bits").getValue();
   json::Array &costAccuracy =
       *tests[0].getAsObject()->getArray("cost-accuracy");
@@ -678,7 +696,7 @@ bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
     double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
     StringRef expr = entry[2].getAsString().getValue();
     if (EnzymePrintHerbie)
-      llvm::errs() << "Alternative " << i << ": Cost = " << cost
+      llvm::errs() << "Alternative " << i - 1 << ": Cost = " << cost
                    << ", Accuracy = " << accuracy << ", Expression = " << expr
                    << "\n";
     AO.candidates.emplace_back(cost, accuracy, expr.str());
@@ -828,6 +846,42 @@ bool extractErrorLogData(const std::string &filePath,
 
   if (EnzymePrintFPOpt)
     llvm::errs() << "Failed to get error log data for: " << "Function: "
+                 << functionName << ", BlockIdx: " << blockIdx
+                 << ", InstIdx: " << instIdx << "\n";
+  return false;
+}
+
+struct GradLogData {
+  double grad;
+  unsigned executions;
+};
+
+bool extractGradLogData(const std::string &filePath,
+                        const std::string &functionName, size_t blockIdx,
+                        size_t instIdx, GradLogData &data) {
+  std::ifstream file(filePath);
+  if (!file.is_open()) {
+    llvm::errs() << "Failed to open grad log: " << filePath << "\n";
+    return false;
+  }
+
+  std::regex linePattern("Function: " + functionName +
+                         ", BlockIdx: " + std::to_string(blockIdx) +
+                         ", InstIdx: " + std::to_string(instIdx) +
+                         R"(, Grad: ([\d\.eE+-]+), Executions: (\d+))");
+  std::string line;
+
+  while (getline(file, line)) {
+    std::smatch match;
+    if (std::regex_search(line, match, linePattern)) {
+      data.grad = stringToDouble(match[1]);
+      data.executions = std::stol(match[2]);
+      return true;
+    }
+  }
+
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "Failed to get grad log data for: " << "Function: "
                  << functionName << ", BlockIdx: " << blockIdx
                  << ", InstIdx: " << instIdx << "\n";
   return false;
@@ -1176,11 +1230,11 @@ B2:
               assert(instIt != I2->getParent()->end() &&
                      "Instruction not found");
               size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
-              bool logFound = extractErrorLogData(
-                  ErrorLogPath, functionName, blockIdx, instIdx, errorLogData);
+              bool found = extractErrorLogData(ErrorLogPath, functionName,
+                                               blockIdx, instIdx, errorLogData);
 
               auto *node = valueToNodeMap[operand];
-              if (logFound) {
+              if (found) {
                 node->updateBounds(errorLogData.lower[i],
                                    errorLogData.upper[i]);
                 if (EnzymePrintFPOpt)
@@ -1194,13 +1248,6 @@ B2:
                   llvm::errs() << "Bounds of " << *operand
                                << " are not found in the log\n";
               }
-
-              if (EnzymePrintFPOpt)
-                llvm::errs()
-                    << "Node bounds of " << *operand
-                    << " are: " << valueToNodeMap[operand]->getLowerBound()
-                    << " and " << valueToNodeMap[operand]->getUpperBound()
-                    << "\n";
             }
           } else {
             if (EnzymePrintFPOpt)
@@ -1216,6 +1263,41 @@ B2:
               if (EnzymePrintFPOpt)
                 llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
+
+              // Look up grad log to get grad of output I2
+              if (!GradLogPath.empty()) {
+                GradLogData gradLogData;
+                auto blockIt = std::find_if(I2->getFunction()->begin(),
+                                            I2->getFunction()->end(),
+                                            [&](const auto &block) {
+                                              return &block == I2->getParent();
+                                            });
+                assert(blockIt != I2->getFunction()->end() &&
+                       "Block not found");
+                size_t blockIdx =
+                    std::distance(I2->getFunction()->begin(), blockIt);
+                auto instIt = std::find_if(
+                    I2->getParent()->begin(), I2->getParent()->end(),
+                    [&](const auto &curr) { return &curr == I2; });
+                assert(instIt != I2->getParent()->end() &&
+                       "Instruction not found");
+                size_t instIdx =
+                    std::distance(I2->getParent()->begin(), instIt);
+                bool found = extractGradLogData(GradLogPath, functionName,
+                                                blockIdx, instIdx, gradLogData);
+
+                auto *node = valueToNodeMap[I2];
+                if (found) {
+                  node->setGrad(gradLogData.grad);
+                  if (EnzymePrintFPOpt)
+                    llvm::errs() << "Grad of " << *I2
+                                 << " is: " << gradLogData.grad << "\n";
+                } else { // Unknown bounds
+                  if (EnzymePrintFPOpt)
+                    llvm::errs()
+                        << "Grad of " << *I2 << " are not found in the log\n";
+                }
+              }
             } else {
               if (EnzymePrintFPOpt)
                 llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
@@ -1326,7 +1408,9 @@ B2:
         llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
       // 3) run fancy opts
-      ApplicableOutput AO(component, output);
+      double grad = valueToNodeMap[output]->getGrad();
+
+      ApplicableOutput AO(component, output, grad);
       if (!improveViaHerbie(herbieInput, AO)) {
         if (EnzymePrintHerbie)
           llvm::errs() << "Failed to optimize an expression using Herbie!\n";
@@ -1341,8 +1425,21 @@ B2:
   for (auto &AO : AOs) {
     // TODO: Solver
 
-    // FOR NOW: apply the rewrite considered optimal by herbie
-    AO.apply(AO.candidates[0], valueToNodeMap, symbolToValueMap);
+    llvm::errs() << "AO: " << AO.oldOutput << "\n";
+    llvm::errs() << "Grad: " << AO.grad << "\n";
+    llvm::errs() << "Candidates:\n";
+    llvm::errs() << "Cost\tAccuracy\tExpression\n";
+    llvm::errs() << "--------------------------------\n";
+    for (const auto &candidate : AO.candidates) {
+      llvm::errs() << candidate.herbieCost << "\t" << candidate.accuracy << "\t"
+                   << candidate.expr << "\n";
+    }
+
+    if (!FPOptEnableSolver) {
+      AO.apply(0, valueToNodeMap, symbolToValueMap);
+    } else {
+      // TODO...
+    }
 
     changed = true;
   }
