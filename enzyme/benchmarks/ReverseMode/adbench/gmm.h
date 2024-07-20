@@ -33,52 +33,50 @@ struct GMMParameters {
 };
 
 extern "C" {
-void gmm_objective(
-    int d,
-    int k,
-    int n,
-    double const* alphas,
-    double const* means,
-    double const* icf,
-    double const* x,
-    Wishart wishart,
-    double* err
-);
-    void dgmm_objective(int d, int k, int n, const double *alphas, double *
-            alphasb, const double *means, double *meansb, const double *icf,
-            double *icfb, const double *x, Wishart wishart, double *err, double *
-            errb);
+void gmm_objective(int d, int k, int n, double const *alphas,
+                   double const *means, double const *icf, double const *x,
+                   Wishart wishart, double *err);
+void gmm_objective_restrict(int d, int k, int n, double const *alphas,
+                            double const *means, double const *icf,
+                            double const *x, Wishart wishart, double *err);
+void dgmm_objective_restrict(int d, int k, int n, const double *alphas,
+                             double *alphasb, const double *means,
+                             double *meansb, const double *icf, double *icfb,
+                             const double *x, Wishart wishart, double *err,
+                             double *errb);
+void dgmm_objective(int d, int k, int n, const double *alphas, double *alphasb,
+                    const double *means, double *meansb, const double *icf,
+                    double *icfb, const double *x, Wishart wishart, double *err,
+                    double *errb);
 
-    void gmm_objective_b(int d, int k, int n, const double *alphas, double *
-        alphasb, const double *means, double *meansb, const double *icf,
-        double *icfb, const double *x, Wishart wishart, double *err, double *
-        errb);
+void gmm_objective_b(int d, int k, int n, const double *alphas, double *alphasb,
+                     const double *means, double *meansb, const double *icf,
+                     double *icfb, const double *x, Wishart wishart,
+                     double *err, double *errb);
 
-    void adept_dgmm_objective(int d, int k, int n, const double *alphas, double *
-        alphasb, const double *means, double *meansb, const double *icf,
-        double *icfb, const double *x, Wishart wishart, double *err, double *
-        errb);
+void adept_dgmm_objective(int d, int k, int n, const double *alphas,
+                          double *alphasb, const double *means, double *meansb,
+                          const double *icf, double *icfb, const double *x,
+                          Wishart wishart, double *err, double *errb);
 
-    void rust_unsafe_dgmm_objective(int d, int k, int n, const double *alphas,
-                                    double *alphasb, const double *means,
-                                    double *meansb, const double *icf,
-                                    double *icfb, const double *x,
-                                    Wishart &wishart, double *err,
-                                    double *errb);
+void rust_unsafe_dgmm_objective(int d, int k, int n, const double *alphas,
+                                double *alphasb, const double *means,
+                                double *meansb, const double *icf, double *icfb,
+                                const double *x, Wishart &wishart, double *err,
+                                double *errb);
 
-    void rust_unsafe_gmm_objective(int d, int k, int n, const double *alphas,
-                                   const double *means, const double *icf,
-                                   const double *x, Wishart &wishart,
-                                   double *err);
+void rust_unsafe_gmm_objective(int d, int k, int n, const double *alphas,
+                               const double *means, const double *icf,
+                               const double *x, Wishart &wishart, double *err);
 
-    void rust_dgmm_objective(int d, int k, int n, const double *alphas, double *
-            alphasb, const double *means, double *meansb, const double *icf,
-            double *icfb, const double *x, Wishart &wishart, double *err, double *
-            errb);
-    
-    void rust_gmm_objective(int d, int k, int n, const double *alphas, 
-            const double *means, const double *icf,
-             const double *x, Wishart &wishart, double *err);
+void rust_dgmm_objective(int d, int k, int n, const double *alphas,
+                         double *alphasb, const double *means, double *meansb,
+                         const double *icf, double *icfb, const double *x,
+                         Wishart &wishart, double *err, double *errb);
+
+void rust_gmm_objective(int d, int k, int n, const double *alphas,
+                        const double *means, const double *icf, const double *x,
+                        Wishart &wishart, double *err);
 }
 
 void read_gmm_instance(const string& fn,
@@ -305,11 +303,41 @@ int main(const int argc, const char* argv[]) {
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);
+      calculate_jacobian<dgmm_objective_restrict>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme c++ restrict combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme restrict combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
+        printf("%f ", result.gradient[i]);
+        enzyme["result"].push_back(result.gradient[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+
+    struct GMMInput input;
+    read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+                      input.alphas, input.means, input.icf, input.x,
+                      input.wishart, params.replicate_point);
+
+    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+
+    struct GMMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
       calculate_jacobian<dgmm_objective>(input, result);
       gettimeofday(&end, NULL);
-      printf("Enzyme c++ combined %0.6f\n", tdiff(&start, &end));
+      printf("Enzyme c++ mayalias combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
-      enzyme["name"] = "Enzyme combined";
+      enzyme["name"] = "Enzyme mayalias combined";
       enzyme["runtime"] = tdiff(&start, &end);
       for (unsigned i = result.gradient.size() - 5;
            i < result.gradient.size(); i++) {
@@ -319,9 +347,8 @@ int main(const int argc, const char* argv[]) {
       printf("\n");
       test_suite["tools"].push_back(enzyme);
     }
-
     }
-    
+
     {
 
     struct GMMInput input;
@@ -337,10 +364,25 @@ int main(const int argc, const char* argv[]) {
       gettimeofday(&start, NULL);
       auto res = primal<gmm_objective>(input);
       gettimeofday(&end, NULL);
-      printf("c++ primal combined t=%0.6f, err=%f\n", tdiff(&start, &end), res);
-      
+      printf("c++ primal mayalias combined t=%0.6f, err=%f\n",
+             tdiff(&start, &end), res);
+
       json primal;
-      primal["name"] = "C++ primal";
+      primal["name"] = "C++ primal mayalias";
+      primal["runtime"] = tdiff(&start, &end);
+      primal["result"].push_back(res);
+      test_suite["tools"].push_back(primal);
+    }
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      auto res = primal<gmm_objective_restrict>(input);
+      gettimeofday(&end, NULL);
+      printf("c++ primal restrict combined t=%0.6f, err=%f\n",
+             tdiff(&start, &end), res);
+
+      json primal;
+      primal["name"] = "C++ primal restrict";
       primal["runtime"] = tdiff(&start, &end);
       primal["result"].push_back(res);
       test_suite["tools"].push_back(primal);
