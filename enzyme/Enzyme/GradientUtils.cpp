@@ -5308,7 +5308,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   }
 
-  if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
+  if (isa<Argument>(oval) && TR.query(oval)[{-1}].isFloat()) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
+  } else if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
     Type *subType = nullptr;

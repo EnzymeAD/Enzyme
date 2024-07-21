@@ -1097,13 +1097,12 @@ public:
     }
 
     unsigned start = 0;
-    unsigned size = storeSize;
 
     while (1) {
-      unsigned nextStart = size;
+      unsigned nextStart = storeSize;
 
       auto dt = vd[{-1}];
-      for (size_t i = start; i < size; ++i) {
+      for (size_t i = start; i < storeSize; ++i) {
         auto nex = vd[{(int)i}];
         if ((nex == BaseType::Anything && dt.isFloat()) ||
             (dt == BaseType::Anything && nex.isFloat())) {
@@ -1117,13 +1116,14 @@ public:
           break;
         }
       }
-      size = nextStart - start;
+      unsigned size = nextStart - start;
       if (!dt.isKnown()) {
 
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I << vd.str()
-           << " size: " << storeSize;
+           << " start: " << start << " size: " << size
+           << " storeSize: " << storeSize;
         EmitNoTypeError(str, I, gutils, BuilderZ);
         break;
       }
@@ -1323,7 +1323,7 @@ public:
         }
       }
 
-      if (nextStart == size)
+      if (nextStart == storeSize)
         break;
       start = nextStart;
     }
