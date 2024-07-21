@@ -26,7 +26,8 @@ enum class ArgType {
   uplo,
   trans,
   diag,
-  side
+  side,
+  info
 };
 
 bool is_char_arg(ArgType ty);

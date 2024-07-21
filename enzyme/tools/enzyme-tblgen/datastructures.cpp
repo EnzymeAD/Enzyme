@@ -63,6 +63,8 @@ const char *TyToString(ArgType ty) {
     return "diag";
   case ArgType::side:
     return "side";
+  case ArgType::info:
+    return "info";
   default:
     return "unknown";
   }
@@ -313,6 +315,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
       auto name = val->getName();
       if (name == "len") {
         argTypes.insert(std::make_pair(pos, ArgType::len));
+      } else if (name == "info") {
+        argTypes.insert(std::make_pair(pos, ArgType::info));
       } else if (name == "fp") {
         argTypes.insert(std::make_pair(pos, ArgType::fp));
       } else if (name == "cblas_layout") {
