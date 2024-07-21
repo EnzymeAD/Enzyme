@@ -6245,6 +6245,10 @@ end:;
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
 
+  if (isa<CallBase>(oval) && TR.query(oval)[{-1}].isFloat()) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
+  }
+
   if (CustomErrorHandler) {
     std::string str;
     raw_string_ostream ss(str);
