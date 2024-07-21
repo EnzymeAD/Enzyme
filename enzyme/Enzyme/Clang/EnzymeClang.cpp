@@ -47,11 +47,7 @@ constexpr auto StructKind = clang::TagTypeKind::Struct;
 constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
 #endif
 
-#if LLVM_VERSION_MAJOR >= 18
-constexpr auto stringkind = clang::StringLiteralKind::Ordinary;
-#elif LLVM_VERSION_MAJOR >= 15
-constexpr auto stringkind = clang::StringLiteral::StringKind::Ordinary;
-#else
+#if LLVM_VERSION_MAJOR < 12
 constexpr auto stringkind = clang::StringLiteral::StringKind::Ascii;
 #endif
 
