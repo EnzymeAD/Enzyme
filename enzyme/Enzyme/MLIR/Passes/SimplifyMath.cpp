@@ -14,6 +14,7 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -64,13 +65,67 @@ struct SubSimplify : public OpRewritePattern<arith::SubFOp> {
   }
 };
 
+bool isZero(mlir::Value v) {
+  ArrayAttr lhs;
+  matchPattern(v, m_Constant(&lhs));
+  if (lhs) {
+    for (auto e : lhs) {
+      if (!e.cast<FloatAttr>().getValue().isZero())
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+struct CAddSimplify : public OpRewritePattern<complex::AddOp> {
+  using OpRewritePattern<complex::AddOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(complex::AddOp op,
+                                PatternRewriter &rewriter) const final {
+
+    if (isZero(op.getLhs())) {
+      rewriter.replaceOp(op, op.getRhs());
+      return success();
+    }
+
+    if (isZero(op.getRhs())) {
+      rewriter.replaceOp(op, op.getLhs());
+      return success();
+    }
+
+    return failure();
+  }
+};
+
+struct CSubSimplify : public OpRewritePattern<complex::SubOp> {
+  using OpRewritePattern<complex::SubOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(complex::SubOp op,
+                                PatternRewriter &rewriter) const final {
+
+    if (isZero(op.getRhs())) {
+      rewriter.replaceOp(op, op.getLhs());
+      return success();
+    }
+
+    if (isZero(op.getLhs())) {
+      rewriter.replaceOpWithNewOp<complex::NegOp>(op, op.getRhs());
+      return success();
+    }
+
+    return failure();
+  }
+};
+
 struct MathematicSimplification
     : public enzyme::MathematicSimplificationPassBase<
           MathematicSimplification> {
   void runOnOperation() override {
 
     RewritePatternSet patterns(&getContext());
-    patterns.insert<AddSimplify, SubSimplify>(&getContext());
+    patterns.insert<AddSimplify, SubSimplify, CAddSimplify, CSubSimplify>(
+        &getContext());
 
     GreedyRewriteConfig config;
     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),

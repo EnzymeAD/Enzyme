@@ -1164,18 +1164,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!isSum) {
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         ss << " call: " << call << "\n";
         ss << " unhandled mpi_reduce op: " << *orig_op << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-          return;
-        }
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return;
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -1413,18 +1405,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!isSum) {
         std::string s;
         llvm::raw_string_ostream ss(s);
-        ss << *gutils->oldFunc << "\n";
-        ss << *gutils->newFunc << "\n";
         ss << " call: " << call << "\n";
         ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-          return;
-        }
+        EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+        return;
       }
 
       Value *shadow_recvbuf = gutils->invertPointerM(orig_recvbuf, Builder2);
@@ -2522,16 +2506,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             nullptr,
             nullptr};
 
-#if LLVM_VERSION_MAJOR >= 13
-        Type *stackTys[] = {getInt8PtrTy(Builder2.getContext())};
-#else
-        ArrayRef<Type *> stackTys = {};
-#endif
-        auto stack = Builder2.CreateIntrinsic(Intrinsic::stacksave,
-                                              ArrayRef<Type *>(stackTys),
-                                              ArrayRef<Value *>());
-        auto tmp = Builder2.CreateAlloca(types[2], args[1]);
-        auto dtmp = Builder2.CreateAlloca(types[2], args[1]);
+        Type *typesS[] = {args[1]->getType()};
+        FunctionType *FTS =
+            FunctionType::get(args[1]->getType(), typesS, false);
+        auto FS = called->getParent()->getOrInsertFunction(
+            "gsl_sf_legendre_array_n", FTS);
+        Value *alSize = Builder2.CreateCall(FS, args[1]);
+        Value *tmp = CreateAllocation(Builder2, types[2], alSize);
+        Value *dtmp = CreateAllocation(Builder2, types[2], alSize);
         Builder2.CreateLifetimeStart(tmp);
         Builder2.CreateLifetimeStart(dtmp);
 
@@ -2540,6 +2522,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         Builder2.CreateCall(F, args, Defs);
         Builder2.CreateLifetimeEnd(tmp);
+        CreateDealloc(Builder2, tmp);
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
 
@@ -2599,10 +2582,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         fin_idx->addIncoming(acc, loopBlock);
 
         Builder2.CreateLifetimeEnd(dtmp);
-
-        Builder2.CreateIntrinsic(Intrinsic::stackrestore,
-                                 ArrayRef<Type *>(stackTys),
-                                 ArrayRef<Value *>(stack));
+        CreateDealloc(Builder2, dtmp);
 
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
@@ -3144,18 +3124,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   if (EnzymeShadowAllocRewrite)
                     EnzymeShadowAllocRewrite(wrap(anti), gutils);
                 }
-                if (Mode == DerivativeMode::ReverseModeCombined ||
-                    (Mode == DerivativeMode::ReverseModePrimal &&
-                     forwardsShadow) ||
-                    (Mode == DerivativeMode::ReverseModeGradient &&
-                     backwardsShadow) ||
-                    (Mode == DerivativeMode::ForwardModeSplit &&
-                     backwardsShadow)) {
-                  if (!inLoop) {
-                    zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
-                                        &call);
-                    zeroed = true;
-                  }
+              }
+              if (Mode == DerivativeMode::ReverseModeCombined ||
+                  (Mode == DerivativeMode::ReverseModePrimal &&
+                   forwardsShadow) ||
+                  (Mode == DerivativeMode::ReverseModeGradient &&
+                   backwardsShadow) ||
+                  (Mode == DerivativeMode::ForwardModeSplit &&
+                   backwardsShadow)) {
+                if (!inLoop) {
+                  zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
+                                      &call);
+                  zeroed = true;
                 }
               }
               return anti;
@@ -4143,8 +4123,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         Function *free = getOrInsertCheckedFree(
             *call.getModule(), &call, newfree->getType(), gutils->getWidth());
 
+        bool used = true;
+        if (auto instArg = dyn_cast<Instruction>(call.getArgOperand(0)))
+          used = unnecessaryInstructions.find(instArg) ==
+                 unnecessaryInstructions.end();
+
         SmallVector<Value *, 3> args;
-        args.push_back(newfree);
+        if (used)
+          args.push_back(newfree);
+        else
+          args.push_back(
+              Constant::getNullValue(call.getArgOperand(0)->getType()));
 
         auto rule = [&args](Value *tofree) { args.push_back(tofree); };
         applyChainRule(Builder2, rule, tofree);
@@ -4152,6 +4141,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
         frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 
+        eraseIfUnused(call);
         return true;
       }
       eraseIfUnused(call);

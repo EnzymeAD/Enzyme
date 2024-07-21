@@ -43,6 +43,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
 
 #include "llvm-c/Core.h"
 
@@ -91,6 +92,9 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool> EnzymeMemmoveWarning(
     "enzyme-memmove-warning", cl::init(true), cl::Hidden,
     cl::desc("Warn if using memmove implementation as a fallback for memmove"));
+llvm::cl::opt<bool> EnzymeRuntimeError(
+    "enzyme-runtime-error", cl::init(false), cl::Hidden,
+    cl::desc("Emit Runtime errors instead of compile time ones"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -456,6 +460,14 @@ EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
+  if (auto VT = dyn_cast<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
+    auto len = VT->getElementCount().getFixedValue();
+#else
+    auto len = VT->getNumElements();
+#endif
+    return "vec" + std::to_string(len) + tofltstr(VT->getElementType());
+  }
   switch (T->getTypeID()) {
   case Type::HalfTyID:
     return "half";
@@ -612,6 +624,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                    end, body);
   }
 
+  auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
   {
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
@@ -621,6 +634,41 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
+
+    if (dstalign) {
+      // If the element size is already aligned to current alignment, do nothing
+      // e.g. elsize = double = 8, dstalign = 2
+      if (elSize % dstalign == 0) {
+
+      } else if (dstalign % elSize == 0) {
+        // Otherwise if the dst alignment is a multiple of the element size,
+        // use the element size as the new alignment. e.g. elsize = double = 8
+        // and alignment = 16
+        dstalign = elSize;
+      } else {
+        // else alignment only applies for first element, and we lose after all
+        // other iterattions, assume nothing
+        dstalign = 1;
+      }
+    }
+
+    if (srcalign) {
+      // If the element size is already aligned to current alignment, do nothing
+      // e.g. elsize = double = 8, dstalign = 2
+      if (elSize % srcalign == 0) {
+
+      } else if (srcalign % elSize == 0) {
+        // Otherwise if the dst alignment is a multiple of the element size,
+        // use the element size as the new alignment. e.g. elsize = double = 8
+        // and alignment = 16
+        srcalign = elSize;
+      } else {
+        // else alignment only applies for first element, and we lose after all
+        // other iterattions, assume nothing
+        srcalign = 1;
+      }
+    }
+
     if (dstalign) {
       dstl->setAlignment(Align(dstalign));
       dsts->setAlignment(Align(dstalign));
@@ -647,12 +695,195 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
+Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
+                          Value *const base, Value *lda, Value *row,
+                          Value *col) {
+  Type *intType = row->getType();
+  Value *is_row_maj =
+      layout ? B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 101))
+             : B.getFalse();
+  Value *offset = nullptr;
+  if (col) {
+    offset = B.CreateMul(
+        row, CreateSelect(B, is_row_maj, lda, ConstantInt::get(intType, 1)));
+    offset = B.CreateAdd(
+        offset,
+        B.CreateMul(col, CreateSelect(B, is_row_maj,
+                                      ConstantInt::get(intType, 1), lda)));
+  } else {
+    offset = B.CreateMul(row, lda);
+  }
+  if (!base)
+    return offset;
+
+  Value *ptr = base;
+  if (base->getType()->isIntegerTy())
+    ptr = B.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));
+
+#if LLVM_VERSION_MAJOR < 17
+#if LLVM_VERSION_MAJOR >= 15
+  if (ptr->getContext().supportsTypedPointers()) {
+#endif
+    if (fpType != ptr->getType()->getPointerElementType()) {
+      ptr = B.CreatePointerCast(
+          ptr,
+          PointerType::get(
+              fpType, cast<PointerType>(ptr->getType())->getAddressSpace()));
+    }
+#if LLVM_VERSION_MAJOR >= 15
+  }
+#endif
+#endif
+  ptr = B.CreateGEP(fpType, ptr, offset);
+
+  if (base->getType()->isIntegerTy()) {
+    ptr = B.CreatePtrToInt(ptr, base->getType());
+  } else if (ptr->getType() != base->getType()) {
+    ptr = B.CreatePointerCast(ptr, base->getType());
+  }
+  return ptr;
+}
+
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *islower, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N) {
+
+  const bool cublasv2 =
+      blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
+
+  const bool cublas = blas.prefix == "cublas";
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+
+  llvm::Type *intType = N->getType();
+  // add spmv diag update call if not already present
+  auto fnc_name = "__enzyme_copy_lower_to_upper" + blas.floatType +
+                  blas.prefix + blas.suffix;
+
+  SmallVector<Type *, 1> tys = {islower->getType(), A->getType(),
+                                lda->getType(), N->getType()};
+  if (layout)
+    tys.insert(tys.begin(), layout->getType());
+  auto ltuFT = FunctionType::get(B.getVoidTy(), tys, false);
+
+  auto F0 = M.getOrInsertFunction(fnc_name, ltuFT);
+
+  SmallVector<Value *, 1> args = {islower, A, lda, N};
+  if (layout)
+    args.insert(args.begin(), layout);
+  auto C = B.CreateCall(F0, args);
+  auto F = getFunctionFromCall(C);
+  assert(F);
+  if (!F->empty()) {
+    return;
+  }
+
+  // now add the implementation for the call
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  if (A->getType()->isPointerTy())
+    F->addParamAttr(1 + ((bool)layout), Attribute::NoCapture);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *loop = BasicBlock::Create(M.getContext(), "loop", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  auto arg = F->arg_begin();
+  Argument *layoutarg = nullptr;
+  if (layout) {
+    layoutarg = arg;
+    layoutarg->setName("layout");
+    arg++;
+  }
+  auto islowerarg = arg;
+  islowerarg->setName("islower");
+  arg++;
+  auto Aarg = arg;
+  Aarg->setName("A");
+  arg++;
+  auto ldaarg = arg;
+  ldaarg->setName("lda");
+  arg++;
+  auto Narg = arg;
+  Narg->setName("N");
+
+  IRBuilder<> EB(entry);
+
+  auto one = ConstantInt::get(intType, 1);
+  auto zero = ConstantInt::get(intType, 0);
+
+  Value *N_minus_1 = EB.CreateSub(Narg, one);
+
+  IRBuilder<> LB(loop);
+
+  auto i = LB.CreatePHI(intType, 2);
+  i->addIncoming(zero, entry);
+  auto i_plus_one = LB.CreateAdd(i, one, "", true, true);
+  i->addIncoming(i_plus_one, loop);
+
+  Value *copyArgs[] = {
+      to_blas_callconv(LB, LB.CreateSub(N_minus_1, i), byRef, cublas, nullptr,
+                       EB),
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
+                         CreateSelect(LB, islowerarg, i_plus_one, i),
+                         CreateSelect(LB, islowerarg, i, i_plus_one)),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
+                             CreateSelect(LB, islowerarg, one, zero),
+                             CreateSelect(LB, islowerarg, zero, one)),
+          byRef, cublas, nullptr, EB),
+      lookup_with_layout(LB, fpType, layoutarg, Aarg, ldaarg,
+                         CreateSelect(LB, islowerarg, i, i_plus_one),
+                         CreateSelect(LB, islowerarg, i_plus_one, i)),
+      to_blas_callconv(
+          LB,
+          lookup_with_layout(LB, fpType, layoutarg, nullptr, ldaarg,
+                             CreateSelect(LB, islowerarg, zero, one),
+                             CreateSelect(LB, islowerarg, one, zero)),
+          byRef, cublas, nullptr, EB)};
+
+  Type *copyTys[] = {copyArgs[0]->getType(), copyArgs[1]->getType(),
+                     copyArgs[2]->getType(), copyArgs[3]->getType(),
+                     copyArgs[4]->getType()};
+
+  FunctionType *FT = FunctionType::get(B.getVoidTy(), copyTys, false);
+
+  auto copy_name = std::string(blas.prefix) + blas.floatType + "copy" +
+                   (cublasv2 ? "" : blas.suffix);
+
+  auto copyfn = M.getOrInsertFunction(copy_name, FT);
+  if (Function *copyF = dyn_cast<Function>(copyfn.getCallee()))
+    attributeKnownFunctions(*copyF);
+  LB.CreateCall(copyfn, copyArgs);
+  LB.CreateCondBr(LB.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
+
+  EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  if (llvm::verifyFunction(*F, &llvm::errs())) {
+    llvm::errs() << *F << "\n";
+    report_fatal_error("helper function failed verification");
+  }
+}
+
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
                            llvm::Type *copy_retty,
                            llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
-  auto copy_name =
-      std::string(blas.prefix) + blas.floatType + "copy" + blas.suffix;
+  const bool cublasv2 =
+      blas.prefix == "cublas" && StringRef(blas.suffix).contains("v2");
+  auto copy_name = std::string(blas.prefix) + blas.floatType + "copy" +
+                   (cublasv2 ? "" : blas.suffix);
 
   SmallVector<Type *, 1> tys;
   for (auto arg : args)
@@ -785,9 +1016,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
               cast<PointerType>(blasalpha->getType())->getAddressSpace()));
       alpha = B1.CreateLoad(fpTy, VP);
     }
-    Value *is_u = is_uper(B1, blasuplo, byRef);
-    // Value *k = B1.CreateSelect(is_u, ConstantInt::get(IT, 0),
-    //                           ConstantInt::get(IT, 1), "k");
+    Value *is_l = is_lower(B1, blasuplo, byRef, /*cublas*/ false);
     B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
@@ -803,7 +1032,7 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
         blasdAP,
         PointerType::get(
             fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
-    B2.CreateCondBr(is_u, uper_code, lower_code);
+    B2.CreateCondBr(is_l, lower_code, uper_code);
 
     IRBuilder<> B3(uper_code);
     B3.setFastMathFlags(getFast());
@@ -1127,7 +1356,7 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
 Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
                                IntegerType *IT, unsigned dstalign,
                                unsigned srcalign) {
-  assert(elementType->isFloatingPointTy());
+  assert(elementType->isFPOrFPVectorTy());
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
   if (Mod.getContext().supportsTypedPointers()) {
@@ -1262,7 +1491,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   Value *Free = call->getCalledOperand();
   AttributeList FreeAttributes = call->getAttributes();
   CallingConv::ID CallingConvention = call->getCallingConv();
-  DebugLoc DebugLoc = call->getDebugLoc();
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
@@ -1308,7 +1536,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
   CI->setAttributes(FreeAttributes);
   CI->setCallingConv(CallingConvention);
-  CI->setDebugLoc(DebugLoc);
 
   if (width > 1) {
     Value *checkResult = nullptr;
@@ -1329,7 +1556,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
         CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
         CI->setAttributes(FreeAttributes);
         CI->setCallingConv(CallingConvention);
-        CI->setDebugLoc(DebugLoc);
       }
     }
     Free0Builder.CreateCondBr(checkResult, free1, end);
@@ -2646,9 +2872,11 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
-  const char *extractable[] = {"dot",  "scal", "axpy", "gemv", "gemm", "spmv",
-                               "syrk", "nrm2", "trmm", "trmv", "symm"};
-  const char *floatType[] = {"s", "d"}; // c, z
+  const char *extractable[] = {
+      "dot",  "scal",  "axpy",  "gemv",  "gemm",  "spmv",  "syrk",
+      "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy",
+      "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs", "getri"};
+  const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -2666,8 +2894,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
     }
   }
   // c interface to cublas
-  const char *cuCFloatType[] = {"S", "D"}; // c, z
-  const char *cuFFloatType[] = {"s", "d"}; // c, z
+  const char *cuCFloatType[] = {"S", "D", "C", "Z"};
+  const char *cuFFloatType[] = {"s", "d", "c", "z"};
   const char *cuCPrefixes[] = {"cublas"};
   const char *cuSuffixes[] = {"", "_v2", "_64", "_v2_64"};
   for (auto t : llvm::enumerate(cuCFloatType)) {
@@ -2729,13 +2957,13 @@ llvm::FastMathFlags getFast() {
 void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const Twine &name) {
+  if (!cache_arg)
+    return;
   if (!arg->getType()->isPointerTy()) {
     assert(arg->getType() == ty);
     cacheValues.push_back(arg);
     return;
   }
-  if (!cache_arg)
-    return;
 #if LLVM_VERSION_MAJOR < 17
   auto PT = cast<PointerType>(arg->getType());
 #if LLVM_VERSION_MAJOR <= 14
@@ -2788,38 +3016,81 @@ llvm::Value *to_blas_fp_callconv(IRBuilder<> &B, llvm::Value *V, bool byRef,
   return allocV;
 }
 
-llvm::Value *select_vec_dims(IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
-                             bool cublas) {
-  auto norm = is_normal(B, trans, byRef, cublas);
-  Value *width = B.CreateSelect(norm, dim1, dim2);
-
-  return width;
-}
-
-Value *is_uper(IRBuilder<> &B, Value *trans, bool byRef) {
-  IntegerType *charTy;
+Value *is_lower(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal = B.CreateICmpEQ(
+        uplo, ConstantInt::get(uplo->getType(),
+                               /*cublasFillMode_t::CUBLAS_FILL_MODE_LOWER*/ 0));
+    return isNormal;
+  }
+  if (auto CI = dyn_cast<ConstantInt>(uplo)) {
+    if (CI->getValue() == 'L' || CI->getValue() == 'l')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'U' || CI->getValue() == 'u')
+      return ConstantInt::getFalse(B.getContext());
+  }
   if (byRef) {
     // can't inspect opaque ptr, so assume 8 (Julia)
-    charTy = IntegerType::get(trans->getContext(), 8);
-    trans = B.CreateLoad(charTy, trans, "loaded.trans");
+    IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
+    uplo = B.CreateLoad(charTy, uplo, "loaded.trans");
+
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
   } else {
     // we can inspect scalars
-    unsigned int len = trans->getType()->getScalarSizeInBits();
-    charTy = IntegerType::get(trans->getContext(), len);
+    auto capi = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 122));
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'l'));
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
+}
 
-  Value *isUper =
-      B.CreateOr(B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'u')),
-                 B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'U')));
-  return isUper;
+Value *is_nonunit(IRBuilder<> &B, Value *uplo, bool byRef, bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal =
+        B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(),
+                                              /*CUBLAS_DIAG_NON_UNIT*/ 0));
+    return isNormal;
+  }
+  if (auto CI = dyn_cast<ConstantInt>(uplo)) {
+    if (CI->getValue() == 'N' || CI->getValue() == 'n')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'U' || CI->getValue() == 'u')
+      return ConstantInt::getFalse(B.getContext());
+  }
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    IntegerType *charTy = IntegerType::get(uplo->getContext(), 8);
+    uplo = B.CreateLoad(charTy, uplo, "loaded.nonunit");
+
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'N'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'n'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
+  } else {
+    // we can inspect scalars
+    auto capi = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 131));
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    auto isL = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'N'));
+    auto isl = B.CreateICmpEQ(uplo, ConstantInt::get(uplo->getType(), 'n'));
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
+  }
 }
 
 llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas) {
   if (cublas) {
     Value *isNormal = nullptr;
-    isNormal = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 0));
+    isNormal = B.CreateICmpEQ(
+        trans, ConstantInt::get(trans->getType(),
+                                /*cublasOperation_t::CUBLAS_OP_N*/ 0));
     return isNormal;
   }
   // Explicitly support 'N' always, since we use in the rule infra
@@ -2833,13 +3104,56 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
     IntegerType *charTy = IntegerType::get(trans->getContext(), 8);
     trans = B.CreateLoad(charTy, trans, "loaded.trans");
 
-    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'N'));
-    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(charTy, 'n'));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
     // fortran blas
     return B.CreateOr(isn, isN);
   } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
     // we can inspect scalars
-    return B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto capi = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+    auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+    auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isn, isN));
+  }
+}
+
+llvm::Value *is_left(IRBuilder<> &B, llvm::Value *side, bool byRef,
+                     bool cublas) {
+  if (cublas) {
+    Value *isNormal = nullptr;
+    isNormal = B.CreateICmpEQ(
+        side, ConstantInt::get(side->getType(),
+                               /*cublasSideMode_t::CUBLAS_SIDE_LEFT*/ 0));
+    return isNormal;
+  }
+  // Explicitly support 'L'/'R' always, since we use in the rule infra
+  if (auto CI = dyn_cast<ConstantInt>(side)) {
+    if (CI->getValue() == 'L' || CI->getValue() == 'l')
+      return ConstantInt::getTrue(B.getContext());
+    if (CI->getValue() == 'R' || CI->getValue() == 'r')
+      return ConstantInt::getFalse(B.getContext());
+  }
+  if (byRef) {
+    // can't inspect opaque ptr, so assume 8 (Julia)
+    IntegerType *charTy = IntegerType::get(side->getContext(), 8);
+    side = B.CreateLoad(charTy, side, "loaded.side");
+
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(isl, isL);
+  } else {
+    // TODO we really should just return capi, but for sake of consistency,
+    // we will accept either here.
+    // we can inspect scalars
+    auto capi = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 141));
+    auto isL = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'L'));
+    auto isl = B.CreateICmpEQ(side, ConstantInt::get(side->getType(), 'l'));
+    // fortran blas
+    return B.CreateOr(capi, B.CreateOr(isl, isL));
   }
 }
 
@@ -2849,7 +3163,8 @@ llvm::Value *is_normal(IRBuilder<> &B, llvm::Value *trans, bool byRef,
 // However, if we ask openBlas c ABI,
 // it is one of the following 32 bit integers values:
 // enum CBLAS_TRANSPOSE {CblasNoTrans=111, CblasTrans=112, CblasConjTrans=113};
-llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
+llvm::Value *transpose(std::string floatType, IRBuilder<> &B, llvm::Value *V,
+                       bool cublas) {
   llvm::Type *T = V->getType();
   if (cublas) {
     auto isT1 = B.CreateICmpEQ(V, ConstantInt::get(T, 1));
@@ -2859,18 +3174,38 @@ llvm::Value *transpose(IRBuilder<> &B, llvm::Value *V, bool cublas) {
                                          ConstantInt::get(V->getType(), 1),
                                          ConstantInt::get(V->getType(), 42)));
   } else if (T->isIntegerTy(8)) {
-    auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
-    auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
-                               ConstantInt::get(V->getType(), 0));
+    if (floatType == "z" || floatType == "c") {
+      auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
+      auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 'c'),
+                                 ConstantInt::get(V->getType(), 0));
 
-    auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
-    auto sel2 = B.CreateSelect(isN, ConstantInt::get(V->getType(), 'T'), sel1);
+      auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
+      auto sel2 =
+          B.CreateSelect(isN, ConstantInt::get(V->getType(), 'C'), sel1);
 
-    auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't'));
-    auto sel3 = B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
+      auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'c'));
+      auto sel3 =
+          B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
 
-    auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T'));
-    return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+      auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'C'));
+      return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+    } else {
+      // the base case here of 'C' or 'c' becomes simply 'N'
+      auto isn = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'n'));
+      auto sel1 = B.CreateSelect(isn, ConstantInt::get(V->getType(), 't'),
+                                 ConstantInt::get(V->getType(), 'N'));
+
+      auto isN = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'N'));
+      auto sel2 =
+          B.CreateSelect(isN, ConstantInt::get(V->getType(), 'T'), sel1);
+
+      auto ist = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 't'));
+      auto sel3 =
+          B.CreateSelect(ist, ConstantInt::get(V->getType(), 'n'), sel2);
+
+      auto isT = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 'T'));
+      return B.CreateSelect(isT, ConstantInt::get(V->getType(), 'N'), sel3);
+    }
 
   } else if (T->isIntegerTy(32)) {
     auto is111 = B.CreateICmpEQ(V, ConstantInt::get(V->getType(), 111));
@@ -2915,18 +3250,26 @@ llvm::Value *get_cached_mat_width(llvm::IRBuilder<> &B,
   return width;
 }
 
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *julia_decl,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *julia_decl,
                        llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name) {
 
   if (!byRef) {
     // Explicitly support 'N' always, since we use in the rule infra
     if (auto CI = dyn_cast<ConstantInt>(V)) {
-      if (CI->getValue() == 'N')
-        return ConstantInt::get(CI->getType(), 'T');
-      if (CI->getValue() == 'n')
-        return ConstantInt::get(CI->getType(), 't');
+      if (floatType == "c" || floatType == "z") {
+        if (CI->getValue() == 'N')
+          return ConstantInt::get(CI->getType(), 'C');
+        if (CI->getValue() == 'c')
+          return ConstantInt::get(CI->getType(), 'c');
+      } else {
+        if (CI->getValue() == 'N')
+          return ConstantInt::get(CI->getType(), 'T');
+        if (CI->getValue() == 'n')
+          return ConstantInt::get(CI->getType(), 't');
+      }
     }
 
     // cblas
@@ -2942,7 +3285,7 @@ llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
     V = B.CreateLoad(charType, V, "ld." + name);
   }
 
-  V = transpose(B, V, cublas);
+  V = transpose(floatType, B, V, cublas);
 
   return to_blas_callconv(B, V, byRef, cublas, julia_decl, entryBuilder,
                           "transpose." + name);
@@ -2953,10 +3296,13 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
   if (!byRef)
     return V;
 
-  auto VP = B.CreatePointerCast(
-      V, PointerType::get(intType,
-                          cast<PointerType>(V->getType())->getAddressSpace()));
-  return B.CreateLoad(intType, VP);
+  if (V->getType()->isIntegerTy())
+    V = B.CreateIntToPtr(V, PointerType::getUnqual(intType));
+  else
+    V = B.CreatePointerCast(
+        V, PointerType::get(
+               intType, cast<PointerType>(V->getType())->getAddressSpace()));
+  return B.CreateLoad(intType, V);
 }
 
 SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
@@ -2995,7 +3341,11 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
   assert(row.size() == col.size());
   SmallVector<Value *, 1> toreturn;
   for (size_t i = 0; i < row.size(); i++) {
-    toreturn.push_back(B.CreateSelect(conds[0], row[i], col[i]));
+    auto lhs = row[i];
+    auto rhs = col[i];
+    if (lhs->getType() != rhs->getType())
+      rhs = B.CreatePointerCast(rhs, lhs->getType());
+    toreturn.push_back(B.CreateSelect(conds[0], lhs, rhs));
   }
   return toreturn;
 }
@@ -3181,8 +3531,112 @@ llvm::Function *getLogFunction(llvm::Module *M, DerivativeMode mode) {
   return nullptr; // Return nullptr if no matching function is found
 }
 
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils,
+                                   llvm::IRBuilder<> &Builder2) {
+  if (CustomErrorHandler) {
+    return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
+                                     ErrorType::NoDerivative, gutils, nullptr,
+                                     wrap(&Builder2)));
+  } else if (EnzymeRuntimeError) {
+    auto &M = *inst.getParent()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    Builder2.CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    Builder2.CreateCall(ExitF,
+                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+    return nullptr;
+  } else {
+    if (StringRef(message).contains("cannot handle above cast")) {
+      gutils->TR.dump();
+    }
+    EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, message);
+    return nullptr;
+  }
+}
+
+bool EmitNoDerivativeError(const std::string &message, Value *todiff,
+                           RequestContext &context) {
+  Value *toshow = todiff;
+  if (context.req) {
+    toshow = context.req;
+  }
+  if (CustomErrorHandler) {
+    CustomErrorHandler(message.c_str(), wrap(toshow), ErrorType::NoDerivative,
+                       nullptr, wrap(todiff), wrap(context.ip));
+    return true;
+  } else if (context.ip && EnzymeRuntimeError) {
+    auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    context.ip->CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    context.ip->CreateCall(
+        ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+    return true;
+  } else if (context.req) {
+    EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                message);
+    return true;
+  } else if (auto arg = dyn_cast<Instruction>(todiff)) {
+    auto loc = arg->getDebugLoc();
+    EmitFailure("NoDerivative", loc, arg, message);
+    return true;
+  }
+  return false;
+}
+
+void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &Builder2) {
+  if (CustomErrorHandler) {
+    CustomErrorHandler(message.c_str(), wrap(&inst), ErrorType::NoType,
+                       gutils->TR.analyzer, nullptr, wrap(&Builder2));
+  } else if (EnzymeRuntimeError) {
+    auto &M = *inst.getParent()->getParent()->getParent();
+    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
+                                         {getInt8PtrTy(M.getContext())}, false);
+    auto msg = getString(M, message);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
+    Builder2.CreateCall(PutsF, msg);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
+
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
+    Builder2.CreateCall(ExitF,
+                        ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+  } else {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    gutils->TR.dump(ss);
+    EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
+  }
+}
+
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
 
+void dumpBlock(llvm::BasicBlock *blk) { llvm::errs() << *blk << "\n"; }
+
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
+
+void dumpTypeResults(TypeResults &TR) { TR.dump(); }

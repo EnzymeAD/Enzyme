@@ -47,11 +47,7 @@ constexpr auto StructKind = clang::TagTypeKind::Struct;
 constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
 #endif
 
-#if LLVM_VERSION_MAJOR >= 18
-constexpr auto stringkind = clang::StringLiteralKind::Ordinary;
-#elif LLVM_VERSION_MAJOR >= 15
-constexpr auto stringkind = clang::StringLiteral::StringKind::Ordinary;
-#else
+#if LLVM_VERSION_MAJOR < 12
 constexpr auto stringkind = clang::StringLiteral::StringKind::Ascii;
 #endif
 
@@ -206,6 +202,7 @@ public:
     auto name = V->getName();
     if (!(name.contains("__enzyme_inactive_global") ||
           name.contains("__enzyme_inactivefn") ||
+          name.contains("__enzyme_shouldrecompute") ||
           name.contains("__enzyme_function_like") ||
           name.contains("__enzyme_allocation_like") ||
           name.contains("__enzyme_register_gradient") ||
@@ -256,7 +253,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
 
   AttrHandling handleDeclAttribute(Sema &S, Decl *D,
                                    const ParsedAttr &Attr) const override {
-    auto FD = cast<FunctionDecl>(D);
     if (Attr.getNumArgs() != 1) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(
           DiagnosticsEngine::Error,
@@ -273,7 +269,13 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
       S.Diag(Attr.getLoc(), ID);
       return AttributeNotApplied;
     }
-
+#if LLVM_VERSION_MAJOR >= 12
+    D->addAttr(AnnotateAttr::Create(
+        S.Context, ("enzyme_function_like=" + Literal->getString()).str(),
+        nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+#else
+    auto FD = cast<FunctionDecl>(D);
     // if (FD->isLateTemplateParsed()) return;
     auto &AST = S.getASTContext();
     DeclContext *declCtx = FD->getDeclContext();
@@ -361,11 +363,62 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     S.MarkVariableReferenced(loc, V);
     S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
     return AttributeApplied;
+#endif
   }
 };
 
+#if LLVM_VERSION_MAJOR >= 12
 static ParsedAttrInfoRegistry::Add<EnzymeFunctionLikeAttrInfo>
     X3("enzyme_function_like", "");
+
+struct EnzymeShouldRecomputeAttrInfo : public ParsedAttrInfo {
+  EnzymeShouldRecomputeAttrInfo() {
+    OptArgs = 1;
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_shouldrecompute"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_shouldrecompute"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_shouldrecompute"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_shouldrecompute"},
+      {ParsedAttr::AS_CXX11, "enzyme::shouldrecompute"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (isa<FunctionDecl>(D))
+      return true;
+    if (auto VD = dyn_cast<VarDecl>(D)) {
+      if (VD->hasGlobalStorage())
+        return true;
+    }
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "functions and globals";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_inactive' attribute requires zero arguments");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_shouldrecompute",
+                                    nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeShouldRecomputeAttrInfo>
+    ESR("enzyme_shouldrecompute", "");
+#endif
 
 struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
   EnzymeInactiveAttrInfo() {

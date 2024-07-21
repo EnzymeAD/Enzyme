@@ -180,19 +180,20 @@ entry:
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   %15 = bitcast double* %0 to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   %ld.row.trans = load i8, i8* %malloccall, align 1
 ; CHECK-DAG:   %[[r24:.+]] = icmp eq i8 %ld.row.trans, 110
 ; CHECK-DAG:   %[[r25:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-DAG:   %[[r26:.+]] = or i1 %[[r25]], %[[r24]]
 ; CHECK-NEXT:   %[[r27:.+]] = select i1 %[[r26]], i8* %"y'", i8* %15
-; CHECK-NEXT:   %[[r31:.+]] = select i1 %[[r26]], i8* %incy_p, i8* %intcast.int.one
+; CHECK-NEXT:   %[[cast1:.+]] = bitcast i64* %byref.int.one to i8*
+; CHECK-NEXT:   %[[r31:.+]] = select i1 %[[r26]], i8* %incy_p, i8* %[[cast1]]
 ; CHECK-NEXT:   %[[r35:.+]] = select i1 %[[r26]], i8* %15, i8* %"y'"
-; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r26]], i8* %intcast.int.one, i8* %incy_p
-; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i8* %[[r39]], i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   %[[cast2:.+]] = bitcast i8* %incy_p to i64*
+; CHECK-NEXT:   %[[r39:.+]] = select i1 %[[r26]], i64* %byref.int.one, i64* %[[cast2]]
+; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha_p, i8* %[[r27]], i8* %[[r31]], i8* %[[r35]], i64* %[[r39]], i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %malloccall
 ; CHECK-DAG:    %[[r0:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 0
+; CHECK-DAG:    %[[r1:.+]] = select i1 %[[r0]], i8 116, i8 78
 ; CHECK-DAG:    %[[r2:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:    %[[r3:.+]] = select i1 %[[r2]], i8 84, i8 %[[r1]]
 ; CHECK-DAG:    %[[r4:.+]] = icmp eq i8 %ld.transa, 116

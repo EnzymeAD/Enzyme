@@ -203,6 +203,17 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   return nullptr;
 }
 
+class GradientUtils;
+struct RequestContext;
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+                           RequestContext &ctx);
+
+void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &B);
+
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 
@@ -1817,6 +1828,11 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
 llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
 
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N);
+
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
 llvm::Value *to_blas_callconv(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
@@ -1851,16 +1867,25 @@ static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
 
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas);
-llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
-llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
-                             bool cublas);
+llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
+                     bool cublas);
+llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                      bool cublas);
+llvm::Value *is_nonunit(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                        bool cublas);
+
+llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                                llvm::Value *layout, llvm::Value *base,
+                                llvm::Value *lda, llvm::Value *row,
+                                llvm::Value *col);
+
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *IT,
-                       llvm::IRBuilder<> &entryBuilder,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,

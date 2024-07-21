@@ -56,6 +56,7 @@
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/TimeProfiler.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -163,7 +164,7 @@ GradientUtils::GradientUtils(
     ValueToValueMapTy &invertedPointers_,
     const SmallPtrSetImpl<Value *> &constantvalues_,
     const SmallPtrSetImpl<Value *> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+    bool shadowReturnUsed_, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
     DerivativeMode mode, unsigned width, bool omp)
     : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
@@ -194,7 +195,8 @@ GradientUtils::GradientUtils(
       tid(nullptr), numThreads(nullptr),
       OrigAA(oldFunc_->empty() ? ((AAResults *)nullptr)
                                : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
+      TA(TA_), TR(TR_), omp(omp), width(width),
+      shadowReturnUsed(shadowReturnUsed_), ArgDiffeTypes(ArgDiffeTypes_) {
   if (oldFunc_->empty())
     return;
   if (oldFunc_->getSubprogram()) {
@@ -4342,8 +4344,8 @@ GradientUtils *GradientUtils::CreateFromClone(
 
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
-      nonconstant_values, retType, constant_args, originalToNew,
-      DerivativeMode::ReverseModePrimal, width, omp);
+      nonconstant_values, retType, shadowReturnUsed, constant_args,
+      originalToNew, DerivativeMode::ReverseModePrimal, width, omp);
   return res;
 }
 
@@ -5306,7 +5308,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   }
 
-  if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
+  if (isa<Argument>(oval) && TR.query(oval)[{-1}].isFloat()) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
+  } else if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
     Type *subType = nullptr;
@@ -5479,9 +5483,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Constant::getNullValue(elemTy), arg->getName() + "_shadow", arg,
               arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
               arg->isExternallyInitialized());
-          arg->setMetadata("enzyme_shadow",
-                           MDTuple::get(shadow->getContext(),
-                                        {ConstantAsMetadata::get(shadow)}));
           shadow->setAlignment(arg->getAlign());
           shadow->setUnnamedAddr(arg->getUnnamedAddr());
 
@@ -5489,6 +5490,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         };
 
         Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
+        arg->setMetadata(
+            "enzyme_shadow",
+            MDTuple::get(shadow->getContext(),
+                         {ConstantAsMetadata::get(cast<Constant>(shadow))}));
+        if (getWidth() != 1) {
+          BuilderM.Insert(InsertValueInst::Create(shadow, arg, {0}), "tmp");
+        }
 
         if (arg->hasInitializer()) {
           applyChainRule(
@@ -5884,13 +5892,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient:
       if (TR.query(arg)[{-1}].isFloat()) {
-        auto newv = getNewFromOriginal(arg);
-        IRBuilder<> bb(newv);
-        auto res =
-            applyChainRule(newv->getType(), bb, [&newv] { return newv; });
-        invertedPointers.insert(
-            std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
-        return res;
+        return Constant::getNullValue(getShadowType(arg->getType()));
       }
       break;
     default:
@@ -8343,6 +8345,11 @@ void GradientUtils::forceAugmentedReturns() {
         if (!isConstantValue(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           Type *antiTy = getShadowType(inst->getType());
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
@@ -8362,6 +8369,11 @@ void GradientUtils::forceAugmentedReturns() {
       if (isa<LoadInst>(inst)) {
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
         Type *antiTy = getShadowType(inst->getType());
         PHINode *anti =
             BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
@@ -8400,6 +8412,11 @@ void GradientUtils::forceAugmentedReturns() {
 
       IRBuilder<> BuilderZ(inst);
       getForwardBuilder(BuilderZ);
+#if LLVM_VERSION_MAJOR >= 18
+      auto It = BuilderZ.GetInsertPoint();
+      It.setHeadBit(true);
+      BuilderZ.SetInsertPoint(It);
+#endif
 
       // Shadow allocations must strictly preceede the primal, lest Julia have
       // GC issues. Consider the following: %r = gc_alloc() init %r
@@ -8414,8 +8431,14 @@ void GradientUtils::forceAugmentedReturns() {
       // inside %dr would hit garbage and segfault. However, by having the %dr
       // first, then it will be zero'd before the %r allocation, preventing the
       // issue.
-      if (isAllocationCall(inst, TLI))
+      if (isAllocationCall(inst, TLI)) {
         BuilderZ.SetInsertPoint(getNewFromOriginal(inst));
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
+      }
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -9045,7 +9068,7 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
       if (!inspos.getHeadBit()) {
         auto srcmarker = I->getParent()->getMarker(inspos);
         if (srcmarker && !srcmarker->empty()) {
-          inspos--;
+          inspos.setHeadBit(true);
         }
       }
     }

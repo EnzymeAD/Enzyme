@@ -210,6 +210,7 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
+    "__cxa_thread_atexit_impl",
     "getenv",
     "strtol",
     "fwrite",
@@ -349,6 +350,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
+    "absl::log_internal::LogMessage",
     "std::chrono::_V2::steady_clock::now",
     "std::string",
     "std::cerr",

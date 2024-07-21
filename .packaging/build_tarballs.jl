@@ -135,7 +135,14 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
         # We don't build LLVM 15 for i686-linux-musl.
         filter!(p -> !(arch(p) == "i686" && libc(p) == "musl"), platforms)
     end
-    
+    if llvm_version >= v"17"
+        # Windows is broken for LLVM16_jll see https://github.com/JuliaPackaging/Yggdrasil/pull/8017#issuecomment-1930838052
+        filter!(p -> !(os(p) == "windows"), platforms)
+    end
+    if llvm_version >= v"17" && llvm_assertions
+        # Windows is broken for LLVM16_jll see https://github.com/JuliaPackaging/Yggdrasil/pull/8017#issuecomment-1930838052
+        filter!(p -> !Sys.isapple(p), platforms)
+    end 
     for platform in platforms
         augmented_platform = deepcopy(platform)
         augmented_platform[LLVM.platform_name] = LLVM.platform(llvm_version, llvm_assertions)

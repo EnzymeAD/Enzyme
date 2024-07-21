@@ -675,8 +675,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (shadow) {
     if (isa<ReturnInst>(user)) {
-      if (gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
-          gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED) {
+      bool notrev = mode != DerivativeMode::ReverseModeGradient;
+      if (gutils->shadowReturnUsed && notrev) {
 
         bool inst_cv = gutils->isConstantValue(const_cast<Value *>(val));
 

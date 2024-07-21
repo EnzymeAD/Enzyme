@@ -26,7 +26,8 @@ enum class ArgType {
   uplo,
   trans,
   diag,
-  side
+  side,
+  info
 };
 
 bool is_char_arg(ArgType ty);
@@ -123,7 +124,8 @@ private:
 
 public:
   TGPattern(Record *r);
-  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg) const;
+  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg,
+                                              bool hideuplo = false) const;
   bool isBLASLevel2or3() const;
   const DenseMap<size_t, DenseSet<size_t>> &getArgUsers() const;
   StringRef getName() const;

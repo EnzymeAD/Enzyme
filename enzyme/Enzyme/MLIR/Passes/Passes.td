@@ -14,14 +14,25 @@ include "mlir/Pass/PassBase.td"
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect"
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def BatchPass : Pass<"enzyme-batch"> {
+  let summary = "Batch Passes";
+  let dependentDialects = [
+  ];
+  let constructor = "mlir::enzyme::createBatchPass()";
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect",
     "enzyme::EnzymeDialect"
   ];

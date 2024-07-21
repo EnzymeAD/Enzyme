@@ -330,12 +330,7 @@ public:
     ss << "cannot handle unknown instruction\n" << inst;
     IRBuilder<> Builder2(&inst);
     getForwardBuilder(Builder2);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&Builder2));
-    } else {
-      EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-    }
+    EmitNoDerivativeError(ss.str(), inst, gutils, Builder2);
     if (!gutils->isConstantValue(&inst)) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
@@ -466,14 +461,7 @@ public:
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-      }
+      EmitNoTypeError(str, I, gutils, BuilderZ);
     known:;
     }
 
@@ -703,9 +691,7 @@ public:
 
         Value *premask = nullptr;
 
-        if (prediff && mask &&
-            (!gutils->isConstantValue(I.getOperand(0)) ||
-             !gutils->isConstantValue(orig_maskInit))) {
+        if (prediff && mask) {
           premask = lookup(mask, Builder2);
         }
 
@@ -911,12 +897,7 @@ public:
     llvm::raw_string_ostream ss(s);
     ss << *I.getParent()->getParent() << "\n" << I << "\n";
     ss << " Active atomic inst not yet handled";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&BuilderZ));
-    } else {
-      EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-    }
+    EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
     if (!gutils->isConstantValue(&I)) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
@@ -1048,14 +1029,7 @@ public:
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-      }
+      EmitNoTypeError(str, I, gutils, BuilderZ);
       return;
     known:;
     }
@@ -1075,12 +1049,7 @@ public:
             raw_string_ostream ss(str);
             ss << "Cannot deduce single type of store " << I << vd.str()
                << " size: " << storeSize;
-            if (CustomErrorHandler) {
-              CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                                 TR.analyzer, nullptr, wrap(&BuilderZ));
-            } else {
-              EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-            }
+            EmitNoTypeError(str, I, gutils, BuilderZ);
             return;
           }
         }
@@ -1126,13 +1095,12 @@ public:
     }
 
     unsigned start = 0;
-    unsigned size = storeSize;
 
     while (1) {
-      unsigned nextStart = size;
+      unsigned nextStart = storeSize;
 
       auto dt = vd[{-1}];
-      for (size_t i = start; i < size; ++i) {
+      for (size_t i = start; i < storeSize; ++i) {
         auto nex = vd[{(int)i}];
         if ((nex == BaseType::Anything && dt.isFloat()) ||
             (dt == BaseType::Anything && nex.isFloat())) {
@@ -1146,19 +1114,15 @@ public:
           break;
         }
       }
-      size = nextStart - start;
+      unsigned size = nextStart - start;
       if (!dt.isKnown()) {
 
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I << vd.str()
-           << " size: " << storeSize;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             TR.analyzer, nullptr, wrap(&BuilderZ));
-        } else {
-          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-        }
+           << " start: " << start << " size: " << size
+           << " storeSize: " << storeSize;
+        EmitNoTypeError(str, I, gutils, BuilderZ);
         break;
       }
 
@@ -1188,6 +1152,7 @@ public:
                 mask, prevNoAlias, prevScopes);
           } else {
             Value *diff;
+            Value *maskL = mask;
             if (!mask) {
               Value *dif1Ptr =
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
@@ -1228,7 +1193,7 @@ public:
 
               diff = applyChainRule(valType, Builder2, rule, dif1Ptr);
             } else {
-              mask = lookup(mask, Builder2);
+              maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
               auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                  Intrinsic::masked_load, tys);
@@ -1239,7 +1204,7 @@ public:
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
               auto rule = [&](Value *ip) {
-                Value *args[] = {ip, alignv, mask,
+                Value *args[] = {ip, alignv, maskL,
                                  Constant::getNullValue(valType)};
                 diff = Builder2.CreateCall(F, args);
                 return diff;
@@ -1255,7 +1220,7 @@ public:
                 mask, prevNoAlias, prevScopes);
             ((DiffeGradientUtils *)gutils)
                 ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {},
-                             mask);
+                             maskL);
           }
           break;
         }
@@ -1357,7 +1322,7 @@ public:
         }
       }
 
-      if (nextStart == size)
+      if (nextStart == storeSize)
         break;
       start = nextStart;
     }
@@ -1462,16 +1427,7 @@ public:
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
-                               TR.analyzer, nullptr, wrap(&Builder2));
-            return;
-          } else {
-            ss << "\n";
-            TR.dump(ss);
-            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-            return;
-          }
+          EmitNoTypeError(str, I, gutils, Builder2);
         }
         assert(FT);
 
@@ -1489,15 +1445,7 @@ public:
             llvm::raw_string_ostream ss(s);
             ss << *I.getParent()->getParent() << "\n";
             ss << "cannot handle above cast " << I << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, gutils, nullptr,
-                                 wrap(&Builder2));
-            } else {
-              ss << "\n";
-              TR.dump(ss);
-              EmitFailure("CannotHandleCast", I.getDebugLoc(), &I, ss.str());
-            }
+            EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
             return (llvm::Value *)UndefValue::get(op0->getType());
           }
         };
@@ -1678,7 +1626,6 @@ public:
       Value *orig_vec = EEI.getVectorOperand();
 
       if (!gutils->isConstantValue(orig_vec)) {
-        Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
 
         size_t size = 1;
         if (EEI.getType()->isSized())
@@ -1687,9 +1634,22 @@ public:
                    EEI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
-                         TR.addingType(size, &EEI), sv);
+        auto diff = diffe(&EEI, Builder2);
+        if (gutils->getWidth() == 1) {
+          Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_vec, diff, Builder2, TR.addingType(size, &EEI),
+                           sv);
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {nullptr,
+                           gutils->getNewFromOriginal(EEI.getIndexOperand())};
+            sv[0] = ConstantInt::get(sv[1]->getType(), i);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_vec, gutils->extractMeta(Builder2, diff, i),
+                             Builder2, TR.addingType(size, &EEI), sv);
+          }
+        }
       }
       setDiffe(&EEI,
                Constant::getNullValue(gutils->getShadowType(EEI.getType())),
@@ -1743,19 +1703,46 @@ public:
              7) /
             8;
 
-      if (!gutils->isConstantValue(orig_op0))
-        addToDiffe(
-            orig_op0,
-            Builder2.CreateInsertElement(
-                dif1,
-                Constant::getNullValue(gutils->getShadowType(op1->getType())),
-                lookup(op2, Builder2)),
-            Builder2, TR.addingType(size0, orig_op0));
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(
+              orig_op0,
+              Builder2.CreateInsertElement(
+                  dif1,
+                  Constant::getNullValue(gutils->getShadowType(op1->getType())),
+                  lookup(op2, Builder2)),
+              Builder2, TR.addingType(size0, orig_op0));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0,
+                             Builder2.CreateInsertElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 Constant::getNullValue(op1->getType()),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size0, orig_op0), sv);
+          }
+        }
+      }
 
-      if (!gutils->isConstantValue(orig_op1))
-        addToDiffe(orig_op1,
-                   Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
-                   Builder2, TR.addingType(size1, orig_op1));
+      if (!gutils->isConstantValue(orig_op1)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(orig_op1,
+                     Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
+                     Builder2, TR.addingType(size1, orig_op1));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op1,
+                             Builder2.CreateExtractElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size1, orig_op1), sv);
+          }
+        }
+      }
 
       setDiffe(&IEI,
                Constant::getNullValue(gutils->getShadowType(IEI.getType())),
@@ -1802,8 +1789,6 @@ public:
       for (size_t idx : SVI.getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
-        Value *sv[] = {
-            ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
 
         if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
           size_t size = 1;
@@ -1813,10 +1798,25 @@ public:
                         .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
                     7) /
                    8;
-          Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
-                           TR.addingType(size, SVI.getOperand(opnum)), sv);
+          if (gutils->getWidth() == 1) {
+            Value *sv[] = {
+                ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+            Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                             TR.addingType(size, SVI.getOperand(opnum)), sv);
+          } else {
+            for (size_t i = 0; i < gutils->getWidth(); i++) {
+              Value *sv[] = {
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), i),
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+              Value *toadd = Builder2.CreateExtractElement(
+                  GradientUtils::extractMeta(Builder2, loaded, i), instidx);
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                               TR.addingType(size, SVI.getOperand(opnum)), sv);
+            }
+          }
         }
         ++instidx;
       }
@@ -2029,13 +2029,7 @@ public:
               raw_string_ostream ss(str);
               ss << "Cannot deduce type of insertvalue ins " << IVI
                  << " size: " << size0 << " TT: " << TT.str();
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   TR.analyzer, nullptr, wrap(&Builder2));
-              } else {
-                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                            ss.str());
-              }
+              EmitNoTypeError(str, IVI, gutils, Builder2);
             }
           }
 
@@ -2114,13 +2108,7 @@ public:
               ss << "Cannot deduce type of insertvalue agg " << IVI
                  << " start: " << start << " size: " << size1
                  << " TT: " << TT.str();
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   TR.analyzer, nullptr, wrap(&Builder2));
-              } else {
-                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                            ss.str());
-              }
+              EmitNoTypeError(str, IVI, gutils, Builder2);
             }
           }
 
@@ -2622,12 +2610,7 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
     }
 
   done:;
@@ -2863,18 +2846,11 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
-                                              ErrorType::NoDerivative, gutils,
-                                              nullptr, wrap(&Builder2)));
-        if (!rval)
-          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-        if (!gutils->isConstantValue(&BO))
-          setDiffe(&BO, rval, Builder2);
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-        return;
-      }
+      auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
+      if (!rval)
+        rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+      if (!gutils->isConstantValue(&BO))
+        setDiffe(&BO, rval, Builder2);
       break;
     }
   }
@@ -2924,12 +2900,7 @@ public:
       ss << "couldn't handle non constant inst in memset to "
             "propagate differential to\n"
          << MS;
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&BuilderZ));
-      } else {
-        EmitFailure("NoDerivative", MS.getDebugLoc(), &MS, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), MS, gutils, BuilderZ);
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
@@ -3150,14 +3121,7 @@ public:
       std::string str;
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of memset " << MS;
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS, ss.str());
-      }
+      EmitNoTypeError(str, MS, gutils, BuilderZ);
       return;
     }
   known:;
@@ -3458,15 +3422,7 @@ public:
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of copy " << MTI;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             TR.analyzer, nullptr, wrap(&BuilderZ));
-        } else {
-          ss << "\n";
-          ss << *gutils->oldFunc << "\n";
-          TR.dump(ss);
-          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
-        }
+        EmitNoTypeError(str, MTI, gutils, BuilderZ);
         vd = TypeTree(BaseType::Integer).Only(0, &MTI);
       } else {
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
@@ -3810,17 +3766,10 @@ public:
         ss << *gutils->oldFunc << "\n";
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
-        if (CustomErrorHandler) {
-          IRBuilder<> BuilderZ(&I);
-          getForwardBuilder(BuilderZ);
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        IRBuilder<> BuilderZ(&I);
+        getForwardBuilder(BuilderZ);
+        EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
+        return false;
       }
       return false;
     }
@@ -3951,15 +3900,8 @@ public:
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
+        return false;
       }
       return false;
     }
@@ -4031,13 +3973,7 @@ public:
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-        }
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
         if (!gutils->isConstantValue(&I))
           setDiffe(&I,
                    Constant::getNullValue(gutils->getShadowType(I.getType())),
@@ -4399,8 +4335,14 @@ public:
         if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
                            subdata->returns.end()) {
           if (Mode == DerivativeMode::ReverseModeGradient) {
-            if (tape == nullptr)
+            if (tape == nullptr) {
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
+            }
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
@@ -4949,7 +4891,11 @@ public:
 
         auto idx = *tapeIdx;
         FunctionType *FT = subdata->fn->getFunctionType();
-
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1)
                 ? FT->getReturnType()
@@ -5343,14 +5289,7 @@ public:
           raw_string_ostream ss(str);
           ss << "cannot find shadow for " << *callval
              << " for use as function in " << call;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr,
-                               wrap(&BuilderZ));
-          } else {
-            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-            return;
-          }
+          EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
@@ -5599,6 +5538,11 @@ public:
             if (!tape) {
               assert(tapeIdx);
               auto tval = *tapeIdx;
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
               tape = BuilderZ.CreatePHI(
                   (tapeIdx == -1) ? FT->getReturnType()
                                   : cast<StructType>(FT->getReturnType())
@@ -5614,12 +5558,22 @@ public:
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
                 BuilderZ, cachereplace,
                 getIndex(&call, CacheType::Self, BuilderZ));
           } else {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
             gutils->fictiousPHIs[pn] = &call;
@@ -5719,12 +5673,22 @@ public:
                 QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
           assert(!replaceFunction);
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
               BuilderZ, cachereplace,
               getIndex(&call, CacheType::Self, BuilderZ));
         } else {
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
           gutils->fictiousPHIs[pn] = &call;
@@ -5794,20 +5758,12 @@ public:
         ss << "in Mode: " << to_string(Mode) << "\n";
         ss << " orig: " << call << " callval: " << *callval << "\n";
         ss << " constant function being called, but active call instruction\n";
-        if (CustomErrorHandler) {
-          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                                               ErrorType::NoDerivative, gutils,
-                                               nullptr, wrap(&Builder2)));
-          if (val)
-            newcalled = val;
-          else
-            newcalled =
-                UndefValue::get(gutils->getShadowType(callval->getType()));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+        auto val = EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+        if (val)
+          newcalled = val;
+        else
           newcalled =
               UndefValue::get(gutils->getShadowType(callval->getType()));
-        }
       } else {
         newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
@@ -6205,6 +6161,11 @@ public:
             // EnzymeLogic.
             tapeType = (llvm::Type *)fd->second;
 
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             tape = BuilderZ.CreatePHI(tapeType, 0);
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),

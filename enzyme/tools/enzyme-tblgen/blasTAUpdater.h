@@ -14,9 +14,11 @@ void emit_BLASTypes(raw_ostream &os) {
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
-     << "if (blas.floatType == \"s\" || blas.floatType == \"S\") {\n"
+     << "if (blas.floatType == \"s\" || blas.floatType == \"S\" || "
+        "blas.floatType == \"c\" || blas.floatType == \"C\") {\n"
      << "  floatType = Type::getFloatTy(call.getContext());\n"
-     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\"){\n"
+     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\" || "
+        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
      << "  floatType = Type::getDoubleTy(call.getContext());\n"
      << "} else {\n"
      << "  llvm_unreachable(\"unknown float type of blas\");\n"
@@ -32,6 +34,10 @@ void emit_BLASTypes(raw_ostream &os) {
      << "ttFloatRet.insert({-1},floatType);\n"
      << "TypeTree ttCuBlasRet;\n"
      << "ttCuBlasRet.insert({-1},BaseType::Integer);\n";
+
+  os << "TypeTree ttPtrInt;\n"
+     << "ttPtrInt.insert({-1},BaseType::Pointer);\n"
+     << "ttPtrInt.insert({-1, -1},BaseType::Integer);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -100,6 +106,10 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     }
     os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
     switch (currentType) {
+    case ArgType::info:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << " + offset), ttPtrInt, &call);\n";
+      break;
     case ArgType::len:
     case ArgType::vincInc:
     case ArgType::mldLD:
