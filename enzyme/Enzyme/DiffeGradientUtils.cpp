@@ -756,8 +756,8 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
     }
   }
 
-  Value *metaforfree =
-      unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
+  Value *metaforfree = unwrapM(storeInto, tbuild, antimap,
+                               UnwrapMode::AttemptFullUnwrapWithLookup);
   Type *T;
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
