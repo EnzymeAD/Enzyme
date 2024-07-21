@@ -691,9 +691,7 @@ public:
 
         Value *premask = nullptr;
 
-        if (prediff && mask &&
-            (!gutils->isConstantValue(I.getOperand(0)) ||
-             !gutils->isConstantValue(orig_maskInit))) {
+        if (prediff && mask) {
           premask = lookup(mask, Builder2);
         }
 
@@ -1154,6 +1152,7 @@ public:
                 mask, prevNoAlias, prevScopes);
           } else {
             Value *diff;
+            Value *maskL = mask;
             if (!mask) {
               Value *dif1Ptr =
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
@@ -1194,7 +1193,7 @@ public:
 
               diff = applyChainRule(valType, Builder2, rule, dif1Ptr);
             } else {
-              mask = lookup(mask, Builder2);
+              maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
               auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                  Intrinsic::masked_load, tys);
@@ -1205,7 +1204,7 @@ public:
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
               auto rule = [&](Value *ip) {
-                Value *args[] = {ip, alignv, mask,
+                Value *args[] = {ip, alignv, maskL,
                                  Constant::getNullValue(valType)};
                 diff = Builder2.CreateCall(F, args);
                 return diff;
@@ -1221,7 +1220,7 @@ public:
                 mask, prevNoAlias, prevScopes);
             ((DiffeGradientUtils *)gutils)
                 ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {},
-                             mask);
+                             maskL);
           }
           break;
         }
