@@ -120,7 +120,7 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     } else if (ty == ArgType::fp) {
       scalarType = "fpType";
     } else {
-      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty));
+      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty) || ty == ArgType::info);
       continue;
     }
   os

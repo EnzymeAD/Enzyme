@@ -35,6 +35,10 @@ void emit_BLASTypes(raw_ostream &os) {
      << "TypeTree ttCuBlasRet;\n"
      << "ttCuBlasRet.insert({-1},BaseType::Integer);\n";
 
+  os << "TypeTree ttPtrInt;\n"
+     << "ttPtrInt.insert({-1},BaseType::Pointer);\n"
+     << "ttPtrInt.insert({-1, -1},BaseType::Integer);\n";
+
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
      << "  ttInt.insert({-1},BaseType::Pointer);\n"
@@ -102,6 +106,10 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     }
     os << "  // " << currentType << " " << pattern.getArgNames()[j] << "\n";
     switch (currentType) {
+    case ArgType::info:
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << " + offset), ttPtrInt, &call);\n";
+      break;
     case ArgType::len:
     case ArgType::vincInc:
     case ArgType::mldLD:

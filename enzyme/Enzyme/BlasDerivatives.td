@@ -38,6 +38,7 @@ def diag          : blas_modes<["U","N"]> ;
 def cblas_diag    : blas_modes<["CblasUnit","CblasNonUnit"]> ;
 def side          : blas_modes<["L", "R"]> ;
 def cblas_side    : blas_modes<["CblasLeft","CblasRight"]>;
+def info          : blas_modes<[]>;
 
 
 class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> paramTypes, 
@@ -202,7 +203,7 @@ def lacpy : CallBlasPattern<(Op $layout, $uplo, $m, $n, $A, $lda, $B, $ldb),
                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
-                  ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld<["m", "n"]>, len],
+                  ["A"],[cblas_layout, uplo, len, len, fp, fp, len, len, mld<["m", "n"]>, info],
                   [
                   (AssertingInactiveArg), // cfrom
                   (AssertingInactiveArg), // cto
@@ -520,7 +521,7 @@ def flip_uplo : IntMatchers<
 // d(A^T) −= dB B2^T
 def trtrs : CallBlasPattern<(Op $layout, $uplo, $trans, $diag, $n, $nrhs, $A, $lda, $B, $ldb, $info),
                   ["B"],
-                  [cblas_layout, uplo, trans, diag, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, len],
+                  [cblas_layout, uplo, trans, diag, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, info],
                   [
                   /* a     */ 
                     (Seq<["tri", "triangular", "n"], [], 1>
@@ -628,7 +629,7 @@ def uplo_to_rside : IntMatchers<
 
 def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                   ["A"],
-                  [cblas_layout, uplo, len, mld<["uplo", "n", "n"]>, len],
+                  [cblas_layout, uplo, len, mld<["uplo", "n", "n"]>, info],
                   [
                     /* A     */ 
                   (Seq<["ztri", "zerotriangular", "n"], [], 1>
@@ -718,7 +719,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
 
 def potrs: CallBlasPattern<(Op $layout, $uplo, $n, $nrhs, $A, $lda, $B, $ldb, $info),
                   ["B"],
-                  [cblas_layout, uplo, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, len],
+                  [cblas_layout, uplo, len, len, mld<["uplo", "n", "n"]>, mld<["n", "nrhs"]>, info],
                   [
                     (Seq<["tri", "triangular", "n"], [], 1>
 
