@@ -131,6 +131,7 @@ typedef enum {
   DEM_ReverseModeGradient = 2,
   DEM_ReverseModeCombined = 3,
   DEM_ForwardModeSplit = 4,
+  DEM_ForwardModeError = 5
 } CDerivativeMode;
 
 typedef enum {
@@ -188,6 +189,10 @@ typedef uint8_t (*CustomFunctionForward)(LLVMBuilderRef, LLVMValueRef,
                                          GradientUtils *, LLVMValueRef *,
                                          LLVMValueRef *);
 
+typedef uint8_t (*CustomFunctionDiffUse)(LLVMValueRef, const GradientUtils *,
+                                         LLVMValueRef, uint8_t, CDerivativeMode,
+                                         uint8_t *);
+
 typedef uint8_t (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
                                                   GradientUtils *,
                                                   LLVMValueRef *,
@@ -196,6 +201,14 @@ typedef uint8_t (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
 
 typedef void (*CustomFunctionReverse)(LLVMBuilderRef, LLVMValueRef,
                                       DiffeGradientUtils *, LLVMValueRef);
+
+LLVMValueRef EnzymeCreateForwardDiff(
+    EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
+    CDerivativeMode mode, uint8_t freeMemory, unsigned width,
+    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
+    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented);
 
 #ifdef __cplusplus
 }

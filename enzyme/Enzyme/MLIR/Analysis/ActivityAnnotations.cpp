@@ -1,8 +1,8 @@
 #include "ActivityAnnotations.h"
-#include "AliasAnalysis.h"
+#include "DataFlowAliasAnalysis.h"
+#include "DataFlowLattice.h"
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
-#include "Lattice.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -915,12 +915,12 @@ void topDownActivityAnalysis(
     if (auto argOriginAttr = dyn_cast<ArgumentOriginAttr>(origin)) {
       return llvm::is_contained({Activity::enzyme_dup,
                                  Activity::enzyme_dupnoneed,
-                                 Activity::enzyme_out},
+                                 Activity::enzyme_active},
                                 argActivities[argOriginAttr.getArgNumber()]);
     }
     auto retOriginAttr = cast<ReturnOriginAttr>(origin);
     return llvm::is_contained({Activity::enzyme_dup, Activity::enzyme_dupnoneed,
-                               Activity::enzyme_out},
+                               Activity::enzyme_active},
                               retActivities[retOriginAttr.getReturnNumber()]);
   };
   callee.getFunctionBody().walk([&](Operation *op) {
@@ -985,7 +985,7 @@ void topDownActivityAnalysis(
             bool icv =
                 definingOp->getAttrOfType<BoolAttr>("enzyme.icv").getValue();
             callArgActivities.push_back(icv ? Activity::enzyme_const
-                                            : Activity::enzyme_out);
+                                            : Activity::enzyme_active);
           } else {
             BlockArgument blockArg = cast<BlockArgument>(operand);
             const OriginsPair &originsPair = blockArgOrigins.at(blockArg);
@@ -1000,14 +1000,14 @@ void topDownActivityAnalysis(
               argActive = llvm::any_of(sources.getOrigins(), isOriginActive) &&
                           llvm::any_of(sinks.getOrigins(), isOriginActive);
             }
-            callArgActivities.push_back(argActive ? Activity::enzyme_out
+            callArgActivities.push_back(argActive ? Activity::enzyme_active
                                                   : Activity::enzyme_const);
           }
         }
         if (op->getNumResults() != 0) {
           bool icv = op->getAttrOfType<BoolAttr>("enzyme.icv").getValue();
           callResActivities.push_back(icv ? Activity::enzyme_const
-                                          : Activity::enzyme_out);
+                                          : Activity::enzyme_active);
         }
 
         topDownActivityAnalysis(funcOp, callArgActivities, callResActivities,
@@ -1297,7 +1297,7 @@ void enzyme::runActivityAnnotations(
     SmallVector<enzyme::Activity> resActivities;
     for (Type resultType : callee.getResultTypes()) {
       resActivities.push_back(isa<FloatType, ComplexType>(resultType)
-                                  ? Activity::enzyme_out
+                                  ? Activity::enzyme_active
                                   : Activity::enzyme_const);
     }
 

@@ -141,7 +141,8 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     } else {
       if (gutils->isConstantValue(operand.get())) {
 
-        if (contains(storedVals, operand.getOperandNumber())) {
+        if (contains(storedVals, operand.getOperandNumber()) ||
+            contains(storedVals, -1)) {
           if (auto iface =
                   dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
             if (!iface.isMutable()) {
@@ -417,10 +418,12 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerAffineDialectAutoDiffInterface(registry);
   enzyme::registerArithDialectAutoDiffInterface(registry);
   enzyme::registerBuiltinDialectAutoDiffInterface(registry);
+  enzyme::registerComplexDialectAutoDiffInterface(registry);
   enzyme::registerLLVMDialectAutoDiffInterface(registry);
   enzyme::registerNVVMDialectAutoDiffInterface(registry);
   enzyme::registerMathDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
+  enzyme::registerComplexDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);

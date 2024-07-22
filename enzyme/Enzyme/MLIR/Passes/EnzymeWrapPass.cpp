@@ -28,6 +28,27 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
+std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
+  std::vector<DIFFE_TYPE> ArgActivity;
+  SmallVector<StringRef, 1> split;
+  StringRef(inp.data(), inp.size()).split(split, ',');
+  for (auto &str : split) {
+    if (str == "enzyme_dup")
+      ArgActivity.push_back(DIFFE_TYPE::DUP_ARG);
+    else if (str == "enzyme_const")
+      ArgActivity.push_back(DIFFE_TYPE::CONSTANT);
+    else if (str == "enzyme_dupnoneed")
+      ArgActivity.push_back(DIFFE_TYPE::DUP_NONEED);
+    else if (str == "enzyme_active")
+      ArgActivity.push_back(DIFFE_TYPE::OUT_DIFF);
+    else {
+      llvm::errs() << "unknown activity to parse, found: '" << str << "'\n";
+      assert(0 && " unknown constant");
+    }
+  }
+  return ArgActivity;
+}
+
 namespace {
 struct DifferentiateWrapperPass
     : public DifferentiateWrapperPassBase<DifferentiateWrapperPass> {
@@ -51,34 +72,35 @@ struct DifferentiateWrapperPass
       }
     }
     auto fn = cast<FunctionOpInterface>(symbolOp);
-    SmallVector<StringRef, 1> split;
-    StringRef(argTys.getValue().data(), argTys.getValue().size())
-        .split(split, ',');
-    std::vector<DIFFE_TYPE> constants;
-    for (auto &str : split) {
-      if (str == "enzyme_dup")
-        constants.push_back(DIFFE_TYPE::DUP_ARG);
-      else if (str == "enzyme_const")
-        constants.push_back(DIFFE_TYPE::CONSTANT);
-      else if (str == "enzyme_dupnoneed")
-        constants.push_back(DIFFE_TYPE::DUP_NONEED);
-      else if (str == "enzyme_out")
-        constants.push_back(DIFFE_TYPE::OUT_DIFF);
-      else {
-        llvm::errs() << "unknown argument activity to parse, found: '" << str
-                     << "'\n";
-        assert(0 && " unknown constant");
-      }
-    }
 
-    if (constants.size() != fn.getFunctionBody().front().getNumArguments()) {
+    std::vector<DIFFE_TYPE> ArgActivity =
+        parseActivityString(argTys.getValue());
+
+    if (ArgActivity.size() != fn.getFunctionBody().front().getNumArguments()) {
       fn->emitError()
           << "Incorrect number of arg activity states for function, found "
-          << split;
+          << ArgActivity.size() << " expected "
+          << fn.getFunctionBody().front().getNumArguments();
       return;
     }
 
-    DIFFE_TYPE retType = retTy.getValue();
+    std::vector<DIFFE_TYPE> RetActivity =
+        parseActivityString(retTys.getValue());
+    if (RetActivity.size() !=
+        fn.getFunctionType().cast<FunctionType>().getNumResults()) {
+      fn->emitError()
+          << "Incorrect number of ret activity states for function, found "
+          << RetActivity.size() << " expected "
+          << fn.getFunctionType().cast<FunctionType>().getNumResults();
+      return;
+    }
+    std::vector<bool> returnPrimal;
+    std::vector<bool> returnShadow;
+    for (auto act : RetActivity) {
+      returnPrimal.push_back(act == DIFFE_TYPE::DUP_ARG);
+      returnShadow.push_back(false);
+    }
+
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
 
@@ -93,16 +115,15 @@ struct DifferentiateWrapperPass
 
     FunctionOpInterface newFunc;
     if (mode == DerivativeMode::ForwardMode) {
-      newFunc = Logic.CreateForwardDiff(
-          fn, retType, constants, TA,
-          /*should return*/ (retType == DIFFE_TYPE::DUP_ARG), mode, freeMemory,
-          width,
-          /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr);
+      newFunc = Logic.CreateForwardDiff(fn, RetActivity, ArgActivity, TA,
+                                        returnPrimal, mode, freeMemory, width,
+                                        /*addedType*/ nullptr, type_args,
+                                        volatile_args,
+                                        /*augmented*/ nullptr);
     } else {
       newFunc = Logic.CreateReverseDiff(
-          fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
+          freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr);
     }

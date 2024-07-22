@@ -3073,7 +3073,18 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         continue;
       }
       if (isFunctionReturn(a)) {
-        if (ActiveReturns == DIFFE_TYPE::CONSTANT) {
+        bool allConstant = true;
+        assert(a->getOperands().size() == ActiveReturns.size());
+        for (auto &&[retval, act] :
+             llvm::zip(a->getOperands(), ActiveReturns)) {
+          if (retval != parent)
+            continue;
+          if (act == DIFFE_TYPE::CONSTANT)
+            continue;
+          allConstant = false;
+          break;
+        }
+        if (allConstant) {
           continue;
         } else {
           return false;
@@ -3424,7 +3435,17 @@ bool mlir::enzyme::ActivityAnalyzer::isValueActivelyStoredOrReturned(
       return false;
     }
     if (isFunctionReturn(a)) {
-      if (ActiveReturns == DIFFE_TYPE::CONSTANT)
+      bool allConstant = true;
+      assert(a->getOperands().size() == ActiveReturns.size());
+      for (auto &&[retval, act] : llvm::zip(a->getOperands(), ActiveReturns)) {
+        if (retval != val)
+          continue;
+        if (act == DIFFE_TYPE::CONSTANT)
+          continue;
+        allConstant = false;
+        break;
+      }
+      if (allConstant)
         continue;
 
       if (EnzymePrintActivity)

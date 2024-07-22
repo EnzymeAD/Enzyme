@@ -14,7 +14,7 @@ module {
   }
 
   func.func @diff(%x: f64, %dres: f64) -> f64 {
-    %r = enzyme.autodiff @bbargs(%x, %dres) { activity=[#enzyme<activity enzyme_out>] } : (f64, f64) -> f64
+    %r = enzyme.autodiff @bbargs(%x, %dres) { activity=[#enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_activenoneed>] } : (f64, f64) -> f64
     return %r : f64
   }
 }

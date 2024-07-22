@@ -1,4 +1,6 @@
+add_subdirectory(CppSugar)
 add_subdirectory(ForwardMode)
+add_subdirectory(ForwardError)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(ReverseMode)
 add_subdirectory(BatchMode)

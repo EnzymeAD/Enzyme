@@ -2,11 +2,13 @@ add_subdirectory(Sparse)
 add_subdirectory(Truncate)
 add_subdirectory(ReverseMode)
 add_subdirectory(ReverseModeVector)
+add_subdirectory(ForwardError)
 add_subdirectory(ForwardMode)
 add_subdirectory(ForwardModeSplit)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(BatchMode)
 add_subdirectory(ProbProg)
+add_subdirectory(JLSimplify)
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme "Running enzyme regression tests"

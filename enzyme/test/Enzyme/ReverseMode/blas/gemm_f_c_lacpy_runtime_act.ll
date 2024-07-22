@@ -54,7 +54,7 @@ entry:
 ; CHECK-NEXT:   %byref.constant.fp.1.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
 ; CHECK-NEXT:   %byref.transpose.transb = alloca i8
-; CHECK-NEXT:   %byref.constant.fp.1.09 = alloca double, align 8
+; CHECK-NEXT:   %[[fp109:.+]] = alloca double, align 8
 ; CHECK-NEXT:   %byref.transpose.transa = alloca i8
 ; CHECK-NEXT:   %[[byref_fp_1_017:.+]] = alloca double, align 8
 ; CHECK-NEXT:   %byref.constant.char.G = alloca i8, align 1
@@ -132,7 +132,6 @@ entry:
 ; CHECK-NEXT:   %[[matC0:.+]] = bitcast double* %cache.C to i8*
 ; CHECK-NEXT:   %[[matC:.+]] = bitcast double* %cache.C to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   br i1 %rt.inactive.alpha, label %invertentry.alpha.done, label %invertentry.alpha.active
 
 ; CHECK: invertentry.alpha.active:                         ; preds = %invertentry
@@ -213,7 +212,7 @@ entry:
 ; CHECK: invertentry.A.active:                             ; preds = %invertentry.alpha.done
 ; CHECK-NEXT:   %ld.transb = load i8, i8* %transb
 ; CHECK-DAG:    %[[i33:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 0
+; CHECK-DAG:    %[[i34:.+]] = select i1 %[[i33]], i8 116, i8 78
 ; CHECK-DAG:    %[[i35:.+]] = icmp eq i8 %ld.transb, 78
 ; CHECK-DAG:    %[[i36:.+]] = select i1 %[[i35]], i8 84, i8 %[[i34]]
 ; CHECK-DAG:    %[[i37:.+]] = icmp eq i8 %ld.transb, 116
@@ -237,8 +236,8 @@ entry:
 ; CHECK-NEXT:   %[[r73:.+]] = select i1 %[[r71]], i8* %ldc_p, i8* %ldb_p
 ; CHECK-NEXT:   %[[r74:.+]] = select i1 %[[r71]], i8* %B, i8* %"C'"
 ; CHECK-NEXT:   %[[r75:.+]] = select i1 %[[r71]], i8* %ldb_p, i8* %ldc_p
-; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.09, align 8
-; CHECK-NEXT:   %fpcast.constant.fp.1.010 = bitcast double* %byref.constant.fp.1.09 to i8*
+; CHECK-NEXT:   store double 1.000000e+00, double* %[[fp109]], align 8
+; CHECK-NEXT:   %fpcast.constant.fp.1.010 = bitcast double* %[[fp109]] to i8*
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %[[r65]], i8* %[[r66]], i8* %[[r67]], i8* %[[r68]], i8* %n_p, i8* %alpha, i8* %[[r72]], i8* %[[r73]], i8* %[[r74]], i8* %[[r75]], i8* %fpcast.constant.fp.1.010, i8* %"A'", i8* %lda_p, i64 1, i64 1)
 ; CHECK-NEXT:   br label %invertentry.A.done
 
@@ -248,7 +247,7 @@ entry:
 ; CHECK: invertentry.B.active:                             ; preds = %invertentry.A.done
 ; CHECK-NEXT:   %ld.transa = load i8, i8* %transa
 ; CHECK-DAG:    %[[i25:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 0
+; CHECK-DAG:    %[[i26:.+]] = select i1 %[[i25]], i8 116, i8 78
 ; CHECK-DAG:    %[[i27:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-DAG:    %[[i28:.+]] = select i1 %[[i27]], i8 84, i8 %[[i26]]
 ; CHECK-DAG:    %[[i29:.+]] = icmp eq i8 %ld.transa, 116
@@ -346,12 +345,10 @@ entry:
 ; CHECK: invertentry.C.active:                             ; preds = %invertentry.beta.done
 ; CHECK-NEXT:   store i8 71, i8* %byref.constant.char.G
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0
-; CHECK-NEXT:   %intcast.constant.int.0 = bitcast i64* %byref.constant.int.0 to i8*
 ; CHECK-NEXT:   store i64 0, i64* %[[byref_int_019]]
-; CHECK-NEXT:   %[[intcast_020:.+]] = bitcast i64* %[[byref_int_019]] to i8*
 ; CHECK-NEXT:   store double 1.000000e+00, double* %[[byref_fp_021]]
 ; CHECK-NEXT:   %[[fpcast_1_022:.+]] = bitcast double* %[[byref_fp_021]] to i8*
-; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i8* %intcast.constant.int.0, i8* %[[intcast_020]], i8* %[[fpcast_1_022]], i8* %beta, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[tmp]], i64 1)
+; CHECK-NEXT:   call void @dlascl_64_(i8* %byref.constant.char.G, i64* %byref.constant.int.0, i64* %[[byref_int_019]], i8* %[[fpcast_1_022]], i8* %beta, i8* %m_p, i8* %n_p, i8* %"C'", i8* %ldc_p, i64* %[[tmp]], i64 1)
 ; CHECK-NEXT:   br label %invertentry.C.done
 
 ; CHECK: invertentry.C.done:                               ; preds = %invertentry.C.active, %invertentry.beta.done

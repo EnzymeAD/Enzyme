@@ -91,6 +91,8 @@ extern llvm::StringMap<
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
+constexpr int IndexMappingError = 0x0000fffd;
+
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeRuntimeActivityCheck;
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
@@ -181,6 +183,10 @@ public:
       llvm::CallInst *orig, llvm::ArrayRef<ValueType> types,
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
+
+  bool usedInRooting(const llvm::CallBase *orig,
+                     llvm::ArrayRef<ValueType> types, const llvm::Value *val,
+                     bool shadow) const;
 
   llvm::Value *getNewIfOriginal(llvm::Value *originst) const;
 
@@ -364,6 +370,8 @@ private:
 public:
   unsigned getWidth() { return width; }
 
+  bool shadowReturnUsed;
+
   llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
 public:
@@ -373,7 +381,7 @@ public:
                 llvm::ValueToValueMapTy &invertedPointers_,
                 const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
                 const llvm::SmallPtrSetImpl<llvm::Value *> &activevals_,
-                DIFFE_TYPE ReturnActivity,
+                DIFFE_TYPE ReturnActivity, bool shadowReturnUsed,
                 llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
                     &originalToNewFn_,
@@ -536,6 +544,9 @@ public:
                                   const llvm::Twine &name = "",
                                   bool fallback = true);
 
+  //! Helper routine to get the type of an extraction
+  static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
+
   static llvm::Value *recursiveFAdd(llvm::IRBuilder<> &B, llvm::Value *lhs,
                                     llvm::Value *rhs,
                                     llvm::ArrayRef<unsigned> lhs_off = {},
@@ -557,13 +568,17 @@ public:
           assert(llvm::cast<llvm::ArrayType>(vals[i]->getType())
                      ->getNumElements() == width);
 
-      llvm::Type *wrappedType = llvm::ArrayType::get(diffType, width);
-      llvm::Value *res = llvm::UndefValue::get(wrappedType);
+      llvm::Type *wrappedType = diffType->isVoidTy()
+                                    ? nullptr
+                                    : llvm::ArrayType::get(diffType, width);
+      llvm::Value *res =
+          diffType->isVoidTy() ? nullptr : llvm::UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < getWidth(); ++i) {
         auto tup = std::tuple<Args...>{
             (args ? extractMeta(Builder, args, i) : nullptr)...};
         auto diff = std::apply(rule, std::move(tup));
-        res = Builder.CreateInsertValue(res, diff, {i});
+        if (!diffType->isVoidTy())
+          res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
     } else {

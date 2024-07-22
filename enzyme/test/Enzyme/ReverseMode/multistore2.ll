@@ -24,18 +24,32 @@ entry:
 ; CHECK-NEXT:   %0 = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   %"ins2'de" = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"ins2'de", align 8
+; CHECK-NEXT:   %1 = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   %"ins'de" = alloca { double, i1 }, align 8
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %"ins'de", align 8
 ; CHECK-NEXT:   %ins = insertvalue { double, i1 } undef, double %x, 0
+; CHECK-NEXT:   %"ins2'ipiv" = insertvalue { double, i1 } { double 0.000000e+00, i1 undef }, i1 %z, 1
 ; CHECK-NEXT:   %ins2 = insertvalue { double, i1 } %ins, i1 %z, 1
+
+; CHECK-NEXT:   store { double, i1 } %"ins2'ipiv", { double, i1 }* %1
+; CHECK-NEXT:   %[[a2:.+]] = bitcast { double, i1 }* %"y'" to i8*
+; CHECK-NEXT:   %[[a3:.+]] = getelementptr inbounds i8, i8* %[[a2]], i64 8
+; CHECK-NEXT:   %[[a4:.+]] = bitcast { double, i1 }* %1 to i8*
+; CHECK-NEXT:   %[[a5:.+]] = getelementptr inbounds i8, i8* %[[a4]], i64 8
+; CHECK-NEXT:   %[[a6:.+]] = bitcast i8* %[[a3]] to i64*
+; CHECK-NEXT:   %[[a7:.+]] = bitcast i8* %[[a5]] to i64*
+; CHECK-NEXT:   %[[a8:.+]] = load i64, i64* %[[a7]], align 4
+; CHECK-NEXT:   store i64 %[[a8]], i64* %[[a6]]
+
+
 ; CHECK-NEXT:   store { double, i1 } %ins2, { double, i1 }* %y, align 8
 ; CHECK-NEXT:   %[[i0:.+]] = load { double, i1 }, { double, i1 }* %"y'", align 8
 ; CHECK-NEXT:   store { double, i1 } zeroinitializer, { double, i1 }* %0, align 8
 
-; CHECK-NEXT:   %2 = bitcast { double, i1 }* %"y'" to i64*
-; CHECK-NEXT:   %3 = bitcast { double, i1 }* %0 to i64*
-; CHECK-NEXT:   %4 = load i64, i64* %3, align 4
-; CHECK-NEXT:   store i64 %4, i64* %2, align 8
+; CHECK-NEXT:   %[[r2:.+]] = bitcast { double, i1 }* %"y'" to i64*
+; CHECK-NEXT:   %[[r3:.+]] = bitcast { double, i1 }* %0 to i64*
+; CHECK-NEXT:   %[[r4:.+]] = load i64, i64* %[[r3]], align 4
+; CHECK-NEXT:   store i64 %[[r4]], i64* %[[r2]], align 8
 
 ; CHECK-NEXT:   %[[i2:.+]] = extractvalue { double, i1 } %[[i0]], 0
 ; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds { double, i1 }, { double, i1 }* %"ins2'de", i32 0, i32 0

@@ -1,4 +1,4 @@
-//===- AliasAnalysis.cpp - Implementation of Alias Analysis ---------------===//
+//===- DataFlowAliasAnalysis.cpp - Implementation of Alias Analysis  ------===//
 //
 //                             Enzyme Project
 //
@@ -23,7 +23,7 @@
 // that the pointers in a program may point to.
 //
 //===----------------------------------------------------------------------===//
-#include "AliasAnalysis.h"
+#include "DataFlowAliasAnalysis.h"
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
 
@@ -983,12 +983,16 @@ void enzyme::AliasAnalysis::createImplicitArgDereference(
 void populateConservativeCallEffects(
     CallOpInterface call,
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
-  for (Value argument : call.getArgOperands()) {
+  auto rng = call.getArgOperands();
+  for (auto it = rng.begin(); it != rng.end(); it++) {
+    auto argument = *it;
+    auto argOp = it.getBase();
+    assert(argOp->get() == argument);
     if (!isPointerLike(argument.getType()))
       continue;
 
-    effects.emplace_back(MemoryEffects::Read::get(), argument);
-    effects.emplace_back(MemoryEffects::Write::get(), argument);
+    effects.emplace_back(MemoryEffects::Read::get(), argOp);
+    effects.emplace_back(MemoryEffects::Write::get(), argOp);
     // TODO: consider having a may-free effect.
   }
 }

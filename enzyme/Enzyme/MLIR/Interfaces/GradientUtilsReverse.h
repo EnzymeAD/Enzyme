@@ -27,7 +27,7 @@ public:
                         IRMapping invertedPointers_,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
-                        DIFFE_TYPE ReturnActivity,
+                        ArrayRef<DIFFE_TYPE> ReturnActivity,
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                         IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
@@ -59,12 +59,13 @@ public:
 
   void createReverseModeBlocks(Region &oldFunc, Region &newFunc);
 
-  static MGradientUtilsReverse *
-  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
-                  FunctionOpInterface todiff, MTypeAnalysis &TA,
-                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
-                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, mlir::Type additionalArg);
+  static MGradientUtilsReverse *CreateFromClone(
+      MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
+      FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
+      const std::vector<bool> &returnPrimals,
+      const std::vector<bool> &returnShadows,
+      llvm::ArrayRef<DIFFE_TYPE> retType,
+      llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg);
 };
 
 } // namespace enzyme

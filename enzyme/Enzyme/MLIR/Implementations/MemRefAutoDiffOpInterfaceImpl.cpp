@@ -34,9 +34,9 @@ namespace {
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        memref::LoadOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
 
@@ -62,6 +62,7 @@ struct LoadOpInterfaceReverse
                                         ArrayRef<Value>(retrievedArguments));
       }
     }
+    return success();
   }
 
   SmallVector<Value> cacheValues(Operation *op,
@@ -96,9 +97,9 @@ struct LoadOpInterfaceReverse
 struct StoreOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse,
                                                        memref::StoreOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
@@ -133,6 +134,7 @@ struct StoreOpInterfaceReverse
                                         ArrayRef<Value>(retrievedArguments));
       }
     }
+    return success();
   }
 
   SmallVector<Value> cacheValues(Operation *op,
@@ -167,9 +169,11 @@ struct StoreOpInterfaceReverse
 struct SubViewOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           SubViewOpInterfaceReverse, memref::SubViewOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {}
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
@@ -208,6 +212,11 @@ public:
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
   }
 
   bool isMutable(Type self) const { return true; }

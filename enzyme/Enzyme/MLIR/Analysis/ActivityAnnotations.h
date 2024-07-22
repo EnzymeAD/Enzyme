@@ -1,9 +1,9 @@
 #ifndef ENZYME_MLIR_ANALYSIS_ACTIVITYANNOTATIONS_H
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANNOTATIONS_H
 
-#include "AliasAnalysis.h"
+#include "DataFlowAliasAnalysis.h"
+#include "DataFlowLattice.h"
 #include "Dialect/Ops.h"
-#include "Lattice.h"
 
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"

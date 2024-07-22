@@ -1,5 +1,25 @@
 # - Config file for the Enzyme package
 
+get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+
+if("C" IN_LIST languages)
+    if ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+        message("project languages: ${languages}")
+        message(WARNING "C compiler ID equals ${CMAKE_C_COMPILER_ID}\n"
+        "C compiler: ${CMAKE_C_COMPILER}\n"
+        "Using Enzyme without an LLVM based C compiler.")
+    endif()
+endif()
+
+if("CXX" IN_LIST languages)
+    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+        message("project languages: ${languages}")
+        message(WARNING "C++ compiler equals ${CMAKE_CXX_COMPILER_ID}\n"
+        "C++ compiler: ${CMAKE_CXX_COMPILER}\n"
+        "Using Enzyme without an LLVM based C++ compiler.")
+    endif()
+endif()
+
 # Compute paths
 get_filename_component(Enzyme_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
 set(Enzyme_LLVM_VERSION_MAJOR "@CONF_LLVM_VERSION_MAJOR@")

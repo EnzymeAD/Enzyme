@@ -201,6 +201,17 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   return nullptr;
 }
 
+class GradientUtils;
+struct RequestContext;
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+                           RequestContext &ctx);
+
+void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &B);
+
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 
@@ -339,6 +350,7 @@ enum class DerivativeMode {
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
   ForwardModeSplit = 4,
+  ForwardModeError = 5,
 };
 
 enum class ProbProgMode {
@@ -381,6 +393,8 @@ static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
     return "ForwardMode";
+  case DerivativeMode::ForwardModeError:
+    return "ForwardModeError";
   case DerivativeMode::ForwardModeSplit:
     return "ForwardModeSplit";
   case DerivativeMode::ReverseModePrimal:
@@ -531,7 +545,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return integersAreConstant ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
   } else if (arg->isFPOrFPVectorTy()) {
     return (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit)
+            mode == DerivativeMode::ForwardModeSplit ||
+            mode == DerivativeMode::ForwardModeError)
                ? DIFFE_TYPE::DUP_ARG
                : DIFFE_TYPE::OUT_DIFF;
   } else {
@@ -541,6 +556,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return DIFFE_TYPE::CONSTANT;
   }
 }
+
+llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;
@@ -1248,7 +1265,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
-llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0);
+llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
+                          size_t preOffset = 0);
 
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
@@ -1328,18 +1346,23 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
   return false;
 }
 
-static inline llvm::Value *getBaseObject(llvm::Value *V) {
+static inline llvm::Value *getBaseObject(llvm::Value *V,
+                                         bool offsetAllowed = true) {
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
       V = CI->getOperand(0);
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
-      V = CI->getOperand(0);
-      continue;
+      if (offsetAllowed || CI->hasAllZeroIndices()) {
+        V = CI->getOperand(0);
+        continue;
+      }
     } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
                II && isIntelSubscriptIntrinsic(*II)) {
-      V = II->getOperand(3);
-      continue;
+      if (offsetAllowed) {
+        V = II->getOperand(3);
+        continue;
+      }
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
       if (CI->getNumIncomingValues() == 1) {
         V = CI->getOperand(0);
@@ -1359,7 +1382,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       auto funcName = getFuncNameFromCall(Call);
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
-      if (AttrList.hasAttribute("enzyme_pointermath")) {
+      if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
         size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
@@ -1391,7 +1414,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       if (auto fn = getFunctionFromCall(Call)) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
-        if (AttrList.hasAttribute("enzyme_pointermath")) {
+        if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
           size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
@@ -1421,24 +1444,27 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
-      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
-        V = RP;
-        continue;
-      }
+      if (offsetAllowed)
+        if (auto *RP =
+                llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
+          V = RP;
+          continue;
+        }
     }
 
-    if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
+    if (offsetAllowed)
+      if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
-      auto V2 = llvm::getUnderlyingObject(I, 100);
+        auto V2 = llvm::getUnderlyingObject(I, 100);
 #else
-      auto V2 = llvm::GetUnderlyingObject(
-          I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
+        auto V2 = llvm::GetUnderlyingObject(
+            I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
 #endif
-      if (V2 != V) {
-        V = V2;
-        break;
+        if (V2 != V) {
+          V = V2;
+          break;
+        }
       }
-    }
     break;
   }
   return V;
@@ -1465,7 +1491,7 @@ static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   if (call->onlyReadsMemory())
     return true;
   if (arg != -1 && call->onlyReadsMemory(arg))
@@ -1499,7 +1525,7 @@ static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isWriteOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 14
   if (call->onlyWritesMemory())
     return true;
@@ -1527,7 +1553,7 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
+static inline bool isReadNone(const llvm::CallBase *call, ssize_t arg = -1) {
   return isReadOnly(call, arg) && isWriteOnly(call, arg);
 }
 
@@ -1535,7 +1561,7 @@ static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
   return isReadOnly(F, arg) && isWriteOnly(F, arg);
 }
 
-static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
+static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
 
@@ -1549,6 +1575,121 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
         return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
+  }
+  return false;
+}
+
+static inline bool isNoAlias(const llvm::CallBase *call) {
+  if (call->returnDoesNotAlias())
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    if (F->returnDoesNotAlias())
+      return true;
+  }
+  return false;
+}
+
+static inline bool isNoAlias(const llvm::Value *val) {
+  if (auto CB = llvm::dyn_cast<llvm::CallBase>(val))
+    return isNoAlias(CB);
+  if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
+    arg->hasNoAliasAttr();
+  }
+  return false;
+}
+
+static inline bool isNoEscapingAllocation(const llvm::Function *F) {
+  if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  using namespace llvm;
+  switch (F->getIntrinsicID()) {
+  case Intrinsic::memset:
+  case Intrinsic::memcpy:
+  case Intrinsic::memmove:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::experimental_noalias_scope_decl:
+#endif
+  case Intrinsic::objectsize:
+  case Intrinsic::floor:
+  case Intrinsic::ceil:
+  case Intrinsic::trunc:
+  case Intrinsic::rint:
+  case Intrinsic::lrint:
+  case Intrinsic::llrint:
+  case Intrinsic::nearbyint:
+  case Intrinsic::round:
+  case Intrinsic::roundeven:
+  case Intrinsic::lround:
+  case Intrinsic::llround:
+  case Intrinsic::nvvm_barrier0:
+  case Intrinsic::nvvm_barrier0_popc:
+  case Intrinsic::nvvm_barrier0_and:
+  case Intrinsic::nvvm_barrier0_or:
+  case Intrinsic::nvvm_membar_cta:
+  case Intrinsic::nvvm_membar_gl:
+  case Intrinsic::nvvm_membar_sys:
+  case Intrinsic::amdgcn_s_barrier:
+  case Intrinsic::assume:
+  case Intrinsic::lifetime_start:
+  case Intrinsic::lifetime_end:
+#if LLVM_VERSION_MAJOR <= 16
+  case Intrinsic::dbg_addr:
+#endif
+
+  case Intrinsic::dbg_declare:
+  case Intrinsic::dbg_value:
+  case Intrinsic::dbg_label:
+  case Intrinsic::invariant_start:
+  case Intrinsic::invariant_end:
+  case Intrinsic::var_annotation:
+  case Intrinsic::ptr_annotation:
+  case Intrinsic::annotation:
+  case Intrinsic::codeview_annotation:
+  case Intrinsic::expect:
+  case Intrinsic::type_test:
+  case Intrinsic::donothing:
+  case Intrinsic::prefetch:
+  case Intrinsic::trap:
+  case Intrinsic::is_constant:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::smax:
+  case Intrinsic::smin:
+  case Intrinsic::umax:
+  case Intrinsic::umin:
+#endif
+  case Intrinsic::ctlz:
+  case Intrinsic::cttz:
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::ssub_with_overflow:
+#if LLVM_VERSION_MAJOR >= 12
+  case Intrinsic::abs:
+#endif
+  case Intrinsic::sqrt:
+  case Intrinsic::exp:
+  case Intrinsic::cos:
+  case Intrinsic::sin:
+  case Intrinsic::copysign:
+  case Intrinsic::fabs:
+    return true;
+  default:
+    break;
+  }
+  // if (F->empty())
+  //  llvm::errs() << "  may escape:" << F->getName() << "\n";
+  return false;
+}
+static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
+  auto AttrList =
+      call->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  if (auto F = getFunctionFromCall(call)) {
+    auto res = isNoEscapingAllocation(F);
+    // if (!res && F->empty()) {
+    //    llvm::errs() << "  may escape:" << *call << "\n";
+    //}
+    return res;
   }
   return false;
 }
@@ -1681,8 +1822,13 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
 
-llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
+
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
@@ -1718,21 +1864,34 @@ static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
 
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas);
-llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
-llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
-                             bool cublas);
+llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
+                     bool cublas);
+llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                      bool cublas);
+llvm::Value *is_nonunit(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                        bool cublas);
+
+llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                                llvm::Value *layout, llvm::Value *base,
+                                llvm::Value *lda, llvm::Value *row,
+                                llvm::Value *col);
+
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *IT,
-                       llvm::IRBuilder<> &entryBuilder,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
              llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
+
+llvm::SmallVector<llvm::Value *, 1>
+get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
+             bool byRef, bool cublas);
 
 #ifdef __clang__
 #pragma clang diagnostic push

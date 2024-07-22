@@ -61,6 +61,14 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Construct complex conjugate for the given type.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"createConjOp",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc, "::mlir::Value":$a)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Returns whether the type is mutable in place or not.
       }],
       /*retTy=*/"bool",

@@ -1,7 +1,9 @@
-// RUN: %clang             -DTRUNC_OP -O0                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang -DTRUNC_MEM -DTRUNC_OP -O2                %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang             -DTRUNC_OP -O2    -ffast-math %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
-// RUN: %clang                        -O1 -g             %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// clang-format off
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang                -DTRUNC_OP -O0                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang                -DTRUNC_OP -O2    -ffast-math %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang                           -O1 -g             %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang    -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -g -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
 
 #include <math.h>
 
@@ -11,6 +13,12 @@
 
 double simple_add(double a, double b) {
     return a + b;
+}
+double simple_cmp(double a, double b) {
+    if (a > b)
+        return a * 2;
+    else
+        return b + a;
 }
 double intrinsics(double a, double b) {
     return sqrt(a) * pow(b, 2);
@@ -54,6 +62,15 @@ int main() {
             a, 1e-10);
     }
 
+    {
+        double a = 2;
+        double b = 3;
+        double truth = simple_cmp(a, b);
+        a = __enzyme_truncate_mem_value(a, FROM, TO);
+        b = __enzyme_truncate_mem_value(b, FROM, TO);
+        double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(simple_cmp, FROM, TO)(a, b), FROM, TO);
+        APPROX_EQ(trunc, truth, 1e-5);
+    }
     {
         double a = 2;
         double b = 3;

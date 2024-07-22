@@ -22,7 +22,7 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test")
     for src in glob(
         [
             "**/*.c",
-            "**/.cpp",
+            "**/*.cpp",
         ],
         exclude = ["**/*omp*.c"],
     )

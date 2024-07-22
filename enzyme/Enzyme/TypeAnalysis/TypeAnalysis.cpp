@@ -42,6 +42,7 @@
 #include "llvm/IR/InstIterator.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/ADT/SmallSet.h"
@@ -711,7 +712,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
 
     // Constants explicitly marked as negative that aren't -1 are considered
     // integral
-    if (ci->isNegative() && ci->getSExtValue() < -1) {
+    if (ci->isNegative() && !ci->isMinusOne()) {
       analysis[Val].insert({-1}, BaseType::Integer);
       return;
     }
@@ -875,7 +876,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     // from julia code
-    if (GV->getName() == "small_typeof") {
+    if (GV->getName() == "small_typeof" || GV->getName() == "jl_small_typeof") {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Pointer);
@@ -1006,6 +1007,9 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     if (CE->isCast() && isa<ConstantInt>(CE->getOperand(0))) {
       return;
     }
+    if (CE->getOpcode() == Instruction::GetElementPtr &&
+        isa<ConstantPointerNull>(CE->getOperand(0)))
+      return;
   }
 
   if (auto I = dyn_cast<Instruction>(Val)) {
@@ -1117,8 +1121,10 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     }
     if (auto I = dyn_cast<Instruction>(Val)) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
+      exit(1);
     } else if (auto I = dyn_cast_or_null<Instruction>(Origin)) {
       EmitFailure("IllegalUpdateAnalysis", I->getDebugLoc(), I, ss.str());
+      exit(1);
     } else {
       llvm::errs() << ss.str() << "\n";
     }
@@ -1536,6 +1542,9 @@ void TypeAnalyzer::runPHIHypotheses() {
 }
 
 void TypeAnalyzer::run() {
+
+  TimeTraceScope timeScope("Type Analysis", fntypeinfo.Function->getName());
+
   // This function runs a full round of type analysis.
   // This works by doing two stages of analysis,
   // with a "deduced integer types for unused" values
@@ -1804,7 +1813,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   }
   if (auto GV = dyn_cast<GlobalVariable>(gep.getPointerOperand())) {
     // from julia code, do not propagate int to operands
-    if (GV->getName() == "small_typeof") {
+    if (GV->getName() == "small_typeof" || GV->getName() == "jl_small_typeof") {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Pointer);
@@ -4603,7 +4612,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (funcName == "omp_get_max_threads" || funcName == "omp_get_thread_num" ||
-        funcName == "omp_get_num_threads") {
+        funcName == "omp_get_num_threads" ||
+        funcName == "__kmpc_global_thread_num") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -4722,6 +4732,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (funcName == "jl_get_binding_or_error" ||
         funcName == "ijl_get_binding_or_error") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
 
@@ -5328,6 +5342,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "gsl_sf_legendre_array_e") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
 
     // CONSIDER(__lgamma_r_finite)
 
@@ -5883,18 +5901,41 @@ TypeTree TypeResults::query(Value *val) const {
   return analyzer->getAnalysis(val);
 }
 
-bool TypeResults::anyFloat(Value *val) const {
+// Returns last non-padding/alignment location of the corresponding subtype T.
+size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
+                    size_t offset = 0) {
+  auto ST = dyn_cast<StructType>(T);
+  if (!ST)
+    return (DL.getTypeSizeInBits(T) + 7) / 8;
+
+  auto SL = DL.getStructLayout(ST);
+  size_t prevOff = 0;
+  for (size_t idx = 0; idx < ST->getNumElements(); idx++) {
+    auto off = SL->getElementOffset(idx);
+    if (off > prevOff)
+      for (size_t i = prevOff; i < off; i++)
+        offs.insert(offset + i);
+    size_t subSize = skippedBytes(offs, ST->getElementType(idx), DL, prevOff);
+    prevOff = off + subSize;
+  }
+  return prevOff;
+}
+
+bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   assert(val);
   assert(val->getType());
   auto q = query(val);
   auto dt = q[{-1}];
+  if (!anythingIsFloat && dt == BaseType::Anything)
+    return false;
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt.isFloat();
 
-  size_t ObjSize = 1;
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+    return false;
   auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
-  if (val->getType()->isSized())
-    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+  SmallSet<size_t, 8> offs;
+  size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
     dt = q[{(int)i}];
@@ -5902,8 +5943,16 @@ bool TypeResults::anyFloat(Value *val) const {
       i++;
       continue;
     }
+    if (!anythingIsFloat && dt == BaseType::Integer) {
+      i++;
+      continue;
+    }
     if (dt == BaseType::Pointer) {
       i += dl.getPointerSize(0);
+      continue;
+    }
+    if (offs.count(i)) {
+      i++;
       continue;
     }
     return true;
@@ -5918,11 +5967,12 @@ bool TypeResults::anyPointer(Value *val) const {
   auto dt = q[{-1}];
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt == BaseType::Pointer;
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+    return false;
 
-  size_t ObjSize = 1;
   auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
-  if (val->getType()->isSized())
-    ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+  SmallSet<size_t, 8> offs;
+  size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
     dt = q[{(int)i}];
@@ -5932,6 +5982,10 @@ bool TypeResults::anyPointer(Value *val) const {
     }
     if (auto FT = dt.isFloat()) {
       i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    if (offs.count(i)) {
+      i++;
       continue;
     }
     return true;

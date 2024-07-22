@@ -87,7 +87,7 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     /*desc=*/[{
       Emits a reverse-mode adjoint of the given function.
     }],
-    /*retTy=*/"void",
+    /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createReverseModeAdjoint",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "SmallVector<Value>":$caches)
     >,

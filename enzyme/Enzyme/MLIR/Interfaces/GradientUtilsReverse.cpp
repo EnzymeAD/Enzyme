@@ -32,8 +32,9 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
     IRMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-    const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, IRMapping &originalToNewFn_,
+    const SmallPtrSetImpl<mlir::Value> &activevals_,
+    ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+    IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
@@ -133,13 +134,15 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, mlir::Type additionalArg) {
+    const std::vector<bool> &returnPrimals,
+    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> retType,
+    ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg) {
   std::string prefix;
 
   switch (mode_) {
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
+  case DerivativeMode::ForwardModeError:
     assert(false);
     break;
   case DerivativeMode::ReverseModeCombined:
@@ -162,9 +165,9 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   IRMapping invertedPointers;
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
       mode_, width, todiff, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnValue, retType,
+      nonconstant_values, returnvals, returnPrimals, returnShadows, retType,
       prefix + todiff.getName(), originalToNew, originalToNewOps,
-      diffeReturnArg, additionalArg);
+      additionalArg);
 
   return new MGradientUtilsReverse(Logic, newFunc, todiff, TA, invertedPointers,
                                    constant_values, nonconstant_values, retType,

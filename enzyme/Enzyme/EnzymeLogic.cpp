@@ -31,6 +31,9 @@
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
 #include "EnzymeLogic.h"
+#include "TypeAnalysis/TypeAnalysis.h"
+#include "llvm/IR/Constant.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -75,6 +78,7 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
+#include "llvm/Support/TimeProfiler.h"
 
 #include "llvm/ADT/StringSet.h"
 
@@ -324,6 +328,11 @@ struct CacheAnalysis {
         if (!inst2->mayWriteToMemory())
           return false;
 
+#if LLVM_VERSION_MAJOR >= 12
+        if (isa<FenceInst>(inst2))
+          return false;
+#endif
+
         if (unnecessaryBlocks.count(inst2->getParent())) {
           return false;
         }
@@ -348,6 +357,11 @@ struct CacheAnalysis {
                 [&](Instruction *mid) {
                   if (!mid->mayWriteToMemory())
                     return false;
+
+#if LLVM_VERSION_MAJOR >= 12
+                  if (isa<FenceInst>(mid))
+                    return false;
+#endif
 
                   if (unnecessaryBlocks.count(mid->getParent())) {
                     return false;
@@ -937,6 +951,7 @@ void calculateUnusedValuesInFunction(
             }
 
             if (mode == DerivativeMode::ForwardMode ||
+                mode == DerivativeMode::ForwardModeError ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
                   mode == DerivativeMode::ReverseModeCombined) &&
@@ -1016,7 +1031,8 @@ void calculateUnusedValuesInFunction(
         }
         if ((mode == DerivativeMode::ReverseModePrimal ||
              mode == DerivativeMode::ReverseModeCombined ||
-             mode == DerivativeMode::ForwardMode) &&
+             mode == DerivativeMode::ForwardMode ||
+             mode == DerivativeMode::ForwardModeError) &&
             mayWriteToMemory) {
           return UseReq::Need;
         }
@@ -1053,8 +1069,9 @@ void calculateUnusedValuesInFunction(
       },
       [&](const Instruction *inst, const Value *val) {
         if (isNoNeed(val)) {
-          if (isa<StoreInst>(inst))
-            return false;
+          if (auto SI = dyn_cast<StoreInst>(inst))
+            if (SI->getPointerOperand() == val)
+              return false;
 
           if (auto CI = dyn_cast<CallInst>(inst)) {
             if (isDeallocationCall(CI, TLI)) {
@@ -1761,7 +1778,7 @@ void clearFunctionAttributes(Function *f) {
     }
 #endif
   }
-  for (auto attr : {"enzyme_inactive"}) {
+  for (auto attr : {"enzyme_inactive", "enzyme_type"}) {
 #if LLVM_VERSION_MAJOR >= 14
     if (f->getAttributes().hasRetAttr(attr)) {
       f->removeRetAttr(attr);
@@ -1961,6 +1978,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
     unsigned width, bool AtomicAdd, bool omp) {
+
+  TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
+
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1982,34 +2002,18 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ss << " overwritten_args.size() [" << _overwritten_args.size()
        << "] != todiff->arg_size()\n";
     ss << "todiff: " << *todiff << "\n";
-    llvm::Value *toshow = todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
     }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args))
-          ->second;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      auto newFunc = todiff;
-      std::map<AugmentedStruct, int> returnMapping;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args))
+                                 constant_args, shadowReturnUsed))
           ->second;
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
@@ -2130,7 +2134,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
                                  aug.returns, aug.overwritten_args_map,
-                                 aug.can_modref_map, next_constant_args))
+                                 aug.can_modref_map, next_constant_args,
+                                 shadowReturnUsed))
           ->second;
     }
 
@@ -2194,7 +2199,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                 {}, constant_args))
+                                 {}, constant_args, shadowReturnUsed))
           ->second;
     }
 
@@ -2252,7 +2257,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args))
+                                   {}, constant_args, shadowReturnUsed))
             ->second;
       }
       if (ST->getNumElements() == 2 &&
@@ -2263,7 +2268,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args))
+                                   {}, constant_args, shadowReturnUsed))
             ->second;
       }
       if (ST->getNumElements() == 2) {
@@ -2317,7 +2322,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args))
+                                   {}, constant_args, shadowReturnUsed))
             ->second;
       }
     }
@@ -2329,7 +2334,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
                AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
-                               constant_args))
+                               constant_args, shadowReturnUsed))
         ->second; // dyn_cast<StructType>(st->getElementType(0)));
   }
 
@@ -2355,9 +2360,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ss << "(" << demangledName << ")";
     }
     ss << "\n";
-    llvm::Value *toshow = todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
@@ -2365,27 +2368,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
     DeleteDeadBlock(gutils->inversionAllocs);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args))
-          ->second;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args))
+                                 constant_args, shadowReturnUsed))
           ->second;
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
@@ -2436,7 +2425,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   insert_or_assign(AugmentedCachedFunctions, tup,
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    overwritten_args_map, can_modref_map,
-                                   constant_args));
+                                   constant_args, shadowReturnUsed));
 
   auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
@@ -2650,7 +2639,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 #endif
   }
-  for (auto attr : {"enzyme_inactive"}) {
+  for (auto attr : {"enzyme_inactive", "enzyme_type"}) {
 #if LLVM_VERSION_MAJOR >= 14
     if (gutils->newFunc->getAttributes().hasRetAttr(attr)) {
       gutils->newFunc->removeRetAttr(attr);
@@ -2673,9 +2662,23 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   SmallVector<Type *, 4> MallocTypes;
 
+  bool nonRecursiveUse = false;
+
   for (auto a : gutils->getTapeValues()) {
     MallocTypes.push_back(a->getType());
+    if (auto ei = dyn_cast<ExtractValueInst>(a)) {
+      auto tidx = returnMapping.find(AugmentedStruct::Tape)->second;
+      if (ei->getIndices().size() == 1 && ei->getIndices()[0] == (unsigned)tidx)
+        if (auto cb = dyn_cast<CallBase>(ei->getOperand(0)))
+          if (gutils->newFunc == cb->getCalledFunction())
+            continue;
+    }
+    nonRecursiveUse = true;
   }
+  if (MallocTypes.size() == 0)
+    nonRecursiveUse = true;
+  if (!nonRecursiveUse)
+    MallocTypes.clear();
 
   Type *tapeType = StructType::get(nf->getContext(), MallocTypes);
 
@@ -2925,6 +2928,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       ++i;
     }
+  } else if (!nonRecursiveUse) {
+    for (auto v : gutils->getTapeValues()) {
+      if (isa<UndefValue>(v))
+        continue;
+      auto EV = cast<ExtractValueInst>(v);
+      auto EV2 = cast<ExtractValueInst>(VMap[v]);
+      assert(EV->use_empty());
+      EV->eraseFromParent();
+      assert(EV2->use_empty());
+      EV2->eraseFromParent();
+    }
   }
 
   for (BasicBlock &BB : *nf) {
@@ -2979,8 +2993,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
           ggep->setIsInBounds(true);
         }
-        if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV))) {
-          shadowRV = VMap[shadowRV];
+        if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV) ||
+              isa<ConstantAggregate>(shadowRV))) {
+          auto found = VMap.find(shadowRV);
+          assert(found != VMap.end());
+          shadowRV = found->second;
         }
         if (EnzymeFixupReturn)
           shadowRV = unwrap(EnzymeFixupReturn(wrap(&ib), wrap(shadowRV)));
@@ -3042,11 +3059,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
   for (auto user : fnusers) {
-    if (removeStruct) {
+    if (removeStruct || !nonRecursiveUse) {
       IRBuilder<> B(user);
       SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
-      rep->takeName(user);
+      if (!rep->getType()->isVoidTy())
+        rep->takeName(user);
       rep->copyIRFlags(user);
       rep->setAttributes(user->getAttributes());
       rep->setCallingConv(user->getCallingConv());
@@ -3078,7 +3096,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
 
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
-  if (recursive || (omp && !noTape))
+  if ((recursive && nonRecursiveUse) || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
   AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
@@ -3134,8 +3152,11 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
 
   if (retType != DIFFE_TYPE::CONSTANT) {
     auto ret = inst->getOperand(0);
-    if (!ret->getType()->isFPOrFPVectorTy() &&
-        TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+    Type *rt = ret->getType();
+    while (auto AT = dyn_cast<ArrayType>(rt))
+      rt = AT->getElementType();
+    bool floatLike = rt->isFPOrFPVectorTy();
+    if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       if (gutils->isConstantValue(ret)) {
         if (!EnzymeRuntimeActivityCheck &&
             TR.query(ret)[{-1}].isPossiblePointer()) {
@@ -3160,9 +3181,14 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   case ReturnType::Return: {
     auto ret = inst->getOperand(0);
 
+    Type *rt = ret->getType();
+    while (auto AT = dyn_cast<ArrayType>(rt))
+      rt = AT->getElementType();
+    bool floatLike = rt->isFPOrFPVectorTy();
+
     if (retType == DIFFE_TYPE::CONSTANT) {
       toret = gutils->getNewFromOriginal(ret);
-    } else if (!ret->getType()->isFPOrFPVectorTy() &&
+    } else if (!floatLike &&
                TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       toret = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
@@ -3181,11 +3207,15 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       assert(false && "Invalid return type");
     auto ret = inst->getOperand(0);
 
+    Type *rt = ret->getType();
+    while (auto AT = dyn_cast<ArrayType>(rt))
+      rt = AT->getElementType();
+    bool floatLike = rt->isFPOrFPVectorTy();
+
     toret =
         nBuilder.CreateInsertValue(toret, gutils->getNewFromOriginal(ret), 0);
 
-    if (!ret->getType()->isFPOrFPVectorTy() &&
-        TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+    if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
       toret = nBuilder.CreateInsertValue(
           toret,
           invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder), 1);
@@ -3325,8 +3355,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     auto PNtype = PNtypeT[{-1}];
 
     // TODO remove explicit type check and only use PNtype
-    if (PNtype == BaseType::Anything || PNtype == BaseType::Pointer ||
-        PNtype == BaseType::Integer || orig->getType()->isPointerTy())
+    if (!gutils->TR.anyFloat(orig, /*anythingIsFloat*/ false) ||
+        orig->getType()->isPointerTy())
       continue;
 
     Type *PNfloatType = PNtype.isFloat();
@@ -3359,16 +3389,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
          << " sz: " << size << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer, nullptr, wrap(&Builder));
-        continue;
-      } else {
-        ss << "\n";
-        gutils->TR.dump(ss);
-        EmitFailure("CannotDeduceType", orig->getDebugLoc(), orig, ss.str());
-        continue;
-      }
+      EmitNoTypeError(ss.str(), *orig, gutils, Builder);
+      continue;
     }
 
     auto prediff = gutils->diffe(orig, Builder);
@@ -3636,6 +3658,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     RequestContext context, const ReverseCacheKey &&key, TypeAnalysis &TA,
     const AugmentedReturn *augmenteddata, bool omp) {
 
+  TimeTraceScope timeScope("CreatePrimalAndGradient", key.todiff->getName());
+
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
 
@@ -3644,7 +3668,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());
 
-  assert(key.overwritten_args.size() == key.todiff->arg_size());
+  if (!isMemFreeLibMFunction(getFuncName(key.todiff)))
+    assert(key.overwritten_args.size() == key.todiff->arg_size());
 
   Function *prevFunction = nullptr;
   if (ReverseCachedFunctions.find(key) != ReverseCachedFunctions.end()) {
@@ -3959,21 +3984,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         ss << "]\n";
         ss << "  Instead found " << foundcalled->getName() << " of type "
            << *foundcalled->getFunctionType() << "\n";
-        Value *toshow = key.todiff;
         if (context.req) {
-          toshow = context.req;
           ss << " at context: " << *context.req;
         } else {
           ss << *key.todiff << "\n";
         }
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                             ErrorType::NoDerivative, nullptr, wrap(key.todiff),
-                             wrap(context.ip));
-        } else if (context.req) {
-          EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                      ss.str());
-        } else {
+        if (!EmitNoDerivativeError(ss.str(), key.todiff, context)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
@@ -4084,6 +4100,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, key.mode, key.width, key.todiff, TLI, TA, oldTypeInfo, key.retType,
+      augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
@@ -4095,9 +4112,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "No reverse pass found for " + key.todiff->getName() << "\n";
-    llvm::Value *toshow = key.todiff;
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *key.todiff << "\n";
@@ -4105,17 +4120,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(key.todiff),
-                         wrap(context.ip));
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return newFunc;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
+    if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return newFunc;
@@ -4515,17 +4520,25 @@ Function *EnzymeLogic::CreateForwardDiff(
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
+
+  TimeTraceScope timeScope("CreateForwardDiff", todiff->getName());
+
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::ForwardModeError);
 
   FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
 
   if (retType != DIFFE_TYPE::CONSTANT)
     assert(!todiff->getReturnType()->isVoidTy());
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (returnUsed)
+    assert(!todiff->getReturnType()->isVoidTy());
+
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
 
   ForwardCacheKey tup = {todiff,     retType, constant_args, _overwritten_args,
@@ -4548,7 +4561,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   }
 
-  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode)
+  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode ||
+                                     mode == DerivativeMode::ForwardModeError)
                                         ? "enzyme_derivative"
                                         : "enzyme_splitderivative")) {
     if (!isa<MDTuple>(md)) {
@@ -4727,8 +4741,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType, diffeReturnArg,
-      constant_args, retVal, additionalArg, omp);
+      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType,
+      /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
+      additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
@@ -4736,10 +4751,13 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (todiff->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << "No forward mode derivative found for " + todiff->getName() << "\n";
-    llvm::Value *toshow = todiff;
+    if (mode == DerivativeMode::ForwardModeError) {
+      ss << "No forward mode error function found for " + todiff->getName()
+         << "\n";
+    } else {
+      ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+    }
     if (context.req) {
-      toshow = context.req;
       ss << " at context: " << *context.req;
     } else {
       ss << *todiff << "\n";
@@ -4747,23 +4765,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     BasicBlock *entry = &gutils->newFunc->getEntryBlock();
     cleanupInversionAllocs(gutils, entry);
     clearFunctionAttributes(gutils->newFunc);
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(toshow),
-                         ErrorType::NoDerivative, nullptr, wrap(todiff),
-                         wrap(context.ip));
-      auto newFunc = gutils->newFunc;
-      delete gutils;
-      return newFunc;
-    }
-    if (context.req) {
-      EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
-                  ss.str());
-
-      if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs() << *gutils->newFunc << "\n";
-        report_fatal_error("function failed verification (r6)");
-      }
+    if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
       return newFunc;
@@ -4961,64 +4963,185 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-static Value *floatValTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatValTruncate(IRBuilderBase &B, Value *v,
                                FloatTruncation truncation) {
+  if (truncation.isToFPRT())
+    return v;
+
   Type *toTy = truncation.getToType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     toTy = VectorType::get(toTy, vty->getElementCount());
   return B.CreateFPTrunc(v, toTy, "enzyme_trunc");
 }
 
-static Value *floatValExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatValExpand(IRBuilderBase &B, Value *v,
                              FloatTruncation truncation) {
+  if (truncation.isToFPRT())
+    return v;
+
   Type *fromTy = truncation.getFromType(B.getContext());
   if (auto vty = dyn_cast<VectorType>(v->getType()))
     fromTy = VectorType::get(fromTy, vty->getElementCount());
   return B.CreateFPExt(v, fromTy, "enzyme_exp");
 }
 
-static Value *floatMemTruncate(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatMemTruncate(IRBuilderBase &B, Value *v,
                                FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
-  Type *fromTy = truncation.getFromType(B.getContext());
   Type *toTy = truncation.getToType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      toTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(toTy)));
+  return B.CreateBitCast(v, toTy);
 }
 
-static Value *floatMemExpand(IRBuilderBase &B, Value *v, Value *tmpBlock,
+static Value *floatMemExpand(IRBuilderBase &B, Value *v,
                              FloatTruncation truncation) {
   if (isa<VectorType>(v->getType()))
     report_fatal_error("vector operations not allowed in mem trunc mode");
 
   Type *fromTy = truncation.getFromType(B.getContext());
-  if (!tmpBlock)
-    tmpBlock = B.CreateAlloca(fromTy);
-  auto c0 = Constant::getNullValue(
-      llvm::Type::getIntNTy(B.getContext(), truncation.getFromTypeWidth()));
-  B.CreateStore(
-      c0, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(c0->getType())));
-  B.CreateStore(
-      v, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(v->getType())));
-  return B.CreateLoad(
-      fromTy, B.CreatePointerCast(tmpBlock, PointerType::getUnqual(fromTy)));
+  return B.CreateBitCast(v, fromTy);
 }
 
-class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator> {
+class TruncateUtils {
+protected:
+  FloatTruncation truncation;
+  llvm::Module *M;
+  Type *fromType;
+  Type *toType;
+  LLVMContext &ctx;
+
+private:
+  std::string getOriginalFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTOriginalPrefix) + truncation.mangleFrom() +
+           "_" + Name;
+  }
+  std::string getFPRTName(std::string Name) {
+    return std::string(EnzymeFPRTPrefix) + truncation.mangleFrom() + "_" + Name;
+  }
+
+  // Creates a function which contains the original floating point operation.
+  // The user can use this to compare results against.
+  void createOriginalFPRTFunc(Instruction &I, std::string Name,
+                              SmallVectorImpl<Value *> &Args,
+                              llvm::Type *RetTy) {
+    auto MangledName = getOriginalFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    if (F->isDeclaration()) {
+      BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
+      auto ClonedI = I.clone();
+      for (unsigned It = 0; It < Args.size(); It++)
+        ClonedI->setOperand(It, F->getArg(It));
+      auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
+      ClonedI->insertBefore(Return);
+    }
+  }
+
+  Function *getFPRTFunc(std::string Name, SmallVectorImpl<Value *> &Args,
+                        llvm::Type *RetTy) {
+    auto MangledName = getFPRTName(Name);
+    auto F = M->getFunction(MangledName);
+    if (!F) {
+      SmallVector<Type *, 4> ArgTypes;
+      for (auto Arg : Args)
+        ArgTypes.push_back(Arg->getType());
+      FunctionType *FnTy =
+          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
+      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+    }
+    return F;
+  }
+
+  CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
+                              const SmallVectorImpl<Value *> &ArgsIn,
+                              llvm::Type *RetTy) {
+    SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
+    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
+    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
+    Args.push_back(B.getInt64(truncation.getMode()));
+    auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
+    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
+  }
+
+public:
+  TruncateUtils(FloatTruncation truncation, Module *M)
+      : truncation(truncation), M(M), ctx(M->getContext()) {
+    fromType = truncation.getFromType(ctx);
+    toType = truncation.getToType(ctx);
+    if (fromType == toType)
+      assert(truncation.isToFPRT());
+  }
+
+  Type *getFromType() { return fromType; }
+
+  Type *getToType() { return toType; }
+
+  CallInst *createFPRTConstCall(llvm::IRBuilderBase &B, Value *V) {
+    assert(V->getType() == getFromType());
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "const", Args, getToType());
+  }
+  CallInst *createFPRTNewCall(llvm::IRBuilderBase &B, Value *V) {
+    assert(V->getType() == getFromType());
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "new", Args, getToType());
+  }
+  CallInst *createFPRTGetCall(llvm::IRBuilderBase &B, Value *V) {
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "get", Args, getToType());
+  }
+  CallInst *createFPRTDeleteCall(llvm::IRBuilderBase &B, Value *V) {
+    SmallVector<Value *, 1> Args;
+    Args.push_back(V);
+    return createFPRTGeneric(B, "delete", Args, B.getVoidTy());
+  }
+  CallInst *createFPRTOpCall(llvm::IRBuilderBase &B, llvm::Instruction &I,
+                             llvm::Type *RetTy,
+                             SmallVectorImpl<Value *> &ArgsIn) {
+    std::string Name;
+    if (auto BO = dyn_cast<BinaryOperator>(&I)) {
+      Name = "binop_" + std::string(BO->getOpcodeName());
+    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+      auto FOp = II->getCalledFunction();
+      assert(FOp);
+      Name = "intr_" + std::string(FOp->getName());
+      for (auto &C : Name)
+        if (C == '.')
+          C = '_';
+    } else if (auto CI = dyn_cast<CallInst>(&I)) {
+      if (auto F = CI->getCalledFunction())
+        Name = "func_" + std::string(F->getName());
+      else
+        llvm_unreachable(
+            "Unexpected indirect call inst for conversion to FPRT");
+    } else if (auto CI = dyn_cast<FCmpInst>(&I)) {
+      Name = "fcmp_" + std::string(CI->getPredicateName(CI->getPredicate()));
+    } else {
+      llvm_unreachable("Unexpected instruction for conversion to FPRT");
+    }
+    createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
+    return createFPRTGeneric(B, Name, ArgsIn, RetTy);
+  }
+};
+
+class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator>,
+                          public TruncateUtils {
 private:
   ValueToValueMapTy &originalToNewFn;
   FloatTruncation truncation;
-  Type *fromType;
-  Type *toType;
   Function *oldFunc;
   Function *newFunc;
-  AllocaInst *tmpBlock;
   TruncateMode mode;
   EnzymeLogic &Logic;
   LLVMContext &ctx;
@@ -5026,39 +5149,23 @@ private:
 public:
   TruncateGenerator(ValueToValueMapTy &originalToNewFn,
                     FloatTruncation truncation, Function *oldFunc,
-                    Function *newFunc, TruncateMode mode, EnzymeLogic &Logic)
-      : originalToNewFn(originalToNewFn), truncation(truncation),
-        oldFunc(oldFunc), newFunc(newFunc), mode(mode), Logic(Logic),
-        ctx(newFunc->getContext()) {
-    IRBuilder<> B(&newFunc->getEntryBlock().front());
-
-    fromType = truncation.getFromType(ctx);
-    toType = truncation.getToType(ctx);
-    if (fromType == toType)
-      assert(truncation.isToMPFR());
-
-    if (mode == TruncMemMode)
-      tmpBlock = B.CreateAlloca(fromType);
-    else
-      tmpBlock = nullptr;
-
-    if (truncation.isToMPFR()) {
-      switch (mode) {
-      case TruncMemMode:
-        llvm::report_fatal_error(
-            "truncation to MPFR not supported in memory mode.");
-      case TruncOpMode:
-      case TruncOpFullModuleMode:
-        break;
-      }
-    }
-  }
+                    Function *newFunc, EnzymeLogic &Logic)
+      : TruncateUtils(truncation, newFunc->getParent()),
+        originalToNewFn(originalToNewFn), truncation(truncation),
+        oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
+        Logic(Logic), ctx(newFunc->getContext()) {}
 
   void checkHandled(llvm::Instruction &inst) {
+    // TODO
     // if (all_of(inst.getOperandList(),
     //            [&](Use *use) { return use->get()->getType() == fromType; }))
     //   todo(inst);
   }
+
+  // TODO
+  void handleTrunc();
+  void hendleIntToFloat();
+  void handleFloatToInt();
 
   void visitInstruction(llvm::Instruction &inst) {
     using namespace llvm;
@@ -5075,20 +5182,15 @@ public:
     checkHandled(inst);
   }
 
-  Type *getFromType() { return fromType; }
-
-  Type *getToType() { return toType; }
-
   Value *truncate(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      assert(!truncation.isToMPFR());
-      return floatMemTruncate(B, v, tmpBlock, truncation);
+      if (isa<ConstantFP>(v))
+        return createFPRTConstCall(B, v);
+      return floatMemTruncate(B, v, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      if (truncation.isToMPFR())
-        return v;
-      return floatValTruncate(B, v, tmpBlock, truncation);
+      return floatValTruncate(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
   }
@@ -5096,10 +5198,10 @@ public:
   Value *expand(IRBuilder<> &B, Value *v) {
     switch (mode) {
     case TruncMemMode:
-      return floatMemExpand(B, v, tmpBlock, truncation);
+      return floatMemExpand(B, v, truncation);
     case TruncOpMode:
     case TruncOpFullModuleMode:
-      return floatValExpand(B, v, tmpBlock, truncation);
+      return floatValExpand(B, v, truncation);
     }
     llvm_unreachable("Unknown trunc mode");
   }
@@ -5122,17 +5224,37 @@ public:
   void visitAllocaInst(llvm::AllocaInst &I) { return; }
   void visitICmpInst(llvm::ICmpInst &I) { return; }
   void visitFCmpInst(llvm::FCmpInst &CI) {
-    auto newI = getNewFromOriginal(&CI);
-    IRBuilder<> B(newI);
-    auto truncLHS = truncate(B, getNewFromOriginal(CI.getOperand(0)));
-    auto truncRHS = truncate(B, getNewFromOriginal(CI.getOperand(1)));
-    auto nres =
-        cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
-    nres->takeName(newI);
-    nres->copyIRFlags(newI);
-    newI->replaceAllUsesWith(nres);
-    newI->eraseFromParent();
-    return;
+    switch (mode) {
+    case TruncMemMode: {
+      auto LHS = getNewFromOriginal(CI.getOperand(0));
+      auto RHS = getNewFromOriginal(CI.getOperand(1));
+      if (LHS->getType() != getFromType())
+        return;
+
+      auto newI = getNewFromOriginal(&CI);
+      IRBuilder<> B(newI);
+      auto truncLHS = truncate(B, LHS);
+      auto truncRHS = truncate(B, RHS);
+
+      SmallVector<Value *, 2> Args;
+      Args.push_back(LHS);
+      Args.push_back(RHS);
+      Instruction *nres;
+      if (truncation.isToFPRT())
+        nres = createFPRTOpCall(B, CI, B.getInt1Ty(), Args);
+      else
+        nres =
+            cast<FCmpInst>(B.CreateFCmp(CI.getPredicate(), truncLHS, truncRHS));
+      nres->takeName(newI);
+      nres->copyIRFlags(newI);
+      newI->replaceAllUsesWith(nres);
+      newI->eraseFromParent();
+      return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      return;
+    }
   }
   void visitLoadInst(llvm::LoadInst &LI) {
     auto alignment = LI.getAlign();
@@ -5149,27 +5271,8 @@ public:
   void visitCastInst(llvm::CastInst &CI) {
     switch (mode) {
     case TruncMemMode: {
-      Value *newCI = nullptr;
-      auto newI = getNewFromOriginal(&CI);
-      std::string oldName = CI.getName().str();
-      newI->setName("");
-      if (CI.getSrcTy() == getFromType()) {
-        IRBuilder<> B(newI);
-        newCI =
-            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                         CI.getDestTy(), oldName);
-      }
-      if (CI.getDestTy() == getToType()) {
-        auto newI = getNewFromOriginal(&CI);
-        IRBuilder<> B(newI);
-        newCI =
-            B.CreateCast(CI.getOpcode(), getNewFromOriginal(CI.getOperand(0)),
-                         CI.getDestTy(), oldName);
-      }
-      if (newCI) {
-        newI->replaceAllUsesWith(newCI);
-        newI->eraseFromParent();
-      }
+      if (CI.getSrcTy() == getFromType() || CI.getDestTy() == getFromType())
+        todo(CI);
       return;
     }
     case TruncOpMode:
@@ -5203,46 +5306,6 @@ public:
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &EEI) { return; }
   void visitExtractValueInst(llvm::ExtractValueInst &EEI) { return; }
   void visitInsertValueInst(llvm::InsertValueInst &EEI) { return; }
-  CallInst *createMPFRCall(llvm::IRBuilder<> &B, llvm::Instruction &I,
-                           llvm::Type *RetTy,
-                           SmallVectorImpl<Value *> &ArgsIn) {
-    std::string Name;
-    if (auto BO = dyn_cast<BinaryOperator>(&I)) {
-      Name = "binop_" + std::string(BO->getOpcodeName());
-    } else if (auto II = dyn_cast<IntrinsicInst>(&I)) {
-      auto FOp = II->getCalledFunction();
-      assert(FOp);
-      Name = "intr_" + std::string(FOp->getName());
-      for (auto &C : Name)
-        if (C == '.')
-          C = '_';
-    } else if (auto CI = dyn_cast<CallInst>(&I)) {
-      if (auto F = CI->getCalledFunction())
-        Name = "func_" + std::string(F->getName());
-      else
-        llvm_unreachable(
-            "Unexpected indirect call inst for conversion to MPFR");
-    } else {
-      llvm_unreachable("Unexpected instruction for conversion to MPFR");
-    }
-
-    std::string MangledName =
-        std::string("__enzyme_mpfr_") + truncation.mangleFrom() + "_" + Name;
-    auto F = newFunc->getParent()->getFunction(MangledName);
-    SmallVector<Value *, 4> Args(ArgsIn.begin(), ArgsIn.end());
-    Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
-    Args.push_back(B.getInt64(truncation.getTo().significandWidth));
-    if (!F) {
-      SmallVector<Type *, 4> ArgTypes;
-      for (auto Arg : Args)
-        ArgTypes.push_back(Arg->getType());
-      FunctionType *FnTy =
-          FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
-      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName,
-                           newFunc->getParent());
-    }
-    return cast<CallInst>(B.CreateCall(F, Args));
-  }
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     auto oldLHS = BO.getOperand(0);
     auto oldRHS = BO.getOperand(1);
@@ -5276,9 +5339,9 @@ public:
     auto newLHS = truncate(B, getNewFromOriginal(oldLHS));
     auto newRHS = truncate(B, getNewFromOriginal(oldRHS));
     Instruction *nres = nullptr;
-    if (truncation.isToMPFR()) {
+    if (truncation.isToFPRT()) {
       SmallVector<Value *, 2> Args({newLHS, newRHS});
-      nres = createMPFRCall(B, BO, truncation.getToType(ctx), Args);
+      nres = createFPRTOpCall(B, BO, truncation.getToType(ctx), Args);
     } else {
       nres = cast<Instruction>(B.CreateBinOp(BO.getOpcode(), newLHS, newRHS));
     }
@@ -5308,6 +5371,9 @@ public:
   void visitFenceInst(llvm::FenceInst &FI) { return; }
 
   bool handleIntrinsic(llvm::CallInst &CI, Intrinsic::ID ID) {
+    if (isDbgInfoIntrinsic(ID))
+      return true;
+
     auto newI = cast<llvm::CallInst>(getNewFromOriginal(&CI));
     IRBuilder<> B(newI);
 
@@ -5336,8 +5402,8 @@ public:
 
     Instruction *intr = nullptr;
     Value *nres = nullptr;
-    if (truncation.isToMPFR()) {
-      nres = intr = createMPFRCall(B, CI, retTy, new_ops);
+    if (truncation.isToFPRT()) {
+      nres = intr = createFPRTOpCall(B, CI, retTy, new_ops);
     } else {
       // TODO check that the intrinsic is overloaded
       nres = intr =
@@ -5474,36 +5540,15 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
                                       FloatRepresentation to, bool isTruncate) {
   assert(context.req && context.ip);
 
-  if (from == to) {
-    context.req->replaceAllUsesWith(context.req->getOperand(0));
-    context.req->eraseFromParent();
-    return true;
-  }
-
-  if (from < to) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Cannot truncate into a large width\n";
-    if (context.req) {
-      ss << " at context: " << *context.req;
-      EmitFailure("NoTruncate", context.req->getDebugLoc(), context.req,
-                  ss.str());
-      return false;
-    }
-    llvm_unreachable("failed to truncate value");
-  }
-
   IRBuilderBase &B = *context.ip;
-  Type *fromTy = from.getBuiltinType(B.getContext());
-  Type *toTy = to.getType(B.getContext());
 
   Value *converted = nullptr;
+  auto truncation = FloatTruncation(from, to, TruncMemMode);
+  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent());
   if (isTruncate)
-    converted = floatMemExpand(B, B.CreateFPTrunc(v, toTy), nullptr,
-                               FloatTruncation(from, to));
+    converted = TU.createFPRTNewCall(B, v);
   else
-    converted = B.CreateFPExt(
-        floatMemTruncate(B, v, nullptr, FloatTruncation(from, to)), fromTy);
+    converted = TU.createFPRTGetCall(B, v);
   assert(converted);
 
   context.req->replaceAllUsesWith(converted);
@@ -5537,7 +5582,8 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
 
-  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  if (mode != TruncOpFullModuleMode)
+    NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
   TruncateCachedFunctions[tup] = NewF;
 
@@ -5589,8 +5635,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  TruncateGenerator handle(originalToNewFn, truncation, totrunc, NewF, mode,
-                           *this);
+  TruncateGenerator handle(originalToNewFn, truncation, totrunc, NewF, *this);
   for (auto &BB : *totrunc)
     for (auto &I : BB)
       handle.visit(&I);
@@ -5992,7 +6037,9 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
 
 llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
                                        llvm::Value *todiff) {
-  if (auto F = dyn_cast<Function>(todiff))
+  if (isa<InlineAsm>(todiff))
+    return todiff;
+  else if (auto F = dyn_cast<Function>(todiff))
     return CreateNoFree(context, F);
   if (auto castinst = dyn_cast<ConstantExpr>(todiff))
     if (castinst->isCast()) {
@@ -6000,6 +6047,87 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           cast<llvm::Constant>(CreateNoFree(context, castinst->getOperand(0)))};
       return castinst->getWithOperands(reps);
     }
+
+  // Alloca/allocations are unsafe here since one could store freeing functions
+  // into them. For now we will be unsafe regarding indirect function call
+  // frees.
+  if (isa<AllocaInst>(todiff))
+    return todiff;
+
+  std::string demangledCall;
+  if (auto CI = dyn_cast<CallInst>(todiff)) {
+    TargetLibraryInfo &TLI =
+        PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
+    if (isAllocationFunction(getFuncNameFromCall(CI), TLI))
+      return CI;
+    if (auto F = CI->getCalledFunction()) {
+
+      // clang-format off
+      const char* NoFreeDemanglesStartsWith[] = {
+          "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+          "std::basic_ostream<char, std::char_traits<char>>::operator<<",
+          "std::ostream::operator<<",
+          "std::ostream& std::ostream::_M_insert",
+      };
+      // clang-format on
+
+      demangledCall = llvm::demangle(F->getName().str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledCall.find("> >", start)) != std::string::npos) {
+        demangledCall.replace(start, 3, ">>");
+      }
+
+      for (auto Name : NoFreeDemanglesStartsWith)
+        if (startsWith(demangledCall, Name))
+          return CI;
+    }
+  }
+
+  if (auto GV = dyn_cast<GlobalVariable>(todiff)) {
+    if (GV->getName() == "_ZSt4cerr")
+      return GV;
+    if (GV->getName() == "_ZSt4cout")
+      return GV;
+  }
+
+  if (context.ip) {
+    if (auto LI = dyn_cast<LoadInst>(todiff)) {
+      if (auto smpl = simplifyLoad(LI))
+        return CreateNoFree(context, smpl);
+      auto prev = CreateNoFree(context, LI->getPointerOperand());
+      if (prev == LI->getPointerOperand())
+        return todiff;
+      auto res = cast<LoadInst>(context.ip->CreateLoad(LI->getType(), prev));
+      res->copyMetadata(*LI);
+      return res;
+    }
+    if (auto CI = dyn_cast<CastInst>(todiff)) {
+      auto prev = CreateNoFree(context, CI->getOperand(0));
+      if (prev == CI->getOperand(0))
+        return todiff;
+      auto res = cast<CastInst>(
+          context.ip->CreateCast(CI->getOpcode(), prev, CI->getType()));
+      res->copyMetadata(*CI);
+      return res;
+    }
+    if (auto gep = dyn_cast<GetElementPtrInst>(todiff)) {
+      if (gep->hasAllConstantIndices() || gep->isInBounds()) {
+        auto prev = CreateNoFree(context, gep->getPointerOperand());
+        if (prev == gep->getPointerOperand())
+          return todiff;
+        SmallVector<Value *, 1> idxs;
+        for (auto &ind : gep->indices())
+          idxs.push_back(ind);
+        auto res = cast<GetElementPtrInst>(
+            context.ip->CreateGEP(gep->getSourceElementType(), prev, idxs));
+        res->setIsInBounds(gep->isInBounds());
+        res->copyMetadata(*gep);
+        return res;
+      }
+    }
+  }
+
   if (EnzymeAssumeUnknownNoFree) {
     return todiff;
   }
@@ -6008,6 +6136,9 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
   llvm::raw_string_ostream ss(s);
   ss << "No create nofree of unknown value\n";
   ss << *todiff << "\n";
+  if (demangledCall.size()) {
+    ss << " demangled (" << demangledCall << ")\n";
+  }
   if (context.req) {
     ss << " at context: " << *context.req;
   }
@@ -6023,20 +6154,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     }
     ss << " within func " << fname << " (" << demangledName << ")\n";
   }
-  if (CustomErrorHandler) {
-    CustomErrorHandler(ss.str().c_str(), wrap(context.req),
-                       ErrorType::NoDerivative, nullptr, wrap(todiff),
-                       wrap(context.ip));
-    return todiff;
-  }
-
-  if (context.req) {
-    EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
-    return todiff;
-  }
-  if (auto arg = dyn_cast<Instruction>(todiff)) {
-    auto loc = arg->getDebugLoc();
-    EmitFailure("IllegalNoFree", loc, arg, s);
+  if (EmitNoDerivativeError(ss.str(), todiff, context)) {
     return todiff;
   }
 
@@ -6060,19 +6178,30 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::basic_ostream<char, std::char_traits<char>>::basic_ostream(std::basic_streambuf<char, std::char_traits<char>>*)",
+      "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&)",
       "std::basic_ostream<char, std::char_traits<char>>::put(char)",
+      "std::basic_ostream<char, std::char_traits<char>>::~basic_ostream()",
 
-      "std::basic_filebuf<char, std::char_traits<char>>::open(char const*, std::_Ios_Openmode)",
       "std::basic_filebuf<char, std::char_traits<char>>::basic_filebuf()",
+      "std::basic_filebuf<char, std::char_traits<char>>::open(char const*, std::_Ios_Openmode)",
       "std::basic_filebuf<char, std::char_traits<char>>::close()",
+      "std::basic_filebuf<char, std::char_traits<char>>::~basic_filebuf()",
 
-      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
       "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
 
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::basic_ostringstream()",
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::str() const",
+      "std::__cxx11::basic_ostringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_ostringstream()",
+
       "std::basic_ios<char, std::char_traits<char> >::init(std::basic_streambuf<char, std::char_traits<char> >*)",
+      "std::basic_ios<char, std::char_traits<char>>::clear(std::_Ios_Iostate)",
+      "std::basic_ios<char, std::char_traits<char>>::operator bool() const",
+      "std::basic_ios<char, std::char_traits<char>>::operator!() const",
+      "std::basic_ios<wchar_t, std::char_traits<wchar_t>>::imbue(std::locale const&)",
 
       "std::_Hash_bytes(void const*, unsigned long, unsigned long)",
       "unsigned long std::__1::__do_string_hash<char const*>(char const*, char const*)",
@@ -6081,6 +6210,16 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::allocator<char>::allocator()",
       "std::allocator<char>::~allocator()",
 
+      "std::basic_ifstream<char, std::char_traits<char>>::is_open()",
+      
+      "std::basic_ofstream<char, std::char_traits<char>>::basic_ofstream(char const*, std::_Ios_Openmode)",
+      "std::basic_ofstream<char, std::char_traits<char>>::is_open()",
+      "std::basic_ofstream<char, std::char_traits<char>>::close()",
+      "std::basic_ofstream<char, std::char_traits<char>>::~basic_ofstream()",
+
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::basic_stringstream(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
+      "std::__cxx11::basic_stringstream<char, std::char_traits<char>, std::allocator<char>>::~basic_stringstream()",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::put(wchar_t)",
 
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(char const*, std::allocator<char> const&)",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>&&)",
@@ -6092,6 +6231,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::length() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::data() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::size() const",
+      "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::c_str() const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::~basic_string()",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(char const*) const",
       "std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>>::compare(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&) const",
@@ -6102,17 +6242,26 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::pbackfail(int)",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::underflow()",
       "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::_M_sync(char*, unsigned long, unsigned long)",
+      "std::__cxx11::basic_stringbuf<char, std::char_traits<char>, std::allocator<char>>::basic_stringbuf(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, std::_Ios_Openmode)",
 
+      "std::basic_streambuf<char, std::char_traits<char>>::pubsync()",
+      "std::basic_ifstream<char, std::char_traits<char>>::close()",
+      "std::istream::ignore()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream()",
+      "std::basic_ifstream<char, std::char_traits<char>>::basic_ifstream(char const*, std::_Ios_Openmode)",
+      "std::basic_ifstream<char, std::char_traits<char>>::~basic_ifstream()",
+      "std::basic_ifstream<char, std::char_traits<char>>::rdbuf() const",
+      "std::__basic_file<char>::is_open() const",
       "std::__basic_file<char>::~__basic_file()",
 
-      "std::basic_ostream<char, std::char_traits<char>>::flush()",
+      "std::ostream::flush()",
       "std::basic_streambuf<char, std::char_traits<char>>::xsgetn(char*, long)",
 
+      "std::locale::locale(char const*)",
+      "std::locale::global(std::locale const&)",
       "std::locale::~locale()",
       "std::ios_base::ios_base()",
-      "std::basic_ostream<char, std::char_traits<char>>& "
-      "std::basic_ostream<char, std::char_traits<char> "
-      ">::_M_insert<double>(double)",
+      "std::ios_base::~ios_base()",
 
       // libc++
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::basic_string(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
@@ -6167,14 +6316,44 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::operator=",
       "std::__1::ctype<char>::widen",
       "std::__1::basic_streambuf<char, std::__1::char_traits<char>>::sputn",
+      "std::basic_ostream<char, std::char_traits<char>>& std::flush",
+      "std::basic_ostream<char, std::char_traits<char>>& std::operator<<",
+      "std::basic_ostream<char, std::char_traits<char>>& std::basic_ostream<char, std::char_traits<char>>::_M_insert",
+      "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::operator<<",
+      "std::basic_ostream<wchar_t, std::char_traits<wchar_t>>& std::basic_ostream<wchar_t, std::char_traits<wchar_t>>::_M_insert",
+      "std::istream::get",
+      "std::ostream::put",
+      "std::ostream::write",
+      "std::ostream& std::ostream::_M_insert",
+      "std::istream::read",
+      "std::istream::operator>>",
+      "std::basic_streambuf<char, std::char_traits<char>>::pubsetbuf",
+      "std::basic_streambuf<char, std::char_traits<char>>::sputn",
+      "std::istream& std::istream::_M_extract",
+      "std::ctype<char>::widen",
+  };
+
+  StringSet<> NoFrees = {"mpfr_greater_p",
+                        "fprintf",
+                         "memchr",
+                         "time",
+                         "strlen",
+                         "__cxa_begin_catch",
+                         "__cxa_guard_acquire",
+                         "__cxa_guard_release",
+                         "__cxa_end_catch",
+                         "compress2",
+                         "malloc_usable_size",
+                         "MPI_Allreduce",
+                         "lgamma",
+                         "lgamma_r",
+                         "__kmpc_global_thread_num",
+                         "nlopt_force_stop",
+                         "cudaRuntimeGetVersion"
   };
   // clang-format on
-
-  StringSet<> NoFrees = {
-      "mpfr_greater_p",    "memchr",          "time",      "strlen",
-      "__cxa_begin_catch", "__cxa_end_catch", "compress2", "malloc_usable_size",
-      "MPI_Allreduce",
-  };
 
   if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
     return F;
@@ -6198,8 +6377,16 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   case Intrinsic::memcpy:
   case Intrinsic::memmove:
   case Intrinsic::memset:
+  case Intrinsic::cttz:
+  case Intrinsic::ctlz:
     return F;
   default:;
+  }
+
+  {
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if (isMemFreeLibMFunction(getFuncName(F), &ID))
+      return F;
   }
 
   if (F->empty()) {
@@ -6229,14 +6416,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
     } else {
       ss << *F << "\n";
     }
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(context.req),
-                         ErrorType::NoDerivative, nullptr, wrap(F),
-                         wrap(context.ip));
-      return F;
-    }
-    if (context.req) {
-      EmitFailure("IllegalNoFree", context.req->getDebugLoc(), context.req, s);
+    if (EmitNoDerivativeError(ss.str(), F, context)) {
       return F;
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F

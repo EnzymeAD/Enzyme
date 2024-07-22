@@ -21,25 +21,38 @@ int enzyme_out;
 int enzyme_const;
 template <typename... T> void __enzyme_autodiff(void *, T...);
 
+void my_dscal_v2(cublasHandle_t *handle, int N, double alpha,
+                 double *__restrict__ X, int incx) {
+  cublasDscal_v2(handle, N, &alpha, X, incx);
+  inDerivative = true;
+}
+
 void my_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
               double alpha, double *__restrict__ A, int lda,
               double *__restrict__ X, int incx, double beta,
               double *__restrict__ Y, int incy) {
-  cublasDgemv(handle, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
+  cublasDgemv(handle, trans, M, N, &alpha, A, lda, X, incx, &beta, Y, incy);
   inDerivative = true;
 }
 
 void ow_dgemv(cublasHandle_t *handle, cublasOperation_t trans, int M, int N,
               double alpha, double *A, int lda, double *X, int incx,
               double beta, double *Y, int incy) {
-  cublasDgemv(handle, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
+  cublasDgemv(handle, trans, M, N, &alpha, A, lda, X, incx, &beta, Y, incy);
   inDerivative = true;
 }
 
 double my_ddot(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
                double *__restrict__ Y, int incy) {
+  double res = cublasDdot(handle, N, X, incx, Y, incy);
+  inDerivative = true;
+  return res;
+}
+
+double my_ddot2(cublasHandle_t *handle, int N, double *__restrict__ X, int incx,
+                double *__restrict__ Y, int incy) {
   double res = 0.0;
-  cublasDdot(handle, N, X, incx, Y, incy, &res);
+  cublasDdot_v2(handle, N, X, incx, Y, incy, &res);
   inDerivative = true;
   return res;
 }
@@ -48,9 +61,57 @@ void my_dgemm(cublasHandle_t *handle, cublasOperation_t transA,
               cublasOperation_t transB, int M, int N, int K, double alpha,
               double *__restrict__ A, int lda, double *__restrict__ B, int ldb,
               double beta, double *__restrict__ C, int ldc) {
-  cublasDgemm(handle, transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C,
-               ldc);
+  cublasDgemm(handle, transA, transB, M, N, K, &alpha, A, lda, B, ldb, &beta, C,
+              ldc);
   inDerivative = true;
+}
+
+static void scal2Tests() {
+
+  std::string Test = "SCAL2 active both ";
+  cublasHandle_t *handle = DEFAULT_CUBLAS_HANDLE;
+  BlasInfo inputs[6] = {
+      /*A*/ BlasInfo(A, N, incA),
+      BlasInfo(),
+      BlasInfo(),
+      BlasInfo(),
+      BlasInfo(),
+      BlasInfo(),
+  };
+  init();
+
+  double alpha = 3.14;
+  // cublasHandle_t handle;
+  my_dscal_v2(handle, N, alpha, A, incA);
+
+  // Check memory of primal on own.
+  checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+  init();
+  __enzyme_autodiff((void *)my_dscal_v2, enzyme_const, handle, enzyme_const, N,
+                    enzyme_out, alpha, enzyme_dup, A, dA, enzyme_const, incA);
+  foundCalls = calls;
+
+  init();
+
+  my_dscal_v2(handle, N, alpha, A, incA);
+
+  inDerivative = true;
+
+  double *dalpha = (double *)foundCalls[1].pout_arg1;
+  inputs[3] = BlasInfo(dalpha, 1, 1);
+
+  cublasDdot_v2(handle, N, A, incA, dA, incA, dalpha);
+  cublasDscal_v2(handle, N, &alpha, dA, incA);
+
+  checkTest(Test);
+
+  // Check memory of primal of expected derivative
+  checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+  // Check memory of primal of our derivative (if equal above, it
+  // should be the same).
+  checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 }
 
 static void dotTests() {
@@ -78,19 +139,69 @@ static void dotTests() {
                     enzyme_const, incB);
   foundCalls = calls;
 
+  init();
+
+  my_ddot(handle, N, A, incA, B, incB);
+
+  inDerivative = true;
+
+  cublasDaxpy(handle, N, 1.0, B, incB, dA, incA);
+  cublasDaxpy(handle, N, 1.0, A, incA, dB, incB);
+
+  checkTest(Test);
+
+  // Check memory of primal of expected derivative
+  checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+  // Check memory of primal of our derivative (if equal above, it
+  // should be the same).
+  checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+}
+
+static void dot2Tests() {
+
+  std::string Test = "DOTv2 active both ";
+  cublasHandle_t *handle = DEFAULT_CUBLAS_HANDLE;
+  BlasInfo inputs[6] = {
+      /*A*/ BlasInfo(A, N, incA),
+      /*B*/ BlasInfo(B, N, incB),
+      /*C*/ BlasInfo(C, M, incC), BlasInfo(), BlasInfo(), BlasInfo(),
+  };
+  init();
+  // cublasHandle_t handle;
+  my_ddot2(handle, N, A, incA, B, incB);
+  {
+    auto primal_stack_ret = (double *)calls[0].pout_arg1;
+    inputs[3] = BlasInfo(primal_stack_ret, 1, 1);
+  }
+
+  // Check memory of primal on own.
+  checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+  init();
+  __enzyme_autodiff((void *)my_ddot2, enzyme_const, handle, enzyme_const, N,
+                    enzyme_dup, A, dA, enzyme_const, incA, enzyme_dup, B, dB,
+                    enzyme_const, incB);
+  {
+    auto primal_stack_ret = (double *)calls[0].pout_arg1;
+    inputs[3] = BlasInfo(primal_stack_ret, 1, 1);
+  }
+  foundCalls = calls;
+
   auto stack_ret = (double*)foundCalls[1].pin_arg2;
   inputs[4] = BlasInfo(stack_ret, 1, 1);
 
   init();
 
-  my_ddot(handle, N, A, incA, B, incB);
+  my_ddot2(handle, N, A, incA, B, incB);
 
   calls[0].pout_arg1 = (double*)foundCalls[0].pout_arg1;
 
   inDerivative = true;
 
-  cublasDaxpy(handle, N, stack_ret, B, incB, dA, incA);
-  cublasDaxpy(handle, N, stack_ret, A, incA, dB, incB);
+  cublasDaxpy_v2(handle, N, stack_ret, B, incB, dA, incA);
+  cublasDaxpy_v2(handle, N, stack_ret, A, incA, dB, incB);
+  cudaMemset(stack_ret, 0, sizeof(double));
 
   checkTest(Test);
 
@@ -155,10 +266,10 @@ static void gemvTests() {
 
       inDerivative = true;
       // dC = alpha * X * transpose(Y) + A
-      cublasDger(handle, M, N, alpha, trans ? B : dC, trans ? incB : incC,
-                  trans ? dC : B, trans ? incC : incB, dA, lda);
+      cublasDger(handle, M, N, &alpha, trans ? B : dC, trans ? incB : incC,
+                 trans ? dC : B, trans ? incC : incB, dA, lda);
       // dY = beta * dY
-      cublasDscal(handle, trans ? N : M, beta, dC, incC);
+      cublasDscal(handle, trans ? N : M, &beta, dC, incC);
 
       checkTest(Test);
 
@@ -184,15 +295,16 @@ static void gemvTests() {
 
       inDerivative = true;
       // dC = alpha * X * transpose(Y) + A
-      cublasDger(handle, M, N, alpha, trans ? B : dC, trans ? incB : incC,
-                  trans ? dC : B, trans ? incC : incB, dA, lda);
+      cublasDger(handle, M, N, &alpha, trans ? B : dC, trans ? incB : incC,
+                 trans ? dC : B, trans ? incC : incB, dA, lda);
 
       // dB = alpha * trans(A) * dC + dB
-      cublasDgemv(handle, transpose(transA), M, N, alpha, A, lda, dC, incC,
-                   1.0, dB, incB);
+      double c1 = 1.0;
+      cublasDgemv(handle, transpose(transA), M, N, &alpha, A, lda, dC, incC,
+                  &c1, dB, incB);
 
       // dY = beta * dY
-      cublasDscal(handle, trans ? N : M, beta, dC, incC);
+      cublasDscal(handle, trans ? N : M, &beta, dC, incC);
 
       checkTest(Test);
 
@@ -334,7 +446,9 @@ static void gemmTests() {
             transB_bool ? A : dC, transB_bool ? lda : incC, 1.0, dB, incB);
 
         // TODO we are currently faking support here, this needs to be actually implemented
-        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, 1.0, beta, M, N, dC, incC, 0);
+        double c10 = 1.0;
+        cublasDlascl(handle, (cublasOperation_t)2, 0, 0, &c10, &beta, M, N,
+                     dC, incC, 0);
 
         checkTest(Test);
 
@@ -355,4 +469,8 @@ int main() {
   gemvTests();
 
   dotTests();
+
+  dot2Tests();
+
+  scal2Tests();
 }

@@ -1,0 +1,46 @@
+#pragma once
+
+#include <type_traits>
+
+namespace enzyme {
+
+// this is already in C++20, but we reimplement it here for older C++ versions
+template < typename T >
+struct remove_cvref {
+    using type =
+        typename std::remove_reference<
+            typename std::remove_cv<
+                T
+            >::type
+        >::type;
+};
+
+template < typename T >
+using remove_cvref_t = typename remove_cvref<T>::type;
+
+namespace impl {
+  template<typename _Tp>
+    __attribute__((always_inline))
+    constexpr _Tp&&
+    forward(std::remove_reference_t<_Tp>& __t) noexcept
+    { return static_cast<_Tp&&>(__t); }
+
+  /**
+   *  @brief  Forward an rvalue.
+   *  @return The parameter cast to the specified type.
+   *
+   *  This function is used to implement "perfect forwarding".
+   */
+  template<typename _Tp>
+    __attribute__((always_inline))
+    constexpr _Tp&&
+    forward(std::remove_reference_t<_Tp>&& __t) noexcept
+    {
+      static_assert(!std::is_lvalue_reference<_Tp>::value,
+	  "enzyme::impl::forward must not be used to convert an rvalue to an lvalue");
+      return static_cast<_Tp&&>(__t);
+    }
+
+}
+
+}

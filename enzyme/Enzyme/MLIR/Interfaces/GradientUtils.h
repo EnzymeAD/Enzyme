@@ -38,8 +38,8 @@ public:
   bool omp;
 
   unsigned width;
-  SmallVector<DIFFE_TYPE, 1> RetDiffeTypes;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
+  ArrayRef<DIFFE_TYPE> RetDiffeTypes;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
@@ -50,7 +50,8 @@ public:
                  MTypeResults TR_, IRMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
-                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                 ArrayRef<DIFFE_TYPE> ReturnActivities,
+                 ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
@@ -103,27 +104,26 @@ public:
                       MTypeResults TR, IRMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &activevals_,
-                      DIFFE_TYPE ActiveReturn,
-                      ArrayRef<DIFFE_TYPE> constant_values,
-                      IRMapping &origToNew_,
+                      ArrayRef<DIFFE_TYPE> RetActivity,
+                      ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
-                       constantvalues_, activevals_, ActiveReturn,
-                       constant_values, origToNew_, origToNewOps_, mode, width,
-                       omp),
+                       constantvalues_, activevals_, RetActivity, ArgActivity,
+                       origToNew_, origToNewOps_, mode, width, omp),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
-  static MDiffeGradientUtils *
-  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
-                  FunctionOpInterface todiff, MTypeAnalysis &TA,
-                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
-                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
+  static MDiffeGradientUtils *CreateFromClone(
+      MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+      FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
+      const std::vector<bool> &returnPrimals,
+      const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
+      ArrayRef<DIFFE_TYPE> ArgActivity, mlir::Type additionalArg, bool omp) {
     std::string prefix;
 
     switch (mode) {
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
     case DerivativeMode::ForwardModeSplit:
       prefix = "fwddiffe";
@@ -147,14 +147,14 @@ public:
     SmallPtrSet<mlir::Value, 1> nonconstant_values;
     IRMapping invertedPointers;
     FunctionOpInterface newFunc = CloneFunctionWithReturns(
-        mode, width, todiff, invertedPointers, constant_args, constant_values,
-        nonconstant_values, returnvals, returnValue, retType,
-        prefix + todiff.getName(), originalToNew, originalToNewOps,
-        diffeReturnArg, additionalArg);
+        mode, width, todiff, invertedPointers, ArgActivity, constant_values,
+        nonconstant_values, returnvals, returnPrimals, returnShadows,
+        RetActivity, prefix + todiff.getName(), originalToNew, originalToNewOps,
+        additionalArg);
     MTypeResults TR; // TODO
     return new MDiffeGradientUtils(
         Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
-        nonconstant_values, retType, constant_args, originalToNew,
+        nonconstant_values, RetActivity, ArgActivity, originalToNew,
         originalToNewOps, mode, width, omp);
   }
 };

@@ -94,10 +94,12 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
     [
-      I32EnumAttrCase<"enzyme_out",  0>,
+      I32EnumAttrCase<"enzyme_active",  0>,
       I32EnumAttrCase<"enzyme_dup",  1>,
       I32EnumAttrCase<"enzyme_const",2>,
       I32EnumAttrCase<"enzyme_dupnoneed", 3>,
+      I32EnumAttrCase<"enzyme_activenoneed",  4>,
+      I32EnumAttrCase<"enzyme_constnoneed",  5>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::enzyme";
@@ -116,7 +118,7 @@ def PlaceholderOp : Enzyme_Op<"placeholder",
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -127,7 +129,18 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def BatchOp : Enzyme_Op<"batch",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Perform reverse mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DenseI64ArrayAttr:$batch_shape);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{

@@ -64,8 +64,6 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
 ; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %[[malloccall4]] to double**
-; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %subcache_malloccache = bitcast i8* %[[malloccall8]] to double**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -78,20 +76,17 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %a10 = getelementptr inbounds double, double* %a0, i32 %0
 ; CHECK-NEXT:   store double* %"a10'ipg", double** %"p3'ipc", align 8
 ; CHECK-NEXT:   store double* %a10, double** %p3, align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
-; CHECK-NEXT:   %a4_augmented = call { double*, double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
-; CHECK-NEXT:   %subcache = extractvalue { double*, double*, double* } %a4_augmented, 0
-; CHECK-NEXT:   %a4 = extractvalue { double*, double*, double* } %a4_augmented, 1
-; CHECK-NEXT:   %"a4'ac" = extractvalue { double*, double*, double* } %a4_augmented, 2
+; CHECK-NEXT:   %a4_augmented = call { double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
+; CHECK-NEXT:   %a4 = extractvalue { double*, double* } %a4_augmented, 0
+; CHECK-NEXT:   %"a4'ac" = extractvalue { double*, double* } %a4_augmented, 1
 ; CHECK-NEXT:   %r = load double, double* %a4
 ; CHECK-NEXT:   %m2 = fmul double %r, %r
 ; CHECK-NEXT:   %a13 = getelementptr inbounds double, double* %out, i32 %0
 ; CHECK-NEXT:   store double %m2, double* %a13, align 8
-; CHECK-NEXT:   %1 = getelementptr inbounds double*, double** %subcache_malloccache, i64 %iv
-; CHECK-NEXT:   store double* %subcache, double** %1, align 8
-; CHECK-NEXT:   %2 = getelementptr inbounds double*, double** %"a4'ip_phi_malloccache", i64 %iv
-; CHECK-NEXT:   store double* %"a4'ac", double** %2, align 8
-; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %r_malloccache, i64 %iv
-; CHECK-NEXT:   store double %r, double* %3, align 8
+; CHECK-NEXT:   %[[i2:.+]] = getelementptr inbounds double*, double** %"a4'ip_phi_malloccache", i64 %iv
+; CHECK-NEXT:   store double* %"a4'ac", double** %[[i2]], align 8
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds double, double* %r_malloccache, i64 %iv
+; CHECK-NEXT:   store double %r, double* %[[i3]], align 8
 ; CHECK-NEXT:   %a14 = add nuw nsw i32 %0, 1
 ; CHECK-NEXT:   %a15 = icmp eq i32 %a14, 10
 ; CHECK-NEXT:   br i1 %a15, label %invertloop, label %loop
@@ -101,7 +96,6 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall4]])
-; CHECK-NEXT:   call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop
@@ -122,9 +116,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   store double %[[i11]], double* %[[i9]]
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %p2 to double**
 ; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %"p2'mi" to double**
-; CHECK-NEXT:   %[[i12:.+]] = getelementptr inbounds double*, double** %subcache_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[i13:.+]] = load double*, double** %[[i12]], align 8
-; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap", double* %[[i13]])
+; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
 ; CHECK-NEXT:   %[[i14:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i14]], label %invertentry, label %incinvertloop
 

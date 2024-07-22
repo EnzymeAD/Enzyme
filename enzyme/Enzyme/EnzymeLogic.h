@@ -55,6 +55,9 @@ extern llvm::cl::opt<bool> EnzymePrint;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
+constexpr char EnzymeFPRTPrefix[] = "__enzyme_fprt_";
+constexpr char EnzymeFPRTOriginalPrefix[] = "__enzyme_fprt_original_";
+
 enum class AugmentedStruct { Tape, Return, DifferentialReturn };
 
 static inline std::string str(AugmentedStruct c) {
@@ -118,6 +121,8 @@ public:
 
   const std::vector<DIFFE_TYPE> constant_args;
 
+  bool shadowReturnUsed;
+
   bool isComplete;
 
   AugmentedReturn(
@@ -126,11 +131,11 @@ public:
       std::map<AugmentedStruct, int> returns,
       std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
       std::map<llvm::Instruction *, bool> can_modref_map,
-      const std::vector<DIFFE_TYPE> &constant_args)
+      const std::vector<DIFFE_TYPE> &constant_args, bool shadowReturnUsed)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
         can_modref_map(can_modref_map), constant_args(constant_args),
-        isComplete(false) {}
+        shadowReturnUsed(shadowReturnUsed), isComplete(false) {}
 };
 
 ///  \p todiff is the function to differentiate
@@ -287,7 +292,11 @@ getTypeForWidth(llvm::LLVMContext &ctx, unsigned width, bool builtinFloat) {
   }
 }
 
-enum TruncateMode { TruncMemMode, TruncOpMode, TruncOpFullModuleMode };
+enum TruncateMode {
+  TruncMemMode = 0b0001,
+  TruncOpMode = 0b0010,
+  TruncOpFullModuleMode = 0b0110,
+};
 [[maybe_unused]] static const char *truncateModeStr(TruncateMode mode) {
   switch (mode) {
   case TruncMemMode:
@@ -351,44 +360,45 @@ struct FloatRepresentation {
 struct FloatTruncation {
 private:
   FloatRepresentation from, to;
+  TruncateMode mode;
 
 public:
-  FloatTruncation(FloatRepresentation From, FloatRepresentation To)
-      : from(From), to(To) {
+  FloatTruncation(FloatRepresentation From, FloatRepresentation To,
+                  TruncateMode mode)
+      : from(From), to(To), mode(mode) {
     if (!From.canBeBuiltin())
       llvm::report_fatal_error("Float truncation `from` type is not builtin.");
-    if (From.exponentWidth < To.exponentWidth)
+    if (From.exponentWidth < To.exponentWidth &&
+        (mode == TruncOpMode || mode == TruncOpFullModuleMode))
       llvm::report_fatal_error("Float truncation `from` type must have "
                                "a wider exponent than `to`.");
-    if (From.significandWidth < To.significandWidth)
+    if (From.significandWidth < To.significandWidth &&
+        (mode == TruncOpMode || mode == TruncOpFullModuleMode))
       llvm::report_fatal_error("Float truncation `from` type must have "
-                               "a wider wsignificand than `to`.");
+                               "a wider significand than `to`.");
     if (From == To)
       llvm::report_fatal_error(
           "Float truncation `from` and `to` type must not be the same.");
   }
+  TruncateMode getMode() { return mode; }
   FloatRepresentation getTo() { return to; }
   unsigned getFromTypeWidth() { return from.getTypeWidth(); }
   unsigned getToTypeWidth() { return to.getTypeWidth(); }
   llvm::Type *getFromType(llvm::LLVMContext &ctx) {
     return from.getBuiltinType(ctx);
   }
-  bool isToMPFR() { return !to.canBeBuiltin(); }
-  llvm::Type *getToType(llvm::LLVMContext &ctx) {
-    if (to.canBeBuiltin()) {
-      return to.getBuiltinType(ctx);
-    } else {
-      assert(isToMPFR());
-      // Currently we do not support TruncMemMode for MPFR, and we provide
-      // runtime wrappers around MPFR for each builtin `from` type
-      return from.getBuiltinType(ctx);
-    }
+  bool isToFPRT() {
+    // TODO maybe add new mode in which we directly truncate to native fp ops,
+    // for now everything goes through the runtime
+    return true;
   }
+  llvm::Type *getToType(llvm::LLVMContext &ctx) { return getFromType(ctx); }
+  auto getTuple() const { return std::tuple(from, to, mode); }
   bool operator==(const FloatTruncation &other) const {
-    return from == other.from && to == other.to;
+    return getTuple() == other.getTuple();
   }
   bool operator<(const FloatTruncation &other) const {
-    return std::tuple(from, to) < std::tuple(other.from, other.to);
+    return getTuple() < other.getTuple();
   }
   std::string mangleTruncation() const {
     return from.to_string() + "to" + to.to_string();

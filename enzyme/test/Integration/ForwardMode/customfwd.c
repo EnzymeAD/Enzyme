@@ -21,10 +21,7 @@
 
 double __enzyme_fwddiff(void*, ...);
 
-__attribute__((noinline))
-void square_(const double* src, double* dest) {
-    *dest = *src * *src;
-}
+static void square_(const double *src, double *dest) { *dest = *src * *src; }
 
 int derivative = 0;
 void derivative_square_(const double* src, const double *d_src, const double* dest, double* d_dest) {

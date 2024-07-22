@@ -4,11 +4,12 @@
 #ifndef ENZYME_TBLGEN_CACHING_H
 #define ENZYME_TBLGEN_CACHING_H 1
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "datastructures.h"
 
-std::string get_input_mat(const llvm::DagInit *ruleDag);
+llvm::StringSet<> get_input_mat(const llvm::DagInit *ruleDag);
 
 void emit_mat_vec_caching(const TGPattern &pattern, size_t i, llvm::raw_ostream &os);
 

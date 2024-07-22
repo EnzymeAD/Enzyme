@@ -326,20 +326,29 @@ public:
 
     std::string s;
     llvm::raw_string_ostream ss(s);
-    ss << *gutils->oldFunc << "\n";
-    ss << *gutils->newFunc << "\n";
     ss << "in Mode: " << to_string(Mode) << "\n";
     ss << "cannot handle unknown instruction\n" << inst;
-    if (CustomErrorHandler) {
-      IRBuilder<> Builder2(&inst);
-      getForwardBuilder(Builder2);
-      CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&Builder2));
-      return;
-    } else {
-      EmitFailure("NoDerivative", inst.getDebugLoc(), &inst, ss.str());
-      return;
+    IRBuilder<> Builder2(&inst);
+    getForwardBuilder(Builder2);
+    EmitNoDerivativeError(ss.str(), inst, gutils, Builder2);
+    if (!gutils->isConstantValue(&inst)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit)
+        setDiffe(&inst,
+                 Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 Builder2);
     }
+#if LLVM_VERSION_MAJOR >= 12
+    if (!inst.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
+        U.set(UndefValue::get(inst.getType()));
+      }
+    }
+#endif
+    eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
+    return;
   }
 
   // Common function for falling back to the implementation
@@ -377,7 +386,8 @@ public:
     eraseIfUnused(I);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(I);
       return;
     }
@@ -398,10 +408,13 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 1) / 8;
 
-    assert(Mode == DerivativeMode::ForwardMode || gutils->can_modref_map);
     assert(Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError || gutils->can_modref_map);
+    assert(Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError ||
            gutils->can_modref_map->find(&I) != gutils->can_modref_map->end());
-    bool can_modref = Mode == DerivativeMode::ForwardMode
+    bool can_modref = (Mode == DerivativeMode::ForwardMode ||
+                       Mode == DerivativeMode::ForwardModeError)
                           ? false
                           : gutils->can_modref_map->find(&I)->second;
 
@@ -444,23 +457,16 @@ public:
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        ss << "\n";
-        TR.dump(ss);
+        ss << ", assumed " << vd.str() << "\n";
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-      }
+      EmitNoTypeError(str, I, gutils, BuilderZ);
     known:;
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       if (!constantval) {
         auto found = gutils->invertedPointers.find(&I);
@@ -557,7 +563,8 @@ public:
             break;
           }
           case DerivativeMode::ForwardModeSplit:
-          case DerivativeMode::ForwardMode: {
+          case DerivativeMode::ForwardMode:
+          case DerivativeMode::ForwardModeError: {
             assert(0 && "impossible branch");
             return;
           }
@@ -600,6 +607,7 @@ public:
     // Otherwise caching will be done inside EnzymeLogic.cpp at
     // the end of the function jointly.
     if (Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError &&
         !gutils->knownRecomputeHeuristic.count(&I) && can_modref &&
         !gutils->unnecessaryIntermediates.count(&I)) {
       // we can pre initialize all the knownRecomputeHeuristic values to false
@@ -626,7 +634,8 @@ public:
         assert(inst->getType() == type);
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
+            Mode == DerivativeMode::ForwardModeSplit ||
+            Mode == DerivativeMode::ForwardModeError) {
           assert(inst != newi);
         } else {
           assert(inst == newi);
@@ -660,7 +669,8 @@ public:
     if (!gutils->isConstantInstruction(&I)) {
       switch (Mode) {
       case DerivativeMode::ForwardModeSplit:
-      case DerivativeMode::ForwardMode: {
+      case DerivativeMode::ForwardMode:
+      case DerivativeMode::ForwardModeError: {
         assert(0 && "impossible branch");
         return;
       }
@@ -681,9 +691,7 @@ public:
 
         Value *premask = nullptr;
 
-        if (prediff && mask &&
-            (!gutils->isConstantValue(I.getOperand(0)) ||
-             !gutils->isConstantValue(orig_maskInit))) {
+        if (prediff && mask) {
           premask = lookup(mask, Builder2);
         }
 
@@ -784,6 +792,7 @@ public:
     case AtomicRMWInst::FSub: {
 
       if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit) {
         auto rule = [&](Value *ptr, Value *dif) -> Value * {
           if (dif == nullptr)
@@ -888,20 +897,22 @@ public:
     llvm::raw_string_ostream ss(s);
     ss << *I.getParent()->getParent() << "\n" << I << "\n";
     ss << " Active atomic inst not yet handled";
-    if (CustomErrorHandler) {
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoDerivative,
-                         gutils, nullptr, wrap(&BuilderZ));
-    } else {
-      EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-    }
+    EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
     if (!gutils->isConstantValue(&I)) {
       if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit)
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-    gutils->replaceAWithB(gutils->getNewFromOriginal(&I),
-                          UndefValue::get(I.getType()));
+#if LLVM_VERSION_MAJOR >= 12
+    if (!I.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
+        U.set(UndefValue::get(I.getType()));
+      }
+    }
+#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -1013,25 +1024,18 @@ public:
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of store " << I;
       if (looseTypeAnalysis || true) {
-        ss << "\n";
-        TR.dump(ss);
         vd = defaultTypeTreeForLLVM(valType, &I);
+        ss << ", assumed " << vd.str() << "\n";
         EmitWarning("CannotDeduceType", I, ss.str());
         goto known;
       }
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-      }
+      EmitNoTypeError(str, I, gutils, BuilderZ);
       return;
     known:;
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
 
       auto dt = vd[{-1}];
       // Only need the full type in forward mode, if storing a constant
@@ -1045,12 +1049,7 @@ public:
             raw_string_ostream ss(str);
             ss << "Cannot deduce single type of store " << I << vd.str()
                << " size: " << storeSize;
-            if (CustomErrorHandler) {
-              CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                                 &TR.analyzer, nullptr, wrap(&BuilderZ));
-            } else {
-              EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-            }
+            EmitNoTypeError(str, I, gutils, BuilderZ);
             return;
           }
         }
@@ -1096,13 +1095,12 @@ public:
     }
 
     unsigned start = 0;
-    unsigned size = storeSize;
 
     while (1) {
-      unsigned nextStart = size;
+      unsigned nextStart = storeSize;
 
       auto dt = vd[{-1}];
-      for (size_t i = start; i < size; ++i) {
+      for (size_t i = start; i < storeSize; ++i) {
         auto nex = vd[{(int)i}];
         if ((nex == BaseType::Anything && dt.isFloat()) ||
             (dt == BaseType::Anything && nex.isFloat())) {
@@ -1116,19 +1114,15 @@ public:
           break;
         }
       }
-      size = nextStart - start;
+      unsigned size = nextStart - start;
       if (!dt.isKnown()) {
 
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I << vd.str()
-           << " size: " << storeSize;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
-        } else {
-          EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-        }
+           << " start: " << start << " size: " << size
+           << " storeSize: " << storeSize;
+        EmitNoTypeError(str, I, gutils, BuilderZ);
         break;
       }
 
@@ -1158,6 +1152,7 @@ public:
                 mask, prevNoAlias, prevScopes);
           } else {
             Value *diff;
+            Value *maskL = mask;
             if (!mask) {
               Value *dif1Ptr =
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
@@ -1198,7 +1193,7 @@ public:
 
               diff = applyChainRule(valType, Builder2, rule, dif1Ptr);
             } else {
-              mask = lookup(mask, Builder2);
+              maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
               auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                  Intrinsic::masked_load, tys);
@@ -1209,7 +1204,7 @@ public:
                   lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
               auto rule = [&](Value *ip) {
-                Value *args[] = {ip, alignv, mask,
+                Value *args[] = {ip, alignv, maskL,
                                  Constant::getNullValue(valType)};
                 diff = Builder2.CreateCall(F, args);
                 return diff;
@@ -1225,11 +1220,12 @@ public:
                 mask, prevNoAlias, prevScopes);
             ((DiffeGradientUtils *)gutils)
                 ->addToDiffe(orig_val, diff, Builder2, FT, start, size, {},
-                             mask);
+                             maskL);
           }
           break;
         }
         case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardModeError:
         case DerivativeMode::ForwardMode: {
           IRBuilder<> Builder2(&I);
           getForwardBuilder(Builder2);
@@ -1283,7 +1279,8 @@ public:
             (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeCombined &&
              (forwardsShadow || backwardsShadow)) ||
-            Mode == DerivativeMode::ForwardMode) {
+            Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
 
           Value *valueop = nullptr;
 
@@ -1325,7 +1322,7 @@ public:
         }
       }
 
-      if (nextStart == size)
+      if (nextStart == storeSize)
         break;
       start = nextStart;
     }
@@ -1335,7 +1332,8 @@ public:
     eraseIfUnused(gep);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(gep);
       return;
     }
@@ -1354,7 +1352,8 @@ public:
       return;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(phi);
       return;
     }
@@ -1416,19 +1415,19 @@ public:
           if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
               TR.query(&I)[{-1}] == BaseType::Integer)
             return;
+          if (looseTypeAnalysis) {
+            if (auto ET = I.getSrcTy()->getScalarType())
+              if (ET->isIntOrIntVectorTy()) {
+                EmitWarning("CannotDeduceType", I,
+                            "failed to deduce adding type of cast ", I,
+                            " assumed integral from src");
+                return;
+              }
+          }
           std::string str;
           raw_string_ostream ss(str);
           ss << "Cannot deduce adding type (cast) of " << I;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoType,
-                               &TR.analyzer, nullptr, wrap(&Builder2));
-            return;
-          } else {
-            ss << "\n";
-            TR.dump(ss);
-            EmitFailure("CannotDeduceType", I.getDebugLoc(), &I, ss.str());
-            return;
-          }
+          EmitNoTypeError(str, I, gutils, Builder2);
         }
         assert(FT);
 
@@ -1446,15 +1445,7 @@ public:
             llvm::raw_string_ostream ss(s);
             ss << *I.getParent()->getParent() << "\n";
             ss << "cannot handle above cast " << I << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, gutils, nullptr,
-                                 wrap(&Builder2));
-            } else {
-              ss << "\n";
-              TR.dump(ss);
-              EmitFailure("CannotHandleCast", I.getDebugLoc(), &I, ss.str());
-            }
+            EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
             return (llvm::Value *)UndefValue::get(op0->getType());
           }
         };
@@ -1471,7 +1462,8 @@ public:
       break;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(I);
       return;
     }
@@ -1494,7 +1486,8 @@ public:
       return;
     }
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(SI);
       return;
     }
@@ -1618,7 +1611,8 @@ public:
     eraseIfUnused(EEI);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(EEI);
       return;
     }
@@ -1632,7 +1626,6 @@ public:
       Value *orig_vec = EEI.getVectorOperand();
 
       if (!gutils->isConstantValue(orig_vec)) {
-        Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
 
         size_t size = 1;
         if (EEI.getType()->isSized())
@@ -1641,9 +1634,22 @@ public:
                    EEI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
-                         TR.addingType(size, &EEI), sv);
+        auto diff = diffe(&EEI, Builder2);
+        if (gutils->getWidth() == 1) {
+          Value *sv[] = {gutils->getNewFromOriginal(EEI.getIndexOperand())};
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_vec, diff, Builder2, TR.addingType(size, &EEI),
+                           sv);
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {nullptr,
+                           gutils->getNewFromOriginal(EEI.getIndexOperand())};
+            sv[0] = ConstantInt::get(sv[1]->getType(), i);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_vec, gutils->extractMeta(Builder2, diff, i),
+                             Builder2, TR.addingType(size, &EEI), sv);
+          }
+        }
       }
       setDiffe(&EEI,
                Constant::getNullValue(gutils->getShadowType(EEI.getType())),
@@ -1663,7 +1669,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(IEI);
       return;
     }
@@ -1696,19 +1703,46 @@ public:
              7) /
             8;
 
-      if (!gutils->isConstantValue(orig_op0))
-        addToDiffe(
-            orig_op0,
-            Builder2.CreateInsertElement(
-                dif1,
-                Constant::getNullValue(gutils->getShadowType(op1->getType())),
-                lookup(op2, Builder2)),
-            Builder2, TR.addingType(size0, orig_op0));
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(
+              orig_op0,
+              Builder2.CreateInsertElement(
+                  dif1,
+                  Constant::getNullValue(gutils->getShadowType(op1->getType())),
+                  lookup(op2, Builder2)),
+              Builder2, TR.addingType(size0, orig_op0));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0,
+                             Builder2.CreateInsertElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 Constant::getNullValue(op1->getType()),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size0, orig_op0), sv);
+          }
+        }
+      }
 
-      if (!gutils->isConstantValue(orig_op1))
-        addToDiffe(orig_op1,
-                   Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
-                   Builder2, TR.addingType(size1, orig_op1));
+      if (!gutils->isConstantValue(orig_op1)) {
+        if (gutils->getWidth() == 1) {
+          addToDiffe(orig_op1,
+                     Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
+                     Builder2, TR.addingType(size1, orig_op1));
+        } else {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
+            Value *sv[] = {ConstantInt::get(op2->getType(), i)};
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op1,
+                             Builder2.CreateExtractElement(
+                                 gutils->extractMeta(Builder2, dif1, i),
+                                 lookup(op2, Builder2)),
+                             Builder2, TR.addingType(size1, orig_op1), sv);
+          }
+        }
+      }
 
       setDiffe(&IEI,
                Constant::getNullValue(gutils->getShadowType(IEI.getType())),
@@ -1728,7 +1762,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(SVI);
       return;
     }
@@ -1754,8 +1789,6 @@ public:
       for (size_t idx : SVI.getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
-        Value *sv[] = {
-            ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
 
         if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
           size_t size = 1;
@@ -1765,10 +1798,25 @@ public:
                         .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
                     7) /
                    8;
-          Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
-                           TR.addingType(size, SVI.getOperand(opnum)), sv);
+          if (gutils->getWidth() == 1) {
+            Value *sv[] = {
+                ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+            Value *toadd = Builder2.CreateExtractElement(loaded, instidx);
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                             TR.addingType(size, SVI.getOperand(opnum)), sv);
+          } else {
+            for (size_t i = 0; i < gutils->getWidth(); i++) {
+              Value *sv[] = {
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), i),
+                  ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx)};
+              Value *toadd = Builder2.CreateExtractElement(
+                  GradientUtils::extractMeta(Builder2, loaded, i), instidx);
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(SVI.getOperand(opnum), toadd, Builder2,
+                               TR.addingType(size, SVI.getOperand(opnum)), sv);
+            }
+          }
         }
         ++instidx;
       }
@@ -1796,7 +1844,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode: {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
       forwardModeInvertedPointerFallback(EVI);
       return;
     }
@@ -1861,7 +1910,8 @@ public:
       return;
 
     if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeSplit) {
+        Mode == DerivativeMode::ForwardModeSplit ||
+        Mode == DerivativeMode::ForwardModeError) {
       forwardModeInvertedPointerFallback(IVI);
       return;
     }
@@ -1918,6 +1968,7 @@ public:
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError:
       assert(0 && "should be handled above");
       return;
     case DerivativeMode::ReverseModeCombined:
@@ -1978,13 +2029,7 @@ public:
               raw_string_ostream ss(str);
               ss << "Cannot deduce type of insertvalue ins " << IVI
                  << " size: " << size0 << " TT: " << TT.str();
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
-              } else {
-                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                            ss.str());
-              }
+              EmitNoTypeError(str, IVI, gutils, Builder2);
             }
           }
 
@@ -2063,13 +2108,7 @@ public:
               ss << "Cannot deduce type of insertvalue agg " << IVI
                  << " start: " << start << " size: " << size1
                  << " TT: " << TT.str();
-              if (CustomErrorHandler) {
-                CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                   &TR.analyzer, nullptr, wrap(&Builder2));
-              } else {
-                EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
-                            ss.str());
-              }
+              EmitNoTypeError(str, IVI, gutils, Builder2);
             }
           }
 
@@ -2303,6 +2342,7 @@ public:
       createBinaryOperatorAdjoint(BO);
       break;
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardModeSplit:
       createBinaryOperatorDual(BO);
       break;
@@ -2570,12 +2610,7 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&Builder2));
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
     }
 
   done:;
@@ -2811,18 +2846,11 @@ public:
              << " type: " << TR.query(&I).str() << "\n";
         }
       ss << "cannot handle unknown binary operator: " << BO << "\n";
-      if (CustomErrorHandler) {
-        auto rval = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&BO),
-                                              ErrorType::NoDerivative, gutils,
-                                              nullptr, wrap(&Builder2)));
-        if (!rval)
-          rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-        if (!gutils->isConstantValue(&BO))
-          setDiffe(&BO, rval, Builder2);
-      } else {
-        EmitFailure("NoDerivative", BO.getDebugLoc(), &BO, ss.str());
-        return;
-      }
+      auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
+      if (!rval)
+        rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
+      if (!gutils->isConstantValue(&BO))
+        setDiffe(&BO, rval, Builder2);
       break;
     }
   }
@@ -2872,15 +2900,11 @@ public:
       ss << "couldn't handle non constant inst in memset to "
             "propagate differential to\n"
          << MS;
-      if (CustomErrorHandler) {
-        CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           gutils, nullptr, wrap(&BuilderZ));
-      } else {
-        EmitFailure("NoDerivative", MS.getDebugLoc(), &MS, ss.str());
-      }
+      EmitNoDerivativeError(ss.str(), MS, gutils, BuilderZ);
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
@@ -3097,14 +3121,7 @@ public:
       std::string str;
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of memset " << MS;
-      if (CustomErrorHandler) {
-        CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderZ));
-      } else {
-        ss << "\n";
-        TR.dump(ss);
-        EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS, ss.str());
-      }
+      EmitNoTypeError(str, MS, gutils, BuilderZ);
       return;
     }
   known:;
@@ -3227,7 +3244,7 @@ public:
           if (start != 0) {
             Value *idxs[] = {
                 ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
-            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
+            op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
                                              op0, idxs);
           }
           SmallVector<Value *, 4> args = {op0, op1l, length};
@@ -3308,7 +3325,8 @@ public:
       return;
     }
 
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
@@ -3319,7 +3337,8 @@ public:
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
 
     bool errorIfNoType = true;
-    if (Mode == DerivativeMode::ForwardMode &&
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
         (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
       errorIfNoType = false;
     }
@@ -3403,15 +3422,7 @@ public:
         std::string str;
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of copy " << MTI;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer, nullptr, wrap(&BuilderZ));
-        } else {
-          ss << "\n";
-          ss << *gutils->oldFunc << "\n";
-          TR.dump(ss);
-          EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI, ss.str());
-        }
+        EmitNoTypeError(str, MTI, gutils, BuilderZ);
         vd = TypeTree(BaseType::Integer).Only(0, &MTI);
       } else {
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
@@ -3457,7 +3468,8 @@ public:
              (dt != BaseType::Anything && dt.isKnown())))
           Legal = false;
         if (!Legal) {
-          if (Mode == DerivativeMode::ForwardMode) {
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError) {
             // if both are floats (of any type), forward mode is the same.
             //   + [potentially zero if const, otherwise copy]
             // if both are int/pointer (of any type), also the same
@@ -3584,7 +3596,8 @@ public:
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
-      if (Mode == DerivativeMode::ForwardMode)
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError)
         applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
       else
         applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
@@ -3644,6 +3657,7 @@ public:
     // handling the intrinsic here.
     if (isIntelSubscriptIntrinsic(II)) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
+          Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardMode) {
         forwardModeInvertedPointerFallback(II);
       }
@@ -3752,17 +3766,10 @@ public:
         ss << *gutils->oldFunc << "\n";
         ss << *gutils->newFunc << "\n";
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
-        if (CustomErrorHandler) {
-          IRBuilder<> BuilderZ(&I);
-          getForwardBuilder(BuilderZ);
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&BuilderZ));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        IRBuilder<> BuilderZ(&I);
+        getForwardBuilder(BuilderZ);
+        EmitNoDerivativeError(ss.str(), I, gutils, BuilderZ);
+        return false;
       }
       return false;
     }
@@ -3893,19 +3900,13 @@ public:
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-          return false;
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-          return false;
-        }
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
+        return false;
       }
       return false;
     }
     case DerivativeMode::ForwardModeSplit:
+    case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode: {
 
       IRBuilder<> Builder2(&I);
@@ -3972,15 +3973,11 @@ public:
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
              << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, gutils, nullptr,
-                             wrap(&Builder2));
-        } else {
-          EmitFailure("NoDerivative", I.getDebugLoc(), &I, ss.str());
-        }
-        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
-                 Builder2);
+        EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
         return false;
       }
       return false;
@@ -4302,19 +4299,25 @@ public:
       }
     }
 
-    if (!subdata) {
-      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
-      llvm::errs() << *called << "\n";
-      llvm_unreachable("no subdata");
+    {
+      Intrinsic::ID ID = Intrinsic::not_intrinsic;
+      if (!subdata && !isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+        llvm::errs() << *called << "\n";
+        llvm_unreachable("no subdata");
+      }
     }
 
-    auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
-    assert(found == subdata->returns.end());
-
-    found = subdata->returns.find(AugmentedStruct::Return);
-    assert(found == subdata->returns.end());
+    if (subdata) {
+      auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
+      assert(found == subdata->returns.end());
+    }
+    if (subdata) {
+      auto found = subdata->returns.find(AugmentedStruct::Return);
+      assert(found == subdata->returns.end());
+    }
 
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -4329,11 +4332,17 @@ public:
 
       Function *newcalled = nullptr;
       if (called) {
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
+        if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
+                           subdata->returns.end()) {
           if (Mode == DerivativeMode::ReverseModeGradient) {
-            if (tape == nullptr)
+            if (tape == nullptr) {
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
               tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
+            }
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
@@ -4374,8 +4383,8 @@ public:
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
+        if (subdata && subdata->returns.find(AugmentedStruct::Tape) !=
+                           subdata->returns.end()) {
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
           LoadInst *tape = nullptr;
@@ -4726,6 +4735,7 @@ public:
     }
 
     if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
         Mode == DerivativeMode::ForwardModeSplit) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
@@ -4881,7 +4891,11 @@ public:
 
         auto idx = *tapeIdx;
         FunctionType *FT = subdata->fn->getFunctionType();
-
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1)
                 ? FT->getReturnType()
@@ -5230,12 +5244,13 @@ public:
           cast<Function>(called)->getFunctionType()->getNumParams())
 #endif
       {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
-        assert(0 && "number of arg operands != function parameters");
+        llvm::errs() << " number of arg operands != function parameters\n";
+        EmitFailure("MismatchArgs", call.getDebugLoc(), &call,
+                    "Number of arg operands != function parameters\n", call);
       }
-      assert(argsInverted.size() ==
-             cast<Function>(called)->getFunctionType()->getNumParams());
     }
 
     Value *tape = nullptr;
@@ -5274,14 +5289,7 @@ public:
           raw_string_ostream ss(str);
           ss << "cannot find shadow for " << *callval
              << " for use as function in " << call;
-          if (CustomErrorHandler) {
-            CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, gutils, nullptr,
-                               wrap(&BuilderZ));
-          } else {
-            EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
-            return;
-          }
+          EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
         }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
@@ -5332,45 +5340,53 @@ public:
                 *subaugmentations, &call, (AugmentedReturn *)subdata);
           }
         }
-        if (!subdata) {
-          llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-          llvm::errs() << *gutils->oldFunc << "\n";
-          llvm::errs() << *gutils->newFunc << "\n";
-          llvm::errs() << *called << "\n";
-        }
-        assert(subdata);
-        fnandtapetype = subdata;
-        newcalled = subdata->fn;
-        FT = cast<Function>(newcalled)->getFunctionType();
-
-        auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
-        if (found != subdata->returns.end()) {
-          differetIdx = found->second;
-        } else {
-          assert(!shadowReturnUsed);
+        {
+          Intrinsic::ID ID = Intrinsic::not_intrinsic;
+          if (!subdata &&
+              !isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+            llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+            llvm::errs() << *gutils->oldFunc << "\n";
+            llvm::errs() << *gutils->newFunc << "\n";
+            llvm::errs() << *called << "\n";
+            assert(subdata);
+          }
         }
 
-        found = subdata->returns.find(AugmentedStruct::Return);
-        if (found != subdata->returns.end()) {
-          returnIdx = found->second;
-        } else {
-          assert(!subretused);
-        }
+        if (subdata) {
+          fnandtapetype = subdata;
+          newcalled = subdata->fn;
+          FT = cast<Function>(newcalled)->getFunctionType();
 
-        found = subdata->returns.find(AugmentedStruct::Tape);
-        if (found != subdata->returns.end()) {
-          tapeIdx = found->second;
+          auto found =
+              subdata->returns.find(AugmentedStruct::DifferentialReturn);
+          if (found != subdata->returns.end()) {
+            differetIdx = found->second;
+          } else {
+            assert(!shadowReturnUsed);
+          }
+
+          found = subdata->returns.find(AugmentedStruct::Return);
+          if (found != subdata->returns.end()) {
+            returnIdx = found->second;
+          } else {
+            assert(!subretused);
+          }
+
+          found = subdata->returns.find(AugmentedStruct::Tape);
+          if (found != subdata->returns.end()) {
+            tapeIdx = found->second;
+          }
         }
       }
       // sub_index_map = fnandtapetype.tapeIndices;
-
-      assert(newcalled);
-      assert(FT);
 
       // llvm::errs() << "seeing sub_index_map of " << sub_index_map->size()
       // << " in ap " << cast<Function>(called)->getName() << "\n";
       if (Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ReverseModePrimal) {
+
+        assert(newcalled);
+        assert(FT);
 
         if (false) {
         badaugmentedfn:;
@@ -5518,29 +5534,46 @@ public:
         } else {
           // assert(!tape);
           // assert(subdata);
-          if (!tape) {
-            assert(tapeIdx);
-            auto tval = *tapeIdx;
-            tape = BuilderZ.CreatePHI(
-                (tapeIdx == -1) ? FT->getReturnType()
-                                : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tval),
-                1, "tapeArg");
+          if (FT) {
+            if (!tape) {
+              assert(tapeIdx);
+              auto tval = *tapeIdx;
+#if LLVM_VERSION_MAJOR >= 18
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
+#endif
+              tape = BuilderZ.CreatePHI(
+                  (tapeIdx == -1) ? FT->getReturnType()
+                                  : cast<StructType>(FT->getReturnType())
+                                        ->getElementType(tval),
+                  1, "tapeArg");
+            }
+            tape = gutils->cacheForReverse(
+                BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
           }
-          tape = gutils->cacheForReverse(
-              BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
         }
 
         if (subretused) {
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                               call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
                 BuilderZ, cachereplace,
                 getIndex(&call, CacheType::Self, BuilderZ));
           } else {
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             auto pn = BuilderZ.CreatePHI(
                 call.getType(), 1, (call.getName() + "_replacementE").str());
             gutils->fictiousPHIs[pn] = &call;
@@ -5640,12 +5673,22 @@ public:
                 QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
           assert(!replaceFunction);
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                             call.getName() + "_cachereplace2");
           cachereplace = gutils->cacheForReverse(
               BuilderZ, cachereplace,
               getIndex(&call, CacheType::Self, BuilderZ));
         } else {
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
           auto pn = BuilderZ.CreatePHI(call.getType(), 1,
                                        call.getName() + "_replacementC");
           gutils->fictiousPHIs[pn] = &call;
@@ -5715,20 +5758,12 @@ public:
         ss << "in Mode: " << to_string(Mode) << "\n";
         ss << " orig: " << call << " callval: " << *callval << "\n";
         ss << " constant function being called, but active call instruction\n";
-        if (CustomErrorHandler) {
-          auto val = unwrap(CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                                               ErrorType::NoDerivative, gutils,
-                                               nullptr, wrap(&Builder2)));
-          if (val)
-            newcalled = val;
-          else
-            newcalled =
-                UndefValue::get(gutils->getShadowType(callval->getType()));
-        } else {
-          EmitFailure("NoDerivative", call.getDebugLoc(), &call, ss.str());
+        auto val = EmitNoDerivativeError(ss.str(), call, gutils, Builder2);
+        if (val)
+          newcalled = val;
+        else
           newcalled =
               UndefValue::get(gutils->getShadowType(callval->getType()));
-        }
       } else {
         newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
       }
@@ -5974,7 +6009,8 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     if (overwritten_args_map.find(&call) == overwritten_args_map.end() &&
-        Mode != DerivativeMode::ForwardMode) {
+        Mode != DerivativeMode::ForwardMode &&
+        Mode != DerivativeMode::ForwardModeError) {
       llvm::errs() << " call: " << call << "\n";
       for (auto &pair : overwritten_args_map) {
         llvm::errs() << " + " << *pair.first << "\n";
@@ -5982,9 +6018,11 @@ public:
     }
 
     assert(overwritten_args_map.find(&call) != overwritten_args_map.end() ||
-           Mode == DerivativeMode::ForwardMode);
+           Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError);
     const std::vector<bool> &overwritten_args =
-        Mode == DerivativeMode::ForwardMode
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError)
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 
@@ -5999,7 +6037,8 @@ public:
     DIFFE_TYPE subretType = gutils->getReturnDiffeType(
         &call, &subretused, &shadowReturnUsed, smode);
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       auto found = customFwdCallHandlers.find(funcName);
       if (found != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
@@ -6122,6 +6161,11 @@ public:
             // EnzymeLogic.
             tapeType = (llvm::Type *)fd->second;
 
+#if LLVM_VERSION_MAJOR >= 18
+            auto It = BuilderZ.GetInsertPoint();
+            It.setHeadBit(true);
+            BuilderZ.SetInsertPoint(It);
+#endif
             tape = BuilderZ.CreatePHI(tapeType, 0);
             tape = gutils->cacheForReverse(
                 BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ),
@@ -6161,7 +6205,7 @@ public:
               auto idx = getIndex(&call, CacheType::Shadow, BuilderZ);
               invertedReturn =
                   gutils->cacheForReverse(BuilderZ, placeholder, idx);
-              if (idx == -2) {
+              if (idx == IndexMappingError) {
                 if (placeholder->getType() != invertedReturn->getType())
                   llvm::errs() << " place: " << *placeholder
                                << "  invRet: " << *invertedReturn;
@@ -6224,8 +6268,18 @@ public:
                                    newCall))
       return;
 
-    if (gutils->isConstantInstruction(&call) &&
-        (gutils->isConstantValue(&call) || !shadowReturnUsed)) {
+    bool useConstantFallback =
+        DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+    if (!useConstantFallback) {
+      if (gutils->isConstantInstruction(&call) &&
+          gutils->isConstantValue(&call)) {
+        EmitWarning("ConstnatFallback", call,
+                    "Call was deduced inactive but still doing differential "
+                    "rewrite as it may escape an allocation",
+                    call);
+      }
+    }
+    if (useConstantFallback) {
       if (!gutils->isConstantValue(&call)) {
         auto found = gutils->invertedPointers.find(&call);
         if (found != gutils->invertedPointers.end()) {
@@ -6234,11 +6288,21 @@ public:
           gutils->erase(placeholder);
         }
       }
-      bool noFree = Mode == DerivativeMode::ForwardMode;
+      bool noFree = Mode == DerivativeMode::ForwardMode ||
+                    Mode == DerivativeMode::ForwardModeError;
       noFree |= call.hasFnAttr(Attribute::NoFree);
       if (!noFree && called) {
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
+
+      std::map<UsageKey, bool> CacheResults;
+      for (auto pair : gutils->knownRecomputeHeuristic) {
+        if (!pair.second || gutils->unnecessaryIntermediates.count(
+                                cast<Instruction>(pair.first))) {
+          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
+        }
+      }
+
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
 #if LLVM_VERSION_MAJOR >= 14
@@ -6248,12 +6312,76 @@ public:
 #endif
         {
           Value *a = call.getOperand(i);
-          if (gutils->isConstantValue(a))
+
+          if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
             continue;
+          // if could not be a pointer, it cannot be freed
           if (!TR.query(a)[{-1}].isPossiblePointer())
             continue;
-          mayActiveFree = true;
-          break;
+          // if active value, we need to do memory preservation
+          if (!gutils->isConstantValue(a)) {
+            mayActiveFree = true;
+            break;
+          }
+          // if used in reverse (even if just primal), need to do
+          // memory preservation
+          const auto obj = getBaseObject(a);
+          // If not allocation/allocainst, it is possible this aliases
+          // a pointer needed in the reverse pass
+          bool isAllocation = false;
+          for (auto objv = obj;;) {
+            if (isAllocationCall(objv, gutils->TLI)) {
+              isAllocation = true;
+              break;
+            }
+            if (auto objC = dyn_cast<CallBase>(objv))
+              if (auto F = getFunctionFromCall(objC))
+                if (!F->empty()) {
+                  SmallPtrSet<Value *, 1> set;
+                  for (auto &B : *F) {
+                    if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+                      auto v = getBaseObject(RI->getOperand(0));
+                      if (isa<ConstantPointerNull>(v))
+                        continue;
+                      set.insert(v);
+                    }
+                  }
+                  if (set.size() == 1) {
+                    objv = *set.begin();
+                    continue;
+                  }
+                }
+            break;
+          }
+          if (!isAllocation) {
+            mayActiveFree = true;
+            break;
+          }
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(obj);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                auto CacheResults2(CacheResults);
+                CacheResults2.erase(UsageKey(obj, QueryType::Primal));
+                if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        QueryType::Primal>(gutils, obj,
+                                           DerivativeMode::ReverseModeGradient,
+                                           CacheResults2, oldUnreachable)) {
+                  mayActiveFree = true;
+                  break;
+                }
+              }
+              continue;
+            }
+          }
+          auto CacheResults2(CacheResults);
+          if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                  QueryType::Primal>(gutils, obj,
+                                     DerivativeMode::ReverseModeGradient,
+                                     CacheResults2, oldUnreachable)) {
+            mayActiveFree = true;
+            break;
+          }
         }
         if (!mayActiveFree)
           noFree = true;
@@ -6279,7 +6407,8 @@ public:
       // may load overwritten data)
       //    Store and reload it
       if (Mode != DerivativeMode::ReverseModeCombined &&
-          Mode != DerivativeMode::ForwardMode && subretused &&
+          Mode != DerivativeMode::ForwardMode &&
+          Mode != DerivativeMode::ForwardModeError && subretused &&
           (call.mayWriteToMemory() ||
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {

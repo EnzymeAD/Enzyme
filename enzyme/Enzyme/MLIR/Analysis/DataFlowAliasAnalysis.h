@@ -1,4 +1,4 @@
-//===- AliasAnalysis.h - Declaration of Alias Analysis --------------------===//
+//===- DataflowAliasAnalysis.h - Declaration of Alias Analysis ------------===//
 //
 //                             Enzyme Project
 //
@@ -26,7 +26,7 @@
 #ifndef ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 #define ENZYME_MLIR_ANALYSIS_DATAFLOW_ALIASANALYSIS_H
 
-#include "Lattice.h"
+#include "DataFlowLattice.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
@@ -208,7 +208,7 @@ public:
 
   void print(raw_ostream &os) const override;
 
-  AliasResult alias(const AbstractSparseLattice &other) const;
+  ::mlir::AliasResult alias(const AbstractSparseLattice &other) const;
 
   ChangeResult join(const AbstractSparseLattice &other) override;
 

@@ -57,16 +57,18 @@ DiffeGradientUtils::DiffeGradientUtils(
     ValueToValueMapTy &invertedPointers_,
     const SmallPtrSetImpl<Value *> &constantvalues_,
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
-    ArrayRef<DIFFE_TYPE> constant_values,
+    bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
     DerivativeMode mode, unsigned width, bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
-                    constantvalues_, returnvals_, ActiveReturn, constant_values,
-                    origToNew_, mode, width, omp) {
+                    constantvalues_, returnvals_, ActiveReturn,
+                    shadowReturnUsed, constant_values, origToNew_, mode, width,
+                    omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
   if (mode == DerivativeMode::ForwardMode ||
+      mode == DerivativeMode::ForwardModeError ||
       mode == DerivativeMode::ForwardModeSplit) {
     return;
   }
@@ -84,13 +86,15 @@ DiffeGradientUtils::DiffeGradientUtils(
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, Type *additionalArg, bool omp) {
+    DIFFE_TYPE retType, bool shadowReturn, bool diffeReturnArg,
+    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
+    Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
          mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::ForwardModeError);
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -103,6 +107,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   std::string prefix;
 
   switch (mode) {
+  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
     prefix = "fwddiffe";
@@ -154,15 +159,18 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   if (!oldFunc->empty())
     assert(TR.getFunction() == oldFunc);
 
-  auto res = new DiffeGradientUtils(Logic, newFunc, oldFunc, TLI, TA, TR,
-                                    invertedPointers, constant_values,
-                                    nonconstant_values, retType, constant_args,
-                                    originalToNew, mode, width, omp);
+  auto res = new DiffeGradientUtils(
+      Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
+      nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
+      mode, width, omp);
 
   return res;
 }
 
 AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
+  assert(mode != DerivativeMode::ForwardMode);
+  assert(mode != DerivativeMode::ForwardModeSplit);
+  assert(mode != DerivativeMode::ForwardModeError);
   assert(val);
 #ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
@@ -210,7 +218,8 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
     assert(0 && "getting diffe of constant value");
   }
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit)
+      mode == DerivativeMode::ForwardModeSplit ||
+      mode == DerivativeMode::ForwardModeError)
     return invertPointerM(val, BuilderM);
   if (val->getType()->isPointerTy()) {
     llvm::errs() << *newFunc << "\n";
@@ -237,7 +246,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(VT)) {
-      assert(i < AT->getNumElements());
+      assert((size_t)i < AT->getNumElements());
       VT = AT->getElementType();
       continue;
     }
@@ -464,8 +473,14 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     old = BuilderM.CreateLoad(getShadowType(val->getType()), ptr);
   }
   if (dif->getType() != old->getType()) {
-    llvm::errs() << " val: " << *val << " dif: " << *dif << " old: " << *old
-                 << "\n";
+    if (auto inst = dyn_cast<Instruction>(val)) {
+      EmitFailure("IllegalAddingType", inst->getDebugLoc(), inst, "val ", *val,
+                  " dif ", *dif, " old ", *old);
+      return addedSelects;
+    }
+    llvm::errs() << " IllegalAddingType val: " << *val << " dif: " << *dif
+                 << " old: " << *old << "\n";
+    llvm_unreachable("IllegalAddingType");
   }
 
   assert(dif->getType() == old->getType());
@@ -488,19 +503,17 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       for (auto idx : idxs)
         ss << *idx << ",";
       ss << "}\n";
-      if (CustomErrorHandler) {
+      if (auto inst = dyn_cast<Instruction>(val)) {
+        EmitNoTypeError(ss.str(), *inst, this, BuilderM);
+        return addedSelects;
+      } else if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         TR.dump(ss);
-        DebugLoc loc;
-        if (auto inst = dyn_cast<Instruction>(val))
-          EmitFailure("CannotDeduceType", inst->getDebugLoc(), inst, ss.str());
-        else {
-          llvm::errs() << ss.str() << "\n";
-          llvm_unreachable("Cannot deduce adding type");
-        }
+        llvm::errs() << ss.str() << "\n";
+        llvm_unreachable("Cannot deduce adding type");
         return addedSelects;
       }
     }
@@ -528,7 +541,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
          << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           &TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, wrap(&BuilderM));
         return addedSelects;
       } else {
         DebugLoc loc;
@@ -679,7 +692,8 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
 #endif
   toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
+      mode == DerivativeMode::ForwardModeSplit ||
+      mode == DerivativeMode::ForwardModeError) {
     assert(getShadowType(val->getType()) == toset->getType());
     auto found = invertedPointers.find(val);
     assert(found != invertedPointers.end());
@@ -742,8 +756,8 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
     }
   }
 
-  Value *metaforfree =
-      unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
+  Value *metaforfree = unwrapM(storeInto, tbuild, antimap,
+                               UnwrapMode::AttemptFullUnwrapWithLookup);
   Type *T;
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
@@ -804,6 +818,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   switch (mode) {
   case DerivativeMode::ForwardModeSplit:
   case DerivativeMode::ForwardMode:
+  case DerivativeMode::ForwardModeError:
     ptr = invertPointerM(origptr, BuilderM);
     break;
   case DerivativeMode::ReverseModePrimal:

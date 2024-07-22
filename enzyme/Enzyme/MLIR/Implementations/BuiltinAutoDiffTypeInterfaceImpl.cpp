@@ -14,6 +14,7 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -38,6 +39,10 @@ public:
                     Value b) const {
     return builder.create<arith::AddFOp>(loc, a, b);
   }
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return a;
+  }
 
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
@@ -58,18 +63,39 @@ public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto tenType = self.cast<TensorType>();
     auto ET = tenType.getElementType();
-    size_t num = 1;
-    for (auto sz : tenType.getShape())
-      num *= sz;
-    APFloat apvalue(ET.cast<FloatType>().getFloatSemantics(), 0);
-    SmallVector<APFloat> supportedValues(num, apvalue);
-    auto attr = DenseElementsAttr::get(tenType, supportedValues);
-    return builder.create<arith::ConstantOp>(loc, tenType, attr);
+
+    if (auto F = dyn_cast<FloatType>(ET)) {
+      APFloat apvalue(F.getFloatSemantics(), 0);
+      auto attr = DenseElementsAttr::get(tenType, apvalue);
+      return builder.create<arith::ConstantOp>(loc, tenType, attr);
+    }
+    if (auto G = dyn_cast<ComplexType>(ET)) {
+      if (auto F = dyn_cast<FloatType>(G.getElementType())) {
+        APFloat apvalue(F.getFloatSemantics(), 0);
+        std::complex<APFloat> c(apvalue, apvalue);
+        auto attr = DenseElementsAttr::get(tenType, c);
+        return builder.create<arith::ConstantOp>(loc, tenType, attr);
+      }
+    }
+    assert(0);
+    return nullptr;
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    return builder.create<arith::AddFOp>(loc, a, b);
+    auto tenType = self.cast<TensorType>();
+    auto ET = tenType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    return iface.createAddOp(builder, loc, a, b);
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    auto tenType = self.cast<TensorType>();
+    auto ET = tenType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    auto added = iface.createConjOp(builder, loc, a);
+    return added;
   }
 
   Type getShadowType(Type self, unsigned width) const {
@@ -100,6 +126,45 @@ public:
     return builder.create<arith::AddIOp>(loc, a, b);
   }
 
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return a;
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+};
+
+class ComplexTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<ComplexTypeInterface,
+                                                  ComplexType> {
+public:
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto fltType = self.cast<ComplexType>().getElementType().cast<FloatType>();
+    mlir::Attribute attrs[2] = {
+        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
+        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};
+    return builder.create<complex::ConstantOp>(loc, self,
+                                               builder.getArrayAttr(attrs));
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    return builder.create<complex::AddOp>(loc, a, b)->getResult(0);
+  }
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    return builder.create<complex::ConjOp>(loc, a)->getResult(0);
+  }
+
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;
@@ -124,5 +189,6 @@ void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
     UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);
     RankedTensorType::attachInterface<TensorTypeInterface>(*context);
+    ComplexType::attachInterface<ComplexTypeInterface>(*context);
   });
 }

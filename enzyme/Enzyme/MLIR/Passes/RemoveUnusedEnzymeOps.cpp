@@ -35,6 +35,7 @@ namespace {
 // check before end.
 bool mayExecuteBefore(Block *blk, Operation *check, Operation *end) {
   auto reg = blk->getParent();
+  (void)reg;
   assert(reg->isAncestor(end->getParentRegion()));
 
   DenseSet<Block *> visitedBlocks;

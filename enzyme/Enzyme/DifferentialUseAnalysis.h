@@ -48,6 +48,11 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
 }
 
+extern llvm::StringMap<
+    std::function<bool(const llvm::CallInst *, const GradientUtils *,
+                       const llvm::Value *, bool, DerivativeMode, bool &)>>
+    customDiffUseHandlers;
+
 /// Classification of what type of use is requested
 enum class QueryType {
   // The original value is needed for the derivative
@@ -117,6 +122,14 @@ inline bool is_value_needed_in_reverse(
           return seen[idx] = true;
         }
       }
+    }
+    if (gutils->mode == DerivativeMode::ForwardModeError &&
+        !gutils->isConstantValue(const_cast<Value *>(inst))) {
+      if (EnzymePrintDiffUse)
+        llvm::errs()
+            << " Need: " << to_string(VT) << " of " << *inst
+            << " in reverse as forward mode error always needs result\n";
+      return seen[idx] = true;
     }
   }
 
@@ -525,6 +538,11 @@ forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
     }
   }
 }
+
+//! Return whether or not this is a constant and should use reverse pass
+bool callShouldNotUseDerivative(const GradientUtils *gutils,
+                                llvm::CallBase &orig);
+
 }; // namespace DifferentialUseAnalysis
 
 #endif

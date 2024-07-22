@@ -23,7 +23,7 @@ module {
     return %res : f64
   }
   func.func @dsq(%x : f64, %dx : f64, %c : i32) -> f64 {
-    %r = enzyme.fwddiff @square(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>] } : (f64, f64, i32) -> (f64)
+    %r = enzyme.fwddiff @square(%x, %dx, %c) { activity=[#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64, i32) -> (f64)
     return %r : f64
   }
 }

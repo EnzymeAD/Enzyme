@@ -1481,7 +1481,6 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
                                      Value *extraSize) {
   assert(ctx.Block);
   assert(cache);
-
   auto sublimits = getSubLimits(inForwardPass, &BuilderM, ctx, extraSize);
 
   Value *next = cache;

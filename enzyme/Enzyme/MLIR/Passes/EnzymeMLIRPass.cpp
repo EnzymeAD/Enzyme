@@ -31,15 +31,21 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   void runOnOperation() override;
 
-  static DIFFE_TYPE mode_from_fn(FunctionOpInterface fn, DerivativeMode mode) {
-    DIFFE_TYPE retType = DIFFE_TYPE::CONSTANT;
-    if (fn.getNumResults() != 0) {
+  static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
+                                              DerivativeMode mode) {
+    std::vector<DIFFE_TYPE> retTypes;
+    for (auto ty : fn.getResultTypes()) {
+      if (isa<IntegerType>(ty)) {
+        retTypes.push_back(DIFFE_TYPE::CONSTANT);
+        continue;
+      }
+
       if (mode == DerivativeMode::ReverseModeCombined)
-        retType = DIFFE_TYPE::OUT_DIFF;
+        retTypes.push_back(DIFFE_TYPE::OUT_DIFF);
       else
-        retType = DIFFE_TYPE::DUP_ARG;
+        retTypes.push_back(DIFFE_TYPE::DUP_ARG);
     }
-    return retType;
+    return retTypes;
   }
 
   template <typename T>
@@ -55,7 +61,30 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       auto mop = activityAttr[truei];
       auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
-      DIFFE_TYPE ty = (DIFFE_TYPE)(iattr.getValue());
+      DIFFE_TYPE ty;
+
+      switch (iattr.getValue()) {
+      case mlir::enzyme::Activity::enzyme_active:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        ty = DIFFE_TYPE::DUP_ARG;
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        ty = DIFFE_TYPE::CONSTANT;
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        ty = DIFFE_TYPE::DUP_NONEED;
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        assert(0 && "unsupported arg activenoneed");
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        ty = DIFFE_TYPE::CONSTANT;
+        assert(0 && "unsupported arg constnoneed");
+        break;
+      }
 
       constants.push_back(ty);
       args.push_back(res);
@@ -72,7 +101,40 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
     auto mode = DerivativeMode::ForwardMode;
-    DIFFE_TYPE retType = mode_from_fn(fn, mode);
+    std::vector<DIFFE_TYPE> retType;
+
+    std::vector<bool> returnPrimals;
+    for (auto act : CI.getRetActivity()) {
+      auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+      auto val = iattr.getValue();
+      DIFFE_TYPE ty;
+      bool primalNeeded = true;
+      switch (val) {
+      case mlir::enzyme::Activity::enzyme_active:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        ty = DIFFE_TYPE::DUP_ARG;
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        ty = DIFFE_TYPE::CONSTANT;
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        ty = DIFFE_TYPE::DUP_NONEED;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        ty = DIFFE_TYPE::CONSTANT;
+        primalNeeded = false;
+        break;
+      }
+      retType.push_back(ty);
+      returnPrimals.push_back(primalNeeded);
+    }
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -86,8 +148,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
-        fn, retType, constants, TA,
-        /*should return*/ false, mode, freeMemory, width,
+        fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
     if (!newFunc)
@@ -104,39 +165,96 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   template <typename T>
   LogicalResult HandleAutoDiffReverse(SymbolTableCollection &symbolTable,
                                       T CI) {
-    std::vector<DIFFE_TYPE> constants;
+    std::vector<DIFFE_TYPE> arg_activities;
     SmallVector<mlir::Value, 2> args;
 
-    size_t truei = 0;
-    auto activityAttr = CI.getActivity();
+    size_t call_idx = 0;
+    {
+      for (auto act : CI.getActivity()) {
+        mlir::Value res = CI.getInputs()[call_idx];
+        ++call_idx;
 
-    for (unsigned i = 0; i < CI.getInputs().size() - 1; ++i) {
-      mlir::Value res = CI.getInputs()[i];
-
-      auto mop = activityAttr[truei];
-      auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
-      DIFFE_TYPE ty = (DIFFE_TYPE)(iattr.getValue());
-
-      constants.push_back(ty);
-      args.push_back(res);
-      if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        ++i;
-        res = CI.getInputs()[i];
+        auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+        auto val = iattr.getValue();
+        DIFFE_TYPE ty;
+        switch (val) {
+        case mlir::enzyme::Activity::enzyme_active:
+          ty = DIFFE_TYPE::OUT_DIFF;
+          break;
+        case mlir::enzyme::Activity::enzyme_dup:
+          ty = DIFFE_TYPE::DUP_ARG;
+          break;
+        case mlir::enzyme::Activity::enzyme_const:
+          ty = DIFFE_TYPE::CONSTANT;
+          break;
+        case mlir::enzyme::Activity::enzyme_dupnoneed:
+          ty = DIFFE_TYPE::DUP_NONEED;
+          break;
+        case mlir::enzyme::Activity::enzyme_activenoneed:
+          ty = DIFFE_TYPE::OUT_DIFF;
+          assert(0 && "unsupported arg activenoneed");
+          break;
+        case mlir::enzyme::Activity::enzyme_constnoneed:
+          ty = DIFFE_TYPE::CONSTANT;
+          assert(0 && "unsupported arg constnoneed");
+          break;
+        }
+        arg_activities.push_back(ty);
         args.push_back(res);
+        if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
+          res = CI.getInputs()[call_idx];
+          ++call_idx;
+          args.push_back(res);
+        }
       }
-
-      truei++;
     }
 
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
     auto mode = DerivativeMode::ReverseModeCombined;
-    DIFFE_TYPE retType = mode_from_fn(fn, mode);
+    std::vector<DIFFE_TYPE> retType;
+    std::vector<bool> returnPrimals;
+    std::vector<bool> returnShadows;
 
     // Add the return gradient
-    mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
-    args.push_back(res);
+    for (auto act : CI.getRetActivity()) {
+      auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+      auto val = iattr.getValue();
+      DIFFE_TYPE ty;
+      bool primalNeeded = true;
+      switch (val) {
+      case mlir::enzyme::Activity::enzyme_active:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        ty = DIFFE_TYPE::DUP_ARG;
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        ty = DIFFE_TYPE::CONSTANT;
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        ty = DIFFE_TYPE::DUP_NONEED;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        ty = DIFFE_TYPE::CONSTANT;
+        primalNeeded = false;
+        break;
+      }
+      retType.push_back(ty);
+      returnPrimals.push_back(primalNeeded);
+      returnShadows.push_back(false);
+      if (ty == DIFFE_TYPE::OUT_DIFF) {
+        mlir::Value res = CI.getInputs()[call_idx];
+        ++call_idx;
+        args.push_back(res);
+      }
+    }
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -149,11 +267,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    FunctionOpInterface newFunc = Logic.CreateReverseDiff(
-        fn, retType, constants, TA,
-        /*should return*/ false, mode, freeMemory, width,
-        /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+    FunctionOpInterface newFunc =
+        Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
+                                returnShadows, mode, freeMemory, width,
+                                /*addedType*/ nullptr, type_args, volatile_args,
+                                /*augmented*/ nullptr);
     if (!newFunc)
       return failure();
 

@@ -24,27 +24,35 @@ using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width = 1);
 
-mlir::FunctionType getFunctionTypeForClone(
-    mlir::FunctionType FTy, DerivativeMode mode, unsigned width,
-    mlir::Type additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE ReturnType);
+mlir::FunctionType
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
+                        unsigned width, mlir::Type additionalArg,
+                        llvm::ArrayRef<bool> returnPrimals,
+                        llvm::ArrayRef<bool> returnShadows,
+                        llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
+                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity,
+                        llvm::ArrayRef<int64_t> batchSizes = {});
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               IRMapping &mapper, std::map<Operation *, Operation *> &opMap);
+               IRMapping &mapper, std::map<Operation *, Operation *> &opMap,
+               llvm::ArrayRef<int64_t> batchSizes);
 
 void cloneInto(Region *src, Region *dest, IRMapping &mapper,
-               std::map<mlir::Operation *, mlir::Operation *> &opMap);
+               std::map<mlir::Operation *, mlir::Operation *> &opMap,
+               llvm::ArrayRef<int64_t> batchSizes);
 
 Operation *clone(Operation *src, IRMapping &mapper,
                  Operation::CloneOptions options,
-                 std::map<Operation *, Operation *> &opMap);
+                 std::map<Operation *, Operation *> &opMap,
+                 llvm::ArrayRef<int64_t> batchSizes);
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    IRMapping &ptrInputs, ArrayRef<DIFFE_TYPE> ArgActivity,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
-    SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE ReturnType, Twine name, IRMapping &VMap,
-    std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
-    mlir::Type additionalArg);
+    SmallPtrSetImpl<mlir::Value> &returnvals,
+    const std::vector<bool> &returnPrimals,
+    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> ReturnActivity,
+    Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
+    mlir::Type additionalArg, llvm::ArrayRef<int64_t> batchSizes = {});

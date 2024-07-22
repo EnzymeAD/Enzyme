@@ -17,7 +17,7 @@ add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-SET(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull")
+SET(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
@@ -50,6 +50,11 @@ set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 get_filename_component(LLVM_ABSOLUTE_DIR
     "${LLVM_DIR}"
     REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+if (NOT EXISTS "${LLVM_DIR}")
+  message("Looking for LLVM_DIR at ${LLVM_DIR}")
+  message(SEND_ERROR "The given LLVM_DIR does not exist. Typo?")
+endif()
 
 set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
 
@@ -304,6 +309,21 @@ export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS ClangEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+
+file(GLOB_RECURSE ENZYME_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
+set(bundled_includes "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/bundled_includes.h")
+list(APPEND ENZYME_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh)
+add_custom_command(OUTPUT ${bundled_includes}
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/bundle-includes.sh
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/enzyme/enzyme
+  ${bundled_includes}
+  DEPENDS ${ENZYME_INCLUDES}
+  COMMENT "Bundling includes"
+  VERBATIM
+)
+add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
+add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
+target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
 endif()
 
 if (${ENZYME_FLANG} AND ${Clang_FOUND})

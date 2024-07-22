@@ -38,40 +38,35 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
 /*
 Create reverse mode adjoint for an operation.
 */
-void MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
-                              MGradientUtilsReverse *gutils) {
+LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
+                                       MGradientUtilsReverse *gutils) {
   if ((op->getBlock()->getTerminator() != op) &&
       llvm::all_of(op->getResults(),
                    [gutils](Value v) { return gutils->isConstantValue(v); }) &&
       gutils->isConstantInstruction(op)) {
-    return;
+    return success();
   }
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
-    ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
-    return;
-    /*
-    for (int indexResult = 0; indexResult < (int)op->getNumResults();
-         indexResult++) {
-      Value result = op->getResult(indexResult);
-      gutils->clearValue(result, builder);
-    }
-    */
+    return ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
   }
   op->emitError() << "could not compute the adjoint for this operation " << *op;
+  return failure();
 }
 
-void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
-                                 MGradientUtilsReverse *gutils) {
+LogicalResult MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
+                                          MGradientUtilsReverse *gutils) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
+  bool valid = true;
   if (!oBB->empty()) {
     auto first = oBB->rbegin();
     auto last = oBB->rend();
     for (auto it = first; it != last; ++it) {
       Operation *op = &*it;
-      visitChild(op, revBuilder, gutils);
+      valid &= visitChild(op, revBuilder, gutils).succeeded();
     }
   }
+  return success(valid);
 }
 
 void MEnzymeLogic::handlePredecessors(
@@ -161,7 +156,7 @@ void MEnzymeLogic::handlePredecessors(
   }
 }
 
-void MEnzymeLogic::differentiate(
+LogicalResult MEnzymeLogic::differentiate(
     MGradientUtilsReverse *gutils, Region &oldRegion, Region &newRegion,
     llvm::function_ref<buildReturnFunction> buildFuncReturnOp,
     std::function<std::pair<Value, Value>(Type)> cacheCreator) {
@@ -171,18 +166,21 @@ void MEnzymeLogic::differentiate(
 
   gutils->createReverseModeBlocks(oldRegion, newRegion);
 
+  bool valid = true;
   for (auto &oBB : oldRegion) {
     Block *newBB = gutils->getNewFromOriginal(&oBB);
     Block *reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
     handleReturns(&oBB, newBB, reverseBB, gutils);
-    visitChildren(&oBB, reverseBB, gutils);
+    valid &= visitChildren(&oBB, reverseBB, gutils).succeeded();
     handlePredecessors(&oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
   }
+  return success(valid);
 }
 
 FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
-    FunctionOpInterface fn, DIFFE_TYPE retType,
-    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
+    FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+    std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
 
@@ -191,16 +189,21 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
-  ReturnType returnValue = ReturnType::Args;
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
-      constants, returnValue, addedType);
+      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      retType, constants, addedType);
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
 
   auto buildFuncReturnOp = [&](OpBuilder &builder, Block *oBB) {
     SmallVector<mlir::Value> retargs;
+    for (auto [arg, returnPrimal] :
+         llvm::zip(oBB->getTerminator()->getOperands(), returnPrimals)) {
+      if (returnPrimal) {
+        retargs.push_back(gutils->getNewFromOriginal(arg));
+      }
+    }
     for (auto [arg, cv] : llvm::zip(oBB->getArguments(), constants)) {
       if (cv == DIFFE_TYPE::OUT_DIFF) {
         retargs.push_back(gutils->diffe(arg, builder));
@@ -212,7 +215,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   gutils->forceAugmentedReturns();
 
-  differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
+  auto res =
+      differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
 
   auto nf = gutils->newFunc;
 
@@ -221,5 +225,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   // llvm::errs() << "nf end\n";
 
   delete gutils;
+
+  if (!res.succeeded())
+    return nullptr;
+
   return nf;
 }

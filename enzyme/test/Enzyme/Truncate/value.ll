@@ -18,20 +18,10 @@ entry:
 
 ; CHECK: define double @expand_tester(double %a, double* %c) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = alloca double, align 8
-; CHECK-NEXT:   store double %a, double* %0, align 8
-; CHECK-NEXT:   %1 = bitcast double* %0 to float*
-; CHECK-NEXT:   %2 = load float, float* %1, align 4
-; CHECK-NEXT:   %3 = fpext float %2 to double
-; CHECK-NEXT:   ret double %3
+; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_get(double %a, i64 8, i64 23, i64 1)
+; CHECK-NEXT:   ret double %0
 
 ; CHECK: define double @truncate_tester(double %a) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fptrunc double %a to float
-; CHECK-NEXT:   %1 = alloca double, align 8
-; CHECK-NEXT:   %2 = bitcast double* %1 to i64*
-; CHECK-NEXT:   store i64 0, i64* %2, align 4
-; CHECK-NEXT:   %3 = bitcast double* %1 to float*
-; CHECK-NEXT:   store float %0, float* %3, align 4
-; CHECK-NEXT:   %4 = load double, double* %1, align 8
-; CHECK-NEXT:   ret double %4
+; CHECK-NEXT:   %0 = call double @__enzyme_fprt_64_52_new(double %a, i64 8, i64 23, i64 1)
+; CHECK-NEXT:   ret double %0

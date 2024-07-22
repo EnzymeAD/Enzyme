@@ -8,7 +8,7 @@ module {
     return %r : f64
   }
   func.func @diff(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @unsupported(%x, %dx) { activity=[#enzyme<activity enzyme_dup>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @unsupported(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r : f64
   }
 }

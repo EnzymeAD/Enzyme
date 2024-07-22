@@ -20,7 +20,7 @@
 //
 // This file contains the implementation of Activity Analysis -- an AD-specific
 // analysis that deduces if a given instruction or value can impact the
-// calculation of a derivative. This file consists of two mutually recurive
+// calculation of a derivative. This file consists of two mutually recursive
 // functions that compute this for values and instructions, respectively.
 //
 //===----------------------------------------------------------------------===//
@@ -46,6 +46,7 @@
 
 #include "llvm/IR/InstIterator.h"
 
+#include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/IR/InlineAsm.h"
@@ -106,6 +107,7 @@ cl::opt<bool> EnzymeEnableRecursiveHypotheses(
 // clang-format off
 static const StringSet<> InactiveGlobals = {
     "small_typeof",
+    "jl_small_typeof",
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
@@ -208,10 +210,13 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
+    "__cxa_thread_atexit_impl",
+    "getenv",
+    "strtol",
+    "fwrite",
     "snprintf",
     "sprintf",
     "printf",
-    "fprintf",
     "putchar",
     "fprintf",
     "vprintf",
@@ -345,6 +350,7 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
+    "absl::log_internal::LogMessage",
     "std::chrono::_V2::steady_clock::now",
     "std::string",
     "std::cerr",
@@ -727,6 +733,10 @@ bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
 /// do not propagate adjoints themselves
 bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
                                              Instruction *I) {
+
+  TimeTraceScope timeScope("isConstantInstruction",
+                           I->getParent()->getParent()->getName());
+
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
   assert(I);
@@ -1042,6 +1052,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
   // was created outside a function (e.g. global, constant), that is allowed
+  TimeTraceScope timeScope("isConstantValue");
+
   assert(Val);
   if (auto I = dyn_cast<Instruction>(Val)) {
     if (TR.getFunction() != I->getParent()->getParent()) {
@@ -1410,10 +1422,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   //  Consider all types except
   //   * floating point types (since those are assumed not pointers)
   //   * integers that we know are not pointers
-  bool containsPointer = true;
-  if (Val->getType()->isFPOrFPVectorTy())
-    containsPointer = false;
-  if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
+  bool containsPointer = TR.anyPointer(Val);
+
+  if (containsPointer && Val->getType()->isFPOrFPVectorTy())
     containsPointer = false;
 
   if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
@@ -1971,7 +1982,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   if (Seen.count(V))
                     return false;
                   Seen.insert(V);
-                  if (TR.query(V)[{-1}].isPossiblePointer()) {
+                  if (TR.anyPointer(V)) {
                     for (auto UU : V->users()) {
                       auto U = cast<Instruction>(UU);
                       if (U->mayWriteToMemory()) {
@@ -2039,8 +2050,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               if ((I->mayWriteToMemory() &&
                    !Hypothesis->isConstantInstruction(TR, I)) ||
                   (!Hypothesis->DeducingPointers.count(I) &&
-                   !Hypothesis->isConstantValue(TR, I) &&
-                   TR.query(I)[{-1}].isPossiblePointer())) {
+                   !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I))) {
                 if (EnzymePrintActivity)
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
@@ -2684,7 +2694,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       if (UA == UseActivity::OnlyNonPointerStores ||
           UA == UseActivity::AllStores) {
-        if (!TR.query(LI)[{-1}].isPossiblePointer())
+        if (!TR.anyPointer(LI))
           continue;
       }
     }
