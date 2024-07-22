@@ -29,17 +29,14 @@ fn lstm_model(
     let mut gates = vec![0.0; 4 * hsize];
     let gates = &mut gates[..4 * hsize];
     let (a, b) = gates.split_at_mut(2 * hsize);
-    let (forget, ingate) = a.split_at_mut(hsize);
-    let (outgate, change) = b.split_at_mut(hsize);
+    let ((forget, ingate), (outgate, change)) = (a.split_at_mut(hsize), b.split_at_mut(hsize));
 
     assert_eq!(weight.len(), 4 * hsize);
     assert_eq!(bias.len(), 4 * hsize);
     assert_eq!(hidden.len(), hsize);
-    assert_eq!(ingate.len(), hsize);
-    assert_eq!(change.len(), hsize);
     assert!(cell.len() >= hsize);
     assert!(input.len() >= hsize);
-    // Using unchecked indexing here was slightly slower for some reason
+    // caching input
     for i in 0..hsize {
         forget[i] = sigmoid(input[i] * weight[i] + bias[i]);
         ingate[i] = sigmoid(hidden[i] * weight[hsize + i] + bias[hsize + i]);
@@ -70,42 +67,33 @@ fn lstm_predict(
     for i in 0..b {
         x2[i] = x[i] * w2[i];
     }
-    
-    let (s1, s2) = s.split_at_mut(b);
-    lstm_model(
-        b,
-        &w[0..b * 4],
-        &w[b * 4..2 * b * 4],
-        s1,
-        s2,
-        x2.as_mut(),
-    );
 
-    assert_eq!(s.len(), 2 * b * l);
-    assert_eq!(w.len(), 4 * b * l);
-    for i in 1..l {
-        let i = i * 2 * b;
-        let (xp, s1, s2) = {
+    let mut i = 0;
+    while i <= 2 * l * b - 1 {
+        // make borrow-checker happy with non-overlapping mutable references
+        let (xp, s1, s2) = if i == 0 {
+            let (s1, s2) = s.split_at_mut(b);
+            (x2.as_mut(), s1, s2)
+        } else {
             let tmp = &mut s[i - 2 * b..];
             let (a, d) = tmp.split_at_mut(2 * b);
             let (d, c) = d.split_at_mut(b);
+
             (a, d, c)
         };
-        let (w1, w2) = w.split_at((i + b) * 4);
 
         lstm_model(
             b,
-            //&w1[i * 4..],
-            //&w2[0..(i + 2 * b) * 4],
             &w[i * 4..(i + b) * 4],
             &w[(i + b) * 4..(i + 2 * b) * 4],
             s1,
             s2,
             xp,
         );
+
+        i += 2 * b;
     }
 
-    let i = 2 * l * b;
     let xp = &s[i - 2 * b..];
 
     for i in 0..b {
