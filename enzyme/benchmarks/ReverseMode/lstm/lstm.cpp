@@ -113,12 +113,12 @@ void lstm_predict_restrict(int l, int b, double const *__restrict w,
 }
 
 // LSTM objective (loss function)
-void lstm_objective_restrict(int l, int c, int b,
-                             double const *__restrict main_params,
-                             double const *__restrict extra_params,
-                             double *__restrict state,
-                             double const *__restrict sequence,
-                             double *__restrict loss) {
+void cxx_restrict_lstm_objective(int l, int c, int b,
+                                 double const *__restrict main_params,
+                                 double const *__restrict extra_params,
+                                 double *__restrict state,
+                                 double const *__restrict sequence,
+                                 double *__restrict loss) {
     int i, t;
     double total = 0.0;
     int count = 0;
@@ -167,11 +167,11 @@ void dlstm_objective_restrict(int l, int c, int b, double const *main_params,
                               double *dextra_params, double *state,
                               double const *sequence, double *loss,
                               double *dloss) {
-    __enzyme_autodiff(lstm_objective_restrict, enzyme_const, l, enzyme_const, c,
-                      enzyme_const, b, enzyme_dup, main_params, dmain_params,
-                      enzyme_dup, extra_params, dextra_params, enzyme_const,
-                      state, enzyme_const, sequence, enzyme_dupnoneed, loss,
-                      dloss);
+    __enzyme_autodiff(cxx_restrict_lstm_objective, enzyme_const, l,
+                      enzyme_const, c, enzyme_const, b, enzyme_dup, main_params,
+                      dmain_params, enzyme_dup, extra_params, dextra_params,
+                      enzyme_const, state, enzyme_const, sequence,
+                      enzyme_dupnoneed, loss, dloss);
 }
 }
 

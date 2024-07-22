@@ -104,9 +104,9 @@ void lstm_predict(int l, int b, double const *w, double const *w2, double *s,
 }
 
 // LSTM objective (loss function)
-void lstm_objective(int l, int c, int b, double const *main_params,
-                    double const *extra_params, double *state,
-                    double const *sequence, double *loss) {
+void cxx_mayalias_lstm_objective(int l, int c, int b, double const *main_params,
+                                 double const *extra_params, double *state,
+                                 double const *sequence, double *loss) {
   int i, t;
   double total = 0.0;
   int count = 0;
@@ -146,30 +146,15 @@ void __enzyme_autodiff(...) noexcept;
 
 // *      tapenade -b -o lstm_tapenade -head "lstm_objective(loss)/(main_params extra_params)" lstm.c
 
-void dlstm_objective(
-    int l,
-    int c,
-    int b,
-    double const* main_params,
-    double* dmain_params,
-    double const* extra_params,
-    double* dextra_params,
-    double* state,
-    double const* sequence,
-    double* loss,
-    double* dloss
-)
-{
-    __enzyme_autodiff(lstm_objective,
-        enzyme_const, l,
-        enzyme_const, c,
-        enzyme_const, b,
-        enzyme_dup, main_params, dmain_params,
-        enzyme_dup, extra_params, dextra_params,
-        enzyme_const, state,
-        enzyme_const, sequence,
-        enzyme_dupnoneed, loss, dloss
-    );
+void dlstm_objective_mayalias(int l, int c, int b, double const *main_params,
+                              double *dmain_params, double const *extra_params,
+                              double *dextra_params, double *state,
+                              double const *sequence, double *loss,
+                              double *dloss) {
+  __enzyme_autodiff(cxx_mayalias_lstm_objective, enzyme_const, l, enzyme_const,
+                    c, enzyme_const, b, enzyme_dup, main_params, dmain_params,
+                    enzyme_dup, extra_params, dextra_params, enzyme_const,
+                    state, enzyme_const, sequence, enzyme_dupnoneed, loss,
+                    dloss);
 }
-
 }
