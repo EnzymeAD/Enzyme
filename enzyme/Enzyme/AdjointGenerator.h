@@ -3250,7 +3250,13 @@ public:
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
             args.push_back(op3l);
-          auto cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
+          CallInst *cal;
+          auto funcName = getFuncNameFromCall(&MS);
+          if (startsWith(funcName, "memset_pattern"))
+            cal = Builder2.CreateMemSet(
+                op0, ConstantInt::get(Builder2.getInt8Ty(), 0), length, {});
+          else
+            cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           cal->copyMetadata(MS, ToCopy2);
