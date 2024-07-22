@@ -1558,7 +1558,8 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << "->getOperand(" << argIdx << "))) {\n";
     } else {
       os << "if (!dif && !gutils->isConstantValue(" << origName
-         << ".getOperand(" << argIdx << "))) {\n";
+         << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
+         << ".getOperand(" << argIdx << ")->getType()) ) {\n";
     }
     DagInit *resultTree = cast<DagInit>(argOpEn.value());
     if (hasDiffeRet(resultTree)) {
@@ -1690,7 +1691,9 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << "->getOperand(" << argIdx << "))) {\n";
     else
       os << curIndent << "if (!gutils->isConstantValue(" << origName
-         << ".getOperand(" << argIdx << "))) {\n";
+         << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
+         << ".getOperand(" << argIdx << ")->getType()) ) {\n";
+
     initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
     if (intrinsic == MLIRDerivatives)
       os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
@@ -2331,8 +2334,28 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
-      os << "        if (found != gutils->invertedPointers.end()) {\n";
-      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "        if (found != gutils->invertedPointers.end() && "
+            "!isa<PointerType>("
+         << origName << ".getType())) {\n";
+      os << "          PHINode* PN = dyn_cast<PHINode>(&*found->second);\n";
+      os << "          if (!PN) {\n";
+      os << "            std::string str;\n";
+      os << "            raw_string_ostream ss(str);\n";
+      os << "            ss << \"Shadow of instruction is not phi:\\n\";\n";
+      os << "            ss << *gutils->oldFunc << \"\\n\";\n";
+      os << "            ss << *gutils->newFunc << \"\\n\";\n";
+      os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
+      os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
+      os << "            if (CustomErrorHandler) {\n";
+      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
+         << ")), ErrorType::InternalError,\n";
+      os << "                                 nullptr, nullptr, nullptr);\n";
+      os << "            } else {\n";
+      os << "              EmitFailure(\"PHIError\", (" << origName
+         << ").getDebugLoc(), &(" << origName << "), ss.str());\n";
+      os << "            }\n";
+      os << "          }\n";
+      os << "          assert(PN);\n";
       os << "          gutils->invertedPointers.erase(found);\n";
       os << "          gutils->erase(PN);\n";
       os << "        }\n";
@@ -2342,8 +2365,28 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "      case DerivativeMode::ReverseModePrimal:{\n";
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
-      os << "        if (found != gutils->invertedPointers.end()) {\n";
-      os << "          PHINode* PN = cast<PHINode>(&*found->second);\n";
+      os << "        if (found != gutils->invertedPointers.end() && "
+            "!isa<PointerType>("
+         << origName << ".getType())) {\n";
+      os << "          PHINode* PN = dyn_cast<PHINode>(&*found->second);\n";
+      os << "          if (!PN) {\n";
+      os << "            std::string str;\n";
+      os << "            raw_string_ostream ss(str);\n";
+      os << "            ss << \"Shadow of instruction is not phi:\\n\";\n";
+      os << "            ss << *gutils->oldFunc << \"\\n\";\n";
+      os << "            ss << *gutils->newFunc << \"\\n\";\n";
+      os << "            ss << \"orig: \" << " << origName << " << \"\\n\";\n";
+      os << "            ss << \"found: \" << *found->second << \"\\n\";\n";
+      os << "            if (CustomErrorHandler) {\n";
+      os << "              CustomErrorHandler(str.c_str(), wrap(&(" << origName
+         << ")), ErrorType::InternalError,\n";
+      os << "                                 nullptr, nullptr, nullptr);\n";
+      os << "            } else {\n";
+      os << "              EmitFailure(\"PHIError\", (" << origName
+         << ").getDebugLoc(), &(" << origName << "), ss.str());\n";
+      os << "            }\n";
+      os << "          }\n";
+      os << "          assert(PN);\n";
       os << "          gutils->invertedPointers.erase(found);\n";
       os << "          gutils->erase(PN);\n";
       os << "        }\n";

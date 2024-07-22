@@ -5605,6 +5605,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
+  } else if (auto arg = dyn_cast<FreezeInst>(oval)) {
+    IRBuilder<> bb(getNewFromOriginal(arg));
+    Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
+    Type *shadowTy = arg->getType();
+
+    auto rule = [&](Value *invertOp) {
+      return bb.CreateFreeze(invertOp, arg->getName() + "'ipf");
+    };
+
+    Value *shadow = applyChainRule(shadowTy, bb, rule, invertOp);
+
+    invertedPointers.insert(
+        std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+    return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
     if (arg->getOpcode() == Instruction::Add) {
