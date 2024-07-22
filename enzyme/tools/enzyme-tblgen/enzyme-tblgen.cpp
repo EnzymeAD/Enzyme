@@ -1558,7 +1558,8 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << "->getOperand(" << argIdx << "))) {\n";
     } else {
       os << "if (!dif && !gutils->isConstantValue(" << origName
-         << ".getOperand(" << argIdx << "))) {\n";
+         << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
+         << ".getOperand(" << argIdx << ")->getType()) ) {\n";
     }
     DagInit *resultTree = cast<DagInit>(argOpEn.value());
     if (hasDiffeRet(resultTree)) {
@@ -1690,7 +1691,9 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << "->getOperand(" << argIdx << "))) {\n";
     else
       os << curIndent << "if (!gutils->isConstantValue(" << origName
-         << ".getOperand(" << argIdx << "))) {\n";
+         << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
+         << ".getOperand(" << argIdx << ")->getType()) ) {\n";
+
     initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
     if (intrinsic == MLIRDerivatives)
       os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
@@ -2331,7 +2334,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
-      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "        if (found != gutils->invertedPointers.end() && "
+            "!isa<PointerType>("
+         << origName << ".getType())) {\n";
       os << "          PHINode* PN = dyn_cast<PHINode>(&*found->second);\n";
       os << "          if (!PN) {\n";
       os << "            std::string str;\n";
@@ -2360,7 +2365,9 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "      case DerivativeMode::ReverseModePrimal:{\n";
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
-      os << "        if (found != gutils->invertedPointers.end()) {\n";
+      os << "        if (found != gutils->invertedPointers.end() && "
+            "!isa<PointerType>("
+         << origName << ".getType())) {\n";
       os << "          PHINode* PN = dyn_cast<PHINode>(&*found->second);\n";
       os << "          if (!PN) {\n";
       os << "            std::string str;\n";
