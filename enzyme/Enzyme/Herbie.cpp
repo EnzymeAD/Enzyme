@@ -103,6 +103,7 @@ public:
   std::string symbol;
   SmallVector<FPNode *, 1> operands;
   double grad;
+  unsigned executions;
 
   FPNode(const std::string &op) : op(op) {}
   virtual ~FPNode() = default;
@@ -121,9 +122,6 @@ public:
     expr += ")";
     return expr;
   }
-
-  void setGrad(double grad) { this->grad = grad; }
-  double getGrad() const { return grad; }
 
   virtual void updateBounds(double lower, double upper) {
     assert(0 && "Trying to update bounds of a non-input node!");
@@ -475,15 +473,104 @@ parseHerbieExpr(const std::string &expr,
   return node;
 }
 
+void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
+  // TODO: Update it if we use let expr in the future
+  std::regex argPattern("v\\d+");
+
+  std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
+  std::sregex_iterator end;
+
+  while (begin != end) {
+    args.insert(begin->str());
+    ++begin;
+  }
+}
+
+// Sum up the cost of `output` and its FP operands recursively up to `inputs`
+// (exclusive).
+InstructionCost getTTICost(Value *output, const SetVector<Value *> &inputs,
+                           const TargetTransformInfo &TTI) {
+  SmallPtrSet<Value *, 8> seen;
+  SmallVector<Value *, 8> todo;
+  InstructionCost cost = 0;
+
+  todo.push_back(output);
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+
+    if (inputs.contains(cur))
+      continue;
+
+    if (auto *I = dyn_cast<Instruction>(cur)) {
+      // TODO: unfair to ignore branches when calculating cost
+      auto instCost = TTI.getInstructionCost(
+          I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
+      // auto instCost = TTI.getInstructionCost(
+      //     I, TargetTransformInfo::TCK_RecipThroughput);
+
+      if (EnzymePrintFPOpt)
+        llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
+
+      // Only add the cost of the instruction if it is not an input
+      cost += instCost;
+
+      auto operands =
+          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+      for (auto &operand : operands) {
+        todo.push_back(operand);
+      }
+    }
+  }
+
+  return cost;
+}
+
+InstructionCost
+getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
+           std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+           std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
+  SetVector<Value *> args;
+  for (const auto &argStr : argStrSet) {
+    args.insert(symbolToValueMap[argStr]);
+  }
+
+  FPNode *parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+
+  // Materialize the expression in a temporary function
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
+  Function *tempFunction =
+      Function::Create(FT, Function::InternalLinkage, "getTTICost_temp", M);
+  BasicBlock *entry =
+      BasicBlock::Create(M->getContext(), "entry", tempFunction);
+  Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
+
+  IRBuilder<> builder(ReturnInst);
+
+  builder.setFastMathFlags(getFast());
+  Value *newOutput = parsedNode->getValue(builder);
+
+  tempFunction->print(llvm::errs());
+
+  InstructionCost cost = getTTICost(newOutput, args, TTI);
+
+  tempFunction->eraseFromParent();
+  return cost;
+}
+
 struct RewriteCandidate {
   // Only one rewrite candidate per output `llvm::Value` can be applied
-  // InstructionCost TTICost;
-  double herbieCost;
+  InstructionCost TTICost;
+  double herbieCost; // Unused for now
   double accuracy;
   std::string expr;
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
-      : herbieCost(cost), accuracy(accuracy), expr(std::move(expression)) {}
+      : herbieCost(cost), accuracy(accuracy), expr(expression) {}
 };
 
 struct FPComponent {
@@ -503,11 +590,17 @@ public:
   FPComponent &component;
   Value *oldOutput;
   double grad;
+  unsigned executions;
+  InstructionCost initialTTICost;
   SmallVector<RewriteCandidate> candidates;
 
   explicit ApplicableOutput(FPComponent &component, Value *oldOutput,
-                            double grad)
-      : component(component), oldOutput(oldOutput), grad(grad) {}
+                            double grad, unsigned executions,
+                            const TargetTransformInfo &TTI)
+      : component(component), oldOutput(oldOutput), grad(grad),
+        executions(executions) {
+    initialTTICost = getTTICost(oldOutput, component.inputs, TTI);
+  }
 
   void apply(size_t candidateIndex,
              std::unordered_map<Value *, FPNode *> &valueToNodeMap,
@@ -531,10 +624,10 @@ public:
     // Evaluate errors and costs of the original and new expression
     // Value *newOutputValue = parsedNode->getValue(builder);
     // InstructionCost oldCost =
-    //     getValueTreeCost(oldOutput, component.inputs, TTI);
+    //     getTTICost(oldOutput, component.inputs, TTI);
     // llvm::errs() << "Cost of the original expression is: " << oldCost <<
     // "\n"; InstructionCost newCost =
-    //     getValueTreeCost(newOutputValue, component.inputs, TTI);
+    //     getTTICost(newOutputValue, component.inputs, TTI);
     // llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
 
     // double oldError, newError;
@@ -557,7 +650,11 @@ public:
   }
 };
 
-bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
+bool improveViaHerbie(
+    const std::string &inputExpr, ApplicableOutput &AO, Module *M,
+    const TargetTransformInfo &TTI,
+    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SmallString<32> tmpin, tmpout;
 
   if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
@@ -677,12 +774,17 @@ bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
   double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
   double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
 
-  AO.candidates.emplace_back(bestCost, bestAccuracy, bestExpr.str());
+  RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
+  bestCandidate.TTICost =
+      getTTICost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+  AO.candidates.push_back(bestCandidate);
 
   if (EnzymePrintHerbie) {
-    llvm::errs() << "Initial: Cost = " << initialCost
+    llvm::errs() << "Initial: TTICost = " << AO.initialTTICost
+                 << ", HerbieCost = " << initialCost
                  << ", Accuracy = " << initialAccuracy << "\n";
-    llvm::errs() << "Best: Cost = " << bestCost
+    llvm::errs() << "Best: TTICost = " << bestCandidate.TTICost
+                 << ", HerbieCost = " << bestCost
                  << ", Accuracy = " << bestAccuracy
                  << ", Expression = " << bestExpr << "\n";
   }
@@ -695,11 +797,15 @@ bool improveViaHerbie(const std::string &inputExpr, ApplicableOutput &AO) {
     double cost = entry[0].getAsNumber().getValue() / initialCostVal;
     double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
     StringRef expr = entry[2].getAsString().getValue();
+    RewriteCandidate candidate(cost, accuracy, expr.str());
+    candidate.TTICost =
+        getTTICost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+    AO.candidates.push_back(candidate);
     if (EnzymePrintHerbie)
-      llvm::errs() << "Alternative " << i - 1 << ": Cost = " << cost
-                   << ", Accuracy = " << accuracy << ", Expression = " << expr
-                   << "\n";
-    AO.candidates.emplace_back(cost, accuracy, expr.str());
+      llvm::errs() << "Alternative " << i - 1
+                   << ": TTICost = " << candidate.TTICost
+                   << ", HerbieCost = " << cost << ", Accuracy = " << accuracy
+                   << ", Expression = " << expr << "\n";
   }
 
   return true;
@@ -774,19 +880,6 @@ bool herbiable(const Value &Val) {
   }
   default:
     return false;
-  }
-}
-
-void getUniqueArgs(const std::string &expr, SmallSet<std::string, 1> &args) {
-  // TODO: Update it if we use let expr in the future
-  std::regex argPattern("v\\d+");
-
-  std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
-  std::sregex_iterator end;
-
-  while (begin != end) {
-    args.insert(begin->str());
-    ++begin;
   }
 }
 
@@ -907,7 +1000,7 @@ bool isLogged(const std::string &filePath, const std::string &functionName) {
 }
 
 std::string getPrecondition(
-    const SmallSet<std::string, 1> &args,
+    const SmallSet<std::string, 8> &args,
     const std::unordered_map<Value *, FPNode *> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
   std::string preconditions;
@@ -935,48 +1028,6 @@ std::string getPrecondition(
   }
 
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
-}
-
-// Sum up the cost of `output` and its FP operands recursively up to `inputs`
-// (exclusive).
-InstructionCost getValueTreeCost(Value *output,
-                                 const SetVector<Value *> &inputs,
-                                 const TargetTransformInfo &TTI) {
-  SmallPtrSet<Value *, 8> seen;
-  SmallVector<Value *, 8> todo;
-  InstructionCost cost = 0;
-
-  todo.push_back(output);
-  while (!todo.empty()) {
-    auto cur = todo.pop_back_val();
-    if (!seen.insert(cur).second)
-      continue;
-
-    if (inputs.contains(cur))
-      continue;
-
-    if (auto *I = dyn_cast<Instruction>(cur)) {
-      // TODO: unfair to ignore branches when calculating cost
-      auto instCost = TTI.getInstructionCost(
-          I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
-      // auto instCost = TTI.getInstructionCost(
-      //     I, TargetTransformInfo::TCK_RecipThroughput);
-
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
-
-      // Only add the cost of the instruction if it is not an input
-      cost += instCost;
-
-      auto operands =
-          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-      for (auto &operand : operands) {
-        todo.push_back(operand);
-      }
-    }
-  }
-
-  return cost;
 }
 
 bool getErrorsWithJIT(const Value *oldOutput, const Value *newOutput,
@@ -1148,7 +1199,7 @@ B2:
     }
   }
 
-  SmallSet<Value *, 1> component_seen;
+  SmallSet<Value *, 8> component_seen;
   SmallVector<FPComponent, 1> connected_components;
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -1288,7 +1339,7 @@ B2:
 
                 auto *node = valueToNodeMap[I2];
                 if (found) {
-                  node->setGrad(gradLogData.grad);
+                  node->grad = gradLogData.grad;
                   if (EnzymePrintFPOpt)
                     llvm::errs() << "Grad of " << *I2
                                  << " is: " << gradLogData.grad << "\n";
@@ -1383,7 +1434,7 @@ B2:
       // TODO: Herbie properties
       std::string expr =
           valueToNodeMap[output]->toFullExpression(valueToNodeMap);
-      SmallSet<std::string, 1> args;
+      SmallSet<std::string, 8> args;
       getUniqueArgs(expr, args);
 
       std::string properties =
@@ -1408,10 +1459,12 @@ B2:
         llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
       // 3) run fancy opts
-      double grad = valueToNodeMap[output]->getGrad();
+      double grad = valueToNodeMap[output]->grad;
+      unsigned executions = valueToNodeMap[output]->executions;
 
-      ApplicableOutput AO(component, output, grad);
-      if (!improveViaHerbie(herbieInput, AO)) {
+      ApplicableOutput AO(component, output, grad, executions, TTI);
+      if (!improveViaHerbie(herbieInput, AO, F.getParent(), TTI, valueToNodeMap,
+                            symbolToValueMap)) {
         if (EnzymePrintHerbie)
           llvm::errs() << "Failed to optimize an expression using Herbie!\n";
         continue;
@@ -1435,11 +1488,12 @@ B2:
       llvm::errs() << "AO: " << *AO.oldOutput << "\n";
       llvm::errs() << "Grad: " << AO.grad << "\n";
       llvm::errs() << "Candidates:\n";
-      llvm::errs() << "Cost\tAccuracy\tExpression\n";
+      llvm::errs() << "TTICost\tHerbieCost\tAccuracy\tExpression\n";
       llvm::errs() << "--------------------------------\n";
       for (const auto &candidate : AO.candidates) {
-        llvm::errs() << candidate.herbieCost << "\t" << candidate.accuracy
-                     << "\t" << candidate.expr << "\n";
+        llvm::errs() << candidate.TTICost << "\t" << candidate.herbieCost
+                     << "\t" << candidate.accuracy << "\t" << candidate.expr
+                     << "\n";
       }
     }
   }
