@@ -5645,6 +5645,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
     Type *shadowTy = arg->getType();
 
+    if (mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ReverseModePrimal ||
+        mode == DerivativeMode::ReverseModeGradient) {
+      if (TR.query(arg)[{-1}].isFloat()) {
+        return Constant::getNullValue(getShadowType(oval->getType()));
+      }
+    }
+    assert(!arg->getType()->isDoubleTy());
+
     auto rule = [&](Value *invertOp) {
       return bb.CreateFreeze(invertOp, arg->getName() + "'ipf");
     };
