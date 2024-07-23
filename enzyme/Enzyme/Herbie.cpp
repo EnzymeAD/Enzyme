@@ -791,7 +791,7 @@ bool improveViaHerbie(
   json::Array &alternatives = *costAccuracy[2].getAsArray();
 
   // Handle alternatives
-  for (size_t i = 2; i < alternatives.size(); ++i) {
+  for (size_t i = 0; i < alternatives.size(); ++i) {
     json::Array &entry = *alternatives[i].getAsArray();
     double cost = entry[0].getAsNumber().getValue() / initialCostVal;
     double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
@@ -801,7 +801,7 @@ bool improveViaHerbie(
         getTTICost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
     AO.candidates.push_back(candidate);
     if (EnzymePrintHerbie)
-      llvm::errs() << "Alternative " << i - 1
+      llvm::errs() << "Alternative " << i + 1
                    << ": TTICost = " << candidate.TTICost
                    << ", HerbieCost = " << cost << ", Accuracy = " << accuracy
                    << ", Expression = " << expr << "\n";
@@ -1665,8 +1665,8 @@ B2:
       llvm::errs() << "FPOpt: Solver enabled but no grad log provided\n";
       return false;
     }
-    // changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
-    changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
+    changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
+    // changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
