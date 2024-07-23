@@ -95,6 +95,9 @@ static cl::opt<bool> FPOptEnableSolver(
     "fpopt-enable-solver", cl::init(false), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
+static cl::opt<InstructionCost> FPOptComputationCostBudget(
+    "fpopt-comp-cost-budget", cl::init(500), cl::Hidden,
+    cl::desc("The maximum computation cost budget for the solver"));
 }
 
 class FPNode {
@@ -591,7 +594,8 @@ public:
   Value *oldOutput;
   double grad;
   unsigned executions;
-  InstructionCost initialTTICost;
+  InstructionCost initialTTICost; // Requires manual initialization
+  double initialAccuracy;         // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
 
   explicit ApplicableOutput(FPComponent &component, Value *oldOutput,
@@ -621,23 +625,6 @@ public:
     // TODO ponder fast math
     builder.setFastMathFlags(getFast());
 
-    // Evaluate errors and costs of the original and new expression
-    // Value *newOutputValue = parsedNode->getValue(builder);
-    // InstructionCost oldCost =
-    //     getTTICost(oldOutput, component.inputs, TTI);
-    // llvm::errs() << "Cost of the original expression is: " << oldCost <<
-    // "\n"; InstructionCost newCost =
-    //     getTTICost(newOutputValue, component.inputs, TTI);
-    // llvm::errs() << "Cost of the new expression is: " << newCost << "\n";
-
-    // double oldError, newError;
-    // if (getErrorsWithJIT(output, newOutputValue, &F, oldError, newError)) {
-    //   llvm::errs() << "Error of the original expression is: " << oldError
-    //                << "\n";
-    //   llvm::errs() << "Error of the new expression is: " << newError <<
-    //   "\n";
-    // }
-
     Value *newOutput = parsedNode->getValue(builder);
     assert(newOutput && "Failed to get value from parsed node");
 
@@ -647,6 +634,17 @@ public:
 
     oldOutput->replaceAllUsesWith(newOutput);
     component.outputs_rewritten++;
+  }
+
+  // Lower is better
+  InstructionCost getComputationCost(size_t candidateIndex) {
+    return (candidates[candidateIndex].TTICost - initialTTICost) * executions;
+  }
+
+  // Lower is better
+  double getAccuracyCost(size_t candidateIndex) {
+    // TODO: `executions`?
+    return (initialAccuracy - candidates[candidateIndex].accuracy) * grad;
   }
 };
 
@@ -769,6 +767,7 @@ bool improveViaHerbie(
   double initialCostVal = initial[0].getAsNumber().getValue();
   double initialCost = 1.0;
   double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
+  AO.initialAccuracy = initialAccuracy;
 
   json::Array &best = *costAccuracy[1].getAsArray();
   double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
@@ -1102,6 +1101,156 @@ bool getErrorsWithJIT(const Value *oldOutput, const Value *newOutput,
   return true;
 }
 
+// Given the cost budget `FPOptComputationCostBudget`, we want to minimize the
+// accuracy cost of the rewritten expressions.
+bool accuracyGreedySolver(
+    SmallVector<ApplicableOutput> &AOs,
+    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  bool changed = false;
+  llvm::errs() << "Starting accuracy greedy solver with computation budget: "
+               << FPOptComputationCostBudget << "\n";
+  InstructionCost totalComputationCost = 0;
+
+  for (auto &AO : AOs) {
+    size_t bestCandidateIndex = -1;
+    double bestAccuracyCost = std::numeric_limits<double>::infinity();
+    InstructionCost bestCandidateComputationCost;
+
+    for (auto &candidate : enumerate(AO.candidates)) {
+      size_t i = candidate.index();
+      auto candidateComputationCost = AO.getComputationCost(i);
+      auto candidateAccuracyCost = AO.getAccuracyCost(i);
+      llvm::errs() << "Candidate " << i << " for " << *AO.oldOutput
+                   << " has accuracy cost: " << candidateAccuracyCost
+                   << " and computation cost: " << candidateComputationCost
+                   << "\n";
+
+      // See if the candidate fits within the computation cost budget
+      if (totalComputationCost + candidateComputationCost <=
+          FPOptComputationCostBudget) {
+        // Select the candidate with the lowest accuracy cost
+        if (candidateAccuracyCost < bestAccuracyCost) {
+          llvm::errs() << "Found better candidate for " << *AO.oldOutput
+                       << " with accuracy cost: " << candidateAccuracyCost
+                       << " and computation cost: " << candidateComputationCost
+                       << "\n";
+          bestCandidateIndex = i;
+          bestAccuracyCost = candidateAccuracyCost;
+          bestCandidateComputationCost = candidateComputationCost;
+        }
+      }
+    }
+
+    if (bestCandidateIndex != -1) {
+      AO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
+      changed = true;
+      totalComputationCost += bestCandidateComputationCost;
+      llvm::errs() << "Applied rewrite for " << *AO.oldOutput << "\n";
+      llvm::errs() << "Current total computation cost: " << totalComputationCost
+                   << "\n";
+    }
+  }
+
+  return changed;
+}
+
+bool accuracyDPSolver(
+    SmallVector<ApplicableOutput> &AOs,
+    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  bool changed = false;
+  llvm::errs() << "Starting accuracy DP solver with computation budget: "
+               << FPOptComputationCostBudget << "\n";
+
+  using CostMap = std::map<InstructionCost, double>;
+  using SolutionMap =
+      std::map<InstructionCost,
+               SmallVector<std::pair<ApplicableOutput *, size_t>>>;
+
+  CostMap prevAccuracy;
+  prevAccuracy[0] = 0.0;
+  CostMap nextAccuracy;
+  SolutionMap prevSolutions;
+  SolutionMap nextSolutions;
+
+  prevSolutions[0] = {};
+
+  for (auto &AO : AOs) {
+    nextAccuracy.clear();
+    nextSolutions.clear();
+
+    for (const auto &pair : prevAccuracy) {
+      for (auto &candidate : enumerate(AO.candidates)) {
+        size_t i = candidate.index();
+        auto candidateComputationCost = AO.getComputationCost(i);
+        auto candidateAccuracyCost = AO.getAccuracyCost(i);
+
+        InstructionCost newComputationCost =
+            pair.first + candidateComputationCost;
+        double newAccuracyCost = pair.second + candidateAccuracyCost;
+
+        if (newComputationCost <= FPOptComputationCostBudget) {
+          if (nextAccuracy.find(newComputationCost) == nextAccuracy.end() ||
+              nextAccuracy[newComputationCost] > newAccuracyCost) {
+            nextAccuracy[newComputationCost] = newAccuracyCost;
+            nextSolutions[newComputationCost] = prevSolutions[pair.first];
+            nextSolutions[newComputationCost].emplace_back(&AO, i);
+            llvm::errs() << "Updating accuracy map: computation cost "
+                         << newComputationCost << " -> accuracy cost "
+                         << newAccuracyCost << "\n";
+            llvm::errs() << "Solutions: ";
+            for (const auto &solution : nextSolutions[newComputationCost]) {
+              llvm::errs() << "\t" << *solution.first->oldOutput << " --> "
+                           << solution.first->candidates[solution.second].expr
+                           << "\n";
+            }
+          }
+        }
+      }
+    }
+
+    // Accuracy costs should be non-increasing
+    for (auto it = nextAccuracy.begin(); it != nextAccuracy.end(); ++it) {
+      if (it != nextAccuracy.begin()) {
+        auto prev = std::prev(it);
+        if (it->second > prev->second) {
+          it->second = prev->second;
+          nextSolutions[it->first] = nextSolutions[prev->first];
+        }
+      }
+    }
+
+    prevAccuracy.swap(nextAccuracy);
+    prevSolutions.swap(nextSolutions);
+  }
+
+  double minAccuracyCost = std::numeric_limits<double>::infinity();
+  InstructionCost bestCost = 0;
+  for (const auto &entry : prevAccuracy) {
+    if (entry.second < minAccuracyCost) {
+      minAccuracyCost = entry.second;
+      bestCost = entry.first;
+    }
+  }
+
+  llvm::errs() << "Minimum accuracy cost within budget: " << minAccuracyCost
+               << "\n";
+  llvm::errs() << "Computation cost budget used: " << bestCost << "\n";
+
+  assert(prevSolutions.find(bestCost) != prevSolutions.end() &&
+         "FPOpt DP solver: expected a solution!");
+  for (const auto &solution : prevSolutions[bestCost]) {
+    auto *AO = solution.first;
+    size_t i = solution.second;
+    AO->apply(i, valueToNodeMap, symbolToValueMap);
+    changed = true;
+    llvm::errs() << "Applied rewrite for " << *AO->oldOutput << "\n";
+  }
+
+  return changed;
+}
+
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
@@ -1340,9 +1489,12 @@ B2:
                 auto *node = valueToNodeMap[I2];
                 if (found) {
                   node->grad = gradLogData.grad;
+                  node->executions = gradLogData.executions;
                   if (EnzymePrintFPOpt)
                     llvm::errs() << "Grad of " << *I2
                                  << " is: " << gradLogData.grad << "\n";
+                  llvm::errs() << "Execution count of " << *I2
+                               << " is: " << gradLogData.executions << "\n";
                 } else { // Unknown bounds
                   if (EnzymePrintFPOpt)
                     llvm::errs()
@@ -1505,7 +1657,16 @@ B2:
     }
   } else {
     // TODO: Solver
-    llvm_unreachable("Solver not implemented");
+    if (ErrorLogPath.empty()) {
+      llvm::errs() << "FPOpt: Solver enabled but no error log provided\n";
+      return false;
+    }
+    if (GradLogPath.empty()) {
+      llvm::errs() << "FPOpt: Solver enabled but no grad log provided\n";
+      return false;
+    }
+    // changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
+    changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
@@ -1515,25 +1676,27 @@ B2:
   }
 
   // Cleanup
-  for (auto &component : connected_components) {
-    if (component.outputs_rewritten != component.outputs.size()) {
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Skip erasing a connect component: only rewrote "
-                     << component.outputs_rewritten << " of "
-                     << component.outputs.size() << " outputs\n";
-      continue; // Intermediate operations cannot be erased safely
-    }
-    for (auto *I : component.operations) {
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Erasing: " << *I << "\n";
-      if (!I->use_empty()) {
-        I->replaceAllUsesWith(UndefValue::get(I->getType()));
+  if (changed) {
+    for (auto &component : connected_components) {
+      if (component.outputs_rewritten != component.outputs.size()) {
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Skip erasing a connect component: only rewrote "
+                       << component.outputs_rewritten << " of "
+                       << component.outputs.size() << " outputs\n";
+        continue; // Intermediate operations cannot be erased safely
       }
-      I->eraseFromParent();
+      for (auto *I : component.operations) {
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "Erasing: " << *I << "\n";
+        if (!I->use_empty()) {
+          I->replaceAllUsesWith(UndefValue::get(I->getType()));
+        }
+        I->eraseFromParent();
+      }
     }
-  }
 
-  llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
+    llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
+  }
 
   if (EnzymePrintFPOpt) {
     llvm::errs() << "Finished fpOptimize\n";
