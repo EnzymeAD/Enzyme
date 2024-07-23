@@ -22,6 +22,12 @@ def Enzyme_Dialect : Dialect {
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+
+  let extraClassDeclaration = [{
+    /// Names of analysis summary attributes
+    static StringRef getPointerSummaryAttrName() { return "enzyme.p2p"; }
+    static StringRef getAliasSummaryAttrName() { return "enzyme.alias"; }
+  }];
 }
 
 //===----------------------------------------------------------------------===//
