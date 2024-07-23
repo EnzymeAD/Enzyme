@@ -336,6 +336,19 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "EnzymeAttributeInterfacesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-attr-interface-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeAttributeInterfaces.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
     name = "EnzymeAttributesIncGen",
     tbl_outs = [
         (
@@ -558,6 +571,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeAttributesIncGen",
+        ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",
