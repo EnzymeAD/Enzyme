@@ -38,9 +38,10 @@ int test_failures() {
          * mode
          */
         float dfdx = 0;
-        enzyme::autodiff<enzyme::Reverse>( // expected-error@/enzymeroot/enzyme/utils:472 {{static assertion failed due to requirement 'detail::verify_dup_args<enzyme::ReverseMode<false>, enzyme::Duplicated<float>>::value': Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make sense for Reverse mode AD}} expected-note {{}}
+        enzyme::autodiff<enzyme::Reverse>( // expected-error@/enzymeroot/enzyme/utils:477 {{static assertion failed due to requirement 'detail::verify_dup_args<enzyme::ReverseMode<false>, enzyme::Duplicated<float>>::value': Non-reference/pointer Duplicated/DuplicatedNoNeed args don't make sense for Reverse mode AD}} expected-note {{}}
             f, enzyme::Duplicated<float>{ x, dfdx }
         );
     }
     return 0;
 }
+
