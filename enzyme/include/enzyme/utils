@@ -420,6 +420,11 @@ namespace enzyme {
           );
         };
 
+        template<class T>
+        struct is_function_or_function_ptr : std::is_function<T> {};
+         
+        template<class T>
+        struct is_function_or_function_ptr<T*> : std::is_function<T> {};
     }  // namespace detail
 
     template < typename return_type, typename function, typename ... enz_arg_types >
@@ -434,7 +439,7 @@ namespace enzyme {
         return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!std::is_function_v<typename remove_cvref< function >::type>, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
@@ -443,7 +448,7 @@ namespace enzyme {
             std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, &enzyme_const, &f);
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<std::is_function_v<typename remove_cvref< function >::type>, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
