@@ -25,7 +25,7 @@ int test_failures() {
         const float dfdx = enzyme::get<0>(
             enzyme::get<0>(
                 enzyme::autodiff<enzyme::Reverse>( // expected-error@/enzymeroot/enzyme/utils:233 {{no member named 'value' in 'enzyme::Active<const float &>'}} expected-note {{}}
-                    g, enzyme::Active<const float&>{ x } // expected-error@/enzymeroot/enzyme/utils:46 {{static assertion failed due to requirement '!std::is_reference_v<const float &>': Reference/pointer active arguments don't make sense for AD!}} expected-note {{}} expected-note@/enzymeroot/enzyme/utils:480 {{}}
+                    g, enzyme::Active<const float&>{ x } // expected-error@/enzymeroot/enzyme/utils:46 {{static assertion failed due to requirement '!std::is_reference_v<const float &>': Reference/pointer active arguments don't make sense for AD!}} expected-note {{}} expected-note@/enzymeroot/enzyme/utils:485 {{}}
                 )
             )
         );
