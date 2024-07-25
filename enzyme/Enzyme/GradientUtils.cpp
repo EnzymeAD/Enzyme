@@ -5605,6 +5605,29 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
+  } else if (auto arg = dyn_cast<FreezeInst>(oval)) {
+    IRBuilder<> bb(getNewFromOriginal(arg));
+    Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
+    Type *shadowTy = arg->getType();
+
+    if (mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ReverseModePrimal ||
+        mode == DerivativeMode::ReverseModeGradient) {
+      if (TR.query(arg)[{-1}].isFloat()) {
+        return Constant::getNullValue(getShadowType(oval->getType()));
+      }
+    }
+    assert(!arg->getType()->isDoubleTy());
+
+    auto rule = [&](Value *invertOp) {
+      return bb.CreateFreeze(invertOp, arg->getName() + "'ipf");
+    };
+
+    Value *shadow = applyChainRule(shadowTy, bb, rule, invertOp);
+
+    invertedPointers.insert(
+        std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+    return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
     if (arg->getOpcode() == Instruction::Add) {
@@ -6244,6 +6267,10 @@ end:;
   assert(BuilderM.GetInsertBlock());
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
+
+  if (isa<CallBase>(oval) && TR.query(oval)[{-1}].isFloat()) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
+  }
 
   if (CustomErrorHandler) {
     std::string str;
