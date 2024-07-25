@@ -242,7 +242,10 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       if (!vecValue && !startsWith(ord, "local")) {
 
         if (ext.size()) {
-          os << "gutils->extractMeta(" << builder << ", ";
+          if (!lookup)
+            os << "gutils->extractMeta(" << builder << ", ";
+          else
+            os << builder << ".CreateExtractValue(";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)
@@ -903,7 +906,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                   os << curIndent << INDENT << "Value* local_"
                      << ptree->getArgNameStr(i) << " = ";
                   if (!vectorValued[next[0]]) {
-                    os << "gutils->extractMeta(" << builder << ", " << op
+                    os << builder << ".CreateExtractValue(" << op
                        << ", ArrayRef<unsigned>({";
                     for (unsigned i = 1; i < next.size(); i++) {
                       if (i != 1)
