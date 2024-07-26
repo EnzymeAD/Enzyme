@@ -8236,7 +8236,8 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement = getUndefinedValueForType(P->getType());
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
