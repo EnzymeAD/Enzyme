@@ -1686,11 +1686,17 @@ public:
     switch (mode) {
     case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
-      newFunc = Logic.CreateForwardDiff(
-          context, fn, retType, constants, TA,
-          /*should return*/ primalReturn, mode, freeMemory, width,
-          /*addedType*/ nullptr, type_args, overwritten_args,
-          /*augmented*/ nullptr);
+      if (primalReturn && fn->getReturnType()->isVoidTy()) {
+        auto fnname = fn->getName();
+        EmitFailure("PrimalRetOfVoid", CI->getDebugLoc(), CI,
+                    "Requested primal result of void-returning function type ",
+                    *fn->getFunctionType(), " ", fnname, " ", *CI);
+      } else
+        newFunc = Logic.CreateForwardDiff(
+            context, fn, retType, constants, TA,
+            /*should return*/ primalReturn, mode, freeMemory, width,
+            /*addedType*/ nullptr, type_args, overwritten_args,
+            /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
