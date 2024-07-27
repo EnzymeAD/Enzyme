@@ -99,25 +99,34 @@ Operation *clone(Operation *src, IRMapping &mapper,
     successors.push_back(mapper.lookupOrDefault(successor));
 
   // Create the new operation.
-  SmallVector<Type> resultTypes(src->getResultTypes().begin(),
-                                src->getResultTypes().end());
-  if (batchSizes.size()) {
-    for (auto &Ty : resultTypes) {
-      auto T = cast<TensorType>(Ty);
-      SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-      shape.append(T.getShape().begin(), T.getShape().end());
-      Ty = T.clone(shape);
-    }
-  }
-  auto *newOp = Operation::create(
-      src->getLoc(), src->getName(), resultTypes, operands, src->getAttrs(),
-      OpaqueProperties(nullptr), successors, src->getNumRegions());
+  Operation *newOp = nullptr;
 
-  // Clone the regions.
-  if (options.shouldCloneRegions()) {
-    for (unsigned i = 0; i != src->getNumRegions(); ++i)
-      cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap,
-                batchSizes);
+  if (batchSizes.size())
+    if (auto ifaceOp = dyn_cast<BatchOpInterface>(src)) {
+      newOp = ifaceOp.createBatch(mapper, options, opMap, batchSizes);
+    }
+
+  if (!newOp) {
+    SmallVector<Type> resultTypes(src->getResultTypes().begin(),
+                                  src->getResultTypes().end());
+    if (batchSizes.size()) {
+      for (auto &Ty : resultTypes) {
+        auto T = cast<TensorType>(Ty);
+        SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
+        shape.append(T.getShape().begin(), T.getShape().end());
+        Ty = T.clone(shape);
+      }
+    }
+    newOp = Operation::create(
+        src->getLoc(), src->getName(), resultTypes, operands, src->getAttrs(),
+        OpaqueProperties(nullptr), successors, src->getNumRegions());
+
+    // Clone the regions.
+    if (options.shouldCloneRegions()) {
+      for (unsigned i = 0; i != src->getNumRegions(); ++i)
+        cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap,
+                  batchSizes);
+    }
   }
 
   // Remember the mapping of any results.
