@@ -907,7 +907,7 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
 
 void EnzymeSetStringMD(LLVMValueRef Inst, const char *Kind, LLVMValueRef Val) {
   MDNode *N = Val ? extractMDNode(unwrap<MetadataAsValue>(Val)) : nullptr;
-  unwrap<Instruction>(Inst)->setMetadata(Kind, N);
+  unwrap(Inst)->setMetadata(Kind, N);
 }
 
 LLVMValueRef EnzymeGetStringMD(LLVMValueRef Inst, const char *Kind) {
