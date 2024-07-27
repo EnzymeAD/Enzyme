@@ -952,6 +952,10 @@ void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
 }
 
+void EnzymeDumpModuleRef(LLVMModuleRef M) {
+  llvm::errs() << *unwrap(M) << "\n";
+}
+
 #if LLVM_VERSION_MAJOR >= 15
 
 static bool runAttributorOnFunctions(InformationCache &InfoCache,
