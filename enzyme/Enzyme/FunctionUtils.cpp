@@ -2274,7 +2274,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     VMapO->getMDMap() = VMap.getMDMap();
   }
 
-  for (auto attr : {"enzyme_ta_norecur"})
+  for (auto attr : {"enzyme_ta_norecur", "frame-pointer"})
     if (F->getAttributes().hasAttribute(AttributeList::FunctionIndex, attr)) {
       NewF->addAttribute(
           AttributeList::FunctionIndex,

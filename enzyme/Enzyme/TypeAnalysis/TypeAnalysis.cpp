@@ -1003,6 +1003,11 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     return;
   }
 
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (hasMetadata(GV, "enzyme_ta_norecur"))
+      return;
+  }
+
   if (auto CE = dyn_cast<ConstantExpr>(Val)) {
     if (CE->isCast() && isa<ConstantInt>(CE->getOperand(0))) {
       return;
