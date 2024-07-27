@@ -1695,7 +1695,8 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
 
 bool attributeKnownFunctions(llvm::Function &F);
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+                                         bool forceZero = false);
 
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,

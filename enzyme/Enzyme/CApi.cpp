@@ -1648,8 +1648,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                                         FT->isVarArg());
 
   // Create the new function
+  auto &M = *F->getParent();
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
-                                    F->getName(), F->getParent());
+                                    F->getName(), &M);
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1948,7 +1949,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                 }
                 if (outinds.size() > 1)
                   out = B.CreateInBoundsGEP(sretTy, out, outinds);
-                B.CreateStore(getUndefinedValueForType(PT), out);
+                B.CreateStore(getUndefinedValueForType(M, PT), out);
               }
               return;
             }
