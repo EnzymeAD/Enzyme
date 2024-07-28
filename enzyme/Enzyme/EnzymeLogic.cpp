@@ -2994,7 +2994,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           ggep->setIsInBounds(true);
         }
         if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV) ||
-              isa<ConstantAggregate>(shadowRV))) {
+              isa<ConstantAggregate>(shadowRV) ||
+              isa<GlobalVariable>(shadowRV))) {
           auto found = VMap.find(shadowRV);
           assert(found != VMap.end());
           shadowRV = found->second;
