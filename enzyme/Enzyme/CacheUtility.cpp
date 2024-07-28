@@ -1137,7 +1137,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     if (!getContext(blk, idx, ctx.ReverseLimit)) {
       break;
     }
-    contexts.emplace_back(idx);
+    contexts.emplace_back(std::move(idx));
     blk = idx.preheader;
   }
 
