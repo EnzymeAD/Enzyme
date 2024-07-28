@@ -58,10 +58,10 @@ if(ENZYME_ENABLE_HERBIE)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/herbie-fp/herbie
-        GIT_TAG 66dd3019bfbd508bcd397fbe22c1b4b9078c3dee
+        GIT_TAG f71c0270f8f31bb5072fb721a076944fa454068d
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/herbie.rkt
+        BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
