@@ -6340,6 +6340,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "memchr",
                          "time",
                          "strlen",
+                         "pthread_key_delete",
+                         "pthread_key_create",
                          "__cxa_begin_catch",
                          "__cxa_guard_acquire",
                          "__cxa_guard_release",
