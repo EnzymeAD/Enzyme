@@ -211,7 +211,6 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
-    "__cxa_thread_atexit_impl",
     "getenv",
     "strtol",
     "fwrite",
