@@ -6337,6 +6337,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_streambuf<char, std::char_traits<char>>::sputn",
       "std::istream& std::istream::_M_extract",
       "std::ctype<char>::widen",
+      //Rust
+      "std::io::stdio::_eprint",
   };
 
   StringSet<> NoFrees = {"mpfr_greater_p",
