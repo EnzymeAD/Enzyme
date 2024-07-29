@@ -429,6 +429,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
 
+    // Rust
+    "std::io::stdio::_eprint",
+
 };
   // clang-format on
 
