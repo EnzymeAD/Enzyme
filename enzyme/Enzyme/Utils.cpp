@@ -67,7 +67,8 @@ void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
 LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
                                       uint64_t *size) = nullptr;
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
-LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef, uint8_t) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMModuleRef, LLVMTypeRef,
+                                            uint8_t) = nullptr;
 
 LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
                                           LLVMBuilderRef,
@@ -2928,10 +2929,11 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   return {};
 }
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+                                         bool forceZero) {
   if (EnzymeUndefinedValueForType)
     return cast<Constant>(
-        unwrap(EnzymeUndefinedValueForType(wrap(T), forceZero)));
+        unwrap(EnzymeUndefinedValueForType(wrap(&M), wrap(T), forceZero)));
   else if (EnzymeZeroCache || forceZero)
     return Constant::getNullValue(T);
   else

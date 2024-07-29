@@ -907,7 +907,11 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
 
 void EnzymeSetStringMD(LLVMValueRef Inst, const char *Kind, LLVMValueRef Val) {
   MDNode *N = Val ? extractMDNode(unwrap<MetadataAsValue>(Val)) : nullptr;
-  unwrap<Instruction>(Inst)->setMetadata(Kind, N);
+  Value *V = unwrap(Inst);
+  if (auto I = dyn_cast<Instruction>(V))
+    I->setMetadata(Kind, N);
+  else
+    cast<GlobalVariable>(V)->setMetadata(Kind, N);
 }
 
 LLVMValueRef EnzymeGetStringMD(LLVMValueRef Inst, const char *Kind) {
@@ -950,6 +954,10 @@ void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
 
 void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
+}
+
+void EnzymeDumpModuleRef(LLVMModuleRef M) {
+  llvm::errs() << *unwrap(M) << "\n";
 }
 
 #if LLVM_VERSION_MAJOR >= 15
@@ -1648,8 +1656,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                                         FT->isVarArg());
 
   // Create the new function
+  auto &M = *F->getParent();
   Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
-                                    F->getName(), F->getParent());
+                                    F->getName(), &M);
 
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1948,7 +1957,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                 }
                 if (outinds.size() > 1)
                   out = B.CreateInBoundsGEP(sretTy, out, outinds);
-                B.CreateStore(getUndefinedValueForType(PT), out);
+                B.CreateStore(getUndefinedValueForType(M, PT), out);
               }
               return;
             }

@@ -4719,6 +4719,7 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    Module &M = *call.getParent()->getParent()->getParent();
 
     bool foreignFunction = called == nullptr;
 
@@ -4816,7 +4817,7 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -5127,7 +5128,7 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        prearg = getUndefinedValueForType(argi->getType());
+        prearg = getUndefinedValueForType(M, argi->getType());
         preType = ValueType::None;
       }
       pre_args.push_back(prearg);
@@ -5145,7 +5146,7 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
           revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
@@ -5214,7 +5215,7 @@ public:
 
           if (writeOnlyNoCapture && !replaceFunction &&
               TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
-            darg = getUndefinedValueForType(argi->getType());
+            darg = getUndefinedValueForType(M, argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow

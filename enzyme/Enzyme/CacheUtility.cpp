@@ -840,7 +840,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     alloc->setAlignment(Align(align));
   }
   if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(types.back());
+    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
     if (!isa<UndefValue>(val))
       scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
   }
@@ -949,7 +949,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // TODO change this to a power-of-two allocation strategy
 
         auto zerostore = allocationBuilder.CreateStore(
-            getUndefinedValueForType(allocType, /*forceZero*/ true), storeInto);
+            getUndefinedValueForType(*newFunc->getParent(), allocType,
+                                     /*forceZero*/ true),
+            storeInto);
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());

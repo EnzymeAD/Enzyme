@@ -5308,7 +5308,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   }
 
-  if (isa<Argument>(oval) && TR.query(oval)[{-1}].isFloat()) {
+  if (isa<Argument>(oval) && !TR.anyPointer(oval)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   } else if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
@@ -8236,7 +8236,8 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement = getUndefinedValueForType(P->getType());
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
