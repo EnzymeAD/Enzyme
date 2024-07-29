@@ -716,9 +716,13 @@ public:
             }
           }
           if (!dt.isKnown()) {
-            TR.dump();
-            llvm::errs() << " vd:" << vd.str() << " start:" << start
-                         << " size: " << size << " dt:" << dt.str() << "\n";
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce type of load " << I;
+              ss << " vd:" << vd.str() << " start:" << start
+                 << " size: " << size << " dt:" << dt.str() << "\n";
+              EmitNoTypeError(str, I, gutils, BuilderZ);
+              continue;
           }
           assert(dt.isKnown());
 
