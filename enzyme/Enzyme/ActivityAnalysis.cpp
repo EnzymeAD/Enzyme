@@ -111,7 +111,6 @@ static const StringSet<> InactiveGlobals = {
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
-    "__cxa_thread_atexit_impl",
     "stderr",
     "stdout",
     "stdin",
@@ -211,6 +210,7 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
+    "__cxa_thread_atexit_impl",
     "getenv",
     "strtol",
     "fwrite",
@@ -428,9 +428,6 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
-
-    // Rust
-    "std::io::stdio::_eprint",
 
 };
   // clang-format on
