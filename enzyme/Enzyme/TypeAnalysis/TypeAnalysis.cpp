@@ -3415,15 +3415,15 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
     }
   }
 
-  auto &dl = MTI.getParent()->getParent()->getParent()->getDataLayout();
+  auto &DL = MTI.getParent()->getParent()->getParent()->getDataLayout();
   TypeTree res = getAnalysis(MTI.getArgOperand(0))
                      .PurgeAnything()
                      .Data0()
-                     .ShiftIndices(dl, 0, sz, 0);
+                     .ShiftIndices(DL, 0, sz, 0);
   TypeTree res2 = getAnalysis(MTI.getArgOperand(1))
                       .PurgeAnything()
                       .Data0()
-                      .ShiftIndices(dl, 0, sz, 0);
+                      .ShiftIndices(DL, 0, sz, 0);
 
   bool Legal = true;
   res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
@@ -3450,19 +3450,48 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
     EmitFailure("IllegalUpdateAnalysis", MTI.getDebugLoc(), &MTI, ss.str());
     report_fatal_error("Performed illegal updateAnalysis");
   }
-  res.insert({}, BaseType::Pointer);
-  res = res.Only(-1, &MTI);
-  updateAnalysis(MTI.getArgOperand(0), res, &MTI);
-  updateAnalysis(MTI.getArgOperand(1), res, &MTI);
-#if LLVM_VERSION_MAJOR >= 14
-  for (unsigned i = 2; i < MTI.arg_size(); ++i)
-#else
-  for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i)
-#endif
-  {
-    updateAnalysis(MTI.getArgOperand(i),
-                   TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
+  for (unsigned i = 0; i < 2; ++i) {
+    // if (MTI.getArgOperand(i) != origArg)
+    //   continue;
+    if (!MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
+      updateAnalysis(MTI.getArgOperand(i),
+                     TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
+      continue;
+    }
+    llvm::errs() << "reading memcpy enzyme_type for arg " << i << "\n";
+    auto attr = MTI.getParamAttr(i, "enzyme_type");
+    auto TT = TypeTree::parse(attr.getValueAsString(), MTI.getContext());
+    llvm::errs() << "TT:" << TT.str() << "\n";
+    bool legal = true;
+    // llvm::errs() << "res before:" << res.Only(-1, &MTI).str() << "\n";
+    // res before:{[-1]:Pointer}
+    res.checkedOrIn(TT.Data0().ShiftIndices(DL, 0, sz, 0),
+                    /*PointerIntSame*/
+                    false, legal);
+    llvm::errs() << "res after:" << res.Only(-1, &MTI).str() << "\n";
+    if (!legal) {
+      // TR.dump();
+      llvm::errs() << " vd:" << res.str() << " TT:" << TT.str() << "\n";
+      EmitFailure("Illegal TA update", MTI.getDebugLoc(), &MTI,
+                  "failed to update type of copy ", MTI);
+    }
   }
+
+  updateAnalysis(MTI.getArgOperand(0), res.Only(-1, &MTI), &MTI);
+  updateAnalysis(MTI.getArgOperand(1), res.Only(-1, &MTI), &MTI);
+
+  // llvm::errs() << "res final:" << res.Only(-1, &MTI).str() << "\n";
+  // res final:{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double,
+  // [-1,16]:Float@double, [-1,24]:Float@double, [-1,32]:Float@double,
+  // [-1,40]:Float@double, [-1,48]:Float@double, [-1,56]:Float@double,
+  // [-1,64]:Float@double, [-1,72]:Float@double}
+
+  // TypeTree res3 = getAnalysis(MTI.getArgOperand(1))
+  //                     .PurgeAnything()
+  //                     .Data0()
+  //                     .ShiftIndices(DL, 0, sz, 0);
+  //  llvm::errs() << "res updated?:" << res3.Only(-1, &MTI).str() << "\n";
+  //  res updated?:{[-1]:Pointer}
 }
 
 void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {

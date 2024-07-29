@@ -4604,27 +4604,6 @@ public:
     }
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(origArg).Data0().ShiftIndices(DL, 0, size, 0);
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 0; i < call.arg_size(); ++i) {
-#else
-    for (unsigned i = 0; i < call.getNumArgOperands(); ++i) {
-#endif
-      if (call.getArgOperand(i) != origArg)
-        continue;
-      if (!call.getAttributes().hasParamAttr(i, "enzyme_type"))
-        continue;
-      auto attr = call.getParamAttr(i, "enzyme_type");
-      auto TT = TypeTree::parse(attr.getValueAsString(), call.getContext());
-      bool legal = true;
-      vd.checkedOrIn(TT.Data0().ShiftIndices(DL, 0, size, 0), /*PointerIntSame*/
-                     false, legal);
-      if (!legal) {
-        TR.dump();
-        llvm::errs() << " vd:" << vd.str() << " TT:" << TT.str() << "\n";
-        EmitFailure("Illegal TA update", call.getDebugLoc(), &call,
-                    "failed to update type of copy ", call);
-      }
-    }
     if (!vd.isKnownPastPointer()) {
 #if LLVM_VERSION_MAJOR < 17
       if (looseTypeAnalysis) {
