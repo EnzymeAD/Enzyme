@@ -6069,6 +6069,9 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           "std::basic_ostream<char, std::char_traits<char>>::operator<<",
           "std::ostream::operator<<",
           "std::ostream& std::ostream::_M_insert",
+          // Rust
+          "std::io::stdio::_eprint",
+          "__cxa_thread_atexit_impl",
       };
       // clang-format on
 
