@@ -211,7 +211,6 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
-    "pthread_key_create",
     "getenv",
     "strtol",
     "fwrite",
@@ -434,6 +433,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::io::stdio::_eprint",
 
 };
+
 // clang-format on
 
 if (CI.hasFnAttr("enzyme_inactive"))
@@ -443,7 +443,7 @@ if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
   if (StringRef(iasm->getAsmString()).contains("exit") ||
       StringRef(iasm->getAsmString()).contains("cpuid"))
     return true;
-  }
+}
 
   if (auto F = getFunctionFromCall(&CI)) {
     if (F->hasFnAttribute("enzyme_inactive")) {
