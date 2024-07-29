@@ -3283,7 +3283,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
 
   std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> targetToPreds;
   for (auto pred : predecessors(BB)) {
-    targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred);
+    targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].push_back(pred);
   }
 
   if (targetToPreds.size() == 0) {
@@ -3466,7 +3466,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                     gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
                 for (auto select : addedSelects)
-                  selects.emplace_back(select);
+                  selects.push_back(select);
               }
               break;
             }
@@ -3517,7 +3517,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                   gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
               for (auto select : addedSelects)
-                selects.emplace_back(select);
+                selects.push_back(select);
             }
           }
         }
@@ -3554,7 +3554,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
           for (auto select : addedSelects)
-            selects.emplace_back(select);
+            selects.push_back(select);
         }
       }
     }
@@ -3569,8 +3569,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     for (auto pred : predecessors(BB)) {
       if (pred == loopContext.preheader)
         continue;
-      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(
-          pred);
+      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].push_back(pred);
     }
 
     assert(targetToPreds.size() &&
@@ -3605,7 +3604,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     std::map<BasicBlock *, std::vector<std::pair<BasicBlock *, BasicBlock *>>>
         phiTargetToPreds;
     for (auto pair : replacePHIs) {
-      phiTargetToPreds[pair.first].emplace_back(std::make_pair(pair.first, BB));
+      phiTargetToPreds[pair.first].emplace_back(pair.first, BB);
     }
     BasicBlock *fakeTarget = nullptr;
     for (auto pred : predecessors(BB)) {
@@ -3613,7 +3612,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         continue;
       if (fakeTarget == nullptr)
         fakeTarget = pred;
-      phiTargetToPreds[fakeTarget].emplace_back(std::make_pair(pred, BB));
+      phiTargetToPreds[fakeTarget].emplace_back(pred, BB);
     }
     gutils->branchToCorrespondingTarget(BB, phibuilder, phiTargetToPreds,
                                         &replacePHIs);
@@ -3621,8 +3620,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     std::map<BasicBlock *, std::vector<std::pair<BasicBlock *, BasicBlock *>>>
         targetToPreds;
     for (auto pred : predecessors(BB)) {
-      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(
-          std::make_pair(pred, BB));
+      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred,
+                                                                           BB);
     }
     BB2 = gutils->reverseBlocks[BB].back();
     Builder.SetInsertPoint(BB2);

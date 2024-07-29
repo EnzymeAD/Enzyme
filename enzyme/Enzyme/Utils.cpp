@@ -2654,7 +2654,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
               if (subOff != 0)
                 return options;
               for (const auto &pair3 : findAllUsersOf(subPtr)) {
-                todo.emplace_back(pair3);
+                todo.emplace_back(std::move(pair3));
               }
             }
             continue;
@@ -2686,7 +2686,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
             return options;
           }
           for (const auto &pair3 : findAllUsersOf(AI2)) {
-            todo.emplace_back(pair3);
+            todo.emplace_back(std::move(pair3));
           }
           continue;
         }

@@ -231,7 +231,7 @@ GradientUtils::GradientUtils(
     newToOriginalFn[originalToNewFn[&oArg]] = &oArg;
   }
   for (BasicBlock &BB : *newFunc) {
-    originalBlocks.emplace_back(&BB);
+    originalBlocks.push_back(&BB);
   }
   tape = nullptr;
   tapeidx = 0;
@@ -1368,7 +1368,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     for (unsigned i = 0; i < op->getNumArgOperands(); ++i)
 #endif
     {
-      args.emplace_back(getOp(op->getArgOperand(i)));
+      args.push_back(getOp(op->getArgOperand(i)));
       if (args[i] == nullptr)
         goto endCheck;
     }
