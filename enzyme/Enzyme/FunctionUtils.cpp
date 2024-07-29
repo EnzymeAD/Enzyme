@@ -1464,7 +1464,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   if (mode == DerivativeMode::ForwardModeError ||
       mode == DerivativeMode::ReverseModeCombined ||
       mode == DerivativeMode::ReverseModeGradient) {
-    if (getLogFunction(F->getParent(), mode)) {
+    if (getLogFunction(F->getParent(), "enzymeLogError") ||
+        getLogFunction(F->getParent(), "enzymeLogValue") ||
+        getLogFunction(F->getParent(), "enzymeLogGrad")) {
       for (const auto &pair : VMap) {
         if (auto *before = dyn_cast<Instruction>(pair.first)) {
           if (!before->getType()->isFloatingPointTy()) {

@@ -2233,9 +2233,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        assert(res);\n";
 
       // Insert logging function call (optional)
-      os << "        Function *logFunc = getLogFunction(" << origName
-         << ".getModule(), Mode);\n";
-      os << "        if (logFunc) {\n"
+      os << "        if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogError\")) {\n"
          << "            assert(" << origName
          << ".hasMetadata(\"enzyme_preprocess_origin\"));\n"
          << "            auto *CMD = cast<ConstantAsMetadata>(" << origName
@@ -2357,6 +2356,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
+      os << "        if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogValue\")) {\n";
+      os << "          IRBuilder<> BuilderZ(&" << origName << ");\n";
+      os << "          getForwardBuilder(BuilderZ);\n";
+      os << "          ";
+      os << "        }\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";
       os << "        Value *dif = nullptr;\n";
@@ -2368,9 +2373,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
-      os << "        Function *logFunc = getLogFunction(" << origName
-         << ".getModule(), Mode);\n";
-      os << "        if (logFunc) {\n"
+      os << "        if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogGrad\")) {\n"
          << "            assert(" << origName
          << ".hasMetadata(\"enzyme_preprocess_origin\"));\n"
          << "            auto *CMD = cast<ConstantAsMetadata>(" << origName

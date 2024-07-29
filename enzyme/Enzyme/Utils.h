@@ -560,7 +560,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
 }
 
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
-llvm::Function *getLogFunction(llvm::Module *M, DerivativeMode mode);
+llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName);
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;

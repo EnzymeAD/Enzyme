@@ -3504,29 +3504,15 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   return absres;
 }
 
-llvm::Function *getLogFunction(llvm::Module *M, DerivativeMode mode) {
-  switch (mode) {
-  case DerivativeMode::ReverseModeGradient:
-  case DerivativeMode::ReverseModeCombined: {
-    for (llvm::Function &F : *M) {
-      std::string demangledName = llvm::demangle(F.getName().str());
-      if (startsWith(demangledName, "enzymeLogGrad")) {
-        return &F;
-      }
-    }
-    break;
+llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName) {
+  if (demangledName != "enzymeLogError" && demangledName != "enzymeLogGrad" &&
+      demangledName != "enzymeLogValue") {
+    llvm_unreachable("Unknown log function");
   }
-  case DerivativeMode::ForwardModeError: {
-    for (llvm::Function &F : *M) {
-      std::string demangledName = llvm::demangle(F.getName().str());
-      if (startsWith(demangledName, "enzymeLogError")) {
-        return &F;
-      }
+  for (llvm::Function &F : *M) {
+    if (startsWith(llvm::demangle(F.getName().str()), demangledName)) {
+      return &F;
     }
-    break;
-  }
-  default:
-    llvm_unreachable("Unknown DerivativeMode");
   }
   return nullptr; // Return nullptr if no matching function is found
 }
