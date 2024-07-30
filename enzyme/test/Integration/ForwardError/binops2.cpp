@@ -48,6 +48,6 @@ int main() {
   std::cout << "res = " << res << ", abs error = " << error
             << ", rel error = " << fabs(error / res) << "\n";
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
-  TEST_EQ(valueLogCount, 4);
+  TEST_EQ(valueLogCount, 5);
   TEST_EQ(errorLogCount, 4);
 }

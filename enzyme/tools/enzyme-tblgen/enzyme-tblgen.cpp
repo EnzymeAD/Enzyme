@@ -1937,6 +1937,57 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     else
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
+    if (intrinsic != MLIRDerivatives) {
+      os << "    if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogValue\")) {\n"
+         << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
+         << "      getForwardBuilder(BuilderZ);\n"
+         << "      std::string idStr = getLogIdentifier(" << origName << ");\n"
+         << "      Value *idValue = "
+            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
+         << "      Value *origValue = "
+            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "), Type::getDoubleTy(" << origName
+         << ".getContext()));\n"
+         << "      unsigned numOperands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
+         << ".getNumOperands();\n"
+         << "      Value *numOperandsValue = "
+            "ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), numOperands);\n"
+         << "      auto operands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").args() : " << origName
+         << ".operands();\n"
+         << "      ArrayType *operandArrayType = "
+            "ArrayType::get(Type::getDoubleTy("
+         << origName << ".getContext()), numOperands);\n"
+         << "      Value *operandArrayValue = "
+            "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
+            "operandArrayType);\n"
+         << "      for (auto operand : enumerate(operands)) {\n"
+         << "        Value *operandValue = "
+            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "        Value *ptr = "
+            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), operand.index())});\n"
+         << "        BuilderZ.CreateStore(operandValue, ptr);\n"
+         << "      }\n"
+         << "      Value *operandPtrValue = "
+            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0)});\n"
+         << "      CallInst *logCallInst = BuilderZ.CreateCall(logFunc, "
+         << "{idValue, origValue, numOperandsValue, operandPtrValue});\n"
+         << "      logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
+         << "    }\n";
+    }
+
     if (intrinsic == MLIRDerivatives) {
       os << "    if (gutils->isConstantInstruction(op))\n";
       os << "      return success();\n";
@@ -2116,53 +2167,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "      case DerivativeMode::ForwardModeError: {\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getForwardBuilder(Builder2);\n";
-      os << "        if (auto *logFunc = getLogFunction(" << origName
-         << ".getModule(), \"enzymeLogValue\")) {\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
-         << "          Value *idValue = "
-            "Builder2.CreateGlobalStringPtr(idStr);\n"
-         << "          Value *origValue = "
-            "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
-         << origName << "), Type::getDoubleTy(" << origName
-         << ".getContext()));\n"
-         << "          unsigned numOperands = isa<CallInst>(" << origName
-         << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
-         << ".getNumOperands();\n"
-         << "          Value *numOperandsValue = "
-            "ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), numOperands);\n"
-         << "          auto operands = isa<CallInst>(" << origName
-         << ") ? cast<CallInst>(" << origName << ").args() : " << origName
-         << ".operands();\n"
-         << "          ArrayType *operandArrayType = "
-            "ArrayType::get(Type::getDoubleTy("
-         << origName << ".getContext()), numOperands);\n"
-         << "          Value *operandArrayValue = "
-            "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
-            "operandArrayType);\n"
-         << "          for (auto operand : enumerate(operands)) {\n"
-         << "            Value *operandValue = "
-            "Builder2.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
-            "Type::getDoubleTy("
-         << origName << ".getContext()));\n"
-         << "            Value *ptr = "
-            "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
-            "{ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), operand.index())});\n"
-         << "            Builder2.CreateStore(operandValue, ptr);\n"
-         << "          }\n"
-         << "          Value *operandPtrValue = "
-            "Builder2.CreateGEP(operandArrayType, operandArrayValue, "
-            "{ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0)});\n"
-         << "          CallInst *logCallInst = Builder2.CreateCall(logFunc, "
-         << "{idValue, origValue, numOperandsValue, operandPtrValue});\n"
-         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
-         << origName << ".getDebugLoc()));\n";
-      os << "        }\n";
       os << "        Value *res = "
          << "Constant::getNullValue(gutils->getShadowType(" << origName
          << "."
@@ -2303,55 +2307,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
-      os << "        if (auto *logFunc = getLogFunction(" << origName
-         << ".getModule(), \"enzymeLogValue\")) {\n"
-         << "          IRBuilder<> BuilderZ(&" << origName << ");\n"
-         << "          getForwardBuilder(BuilderZ);\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
-         << "          Value *idValue = "
-            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
-         << "          Value *origValue = "
-            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
-         << origName << "), Type::getDoubleTy(" << origName
-         << ".getContext()));\n"
-         << "          unsigned numOperands = isa<CallInst>(" << origName
-         << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
-         << ".getNumOperands();\n"
-         << "          Value *numOperandsValue = "
-            "ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), numOperands);\n"
-         << "          auto operands = isa<CallInst>(" << origName
-         << ") ? cast<CallInst>(" << origName << ").args() : " << origName
-         << ".operands();\n"
-         << "          ArrayType *operandArrayType = "
-            "ArrayType::get(Type::getDoubleTy("
-         << origName << ".getContext()), numOperands);\n"
-         << "          Value *operandArrayValue = "
-            "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
-            "operandArrayType);\n"
-         << "          for (auto operand : enumerate(operands)) {\n"
-         << "            Value *operandValue = "
-            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
-            "Type::getDoubleTy("
-         << origName << ".getContext()));\n"
-         << "            Value *ptr = "
-            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
-            "{ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), operand.index())});\n"
-         << "            BuilderZ.CreateStore(operandValue, ptr);\n"
-         << "          }\n"
-         << "          Value *operandPtrValue = "
-            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
-            "{ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
-         << origName << ".getContext()), 0)});\n"
-         << "          CallInst *logCallInst = BuilderZ.CreateCall(logFunc, "
-         << "{idValue, origValue, numOperandsValue, operandPtrValue});\n"
-         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
-         << origName << ".getDebugLoc()));\n";
-      os << "        }\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";
       os << "        Value *dif = nullptr;\n";

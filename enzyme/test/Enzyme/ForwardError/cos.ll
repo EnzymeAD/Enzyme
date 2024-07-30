@@ -34,10 +34,6 @@ declare void @enzymeLogError(i8* noundef %id, double noundef %err)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = alloca [1 x double], align 8
 ; CHECK-NEXT:   %[[i1:.+]] = tail call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   %[[i2:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
-; CHECK-NEXT:   store double %x, double* %[[i2]], align 8
-; CHECK-NEXT:   %[[i3:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
-; CHECK-NEXT:   call void @enzymeLogValue(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @0, i32 0, i32 0), double %1, i32 1, double* %[[i3]])
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %"x'", %x
 ; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i4]], %[[i1]]
 ; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.sin.f64(double %x)
@@ -51,5 +47,9 @@ declare void @enzymeLogError(i8* noundef %id, double noundef %err)
 ; CHECK-NEXT:   %[[i14:.+]] = call fast double @llvm.fabs.f64(double %[[i13]])
 ; CHECK-NEXT:   %[[i15:.+]] = call fast double @llvm.maxnum.f64(double %[[i14]], double %[[i9]])
 ; CHECK-NEXT:   call void @enzymeLogError(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @1, i32 0, i32 0), double %[[i15]])
+; CHECK-NEXT:   %[[i2:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
+; CHECK-NEXT:   store double %x, double* %[[i2]], align 8
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
+; CHECK-NEXT:   call void @enzymeLogValue(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @0, i32 0, i32 0), double %1, i32 1, double* %[[i3]])
 ; CHECK-NEXT:   ret double %[[i15]]
 ; CHECK-NEXT: }
