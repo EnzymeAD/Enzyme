@@ -111,6 +111,8 @@ static const StringSet<> InactiveGlobals = {
     "jl_small_typeof",
     "ompi_request_null",
     "ompi_mpi_double",
+    "RSMPI_DOUBLE",
+    "RSMPI_FLOAT",
     "ompi_mpi_comm_world",
     "__cxa_thread_atexit_impl",
     "stderr",
