@@ -3517,6 +3517,31 @@ llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName) {
   return nullptr; // Return nullptr if no matching function is found
 }
 
+std::string getLogIdentifier(llvm::Instruction &I) {
+  assert(I.hasMetadata("enzyme_preprocess_origin"));
+  auto *CMD = cast<ConstantAsMetadata>(
+      I.getMetadata("enzyme_preprocess_origin")->getOperand(0));
+  uintptr_t ptrValue = cast<ConstantInt>(CMD->getValue())->getZExtValue();
+  auto *OI = reinterpret_cast<Instruction *>(ptrValue);
+
+  llvm::StringRef functionName = OI->getFunction()->getName();
+  int blockIdx = -1, instIdx = -1;
+  auto blockIt = llvm::find_if(*OI->getFunction(), [&](const auto &block) {
+    return &block == OI->getParent();
+  });
+  if (blockIt != OI->getFunction()->end()) {
+    blockIdx = std::distance(OI->getFunction()->begin(), blockIt);
+  }
+  auto instIt = llvm::find_if(*OI->getParent(),
+                              [&](const auto &curr) { return &curr == OI; });
+  if (instIt != OI->getParent()->end()) {
+    instIdx = std::distance(OI->getParent()->begin(), instIt);
+  }
+
+  return functionName.str() + ":" + std::to_string(blockIdx) + ":" +
+         std::to_string(instIdx);
+}
+
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils,

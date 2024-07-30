@@ -11,20 +11,21 @@ double fabs(double);
 
 extern double __enzyme_error_estimate(void *, ...);
 
+int valueLogCount = 0;
 int errorLogCount = 0;
 
-void enzymeLogError(double res, double err, const char *opcodeName,
-                    const char *calleeName, const char *moduleName,
-                    const char *functionName, unsigned blockIdx,
-                    unsigned instIdx, unsigned numOperands, double *operands) {
-  ++errorLogCount;
-  printf("Res = %e, Error = %e, Op = %s, Callee = %s, Module = %s, Function = "
-         "%s, BlockIdx = %u, InstIdx = %u\n",
-         res, err, opcodeName, calleeName, moduleName, functionName, blockIdx,
-         instIdx);
+void enzymeLogValue(const char *id, double res, unsigned numOperands,
+                    double *operands) {
+  ++valueLogCount;
+  printf("Id = %s, Res = %.18e\n", id, res);
   for (int i = 0; i < numOperands; ++i) {
-    printf("Operand[%d] = %e\n", i, operands[i]);
+    printf("\tOperand[%d] = %.18e\n", i, operands[i]);
   }
+}
+
+void enzymeLogError(const char *id, double err) {
+  ++errorLogCount;
+  printf("Id = %s, Err = %.18e\n", id, err);
 }
 
 // An example from https://dl.acm.org/doi/10.1145/3371128
@@ -33,7 +34,7 @@ double fun(double x) {
   double v2 = 1 - v1;
   double v3 = x * x;
   double v4 = v2 / v3;
-  double v5 = sin(v4); // Inactive -- logger is not invoked.
+  double v5 = sin(v4);
 
   printf("v1 = %.18e, v2 = %.18e, v3 = %.18e, v4 = %.18e, v5 = %.18e\n", v1, v2,
          v3, v4, v5);
@@ -47,5 +48,6 @@ int main() {
   printf("res = %.18e, abs error = %.18e, rel error = %.18e\n", res, error,
          fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
+  TEST_EQ(valueLogCount, 4);
   TEST_EQ(errorLogCount, 4);
 }
