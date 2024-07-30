@@ -123,7 +123,8 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
-    if (gutils->mode == DerivativeMode::ForwardModeError &&
+    if ((getLogFunction(gutils->oldFunc->getParent(), "enzymeLogValue") ||
+         gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (EnzymePrintDiffUse)
         llvm::errs()
