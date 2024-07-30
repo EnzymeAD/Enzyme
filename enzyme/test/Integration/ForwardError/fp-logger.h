@@ -6,47 +6,17 @@
 #include <unordered_map>
 #include <vector>
 
-struct InstructionIdentifier {
-  std::string moduleName;
-  std::string functionName;
-  unsigned blockIdx;
-  unsigned instIdx;
-
-  bool operator==(const InstructionIdentifier &other) const {
-    return moduleName == other.moduleName &&
-           functionName == other.functionName && blockIdx == other.blockIdx &&
-           instIdx == other.instIdx;
-  }
-};
-
-namespace std {
-template <> struct hash<InstructionIdentifier> {
-  std::size_t operator()(const InstructionIdentifier &id) const noexcept {
-    std::size_t h1 = std::hash<std::string>{}(id.moduleName);
-    std::size_t h2 = std::hash<std::string>{}(id.functionName);
-    std::size_t h3 = std::hash<unsigned>{}(id.blockIdx);
-    std::size_t h4 = std::hash<unsigned>{}(id.instIdx);
-    return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
-  }
-};
-} // namespace std
-
-class InstructionInfo {
+class ValueInfo {
 public:
   double minRes = std::numeric_limits<double>::max();
   double maxRes = std::numeric_limits<double>::lowest();
-  double minErr = std::numeric_limits<double>::max();
-  double maxErr = std::numeric_limits<double>::lowest();
   std::vector<double> minOperands;
   std::vector<double> maxOperands;
   unsigned executions = 0;
 
-  void update(double res, double err, const double *operands,
-              unsigned numOperands) {
+  void update(double res, const double *operands, unsigned numOperands) {
     minRes = std::min(minRes, res);
     maxRes = std::max(maxRes, res);
-    minErr = std::min(minErr, err);
-    maxErr = std::max(maxErr, err);
     if (minOperands.empty()) {
       minOperands.resize(numOperands, std::numeric_limits<double>::max());
       maxOperands.resize(numOperands, std::numeric_limits<double>::lowest());
@@ -59,43 +29,85 @@ public:
   }
 };
 
-class DataManager {
+class ErrorInfo {
+public:
+  double minErr = std::numeric_limits<double>::max();
+  double maxErr = std::numeric_limits<double>::lowest();
+
+  void update(double err) {
+    minErr = std::min(minErr, err);
+    maxErr = std::max(maxErr, err);
+  }
+};
+
+class GradInfo {
+public:
+  double grad = 0.0;
+
+  void update(double grad) { this->grad = grad; }
+};
+
+class Logger {
 private:
-  std::unordered_map<InstructionIdentifier, InstructionInfo> instructionData;
+  std::unordered_map<std::string, ValueInfo> valueInfo;
+  std::unordered_map<std::string, ErrorInfo> errorInfo;
+  std::unordered_map<std::string, GradInfo> gradInfo;
 
 public:
-  void update(const std::string &moduleName, const std::string &functionName,
-              unsigned blockIdx, unsigned instIdx, double res, double err,
-              const double *operands, unsigned numOperands) {
-    InstructionIdentifier id = {moduleName, functionName, blockIdx, instIdx};
-    auto &info = instructionData.emplace(id, InstructionInfo()).first->second;
-    info.update(res, err, operands, numOperands);
+  void updateValue(const std::string &id, double res, unsigned numOperands,
+                   const double *operands) {
+    auto &info = valueInfo.emplace(id, ValueInfo()).first->second;
+    info.update(res, operands, numOperands);
   }
 
-  void print() {
-    for (auto &entry : instructionData) {
-      auto &id = entry.first;
-      auto &info = entry.second;
-      std::cout << "Module: " << id.moduleName
-                << ", Function: " << id.functionName
-                << ", BlockIdx: " << id.blockIdx << ", InstIdx: " << id.instIdx
-                << "\n"
-                << "Min Res: " << info.minRes << ", Max Res: " << info.maxRes
-                << ", Min Error: " << info.minErr
-                << ", Max Error: " << info.maxErr
-                << ", Executions: " << info.executions << "\n";
-      for (size_t i = 0; i < info.minOperands.size(); ++i) {
-        std::cout << "Operand[" << i << "] Range: [" << info.minOperands[i]
-                  << ", " << info.maxOperands[i] << "]\n";
+  void updateError(const std::string &id, double err) {
+    auto &info = errorInfo.emplace(id, ErrorInfo()).first->second;
+    info.update(err);
+  }
+
+  void updateGrad(const std::string &id, double grad) {
+    auto &info = gradInfo.emplace(id, GradInfo()).first->second;
+    info.update(grad);
+  }
+
+  void print() const {
+    // For each map, print the information. First print the identifier, then
+    // print the information led by a tab.
+    for (const auto &pair : valueInfo) {
+      const auto &id = pair.first;
+      const auto &info = pair.second;
+      std::cout << "Value:" << id << "\n";
+      std::cout << "\tMinRes = " << info.minRes << "\n";
+      std::cout << "\tMaxRes = " << info.maxRes << "\n";
+      std::cout << "\tExecutions = " << info.executions << "\n";
+      for (unsigned i = 0; i < info.minOperands.size(); ++i) {
+        std::cout << "\tMinOperand[" << i << "] = " << info.minOperands[i]
+                  << "\n";
+        std::cout << "\tMaxOperand[" << i << "] = " << info.maxOperands[i]
+                  << "\n";
       }
-      std::cout << "\n";
+    }
+
+    for (const auto &pair : errorInfo) {
+      const auto &id = pair.first;
+      const auto &info = pair.second;
+      std::cout << "Error:" << id << "\n";
+      std::cout << "\tMinErr = " << info.minErr << "\n";
+      std::cout << "\tMaxErr = " << info.maxErr << "\n";
+    }
+
+    for (const auto &pair : gradInfo) {
+      const auto &id = pair.first;
+      const auto &info = pair.second;
+      std::cout << "Grad:" << id << "\n";
+      std::cout << "\tGrad = " << info.grad << "\n";
     }
   }
 };
 
-static DataManager *logger = nullptr;
+static Logger *logger = nullptr;
 
-void initializeLogger() { logger = new DataManager(); }
+void initializeLogger() { logger = new Logger(); }
 
 void destroyLogger() {
   delete logger;
@@ -104,11 +116,18 @@ void destroyLogger() {
 
 void printLogger() { logger->print(); }
 
-void enzymeLogError(double res, double err, const char *opcodeName,
-                    const char *calleeName, const char *moduleName,
-                    const char *functionName, unsigned blockIdx,
-                    unsigned instIdx, unsigned numOperands, double *operands) {
+void enzymeLogError(const char *id, double err) {
   assert(logger && "Logger is not initialized");
-  logger->update(moduleName, functionName, blockIdx, instIdx, res, err,
-                 operands, numOperands);
+  logger->updateError(id, err);
+}
+
+void enzymeLogGrad(const char *id, double grad) {
+  assert(logger && "Logger is not initialized");
+  logger->updateGrad(id, grad);
+}
+
+void enzymeLogValue(const char *id, double res, unsigned numOperands,
+                    double *operands) {
+  assert(logger && "Logger is not initialized");
+  logger->updateValue(id, res, numOperands, operands);
 }
