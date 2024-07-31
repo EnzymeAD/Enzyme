@@ -1,5 +1,6 @@
 #include <cassert>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -71,8 +72,9 @@ public:
   }
 
   void print() const {
-    // For each map, print the information. First print the identifier, then
-    // print the information led by a tab.
+    std::cout << std::fixed
+              << std::setprecision(std::numeric_limits<double>::max_digits10);
+
     for (const auto &pair : valueInfo) {
       const auto &id = pair.first;
       const auto &info = pair.second;
@@ -81,10 +83,8 @@ public:
       std::cout << "\tMaxRes = " << info.maxRes << "\n";
       std::cout << "\tExecutions = " << info.executions << "\n";
       for (unsigned i = 0; i < info.minOperands.size(); ++i) {
-        std::cout << "\tMinOperand[" << i << "] = " << info.minOperands[i]
-                  << "\n";
-        std::cout << "\tMaxOperand[" << i << "] = " << info.maxOperands[i]
-                  << "\n";
+        std::cout << "\tOperand[" << i << "] = [" << info.minOperands[i] << ", "
+                  << info.maxOperands[i] << "]\n";
       }
     }
 

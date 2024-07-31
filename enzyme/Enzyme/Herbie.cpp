@@ -66,11 +66,8 @@ static cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
 static cl::opt<std::string>
-    ErrorLogPath("error-log-path", cl::init(""), cl::Hidden,
-                 cl::desc("Which error log to use in the FPOpt pass"));
-static cl::opt<std::string>
-    GradLogPath("grad-log-path", cl::init(""), cl::Hidden,
-                cl::desc("Which gradient log to use in the FPOpt pass"));
+    LogPath("log-path", cl::init(""), cl::Hidden,
+            cl::desc("Which log to use in the FPOpt pass"));
 static cl::opt<bool>
     HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
                         cl::desc("Disable Herbie's series expansion"));
@@ -886,111 +883,104 @@ bool herbiable(const Value &Val) {
   }
 }
 
-struct ErrorLogData {
+struct ValueInfo {
   double minRes;
   double maxRes;
-  double minError;
-  double maxError;
   unsigned executions;
-  SmallVector<double, 2> lower; // Known bounds of operands
-  SmallVector<double, 2> upper;
+  SmallVector<double, 4> lower;
+  SmallVector<double, 4> upper;
 };
 
-bool extractErrorLogData(const std::string &filePath,
+void extractValueFromLog(const std::string &logPath,
                          const std::string &functionName, size_t blockIdx,
-                         size_t instIdx, ErrorLogData &data) {
-  std::ifstream file(filePath);
+                         size_t instIdx, ValueInfo &data) {
+  std::ifstream file(logPath);
   if (!file.is_open()) {
-    llvm::errs() << "Failed to open error log: " << filePath << "\n";
-    return false;
+    llvm_unreachable("Failed to open log file");
   }
 
-  std::regex linePattern("Function: " + functionName +
-                         ", BlockIdx: " + std::to_string(blockIdx) +
-                         ", InstIdx: " + std::to_string(instIdx));
   std::string line;
+  std::regex valuePattern("^Value:" + functionName + ":" +
+                          std::to_string(blockIdx) + ":" +
+                          std::to_string(instIdx));
+  std::regex newEntryPattern("^(Value|Grad):");
 
   while (getline(file, line)) {
-    if (std::regex_search(line, linePattern)) {
-      if (getline(file, line)) {
-        std::regex statsPattern(
-            R"(Min Res: ([\d\.eE+-]+), Max Res: ([\d\.eE+-]+), Min Error: ([\d\.eE+-]+), Max Error: ([\d\.eE+-]+), Executions: (\d+))");
-        std::smatch statsMatch;
-        if (std::regex_search(line, statsMatch, statsPattern)) {
-          data.minRes = stringToDouble(statsMatch[1]);
-          data.maxRes = stringToDouble(statsMatch[2]);
-          data.minError = stringToDouble(statsMatch[3]);
-          data.maxError = stringToDouble(statsMatch[4]);
-          data.executions = std::stol(statsMatch[5]);
+    if (std::regex_search(line, valuePattern)) {
+      std::regex statsPattern(
+          R"(MinRes = ([\d\.eE+-]+)\s*MaxRes = ([\d\.eE+-]+)\s*Executions = (\d+))");
+      std::smatch statsMatch;
+      if (getline(file, line) &&
+          std::regex_search(line, statsMatch, statsPattern)) {
+        data.minRes = stringToDouble(statsMatch[1]);
+        data.maxRes = stringToDouble(statsMatch[2]);
+        data.executions = std::stol(statsMatch[3]);
+      }
+
+      std::regex rangePattern(
+          R"(Operand\[\d+\] = \[([\d\.eE+-]+), ([\d\.eE+-]+)\])");
+      while (getline(file, line)) {
+        if (std::regex_search(line, newEntryPattern)) {
+          // All operands have been extracted
+          return;
         }
 
-        // Read lines for operand ranges
-        std::regex rangePattern(R"(\[([\d\.eE+-]+),\s*([\d\.eE+-]+)\])");
-        while (getline(file, line) && line.substr(0, 7) == "Operand") {
-          std::smatch rangeMatch;
-          if (std::regex_search(line, rangeMatch, rangePattern)) {
-            data.lower.push_back(stringToDouble(rangeMatch[1]));
-            data.upper.push_back(stringToDouble(rangeMatch[2]));
-          } else {
-            return false;
-          }
+        std::smatch rangeMatch;
+        if (std::regex_search(line, rangeMatch, rangePattern)) {
+          data.lower.push_back(stringToDouble(rangeMatch[1]));
+          data.upper.push_back(stringToDouble(rangeMatch[2]));
         }
+      }
+    }
+  }
+
+  std::string error =
+      "Failed to extract value info for: Function: " + functionName +
+      ", BlockIdx: " + std::to_string(blockIdx) +
+      ", InstIdx: " + std::to_string(instIdx);
+  llvm_unreachable(error.c_str());
+}
+
+bool extractGradFromLog(const std::string &logPath,
+                        const std::string &functionName, size_t blockIdx,
+                        size_t instIdx, double &grad) {
+  std::ifstream file(logPath);
+  if (!file.is_open()) {
+    llvm_unreachable("Failed to open log file");
+  }
+
+  std::string line;
+  std::regex gradPattern("^Grad:" + functionName + ":" +
+                         std::to_string(blockIdx) + ":" +
+                         std::to_string(instIdx));
+
+  while (getline(file, line)) {
+    if (std::regex_search(line, gradPattern)) {
+
+      // Extract Grad data
+      std::regex gradExtractPattern(R"(Grad = ([\d\.eE+-]+))");
+      std::smatch gradMatch;
+      if (getline(file, line) &&
+          std::regex_search(line, gradMatch, gradExtractPattern)) {
+        grad = stringToDouble(gradMatch[1]);
         return true;
       }
     }
   }
 
-  if (EnzymePrintFPOpt)
-    llvm::errs() << "Failed to get error log data for: " << "Function: "
-                 << functionName << ", BlockIdx: " << blockIdx
-                 << ", InstIdx: " << instIdx << "\n";
+  llvm::errs() << "Failed to extract gradient for: Function: " << functionName
+               << ", BlockIdx: " << blockIdx << ", InstIdx: " << instIdx
+               << "\n";
   return false;
 }
 
-struct GradLogData {
-  double grad;
-  unsigned executions;
-};
-
-bool extractGradLogData(const std::string &filePath,
-                        const std::string &functionName, size_t blockIdx,
-                        size_t instIdx, GradLogData &data) {
-  std::ifstream file(filePath);
+bool isLogged(const std::string &logPath, const std::string &functionName) {
+  std::ifstream file(logPath);
   if (!file.is_open()) {
-    llvm::errs() << "Failed to open grad log: " << filePath << "\n";
-    return false;
+    assert(0 && "Failed to open log file");
   }
 
-  std::regex linePattern("Function: " + functionName +
-                         ", BlockIdx: " + std::to_string(blockIdx) +
-                         ", InstIdx: " + std::to_string(instIdx) +
-                         R"(, Grad: ([\d\.eE+-]+), Executions: (\d+))");
-  std::string line;
-
-  while (getline(file, line)) {
-    std::smatch match;
-    if (std::regex_search(line, match, linePattern)) {
-      data.grad = stringToDouble(match[1]);
-      data.executions = std::stol(match[2]);
-      return true;
-    }
-  }
-
-  if (EnzymePrintFPOpt)
-    llvm::errs() << "Failed to get grad log data for: " << "Function: "
-                 << functionName << ", BlockIdx: " << blockIdx
-                 << ", InstIdx: " << instIdx << "\n";
-  return false;
-}
-
-bool isLogged(const std::string &filePath, const std::string &functionName) {
-  std::ifstream file(filePath);
-  if (!file.is_open()) {
-    assert(0 && "Failed to open error log");
-  }
-
-  std::string pattern = "Function: " + functionName + ",";
-  std::regex functionRegex(pattern);
+  std::regex functionRegex("^Value:" + functionName);
 
   std::string line;
   while (std::getline(file, line)) {
@@ -1263,8 +1253,8 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   std::string functionName = F.getName().str();
 
   // TODO: Finer control
-  if (!ErrorLogPath.empty()) {
-    if (!isLogged(ErrorLogPath, functionName)) {
+  if (!LogPath.empty()) {
+    if (!isLogged(LogPath, functionName)) {
       if (EnzymePrintFPOpt)
         llvm::errs() << "Skipping function: " << F.getName()
                      << " since it is not logged\n";
@@ -1422,8 +1412,8 @@ B2:
             input_seen.insert(operand);
 
             // look up error log to get bounds of the operand of I2
-            if (!ErrorLogPath.empty()) {
-              ErrorLogData errorLogData;
+            if (!LogPath.empty()) {
+              ValueInfo valueInfo;
               auto blockIt = std::find_if(
                   I2->getFunction()->begin(), I2->getFunction()->end(),
                   [&](const auto &block) { return &block == I2->getParent(); });
@@ -1436,24 +1426,16 @@ B2:
               assert(instIt != I2->getParent()->end() &&
                      "Instruction not found");
               size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
-              bool found = extractErrorLogData(ErrorLogPath, functionName,
-                                               blockIdx, instIdx, errorLogData);
 
+              extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
+                                  valueInfo);
               auto *node = valueToNodeMap[operand];
-              if (found) {
-                node->updateBounds(errorLogData.lower[i],
-                                   errorLogData.upper[i]);
-                if (EnzymePrintFPOpt)
-                  llvm::errs() << "Bounds of " << *operand
-                               << " are: " << errorLogData.lower[i] << " and "
-                               << errorLogData.upper[i] << "\n";
-              } else { // Unknown bounds
-                node->updateBounds(-std::numeric_limits<double>::infinity(),
-                                   std::numeric_limits<double>::infinity());
-                if (EnzymePrintFPOpt)
-                  llvm::errs() << "Bounds of " << *operand
-                               << " are not found in the log\n";
-              }
+              node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
+
+              if (EnzymePrintFPOpt)
+                llvm::errs()
+                    << "Range of " << *operand << " is [" << valueInfo.lower[i]
+                    << ", " << valueInfo.upper[i] << "]\n";
             }
           } else {
             if (EnzymePrintFPOpt)
@@ -1471,8 +1453,8 @@ B2:
               output_seen.insert(I2);
 
               // Look up grad log to get grad of output I2
-              if (!GradLogPath.empty()) {
-                GradLogData gradLogData;
+              if (!LogPath.empty()) {
+                double grad = 0;
                 auto blockIt = std::find_if(I2->getFunction()->begin(),
                                             I2->getFunction()->end(),
                                             [&](const auto &block) {
@@ -1489,18 +1471,15 @@ B2:
                        "Instruction not found");
                 size_t instIdx =
                     std::distance(I2->getParent()->begin(), instIt);
-                bool found = extractGradLogData(GradLogPath, functionName,
-                                                blockIdx, instIdx, gradLogData);
+                bool found = extractGradFromLog(LogPath, functionName, blockIdx,
+                                                instIdx, grad);
 
                 auto *node = valueToNodeMap[I2];
                 if (found) {
-                  node->grad = gradLogData.grad;
-                  node->executions = gradLogData.executions;
+                  node->grad = grad;
                   if (EnzymePrintFPOpt)
-                    llvm::errs() << "Grad of " << *I2
-                                 << " is: " << gradLogData.grad << "\n";
-                  llvm::errs() << "Execution count of " << *I2
-                               << " is: " << gradLogData.executions << "\n";
+                    llvm::errs()
+                        << "Grad of " << *I2 << " is: " << grad << "\n";
                 } else { // Unknown bounds
                   if (EnzymePrintFPOpt)
                     llvm::errs()
@@ -1598,7 +1577,7 @@ B2:
       std::string properties =
           ":precision binary64 :herbie-conversions ([binary64 binary32])";
 
-      if (!ErrorLogPath.empty()) {
+      if (!LogPath.empty()) {
         std::string precondition =
             getPrecondition(args, valueToNodeMap, symbolToValueMap);
         properties += " :pre " + precondition;
@@ -1668,12 +1647,8 @@ B2:
     }
   } else {
     // TODO: Solver
-    if (ErrorLogPath.empty()) {
-      llvm::errs() << "FPOpt: Solver enabled but no error log provided\n";
-      return false;
-    }
-    if (GradLogPath.empty()) {
-      llvm::errs() << "FPOpt: Solver enabled but no grad log provided\n";
+    if (LogPath.empty()) {
+      llvm::errs() << "FPOpt: Solver enabled but no log file is provided\n";
       return false;
     }
     // changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
