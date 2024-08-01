@@ -96,7 +96,7 @@ static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
 static cl::opt<InstructionCost> FPOptComputationCostBudget(
-    "fpopt-comp-cost-budget", cl::init(500), cl::Hidden,
+    "fpopt-comp-cost-budget", cl::init(1000000000), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
 }
 
@@ -642,12 +642,12 @@ public:
 
   // Lower is better
   InstructionCost getComputationCost(size_t candidateIndex) {
-    return (candidates[candidateIndex].TTICost - initialTTICost) * executions;
+    // TODO: consider erasure of the old output
+    return candidates[candidateIndex].TTICost * executions;
   }
 
   // Lower is better
   double getAccuracyCost(size_t candidateIndex) {
-    // TODO: `executions`?
     return (initialAccuracy - candidates[candidateIndex].accuracy) *
            std::fabs(grad);
   }
@@ -911,14 +911,32 @@ void extractValueFromLog(const std::string &logPath,
 
   while (getline(file, line)) {
     if (std::regex_search(line, valuePattern)) {
-      std::regex statsPattern(
-          R"(MinRes = ([\d\.eE+-]+)\s*MaxRes = ([\d\.eE+-]+)\s*Executions = (\d+))");
-      std::smatch statsMatch;
-      if (getline(file, line) &&
-          std::regex_search(line, statsMatch, statsPattern)) {
-        data.minRes = stringToDouble(statsMatch[1]);
-        data.maxRes = stringToDouble(statsMatch[2]);
-        data.executions = std::stol(statsMatch[3]);
+      std::string minResLine, maxResLine, executionsLine;
+      if (getline(file, minResLine) && getline(file, maxResLine) &&
+          getline(file, executionsLine)) {
+        std::regex minResPattern(R"(MinRes = ([\d\.eE+-]+))");
+        std::regex maxResPattern(R"(MaxRes = ([\d\.eE+-]+))");
+        std::regex executionsPattern(R"(Executions = (\d+))");
+
+        std::smatch minResMatch, maxResMatch, executionsMatch;
+        if (std::regex_search(minResLine, minResMatch, minResPattern) &&
+            std::regex_search(maxResLine, maxResMatch, maxResPattern) &&
+            std::regex_search(executionsLine, executionsMatch,
+                              executionsPattern)) {
+          data.minRes = stringToDouble(minResMatch[1]);
+          data.maxRes = stringToDouble(maxResMatch[1]);
+          data.executions = std::stol(executionsMatch[1]);
+
+          llvm::errs() << "Extracted value info: MinRes = " << data.minRes
+                       << ", MaxRes = " << data.maxRes
+                       << ", Executions = " << data.executions << "\n";
+        } else {
+          std::string error =
+              "Failed to parse stats for: Function: " + functionName +
+              ", BlockIdx: " + std::to_string(blockIdx) +
+              ", InstIdx: " + std::to_string(instIdx);
+          llvm_unreachable(error.c_str());
+        }
       }
 
       std::regex rangePattern(
@@ -1435,6 +1453,7 @@ B2:
                                   valueInfo);
               auto *node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
+              node->executions = valueInfo.executions;
 
               if (EnzymePrintFPOpt)
                 llvm::errs()
@@ -1602,6 +1621,11 @@ B2:
       // 3) run fancy opts
       double grad = valueToNodeMap[output]->grad;
       unsigned executions = valueToNodeMap[output]->executions;
+
+      // TODO: For now just skip if grad is 0
+      if (grad == 0.) {
+        continue;
+      }
 
       ApplicableOutput AO(component, output, expr, grad, executions, TTI);
       if (!improveViaHerbie(herbieInput, AO, F.getParent(), TTI, valueToNodeMap,
