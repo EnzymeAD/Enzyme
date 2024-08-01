@@ -112,7 +112,6 @@ static const StringSet<> InactiveGlobals = {
     "ompi_request_null",
     "ompi_mpi_double",
     "ompi_mpi_comm_world",
-    "__cxa_thread_atexit_impl",
     "stderr",
     "stdout",
     "stdin",

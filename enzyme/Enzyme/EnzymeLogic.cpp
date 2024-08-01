@@ -6068,9 +6068,6 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
           "std::basic_ostream<char, std::char_traits<char>>::operator<<",
           "std::ostream::operator<<",
           "std::ostream& std::ostream::_M_insert",
-          // Rust
-          "std::io::stdio::_eprint",
-          "__cxa_thread_atexit_impl",
       };
       // clang-format on
 
@@ -6336,6 +6333,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_streambuf<char, std::char_traits<char>>::sputn",
       "std::istream& std::istream::_M_extract",
       "std::ctype<char>::widen",
+      //Rust
+      "std::io::stdio::_eprint",
   };
 
   StringSet<> NoFrees = {"mpfr_greater_p",
