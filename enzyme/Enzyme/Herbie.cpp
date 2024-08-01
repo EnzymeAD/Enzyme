@@ -96,7 +96,7 @@ static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
 static cl::opt<InstructionCost> FPOptComputationCostBudget(
-    "fpopt-comp-cost-budget", cl::init(1000000000), cl::Hidden,
+    "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
 }
 
@@ -926,10 +926,6 @@ void extractValueFromLog(const std::string &logPath,
           data.minRes = stringToDouble(minResMatch[1]);
           data.maxRes = stringToDouble(maxResMatch[1]);
           data.executions = std::stol(executionsMatch[1]);
-
-          llvm::errs() << "Extracted value info: MinRes = " << data.minRes
-                       << ", MaxRes = " << data.maxRes
-                       << ", Executions = " << data.executions << "\n";
         } else {
           std::string error =
               "Failed to parse stats for: Function: " + functionName +
@@ -1453,12 +1449,12 @@ B2:
                                   valueInfo);
               auto *node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
-              node->executions = valueInfo.executions;
 
-              if (EnzymePrintFPOpt)
-                llvm::errs()
-                    << "Range of " << *operand << " is [" << valueInfo.lower[i]
-                    << ", " << valueInfo.upper[i] << "]\n";
+              if (EnzymePrintFPOpt) {
+                llvm::errs() << "Range of " << *operand << " is ["
+                             << node->getLowerBound() << ", "
+                             << node->getUpperBound() << "]\n";
+              }
             }
           } else {
             if (EnzymePrintFPOpt)
@@ -1498,11 +1494,20 @@ B2:
                                                 instIdx, grad);
 
                 auto *node = valueToNodeMap[I2];
+
                 if (found) {
                   node->grad = grad;
+
+                  ValueInfo valueInfo;
+                  extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
+                                      valueInfo);
+                  node->executions = valueInfo.executions;
+
                   if (EnzymePrintFPOpt)
                     llvm::errs()
-                        << "Grad of " << *I2 << " is: " << grad << "\n";
+                        << "Grad of " << *I2 << " is: " << node->grad << "\n"
+                        << "Execution count of " << *I2
+                        << " is: " << node->executions << "\n";
                 } else { // Unknown bounds
                   if (EnzymePrintFPOpt)
                     llvm::errs()
