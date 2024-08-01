@@ -92,6 +92,9 @@ static cl::opt<bool> FPOptEnableSolver(
     "fpopt-enable-solver", cl::init(false), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
+static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
+                                            cl::Hidden,
+                                            cl::desc("Which solver to use"));
 static cl::opt<InstructionCost> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(500), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
@@ -505,10 +508,11 @@ InstructionCost getTTICost(Value *output, const SetVector<Value *> &inputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      // auto instCost = TTI.getInstructionCost(
-      //     I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
-      auto instCost =
-          TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
+      auto instCost = TTI.getInstructionCost(
+          I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
+      // auto instCost =
+      //     TTI.getInstructionCost(I,
+      //     TargetTransformInfo::TCK_RecipThroughput);
 
       if (EnzymePrintFPOpt)
         llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
@@ -1651,8 +1655,14 @@ B2:
       llvm::errs() << "FPOpt: Solver enabled but no log file is provided\n";
       return false;
     }
-    // changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
-    changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
+    if (FPOptSolverType == "greedy") {
+      changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
+    } else if (FPOptSolverType == "dp") {
+      changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
+    } else {
+      llvm::errs() << "FPOpt: Unknown solver type: " << FPOptSolverType << "\n";
+      return false;
+    }
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
