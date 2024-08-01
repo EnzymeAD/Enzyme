@@ -973,6 +973,42 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
     }
   }
+
+  // Fix up non-repeatable writing calls that chain within rematerialized
+  // allocations. We could iterate from the keys of the valuemap, but that would
+  // be a non-determinstic ordering.
+  for (auto V : Intermediates) {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found == gutils->rematerializableAllocations.end())
+      continue;
+    if (!found->second.nonRepeatableWritingCall)
+      continue;
+
+    // We are already caching this allocation directly, we're fine
+    if (MinReq.count(V))
+      continue;
+
+    // If we are recomputing a load, we need to fix this.
+    bool needsLoad = false;
+    for (auto load : found->second.loads)
+      if (Intermediates.count(load) && !MinReq.count(load)) {
+        needsLoad = true;
+        break;
+      }
+    for (auto load : found->second.loadLikeCalls)
+      if (Intermediates.count(load.loadCall) && !MinReq.count(load.loadCall)) {
+        needsLoad = true;
+        break;
+      }
+
+    if (!needsLoad)
+      continue;
+
+    // Rewire the uses to cache the allocation directly.
+    // TODO: as further optimization, we can remove potentially unnecessary
+    // values that we are keeping for stores.
+    MinReq.insert(V);
+  }
   return;
 }
 

@@ -8059,8 +8059,16 @@ void GradientUtils::computeMinCache() {
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
           StringRef funcName = getFuncNameFromCall(CI);
-          if (isAllocationFunction(funcName, TLI))
-            Available[CI] = CI;
+          if (isAllocationFunction(funcName, TLI)) {
+            bool legal = true;
+            auto found = rematerializableAllocations.find(CI);
+            if (found != rematerializableAllocations.end()) {
+              if (found->second.nonRepeatableWritingCall)
+                legal = false;
+            }
+            if (legal)
+              Available[CI] = CI;
+          }
         }
       }
     }
@@ -8706,6 +8714,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   bool promotable = true;
   bool shadowpromotable = true;
 
+  CallInst *nonRepeatableWritingCall = nullptr;
   SmallVector<Instruction *, 1> shadowPointerLoads;
 
   std::set<std::pair<Instruction *, Value *>> seen;
@@ -8857,6 +8866,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
             EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
                         *V, " due to unknown writing call ", *cur);
           }
+          if (!nonRepeatableWritingCall)
+            nonRepeatableWritingCall = CI;
           storingOps.insert(cur);
         }
 
@@ -8986,8 +8997,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       }
     }
   }
-  rematerializableAllocations[V] =
-      Rematerializer(loads, loadLikeCalls, stores, frees, outer);
+  rematerializableAllocations[V] = Rematerializer(
+      loads, loadLikeCalls, stores, frees, outer, nonRepeatableWritingCall);
 }
 
 BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
