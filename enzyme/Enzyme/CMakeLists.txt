@@ -51,12 +51,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
+if (ENZYME_RUST_APPLE)
+    set(BUILD_TYPE "SHARED")
+else()
+    set(BUILD_TYPE "MODULE")
+endif()
+
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -67,7 +73,7 @@ if (${Clang_FOUND})
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -78,7 +84,7 @@ endif()
         add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
 	LINK_COMPONENTS
@@ -89,7 +95,7 @@ else()
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
@@ -100,7 +106,7 @@ if (${Clang_FOUND})
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
@@ -111,7 +117,7 @@ endif()
     add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
         PARTIAL_SOURCES_INTENDED
-        MODULE
+        ${BUILD_TYPE}
         DEPENDS
         intrinsics_gen
         PLUGIN_TOOL
