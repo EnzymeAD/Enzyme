@@ -103,12 +103,15 @@ static cl::opt<InstructionCost> FPOptComputationCostBudget(
 class FPNode {
 public:
   std::string op;
+  std::string dtype;
   std::string symbol;
   SmallVector<FPNode *, 1> operands;
   double grad;
   unsigned executions;
 
-  FPNode(const std::string &op) : op(op) {}
+  FPNode(const std::string &op) = delete;
+  explicit FPNode(const std::string &op, const std::string &dtype)
+      : op(op), dtype(dtype) {}
   virtual ~FPNode() = default;
 
   void addOperand(FPNode *operand) { operands.push_back(operand); }
@@ -137,8 +140,8 @@ public:
   }
 
   virtual Value *getValue(IRBuilder<> &builder) {
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Generating new instruction for op: " << op << "\n";
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Generating new instruction for op: " << op << "\n";
 
     if (op == "if") {
       Value *condValue = operands[0]->getValue(builder);
@@ -282,8 +285,8 @@ public:
     } else if (op == "FALSE") {
       val = ConstantInt::getFalse(builder.getContext());
     } else {
-      llvm::errs() << "Unknown operator: " << op << "\n";
-      assert(0 && "Failed to generate optimized IR");
+      std::string msg = "FPNode getValue: Unexpected operator " + op;
+      llvm_unreachable(msg.c_str());
     }
 
     return val;
@@ -299,7 +302,8 @@ class FPLLValue : public FPNode {
   double ub = -std::numeric_limits<double>::infinity();
 
 public:
-  FPLLValue(Value *value) : FPNode("__arg"), value(value) {}
+  explicit FPLLValue(Value *value, const std::string &dtype)
+      : FPNode("__arg", dtype), value(value) {}
 
   virtual std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
@@ -343,7 +347,8 @@ class FPConst : public FPNode {
   std::string strValue;
 
 public:
-  FPConst(std::string strValue) : FPNode("__const"), strValue(strValue) {}
+  explicit FPConst(const std::string &strValue, const std::string &dtype)
+      : FPNode("__const", dtype), strValue(strValue) {}
 
   virtual std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
@@ -379,10 +384,19 @@ public:
   double getUpperBound() const override { return getLowerBound(); }
 
   virtual Value *getValue(IRBuilder<> &builder) override {
+    Type *Ty;
+    if (dtype == "f64") {
+      Ty = builder.getDoubleTy();
+    } else if (dtype == "f32") {
+      Ty = builder.getFloatTy();
+    } else {
+      std::string msg = "FPConst getValue: Unexpected dtype: " + dtype;
+      llvm_unreachable(msg.c_str());
+    }
     if (strValue == "+inf.0") {
-      return ConstantFP::getInfinity(builder.getDoubleTy(), false);
+      return ConstantFP::getInfinity(Ty, false);
     } else if (strValue == "-inf.0") {
-      return ConstantFP::getInfinity(builder.getDoubleTy(), true);
+      return ConstantFP::getInfinity(Ty, true);
     }
 
     double constantValue;
@@ -399,11 +413,10 @@ public:
       constantValue = stringToDouble(strValue);
     }
 
-    // TODO eventually have this be typed
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Returning " << strValue
-    //                << " as constant: " << constantValue << "\n";
-    return ConstantFP::get(builder.getDoubleTy(), constantValue);
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Returning " << strValue << " as " << dtype
+                   << " constant: " << constantValue << "\n";
+    return ConstantFP::get(Ty, constantValue);
   }
 
   bool isExpression() const override { return false; }
@@ -415,7 +428,7 @@ parseHerbieExpr(const std::string &expr,
                 std::unordered_map<std::string, Value *> &symbolToValueMap) {
   // if (EnzymePrintFPOpt)
   //   llvm::errs() << "Parsing: " << expr << "\n";
-  auto trimmedExpr = expr;
+  std::string trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
   trimmedExpr.erase(trimmedExpr.find_last_not_of(" ") + 1);
 
@@ -426,13 +439,25 @@ parseHerbieExpr(const std::string &expr,
 
   // Constants
   std::regex constantPattern(
-      "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+\\w+\\)$");
+      "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
 
   std::smatch matches;
   if (std::regex_match(trimmedExpr, matches, constantPattern)) {
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Found __const " << matches[1].str() << "\n";
-    return new FPConst(matches[1].str());
+    std::string value = matches[1].str();
+    std::string dtype = matches[3].str();
+    if (dtype == "binary64") {
+      dtype = "f64";
+    } else if (dtype == "binary32") {
+      dtype = "f32";
+    } else {
+      std::string msg =
+          "Herbie expr parser: Unexpected constant dtype: " + dtype;
+      llvm_unreachable(msg.c_str());
+    }
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Herbie expr parser: Found __const " << value
+                   << " with dtype " << dtype << "\n";
+    return new FPConst(value, dtype);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -444,15 +469,28 @@ parseHerbieExpr(const std::string &expr,
 
   // Get the operator
   auto endOp = trimmedExpr.find(' ');
-  std::string op = trimmedExpr.substr(0, endOp);
+  std::string fullOp = trimmedExpr.substr(0, endOp);
 
-  // TODO: Simply remove the type for now
-  size_t pos = op.find('.');
+  size_t pos = fullOp.find('.');
+
+  std::string dtype;
+  std::string op;
   if (pos != std::string::npos) {
-    op = op.substr(0, pos);
+    op = fullOp.substr(0, pos);
+    dtype = fullOp.substr(pos + 1);
+    assert(dtype == "f64" || dtype == "f32");
+    llvm::errs() << "Herbie expr parser: Found operator " << op
+                 << " with dtype " << dtype << "\n";
+  } else if (fullOp == "if") {
+    op = fullOp;
+    llvm::errs() << "Herbie expr parser: Found operator " << op << "\n";
+  } else {
+    std::string msg =
+        "Herbie expr parser: Unexpected untyped operator: " + fullOp;
+    llvm_unreachable(msg.c_str());
   }
 
-  FPNode *node = new FPNode(op);
+  auto node = new FPNode(op, dtype);
 
   int depth = 0;
   auto start = trimmedExpr.find_first_not_of(" ", endOp);
@@ -643,7 +681,8 @@ public:
   // Lower is better
   InstructionCost getComputationCost(size_t candidateIndex) {
     // TODO: consider erasure of the old output
-    return candidates[candidateIndex].TTICost * executions;
+    return (candidates[candidateIndex].TTICost - initialHerbieCost) *
+           executions;
   }
 
   // Lower is better
@@ -1322,33 +1361,69 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
-        valueToNodeMap[&I] = new FPLLValue(&I);
+        valueToNodeMap[&I] = new FPLLValue(&I, "NH"); // Non-herbiable
         if (EnzymePrintFPOpt)
           llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
                        << I << "\n";
         continue;
       }
 
-      auto node = new FPNode(getHerbieOperator(I));
+      std::string dtype;
+      if (I.getType()->isFloatTy()) {
+        dtype = "f32";
+      } else if (I.getType()->isDoubleTy()) {
+        dtype = "f64";
+      } else {
+        llvm_unreachable("Unexpected floating point type for instruction");
+      }
+      auto node = new FPNode(getHerbieOperator(I), dtype);
 
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
       for (auto &operand : operands) {
         if (!valueToNodeMap.count(operand)) {
           if (auto Arg = dyn_cast<Argument>(operand)) {
-            valueToNodeMap[operand] = new FPLLValue(Arg);
+            std::string dtype;
+            if (Arg->getType()->isFloatTy()) {
+              dtype = "f32";
+            } else if (Arg->getType()->isDoubleTy()) {
+              dtype = "f64";
+            } else {
+              llvm_unreachable("Unexpected floating point type for argument");
+            }
+            valueToNodeMap[operand] = new FPLLValue(Arg, dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
                            << "\n";
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
-            valueToNodeMap[operand] = new FPConst(value.c_str());
+            std::string dtype;
+            if (C->getType()->isFloatTy()) {
+              dtype = "f32";
+            } else if (C->getType()->isDoubleTy()) {
+              dtype = "f64";
+            } else {
+              llvm_unreachable("Unexpected floating point type for constant");
+            }
+            valueToNodeMap[operand] = new FPConst(value.c_str(), dtype);
             if (EnzymePrintFPOpt)
-              llvm::errs() << "Registered FPNode for constant: " << value
-                           << "\n";
+              llvm::errs() << "Registered FPNode for " << dtype
+                           << " constant: " << value << "\n";
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
-            valueToNodeMap[operand] = new FPLLValue(GV);
+            assert(
+                GV->getType()->getPointerElementType()->isFloatingPointTy() &&
+                "Global variable is not floating point type");
+            std::string dtype;
+            if (GV->getType()->getPointerElementType()->isFloatTy()) {
+              dtype = "f32";
+            } else if (GV->getType()->getPointerElementType()->isDoubleTy()) {
+              dtype = "f64";
+            } else {
+              llvm_unreachable(
+                  "Unexpected floating point type for global variable");
+            }
+            valueToNodeMap[operand] = new FPLLValue(GV, dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << "\n";
@@ -1628,7 +1703,7 @@ B2:
       unsigned executions = valueToNodeMap[output]->executions;
 
       // TODO: For now just skip if grad is 0
-      if (grad == 0.) {
+      if (!LogPath.empty() && grad == 0.) {
         continue;
       }
 
