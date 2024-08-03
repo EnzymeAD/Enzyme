@@ -78,10 +78,9 @@ static cl::opt<bool> HerbieDisableGenSimplify(
     "herbie-disable-gen-simplify", cl::init(false), cl::Hidden,
     cl::desc("Stop Herbie from simplifying expressions "
              "during the main improvement loop"));
-static cl::opt<bool>
-    HerbieDisableRegime("herbie-disable-regime", cl::init(false), cl::Hidden,
-                        cl::desc("Stop Herbie from simplifying expressions "
-                                 "during the main improvement loop"));
+static cl::opt<bool> HerbieDisableRegime(
+    "herbie-disable-regime", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from branching between expressions candidates"));
 static cl::opt<bool> HerbieDisableBranchExpr(
     "herbie-disable-branch-expr", cl::init(false), cl::Hidden,
     cl::desc("Stop Herbie from branching on expressions"));
@@ -95,7 +94,7 @@ static cl::opt<bool> FPOptEnableSolver(
 static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
-static cl::opt<InstructionCost> FPOptComputationCostBudget(
+static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
 }
@@ -105,7 +104,7 @@ public:
   std::string op;
   std::string dtype;
   std::string symbol;
-  SmallVector<FPNode *, 1> operands;
+  SmallVector<FPNode *, 2> operands;
   double grad;
   unsigned executions;
 
@@ -681,8 +680,7 @@ public:
   // Lower is better
   InstructionCost getComputationCost(size_t candidateIndex) {
     // TODO: consider erasure of the old output
-    return (candidates[candidateIndex].TTICost - initialHerbieCost) *
-           executions;
+    return candidates[candidateIndex].TTICost * executions;
   }
 
   // Lower is better
@@ -930,8 +928,8 @@ struct ValueInfo {
   double minRes;
   double maxRes;
   unsigned executions;
-  SmallVector<double, 4> lower;
-  SmallVector<double, 4> upper;
+  SmallVector<double, 2> lower;
+  SmallVector<double, 2> upper;
 };
 
 void extractValueFromLog(const std::string &logPath,
