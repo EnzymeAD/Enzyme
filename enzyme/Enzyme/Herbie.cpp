@@ -1677,8 +1677,14 @@ B2:
       SmallSet<std::string, 8> args;
       getUniqueArgs(expr, args);
 
-      std::string properties =
-          ":precision binary64 :herbie-conversions ([binary64 binary32])";
+      std::string properties = ":herbie-conversions ([binary64 binary32])";
+      if (valueToNodeMap[output]->dtype == "f32") {
+        properties += " :precision binary32";
+      } else if (valueToNodeMap[output]->dtype == "f64") {
+        properties += " :precision binary64";
+      } else {
+        llvm_unreachable("Unexpected dtype");
+      }
 
       if (!LogPath.empty()) {
         std::string precondition =
