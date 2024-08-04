@@ -58,7 +58,7 @@ if(ENZYME_ENABLE_HERBIE)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/herbie-fp/herbie
-        GIT_TAG f71c0270f8f31bb5072fb721a076944fa454068d
+        GIT_TAG 5e640bd324ece7105804c7842c6026fd92808890
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt

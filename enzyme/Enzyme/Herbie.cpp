@@ -68,6 +68,10 @@ static cl::opt<bool>
 static cl::opt<std::string>
     LogPath("log-path", cl::init(""), cl::Hidden,
             cl::desc("Which log to use in the FPOpt pass"));
+static cl::opt<bool> HerbieDisableNumerics(
+    "herbie-disable-numerics", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
+             "expm1, log1p, fma, and hypot"));
 static cl::opt<bool>
     HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
                         cl::desc("Disable Herbie's series expansion"));
@@ -139,8 +143,9 @@ public:
   }
 
   virtual Value *getValue(IRBuilder<> &builder) {
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Generating new instruction for op: " << op << "\n";
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Generating new instruction for op: " << op << "\n";
+    Module *M = builder.GetInsertBlock()->getModule();
 
     if (op == "if") {
       Value *condValue = operands[0]->getValue(builder);
@@ -204,36 +209,85 @@ public:
       val = builder.CreateUnaryIntrinsic(Intrinsic::tan, operandValues[0],
                                          "herbie.tan");
 #else
-      // Lower versions do not have tan intrinsic
-      val = builder.CreateFDiv(
-          builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0]),
-          builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0]),
-          "herbie.tan");
+      // Using std::tan(f) for lower versions of LLVM.
+      auto *Ty = operandValues[0]->getType();
+      std::string funcName = Ty->isDoubleTy() ? "tan" : "tanf";
+      llvm::Function *tanFunc = M->getFunction(funcName);
+      if (!tanFunc) {
+        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
+        tanFunc =
+            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
+      }
+      if (tanFunc) {
+        val = builder.CreateCall(tanFunc, {operandValues[0]}, "herbie.tan");
+      } else {
+        std::string msg =
+            "Failed to find or declare " + funcName + " in the module.";
+        llvm_unreachable(msg.c_str());
+      }
+
 #endif
     } else if (op == "exp") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0],
                                          nullptr, "herbie.exp");
     } else if (op == "expm1") {
-      val = builder.CreateFSub(
-          builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0]),
-          ConstantFP::get(operandValues[0]->getType(), 1.0), "herbie.expm1");
+      auto *Ty = operandValues[0]->getType();
+      std::string funcName = Ty->isDoubleTy() ? "expm1" : "expm1f";
+      llvm::Function *expm1Func = M->getFunction(funcName);
+      if (!expm1Func) {
+        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
+        expm1Func =
+            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
+      }
+      if (expm1Func) {
+        val = builder.CreateCall(expm1Func, {operandValues[0]}, "herbie.expm1");
+      } else {
+        std::string msg = "Failed to find or declare " + funcName +
+                          " in the module. Consider disabling Herbie rules for "
+                          "numerics (-herbie-disable-numerics).";
+        llvm_unreachable(msg.c_str());
+      }
     } else if (op == "log") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0],
                                          nullptr, "herbie.log");
     } else if (op == "log1p") {
-      val = builder.CreateUnaryIntrinsic(
-          Intrinsic::log,
-          builder.CreateFAdd(ConstantFP::get(operandValues[0]->getType(), 1.0),
-                             operandValues[0]),
-          nullptr, "herbie.log1p");
+      auto *Ty = operandValues[0]->getType();
+      std::string funcName = Ty->isDoubleTy() ? "log1p" : "log1pf";
+      llvm::Function *log1pFunc = M->getFunction(funcName);
+      if (!log1pFunc) {
+        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
+        log1pFunc =
+            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
+      }
+      if (log1pFunc) {
+        val = builder.CreateCall(log1pFunc, {operandValues[0]}, "herbie.log1p");
+      } else {
+        std::string msg =
+            "Failed to find or declare log1p in the module. Consider disabling "
+            "Herbie rules for numerics (-herbie-disable-numerics).";
+        llvm_unreachable(msg.c_str());
+      }
     } else if (op == "sqrt") {
       val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0],
                                          nullptr, "herbie.sqrt");
     } else if (op == "cbrt") {
-      val = builder.CreateBinaryIntrinsic(
-          Intrinsic::pow, operandValues[0],
-          ConstantFP::get(operandValues[0]->getType(), 1.0 / 3.0), nullptr,
-          "herbie.cbrt");
+      auto *Ty = operandValues[0]->getType();
+      std::string funcName = Ty->isDoubleTy() ? "cbrt" : "cbrtf";
+      llvm::Function *cbrtFunc = M->getFunction(funcName);
+      if (!cbrtFunc) {
+        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
+        cbrtFunc =
+            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
+      }
+      if (cbrtFunc) {
+        val = builder.CreateCall(cbrtFunc, {operandValues[0]}, "herbie.cbrt");
+      } else {
+        std::string msg =
+            "Failed to find or declare " + funcName +
+            " in the module. Consider disabling "
+            "Herbie rules for numerics (-herbie-disable-numerics).";
+        llvm_unreachable(msg.c_str());
+      }
     } else if (op == "pow") {
       val = builder.CreateBinaryIntrinsic(Intrinsic::pow, operandValues[0],
                                           operandValues[1], nullptr,
@@ -247,12 +301,24 @@ public:
       val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0],
                                          nullptr, "herbie.fabs");
     } else if (op == "hypot") {
-      val = builder.CreateUnaryIntrinsic(
-          Intrinsic::sqrt,
-          builder.CreateFAdd(
-              builder.CreateFMul(operandValues[0], operandValues[0]),
-              builder.CreateFMul(operandValues[1], operandValues[1])),
-          nullptr, "herbie.hypot");
+      auto *Ty = operandValues[0]->getType();
+      std::string funcName = Ty->isDoubleTy() ? "hypot" : "hypotf";
+      llvm::Function *hypotFunc = M->getFunction(funcName);
+      if (!hypotFunc) {
+        auto *funcTy = FunctionType::get(Ty, {Ty, Ty}, false);
+        hypotFunc =
+            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
+      }
+      if (hypotFunc) {
+        val = builder.CreateCall(
+            hypotFunc, {operandValues[0], operandValues[1]}, "herbie.hypot");
+      } else {
+        std::string msg =
+            "Failed to find or declare " + funcName +
+            " in the module. Consider disabling "
+            "Herbie rules for numerics (-herbie-disable-numerics).";
+        llvm_unreachable(msg.c_str());
+      }
     } else if (op == "==") {
       val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1],
                                   "herbie.if.eq");
@@ -412,9 +478,9 @@ public:
       constantValue = stringToDouble(strValue);
     }
 
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Returning " << strValue << " as " << dtype
-                   << " constant: " << constantValue << "\n";
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Returning " << strValue << " as " << dtype
+    //                << " constant: " << constantValue << "\n";
     return ConstantFP::get(Ty, constantValue);
   }
 
@@ -453,9 +519,9 @@ parseHerbieExpr(const std::string &expr,
           "Herbie expr parser: Unexpected constant dtype: " + dtype;
       llvm_unreachable(msg.c_str());
     }
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Herbie expr parser: Found __const " << value
-                   << " with dtype " << dtype << "\n";
+    // if (EnzymePrintFPOpt)
+    //   llvm::errs() << "Herbie expr parser: Found __const " << value
+    //                << " with dtype " << dtype << "\n";
     return new FPConst(value, dtype);
   }
 
@@ -478,15 +544,11 @@ parseHerbieExpr(const std::string &expr,
     op = fullOp.substr(0, pos);
     dtype = fullOp.substr(pos + 1);
     assert(dtype == "f64" || dtype == "f32");
-    llvm::errs() << "Herbie expr parser: Found operator " << op
-                 << " with dtype " << dtype << "\n";
-  } else if (fullOp == "if") {
-    op = fullOp;
-    llvm::errs() << "Herbie expr parser: Found operator " << op << "\n";
+    // llvm::errs() << "Herbie expr parser: Found operator " << op
+    //              << " with dtype " << dtype << "\n";
   } else {
-    std::string msg =
-        "Herbie expr parser: Unexpected untyped operator: " + fullOp;
-    llvm_unreachable(msg.c_str());
+    op = fullOp;
+    // llvm::errs() << "Herbie expr parser: Found operator " << op << "\n";
   }
 
   auto node = new FPNode(op, dtype);
@@ -551,8 +613,8 @@ InstructionCost getTTICost(Value *output, const SetVector<Value *> &inputs,
       //     TTI.getInstructionCost(I,
       //     TargetTransformInfo::TCK_RecipThroughput);
 
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
+      // if (EnzymePrintFPOpt)
+      //   llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
 
       // Only add the cost of the instruction if it is not an input
       cost += instCost;
@@ -595,7 +657,7 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
   builder.setFastMathFlags(getFast());
   Value *newOutput = parsedNode->getValue(builder);
 
-  tempFunction->print(llvm::errs());
+  // tempFunction->print(llvm::errs());
 
   InstructionCost cost = getTTICost(newOutput, args, TTI);
 
@@ -723,6 +785,11 @@ bool improveViaHerbie(
 
   Args.push_back("--disable");
   Args.push_back("generate:proofs"); // We can't show HTML reports
+
+  if (HerbieDisableNumerics) {
+    Args.push_back("--disable");
+    Args.push_back("rules:numerics");
+  }
 
   if (HerbieDisableTaylor) {
     Args.push_back("--disable");
@@ -1109,8 +1176,8 @@ bool getErrorsWithJIT(const Value *oldOutput, const Value *newOutput,
   assert(VMap.count(oldOutput) && "Old output not found in VMap");
   VMap[oldOutput]->replaceAllUsesWith(VMap[newOutput]);
 
-  llvm::errs() << "Cloned module: \n";
-  M->print(llvm::errs(), nullptr);
+  // llvm::errs() << "Cloned module: \n";
+  // M->print(llvm::errs(), nullptr);
 
   auto JIT = orc::LLJITBuilder().create();
   if (!JIT) {
@@ -1669,6 +1736,15 @@ B2:
 
     assert(component.outputs.size() > 0 && "No outputs found for component");
     for (auto &output : component.outputs) {
+      // 3) run fancy opts
+      double grad = valueToNodeMap[output]->grad;
+      unsigned executions = valueToNodeMap[output]->executions;
+
+      // TODO: For now just skip if grad is 0
+      if (!LogPath.empty() && grad == 0.) {
+        continue;
+      }
+
       // TODO: Herbie properties
       std::string expr =
           valueToNodeMap[output]->toFullExpression(valueToNodeMap);
@@ -1701,15 +1777,6 @@ B2:
           "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
       if (EnzymePrintHerbie)
         llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
-
-      // 3) run fancy opts
-      double grad = valueToNodeMap[output]->grad;
-      unsigned executions = valueToNodeMap[output]->executions;
-
-      // TODO: For now just skip if grad is 0
-      if (!LogPath.empty() && grad == 0.) {
-        continue;
-      }
 
       ApplicableOutput AO(component, output, expr, grad, executions, TTI);
       if (!improveViaHerbie(herbieInput, AO, F.getParent(), TTI, valueToNodeMap,
