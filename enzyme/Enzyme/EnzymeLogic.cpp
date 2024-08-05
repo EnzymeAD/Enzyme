@@ -4320,13 +4320,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
       SmallVector<BasicBlock *, 4> toRemove;
-      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
-        toRemove.push_back(
-            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
-      } else {
-        for (auto next : successors(&oBB)) {
-          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          toRemove.push_back(sucBB);
+      if (key.mode != DerivativeMode::ReverseModeCombined) {
+        if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
+          toRemove.push_back(cast<BasicBlock>(
+              gutils->getNewFromOriginal(II->getNormalDest())));
+        } else {
+          for (auto next : successors(&oBB)) {
+            auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
+            toRemove.push_back(sucBB);
+          }
         }
       }
 
@@ -4355,11 +4357,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             /*check*/ key.mode ==
                                 DerivativeMode::ReverseModeCombined);
       }
-      if (newBB->getTerminator())
-        gutils->erase(newBB->getTerminator());
-      IRBuilder<> builder(newBB);
-      builder.CreateUnreachable();
 
+      if (key.mode != DerivativeMode::ReverseModeCombined) {
+        if (newBB->getTerminator())
+          gutils->erase(newBB->getTerminator());
+        IRBuilder<> builder(newBB);
+        builder.CreateUnreachable();
+      }
       continue;
     }
 
