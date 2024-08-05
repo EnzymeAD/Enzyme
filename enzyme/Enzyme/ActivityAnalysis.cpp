@@ -222,6 +222,7 @@ const StringSet<> KnownInactiveFunctions = {
     "vprintf",
     "vsnprintf",
     "puts",
+    "fputc",
     "fflush",
     "__kmpc_for_static_init_4",
     "__kmpc_for_static_init_4u",
