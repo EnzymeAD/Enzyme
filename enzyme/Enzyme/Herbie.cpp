@@ -101,6 +101,9 @@ static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
 static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
+static cl::opt<int> FPOptMaxFPCCDepth(
+    "fpopt-max-fpcc-depth", cl::init(10), cl::Hidden,
+    cl::desc("The maximum depth of a floating-point connected component"));
 }
 
 class FPNode {
@@ -123,23 +126,36 @@ public:
 
   virtual std::string
   toFullExpression(std::unordered_map<Value *, FPNode *> &valueToNodeMap) {
-    assert(!operands.empty() && "FPNode has no operands!");
-    std::string expr = "(" + op;
-    for (auto operand : operands) {
-      expr += " " + operand->toFullExpression(valueToNodeMap);
-    }
-    expr += ")";
-    return expr;
+    std::string msg = "Unexpected invocation of `toFullExpression` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
+  }
+
+  virtual void markAsInput() {
+    std::string msg = "Unexpected invocation of `markAsInput` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
   }
 
   virtual void updateBounds(double lower, double upper) {
-    assert(0 && "Trying to update bounds of a non-input node!");
+    std::string msg = "Unexpected invocation of `updateBounds` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
   }
   virtual double getLowerBound() const {
-    assert(0 && "Trying to get lower bound of a non-input node!");
+    std::string msg = "Unexpected invocation of `getLowerBound` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
   }
   virtual double getUpperBound() const {
-    assert(0 && "Trying to get upper bound of a non-input node!");
+    std::string msg = "Unexpected invocation of `getUpperBound` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
   }
 
   virtual Value *getValue(IRBuilder<> &builder) {
@@ -365,18 +381,32 @@ class FPLLValue : public FPNode {
   Value *value;
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
+  bool input = false; // Whether `llvm::Value` is an input of an FPCC
 
 public:
-  explicit FPLLValue(Value *value, const std::string &dtype)
-      : FPNode("__arg", dtype), value(value) {}
+  explicit FPLLValue(Value *value, const std::string &op,
+                     const std::string &dtype)
+      : FPNode(op, dtype), value(value) {}
 
-  virtual std::string toFullExpression(
+  std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
-    assert(hasSymbol() && "FPLLValue has no symbol!");
-    return symbol;
+    if (input) {
+      assert(hasSymbol() && "FPLLValue has no symbol!");
+      return symbol;
+    } else {
+      assert(!operands.empty() && "FPNode has no operands!");
+      std::string expr = "(" + op;
+      for (auto operand : operands) {
+        expr += " " + operand->toFullExpression(valueToNodeMap);
+      }
+      expr += ")";
+      return expr;
+    }
   }
 
-  virtual void updateBounds(double lower, double upper) override {
+  void markAsInput() override { input = true; }
+
+  void updateBounds(double lower, double upper) override {
     lb = std::min(lb, lower);
     ub = std::max(ub, upper);
     if (EnzymePrintFPOpt)
@@ -384,10 +414,10 @@ public:
                    << ub << "]\n";
   }
 
-  virtual double getLowerBound() const override { return lb; }
-  virtual double getUpperBound() const override { return ub; }
+  double getLowerBound() const override { return lb; }
+  double getUpperBound() const override { return ub; }
 
-  virtual Value *getValue(IRBuilder<> &builder) override { return value; }
+  Value *getValue(IRBuilder<> &builder) override { return value; }
 
   bool isExpression() const override { return false; }
 };
@@ -415,10 +445,12 @@ public:
   explicit FPConst(const std::string &strValue, const std::string &dtype)
       : FPNode("__const", dtype), strValue(strValue) {}
 
-  virtual std::string toFullExpression(
+  std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
     return strValue;
   }
+
+  void markAsInput() override { return; }
 
   void updateBounds(double lower, double upper) override { return; }
 
@@ -676,21 +708,109 @@ struct RewriteCandidate {
       : herbieCost(cost), accuracy(accuracy), expr(expression) {}
 };
 
-struct FPComponent {
+// Floating-Point Connected Component
+struct FPCC {
   SetVector<Value *> inputs;
-  SetVector<Value *> outputs;
+  SetVector<Instruction *> outputs;
   SetVector<Instruction *> operations;
   size_t outputs_rewritten = 0;
 
-  explicit FPComponent(SetVector<Value *> inputs, SetVector<Value *> outputs,
-                       SetVector<Instruction *> operations)
+  FPCC() = default;
+  explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
+                SetVector<Instruction *> operations)
       : inputs(std::move(inputs)), outputs(std::move(outputs)),
         operations(std::move(operations)) {}
 };
 
+void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
+  std::unordered_map<Instruction *, int> shortestDistances;
+
+  for (auto &op : CC.operations) {
+    shortestDistances[op] = std::numeric_limits<int>::max();
+  }
+
+  // find the shortest distance from inputs to each operation
+  for (auto &input : CC.inputs) {
+    SmallVector<std::pair<Instruction *, int>, 8> todo;
+    for (auto user : input->users()) {
+      if (auto *I = dyn_cast<Instruction>(user); I && CC.operations.count(I)) {
+        todo.emplace_back(I, 1);
+      }
+    }
+
+    while (!todo.empty()) {
+      auto [cur, dist] = todo.pop_back_val();
+      if (dist < shortestDistances[cur]) {
+        shortestDistances[cur] = dist;
+        for (auto user : cur->users()) {
+          if (auto *I = dyn_cast<Instruction>(user);
+              I && CC.operations.count(I)) {
+            todo.emplace_back(I, dist + 1);
+          }
+        }
+      }
+    }
+  }
+
+  llvm::errs() << "Shortest distances:\n";
+  for (auto &[op, dist] : shortestDistances) {
+    llvm::errs() << *op << ": " << dist << "\n";
+  }
+
+  int maxDepth =
+      std::max_element(shortestDistances.begin(), shortestDistances.end(),
+                       [](const auto &lhs, const auto &rhs) {
+                         return lhs.second < rhs.second;
+                       })
+          ->second;
+
+  if (maxDepth <= FPOptMaxFPCCDepth) {
+    newCCs.push_back(CC);
+    return;
+  }
+
+  newCCs.resize(maxDepth / FPOptMaxFPCCDepth + 1);
+
+  // Split `operations` based on the shortest distance
+  for (const auto &[op, dist] : shortestDistances) {
+    newCCs[dist / FPOptMaxFPCCDepth].operations.insert(op);
+  }
+
+  // Reconstruct `inputs` and `outputs` for new components
+  for (auto &newCC : newCCs) {
+    for (auto &op : newCC.operations) {
+      auto operands =
+          isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
+      for (auto &operand : operands) {
+        if (newCC.inputs.count(operand)) {
+          continue;
+        }
+
+        // Original non-herbiable operands or herbiable intermediate operations
+        if (CC.inputs.count(operand) ||
+            !newCC.operations.count(cast<Instruction>(operand))) {
+          newCC.inputs.insert(operand);
+        }
+      }
+
+      for (auto user : op->users()) {
+        if (auto *I = dyn_cast<Instruction>(user);
+            I && !newCC.operations.count(I)) {
+          newCC.outputs.insert(op);
+        }
+      }
+    }
+  }
+
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "Splitting the FPCC into " << newCCs.size()
+                 << " components\n";
+  }
+}
+
 class ApplicableOutput {
 public:
-  FPComponent &component;
+  FPCC &component;
   Value *oldOutput;
   std::string expr;
   double grad;
@@ -700,8 +820,8 @@ public:
   double initialAccuracy;            // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
 
-  explicit ApplicableOutput(FPComponent &component, Value *oldOutput,
-                            std::string expr, double grad, unsigned executions,
+  explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
+                            double grad, unsigned executions,
                             const TargetTransformInfo &TTI)
       : component(component), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions) {
@@ -737,6 +857,8 @@ public:
 
     oldOutput->replaceAllUsesWith(newOutput);
     symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
+    valueToNodeMap[newOutput] =
+        new FPLLValue(newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
     component.outputs_rewritten++;
   }
 
@@ -1427,7 +1549,7 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
-        valueToNodeMap[&I] = new FPLLValue(&I, "NH"); // Non-herbiable
+        valueToNodeMap[&I] = new FPLLValue(&I, "__nh", "__nh"); // Non-herbiable
         if (EnzymePrintFPOpt)
           llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
                        << I << "\n";
@@ -1442,7 +1564,7 @@ B2:
       } else {
         llvm_unreachable("Unexpected floating point type for instruction");
       }
-      auto node = new FPNode(getHerbieOperator(I), dtype);
+      auto node = new FPLLValue(&I, getHerbieOperator(I), dtype);
 
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
@@ -1457,7 +1579,7 @@ B2:
             } else {
               llvm_unreachable("Unexpected floating point type for argument");
             }
-            valueToNodeMap[operand] = new FPLLValue(Arg, dtype);
+            valueToNodeMap[operand] = new FPLLValue(Arg, "__arg", dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
                            << "\n";
@@ -1489,7 +1611,7 @@ B2:
               llvm_unreachable(
                   "Unexpected floating point type for global variable");
             }
-            valueToNodeMap[operand] = new FPLLValue(GV, dtype);
+            valueToNodeMap[operand] = new FPLLValue(GV, "__gv", dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << "\n";
@@ -1504,7 +1626,7 @@ B2:
   }
 
   SmallSet<Value *, 8> component_seen;
-  SmallVector<FPComponent, 1> connected_components;
+  SmallVector<FPCC, 1> connected_components;
   for (auto &BB : F) {
     for (auto &I : BB) {
       // Not a herbiable instruction, doesn't make sense to create graph node
@@ -1527,7 +1649,7 @@ B2:
 
       SmallVector<Value *, 8> todo;
       SetVector<Value *> input_seen;
-      SetVector<Value *> output_seen;
+      SetVector<Instruction *> output_seen;
       SetVector<Instruction *> operation_seen;
       todo.push_back(&I);
       while (!todo.empty()) {
@@ -1539,8 +1661,8 @@ B2:
         assert(isa<Instruction>(cur));
         auto I2 = cast<Instruction>(cur);
 
-        // Don't repeat any instructions we've already seen (to avoid loops for
-        // phi nodes)
+        // Don't repeat any instructions we've already seen (to avoid loops
+        // for phi nodes)
         if (operation_seen.contains(I2)) {
           if (EnzymePrintFPOpt)
             llvm::errs() << "Skipping already seen instruction: " << *I2
@@ -1569,7 +1691,7 @@ B2:
               llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
             input_seen.insert(operand);
 
-            // look up error log to get bounds of the operand of I2
+            // look up error log to get bounds of non-herbiable inputs
             if (!LogPath.empty()) {
               ValueInfo valueInfo;
               auto blockIt = std::find_if(
@@ -1610,50 +1732,6 @@ B2:
               if (EnzymePrintFPOpt)
                 llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
-
-              // Look up grad log to get grad of output I2
-              if (!LogPath.empty()) {
-                double grad = 0;
-                auto blockIt = std::find_if(I2->getFunction()->begin(),
-                                            I2->getFunction()->end(),
-                                            [&](const auto &block) {
-                                              return &block == I2->getParent();
-                                            });
-                assert(blockIt != I2->getFunction()->end() &&
-                       "Block not found");
-                size_t blockIdx =
-                    std::distance(I2->getFunction()->begin(), blockIt);
-                auto instIt = std::find_if(
-                    I2->getParent()->begin(), I2->getParent()->end(),
-                    [&](const auto &curr) { return &curr == I2; });
-                assert(instIt != I2->getParent()->end() &&
-                       "Instruction not found");
-                size_t instIdx =
-                    std::distance(I2->getParent()->begin(), instIt);
-                bool found = extractGradFromLog(LogPath, functionName, blockIdx,
-                                                instIdx, grad);
-
-                auto *node = valueToNodeMap[I2];
-
-                if (found) {
-                  node->grad = grad;
-
-                  ValueInfo valueInfo;
-                  extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
-                                      valueInfo);
-                  node->executions = valueInfo.executions;
-
-                  if (EnzymePrintFPOpt)
-                    llvm::errs()
-                        << "Grad of " << *I2 << " is: " << node->grad << "\n"
-                        << "Execution count of " << *I2
-                        << " is: " << node->executions << "\n";
-                } else { // Unknown bounds
-                  if (EnzymePrintFPOpt)
-                    llvm::errs()
-                        << "Grad of " << *I2 << " are not found in the log\n";
-                }
-              }
             } else {
               if (EnzymePrintFPOpt)
                 llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
@@ -1695,9 +1773,75 @@ B2:
           continue;
         }
 
-        connected_components.emplace_back(std::move(input_seen),
-                                          std::move(output_seen),
-                                          std::move(operation_seen));
+        FPCC origCC{input_seen, output_seen, operation_seen};
+        SmallVector<FPCC, 1> newCCs;
+        splitFPCC(origCC, newCCs);
+
+        for (auto &CC : newCCs) {
+          for (auto *input : CC.inputs) {
+            valueToNodeMap[input]->markAsInput();
+          }
+        }
+
+        if (!LogPath.empty()) {
+          for (auto &CC : newCCs) {
+            // Extract grad and value info for all outputs. This implicitly
+            // extracts the value info for herbiable intermediate `inputs` since
+            // they are also `outputs` of a previous FPCC.
+            for (auto &output : CC.outputs) {
+              double grad = 0;
+              auto blockIt = std::find_if(
+                  output->getFunction()->begin(), output->getFunction()->end(),
+                  [&](const auto &block) {
+                    return &block == output->getParent();
+                  });
+              assert(blockIt != output->getFunction()->end() &&
+                     "Block not found");
+              size_t blockIdx =
+                  std::distance(output->getFunction()->begin(), blockIt);
+              auto instIt = std::find_if(
+                  output->getParent()->begin(), output->getParent()->end(),
+                  [&](const auto &curr) { return &curr == output; });
+              assert(instIt != output->getParent()->end() &&
+                     "Instruction not found");
+              size_t instIdx =
+                  std::distance(output->getParent()->begin(), instIt);
+              bool found = extractGradFromLog(LogPath, functionName, blockIdx,
+                                              instIdx, grad);
+
+              auto *node = valueToNodeMap[output];
+
+              if (found) {
+                node->grad = grad;
+
+                ValueInfo valueInfo;
+                extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
+                                    valueInfo);
+                node->executions = valueInfo.executions;
+                node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
+
+                if (EnzymePrintFPOpt) {
+                  llvm::errs() << "Range of " << *output << " is ["
+                               << node->getLowerBound() << ", "
+                               << node->getUpperBound() << "]\n";
+                }
+
+                if (EnzymePrintFPOpt)
+                  llvm::errs()
+                      << "Grad of " << *output << " is: " << node->grad << "\n"
+                      << "Execution count of " << *output
+                      << " is: " << node->executions << "\n";
+              } else { // Unknown bounds
+                if (EnzymePrintFPOpt)
+                  llvm::errs()
+                      << "Grad of " << *output << " are not found in the log\n";
+              }
+            }
+          }
+        }
+
+        connected_components.insert(connected_components.end(), newCCs.begin(),
+                                    newCCs.end());
       }
     }
   }
