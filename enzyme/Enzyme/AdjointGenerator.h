@@ -2587,8 +2587,9 @@ public:
     case Instruction::Sub:
     case Instruction::Add: {
       if (looseTypeAnalysis) {
-        llvm::errs() << "warning: binary operator is integer and constant: "
-                     << BO << "\n";
+        llvm::errs()
+            << "warning: binary operator is integer and assumed constant: "
+            << BO << "\n";
         // if loose type analysis, assume this integer add is constant
         return;
       }
@@ -3772,7 +3773,13 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
 #if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -3891,7 +3898,13 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
 #if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -3973,6 +3986,20 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         if (Intrinsic::isOverloaded(ID))
