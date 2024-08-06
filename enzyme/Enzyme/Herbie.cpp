@@ -1248,21 +1248,15 @@ std::string getPrecondition(
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
 
-    if (std::isinf(lower) && std::isinf(upper))
-      continue;
+    std::ostringstream lowerStr, upperStr;
+    lowerStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << std::scientific << lower;
+    upperStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << std::scientific << upper;
 
-    if (std::isinf(lower)) {
-      preconditions += " (<= " + arg + " " + std::to_string(upper) + ")";
-      continue;
-    }
-
-    if (std::isinf(upper)) {
-      preconditions += " (>= " + arg + " " + std::to_string(lower) + ")";
-      continue;
-    }
-
-    preconditions += " (<= " + std::to_string(lower) + " " + arg + " " +
-                     std::to_string(upper) + ")";
+    preconditions += " (<=" + (std::isinf(lower) ? "" : " " + lowerStr.str()) +
+                     " " + arg +
+                     (std::isinf(upper) ? "" : " " + upperStr.str()) + ")";
   }
 
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
