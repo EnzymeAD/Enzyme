@@ -478,6 +478,8 @@ static inline std::string tofltstr(Type *T) {
     return "double";
   case Type::X86_FP80TyID:
     return "x87d";
+  case Type::BFloatTyID:
+    return "bf16";
   case Type::FP128TyID:
     return "quad";
   case Type::PPC_FP128TyID:
