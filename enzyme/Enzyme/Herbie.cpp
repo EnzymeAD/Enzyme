@@ -736,6 +736,7 @@ public:
                    << candidates[candidateIndex].expr << "\n";
 
     oldOutput->replaceAllUsesWith(newOutput);
+    symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
     component.outputs_rewritten++;
   }
 
@@ -981,8 +982,8 @@ bool herbiable(const Value &Val) {
              funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
              funcName.startswith("llvm.pow") ||
              funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd") ||
-             funcName.startswith("llvm.fabs");
+             funcName.startswith("llvm.fmuladd");
+      // llvm.fabs is deliberately excluded
     }
     return false;
   }
@@ -1531,8 +1532,7 @@ B2:
       todo.push_back(&I);
       while (!todo.empty()) {
         auto cur = todo.pop_back_val();
-        auto node = valueToNodeMap[cur];
-        assert(node && "Node not found in valueToNodeMap");
+        assert(valueToNodeMap.count(cur) && "Node not found in valueToNodeMap");
 
         // We now can assume that this is a herbiable expression
         // Since we can only herbify instructions, let's assert that
