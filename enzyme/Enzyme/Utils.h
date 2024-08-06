@@ -583,6 +583,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
   }
   if (T->isHalfTy())
     return llvm::IntegerType::get(T->getContext(), 16);
+  if (T->isBFloatTy())
+    return llvm::IntegerType::get(T->getContext(), 16);
   if (T->isFloatTy())
     return llvm::IntegerType::get(T->getContext(), 32);
   if (T->isDoubleTy())
@@ -605,6 +607,7 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
     switch (ty->getBitWidth()) {
     case 16:
       return llvm::Type::getHalfTy(T->getContext());
+      // return llvm::Type::getBFloat16Ty(T->getContext());
     case 32:
       return llvm::Type::getFloatTy(T->getContext());
     case 64:

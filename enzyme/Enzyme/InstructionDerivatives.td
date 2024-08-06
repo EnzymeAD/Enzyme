@@ -251,6 +251,10 @@ def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
     // x86_fp80 has only 15 exponent bits, but we must also
     // retain the most-significant bit of the mantissa as
     // there is no implicit leading
+  } else if (ty->isBFloatTy()) {
+    tsize = 16;
+    high = tsize - 1;
+    low = high - 8;
   } else if (ty->isFP128Ty()) {
     tsize = 128;
     high = tsize - 1;

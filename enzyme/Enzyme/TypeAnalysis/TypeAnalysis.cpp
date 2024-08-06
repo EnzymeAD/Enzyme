@@ -1422,8 +1422,8 @@ void TypeAnalyzer::considerTBAA() {
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
-          llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
-          assert(0 && "unknown tbaa call instruction user");
+          llvm::errs() << " unknown tbaa call instruction user inst: " << I
+                       << " vdptr: " << vdptr.str() << "\n";
         }
       } else if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto StoreSize =

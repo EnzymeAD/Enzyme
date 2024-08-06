@@ -3345,6 +3345,14 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
+    for (size_t i = 0; i < MTI.getNumOperands(); i++)
+      if (MTI.getOperand(i) == orig_dst)
+        if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
+          auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
+          auto TT = TypeTree::parse(attr.getValueAsString(), MTI.getContext());
+          vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
+          break;
+        }
 
     bool errorIfNoType = true;
     if ((Mode == DerivativeMode::ForwardMode ||
