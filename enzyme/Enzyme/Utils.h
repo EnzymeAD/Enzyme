@@ -655,7 +655,7 @@ static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
 
 static inline bool isCertainPrint(const llvm::StringRef name) {
   if (name == "printf" || name == "puts" || name == "fprintf" ||
-      name == "putchar" ||
+      name == "putchar" || name == "fputc" ||
       startsWith(name,
                  "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
       startsWith(name, "_ZNSolsE") || startsWith(name, "_ZNSo9_M_insert") ||
