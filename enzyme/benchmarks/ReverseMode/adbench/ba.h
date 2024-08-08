@@ -115,60 +115,68 @@ struct BAOutput {
 };
 
 extern "C" {
-    void ba_objective(
-        int n,
-        int m,
-        int p,
-        double const* cams,
-        double const* X,
-        double const* w,
-        int const* obs,
-        double const* feats,
-        double* reproj_err,
-        double* w_err
-    );
+void ba_objective_restrict(int n, int m, int p, double const *cams,
+                           double const *X, double const *w, int const *obs,
+                           double const *feats, double *reproj_err,
+                           double *w_err);
 
-    void dcompute_reproj_error(
-        double const* cam,
-        double * dcam,
-        double const* X,
-        double * dX,
-        double const* w,
-        double * wb,
-        double const* feat,
-        double *err,
-        double *derr
-    );
+void ba_objective(int n, int m, int p, double const *cams, double const *X,
+                  double const *w, int const *obs, double const *feats,
+                  double *reproj_err, double *w_err);
 
-    void dcompute_zach_weight_error(double const* w, double* dw, double* err, double* derr);
+void rust2_unsafe_ba_objective(int n, int m, int p, double const *cams,
+                               double const *X, double const *w, int const *obs,
+                               double const *feats, double *reproj_err,
+                               double *w_err);
 
-    void compute_reproj_error_b(
-        double const* cam,
-        double * dcam,
-        double const* X,
-        double * dX,
-        double const* w,
-        double * wb,
-        double const* feat,
-        double *err,
-        double *derr
-    );
+void rust2_ba_objective(int n, int m, int p, double const *cams,
+                        double const *X, double const *w, int const *obs,
+                        double const *feats, double *reproj_err, double *w_err);
 
-    void compute_zach_weight_error_b(double const* w, double* dw, double* err, double* derr);
+void dcompute_reproj_error_restrict(double const *cam, double *dcam,
+                                    double const *X, double *dX,
+                                    double const *w, double *wb,
+                                    double const *feat, double *err,
+                                    double *derr);
 
-    void adept_compute_reproj_error(
-        double const* cam,
-        double * dcam,
-        double const* X,
-        double * dX,
-        double const* w,
-        double * wb,
-        double const* feat,
-        double *err,
-        double *derr
-    );
+void dcompute_zach_weight_error_restrict(double const *w, double *dw,
+                                         double *err, double *derr);
 
-    void adept_compute_zach_weight_error(double const* w, double* dw, double* err, double* derr);
+void dcompute_reproj_error(double const *cam, double *dcam, double const *X,
+                           double *dX, double const *w, double *wb,
+                           double const *feat, double *err, double *derr);
+
+void dcompute_zach_weight_error(double const *w, double *dw, double *err,
+                                double *derr);
+
+void compute_reproj_error_b(double const *cam, double *dcam, double const *X,
+                            double *dX, double const *w, double *wb,
+                            double const *feat, double *err, double *derr);
+
+void compute_zach_weight_error_b(double const *w, double *dw, double *err,
+                                 double *derr);
+
+void adept_compute_reproj_error(double const *cam, double *dcam,
+                                double const *X, double *dX, double const *w,
+                                double *wb, double const *feat, double *err,
+                                double *derr);
+
+void adept_compute_zach_weight_error(double const *w, double *dw, double *err,
+                                     double *derr);
+
+void rust_unsafe_dcompute_reproj_error(double const *cam, double *dcam,
+                                       double const *X, double *dX,
+                                       double const *w, double *wb,
+                                       double const *feat, double *err,
+                                       double *derr);
+
+void rust_dcompute_reproj_error(double const *cam, double *dcam,
+                                double const *X, double *dX, double const *w,
+                                double *wb, double const *feat, double *err,
+                                double *derr);
+
+void rust_dcompute_zach_weight_error(double const *w, double *dw, double *err,
+                                     double *derr);
 }
 
 void read_ba_instance(const string& fn,
@@ -335,10 +343,22 @@ int main(const int argc, const char* argv[]) {
     std::string path = "/mnt/Data/git/Enzyme/apps/ADBench/data/ba/ba1_n49_m7776_p31843.txt";
 
     std::vector<std::string> paths = {
-        "ba10_n1197_m126327_p563734.txt",  "ba14_n356_m226730_p1255268.txt",   "ba18_n1936_m649673_p5213733.txt",    "ba2_n21_m11315_p36455.txt",    "ba6_n539_m65220_p277273.txt",  "test.txt",
-        "ba11_n1723_m156502_p678718.txt",  "ba15_n1102_m780462_p4052340.txt",  "ba19_n4585_m1324582_p9125125.txt",   "ba3_n161_m48126_p182072.txt",  "ba7_n93_m61203_p287451.txt",
-        "ba12_n253_m163691_p899155.txt",   "ba16_n1544_m942409_p4750193.txt",  "ba1_n49_m7776_p31843.txt",           "ba4_n372_m47423_p204472.txt",  "ba8_n88_m64298_p383937.txt",
-        "ba13_n245_m198739_p1091386.txt",  "ba17_n1778_m993923_p5001946.txt",  "ba20_n13682_m4456117_p2987644.txt",  "ba5_n257_m65132_p225911.txt",  "ba9_n810_m88814_p393775.txt",
+        "ba10_n1197_m126327_p563734.txt",
+        "ba14_n356_m226730_p1255268.txt", //  "ba18_n1936_m649673_p5213733.txt",
+                                          //  "ba2_n21_m11315_p36455.txt",
+                                          //  "ba6_n539_m65220_p277273.txt",
+                                          //  "test.txt",
+        //       "ba11_n1723_m156502_p678718.txt",
+        //       "ba15_n1102_m780462_p4052340.txt",
+        //       "ba19_n4585_m1324582_p9125125.txt",
+        //       "ba3_n161_m48126_p182072.txt",  "ba7_n93_m61203_p287451.txt",
+        //       "ba12_n253_m163691_p899155.txt",
+        //       "ba16_n1544_m942409_p4750193.txt",  "ba1_n49_m7776_p31843.txt",
+        //       "ba4_n372_m47423_p204472.txt",  "ba8_n88_m64298_p383937.txt",
+        //       "ba13_n245_m198739_p1091386.txt",
+        //       "ba17_n1778_m993923_p5001946.txt",
+        //       "ba20_n13682_m4456117_p2987644.txt",
+        //       "ba5_n257_m65132_p225911.txt",  "ba9_n810_m88814_p393775.txt",
     };
 
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
@@ -357,27 +377,6 @@ int main(const int argc, const char* argv[]) {
         std::vector<double>(input.p),
         BASparseMat(input.n, input.m, input.p)
     };
-
-    //BASparseMat(this->input.n, this->input.m, this->input.p)
-
-    /*
-    ba_objective(
-        input.n,
-        input.m,
-        input.p,
-        input.cams.data(),
-        input.X.data(),
-        input.w.data(),
-        input.obs.data(),
-        input.feats.data(),
-        result.reproj_err.data(),
-        result.w_err.data()
-    );
-
-    for(unsigned i=0; i<input.p; i++) {
-        //printf("w_err[%d]=%f reproj_err[%d]=%f, reproj_err[%d]=%f\n", i, result.w_err[i], 2*i, result.reproj_err[2*i], 2*i+1, result.reproj_err[2*i+1]);
-    }
-    */
 
     {
       struct timeval start, end;
@@ -409,10 +408,198 @@ int main(const int argc, const char* argv[]) {
         BASparseMat(input.n, input.m, input.p)
     };
 
-    //BASparseMat(this->input.n, this->input.m, this->input.p)
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<adept_compute_reproj_error,
+                         adept_compute_zach_weight_error>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Adept combined %0.6f\n", tdiff(&start, &end));
+      json adept;
+      adept["name"] = "Adept combined";
+      adept["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.J.vals[i]);
+        adept["result"].push_back(result.J.vals[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(adept);
+    }
+    }
 
-    /*
-    ba_objective(
+    {
+
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<dcompute_reproj_error_restrict,
+                         dcompute_zach_weight_error_restrict>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme restrict c++ combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme restrict c++ combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.J.vals[i]);
+        enzyme["result"].push_back(result.J.vals[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<dcompute_reproj_error, dcompute_zach_weight_error>(
+          input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme aliasing c++ combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme c++ combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.J.vals[i]);
+        enzyme["result"].push_back(result.J.vals[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      ba_objective_restrict(input.n, input.m, input.p, input.cams.data(),
+                            input.X.data(), input.w.data(), input.obs.data(),
+                            input.feats.data(), result.reproj_err.data(),
+                            result.w_err.data());
+      gettimeofday(&end, NULL);
+      printf("primal restrict c++ t=%0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "primal restrict c++";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.reproj_err[i]);
+        enzyme["result"].push_back(result.reproj_err[i]);
+      }
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.w_err[i]);
+        enzyme["result"].push_back(result.w_err[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      ba_objective(input.n, input.m, input.p, input.cams.data(), input.X.data(),
+                   input.w.data(), input.obs.data(), input.feats.data(),
+                   result.reproj_err.data(), result.w_err.data());
+      gettimeofday(&end, NULL);
+      printf("primal aliasing c++ t=%0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "primal aliasing c++";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.reproj_err[i]);
+        enzyme["result"].push_back(result.reproj_err[i]);
+      }
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.w_err[i]);
+        enzyme["result"].push_back(result.w_err[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
+    {
+
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      rust2_unsafe_ba_objective(input.n, input.m, input.p, input.cams.data(),
+                                input.X.data(), input.w.data(),
+                                input.obs.data(), input.feats.data(),
+                                result.reproj_err.data(), result.w_err.data());
+      gettimeofday(&end, NULL);
+      printf("primal unsafe rust t=%0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "primal unsafe rust";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.reproj_err[i]);
+        enzyme["result"].push_back(result.reproj_err[i]);
+      }
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.w_err[i]);
+        enzyme["result"].push_back(result.w_err[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
+    }
+    }
+
+    {
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {
+        std::vector<double>(2 * input.p),
+        std::vector<double>(input.p),
+        BASparseMat(input.n, input.m, input.p)
+    };
+    {
+
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+    rust2_ba_objective(
         input.n,
         input.m,
         input.p,
@@ -424,29 +611,22 @@ int main(const int argc, const char* argv[]) {
         result.reproj_err.data(),
         result.w_err.data()
     );
-
-    for(unsigned i=0; i<input.p; i++) {
-        //printf("w_err[%d]=%f reproj_err[%d]=%f, reproj_err[%d]=%f\n", i, result.w_err[i], 2*i, result.reproj_err[2*i], 2*i+1, result.reproj_err[2*i+1]);
-    }
-    */
-
-    {
-      struct timeval start, end;
-      gettimeofday(&start, NULL);
-      calculate_jacobian<adept_compute_reproj_error, adept_compute_zach_weight_error>(input, result);
       gettimeofday(&end, NULL);
-      printf("Adept combined %0.6f\n", tdiff(&start, &end));
-      json adept;
-      adept["name"] = "Adept combined";
-      adept["runtime"] = tdiff(&start, &end);
+      printf("primal rust t=%0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "primal rust";
+      enzyme["runtime"] = tdiff(&start, &end);
       for(unsigned i=0; i<5; i++) {
-        printf("%f ", result.J.vals[i]);
-        adept["result"].push_back(result.J.vals[i]);
+        printf("%f ", result.reproj_err[i]);
+        enzyme["result"].push_back(result.reproj_err[i]);
+      }
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.w_err[i]);
+        enzyme["result"].push_back(result.w_err[i]);
       }
       printf("\n");
-      test_suite["tools"].push_back(adept);
+      test_suite["tools"].push_back(enzyme);
     }
-
     }
 
     {
@@ -460,35 +640,43 @@ int main(const int argc, const char* argv[]) {
         BASparseMat(input.n, input.m, input.p)
     };
 
-    //BASparseMat(this->input.n, this->input.m, this->input.p)
-
-    /*
-    ba_objective(
-        input.n,
-        input.m,
-        input.p,
-        input.cams.data(),
-        input.X.data(),
-        input.w.data(),
-        input.obs.data(),
-        input.feats.data(),
-        result.reproj_err.data(),
-        result.w_err.data()
-    );
-
-    for(unsigned i=0; i<input.p; i++) {
-        //printf("w_err[%d]=%f reproj_err[%d]=%f, reproj_err[%d]=%f\n", i, result.w_err[i], 2*i, result.reproj_err[2*i], 2*i+1, result.reproj_err[2*i+1]);
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<rust_unsafe_dcompute_reproj_error,
+                         rust_dcompute_zach_weight_error>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme unsafe rust combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme unsafe rust combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
+        printf("%f ", result.J.vals[i]);
+        enzyme["result"].push_back(result.J.vals[i]);
+      }
+      printf("\n");
+      test_suite["tools"].push_back(enzyme);
     }
-    */
+    }
+
+    {
+
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                     input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {std::vector<double>(2 * input.p),
+                              std::vector<double>(input.p),
+                              BASparseMat(input.n, input.m, input.p)};
 
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);
-      calculate_jacobian<dcompute_reproj_error, dcompute_zach_weight_error>(input, result);
+      calculate_jacobian<rust_dcompute_reproj_error, rust_dcompute_zach_weight_error>(input, result);
       gettimeofday(&end, NULL);
-      printf("Enzyme combined %0.6f\n", tdiff(&start, &end));
+      printf("Enzyme rust combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
-      enzyme["name"] = "Enzyme combined";
+      enzyme["name"] = "Enzyme rust combined";
       enzyme["runtime"] = tdiff(&start, &end);
       for(unsigned i=0; i<5; i++) {
         printf("%f ", result.J.vals[i]);
@@ -497,8 +685,8 @@ int main(const int argc, const char* argv[]) {
       printf("\n");
       test_suite["tools"].push_back(enzyme);
     }
-
     }
+
     test_suite["llvm-version"] = __clang_version__;
     test_suite["mode"] = "ReverseMode";
     test_suite["batch-size"] = 1;

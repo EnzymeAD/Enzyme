@@ -202,21 +202,13 @@ void Qtimesx(
     }
 }
 
-
-
-void gmm_objective(
-    int d,
-    int k,
-    int n,
-    double const* __restrict alphas,
-    double const* __restrict means,
-    double const* __restrict icf,
-    double const* __restrict x,
-    Wishart wishart,
-    double* __restrict err
-)
-{
-    #define int int64_t
+void gmm_objective_restrict(int d, int k, int n,
+                            double const *__restrict alphas,
+                            double const *__restrict means,
+                            double const *__restrict icf,
+                            double const *__restrict x, Wishart wishart,
+                            double *__restrict err) {
+#define int int64_t
     int ix, ik;
     const double CONSTANT = -n * d * 0.5 * log(2 * PI);
     int icf_sz = d * (d + 1) / 2;
@@ -265,23 +257,16 @@ extern int enzyme_dupnoneed;
 void __enzyme_autodiff(...) noexcept;
 
 // *      tapenade -b -o gmm_tapenade -head "gmm_objective(err)/(alphas means icf)" gmm.c
-void dgmm_objective(int d, int k, int n, const double *alphas, double *
-        alphasb, const double *means, double *meansb, const double *icf,
-        double *icfb, const double *x, Wishart wishart, double *err, double *
-        errb) {
-    __enzyme_autodiff(
-            gmm_objective,
-            enzyme_const, d,
-            enzyme_const, k,
-            enzyme_const, n,
-            enzyme_dup, alphas, alphasb,
-            enzyme_dup, means, meansb,
-            enzyme_dup, icf, icfb,
-            enzyme_const, x,
-            enzyme_const, wishart,
-            enzyme_dupnoneed, err, errb);
+void dgmm_objective_restrict(int d, int k, int n, const double *alphas,
+                             double *alphasb, const double *means,
+                             double *meansb, const double *icf, double *icfb,
+                             const double *x, Wishart wishart, double *err,
+                             double *errb) {
+    __enzyme_autodiff(gmm_objective_restrict, enzyme_const, d, enzyme_const, k,
+                      enzyme_const, n, enzyme_dup, alphas, alphasb, enzyme_dup,
+                      means, meansb, enzyme_dup, icf, icfb, enzyme_const, x,
+                      enzyme_const, wishart, enzyme_dupnoneed, err, errb);
 }
-
 }
 
 
@@ -1050,3 +1035,5 @@ void adept_dgmm_objective(int d, int k, int n, const double *alphas, double *
   delete[] ameans;
   delete[] aicf;
 }
+
+#include "gmm_mayalias.h"
