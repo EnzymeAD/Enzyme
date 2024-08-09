@@ -104,7 +104,7 @@ entry:
 ; CHECK-NEXT:   %[[i9:.+]] = select i1 %[[i7:.+]], i64* %k, i64* %n
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1, align 8
 ; CHECK-NEXT:   %fpcast.constant.fp.1 = bitcast double* %byref.constant.fp.1 to i8*
-; CHECK-NEXT:   call void @dsymm_64_(i8* %[[i4]], i8* %uplo, i64* %[[i8]], i64* %[[i9]], i8* %alpha_p, i8* %"C'", i64* %ldc, i8* %A, i64* %lda, i8* %fpcast.constant.fp.1, i8* %"A'", i64* %lda)
+; CHECK-NEXT:   call void @dsymm_64_(i8* %[[i4]], i8* %uplo, i64* %[[i8]], i64* %[[i9]], i8* %alpha_p, i8* %"C'", i64* %ldc, i8* %A, i64* %lda, i8* %fpcast.constant.fp.1, i8* %"A'", i64* %lda, i64 1, i64 1)
 ; CHECK-NEXT:   %[[i11:.+]] = load i64, i64* %n, align 4
 ; CHECK-NEXT:   %[[i12:.+]] = icmp eq i64 %[[i11]], 0
 ; CHECK-NEXT:   br i1 %[[i12]], label %invertentry_end, label %invertentry_loop

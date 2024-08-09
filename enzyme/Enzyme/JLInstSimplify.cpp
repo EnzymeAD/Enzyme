@@ -245,7 +245,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           changed = true;
           continue;
         }
-        bool loadlegal = false;
+        bool loadlegal = true;
         SmallVector<LoadInst *, 1> llhs, lrhs;
         for (auto lhs : lhs_v) {
           auto ld = dyn_cast<LoadInst>(lhs);
