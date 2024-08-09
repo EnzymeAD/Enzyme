@@ -674,6 +674,9 @@ struct BlasInfo {
   std::string suffix;
   std::string function;
   bool is64;
+
+  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
 #if LLVM_VERSION_MAJOR >= 16

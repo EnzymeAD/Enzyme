@@ -570,6 +570,27 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   call->setDebugLoc(loc);
 }
 
+Type *BlasInfo::fpType(LLVMContext &ctx) const {
+  if (floatType == "d" || floatType == "D") {
+    return Type::getDoubleTy(ctx);
+  } else if (floatType == "s" || floatType == "S") {
+    return Type::getFloatTy(ctx);
+  } else if (floatType == "c" || floatType == "C") {
+    return VectorType::get(Type::getFloatTy(ctx), 2, false);
+  } else if (floatType == "z" || floatType == "Z") {
+    return VectorType::get(Type::getDoubleTy(ctx), 2, false);
+  } else {
+    assert(false && "Unreachable");
+  }
+}
+
+IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
+  if (is64)
+    return IntegerType::get(ctx, 64);
+  else
+    return IntegerType::get(ctx, 32);
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
 Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
