@@ -1,6 +1,8 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" make -B ode-raw.ll ode-opt.ll results.txt VERBOSE=1 -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadEnzyme %enzyme" make -B ode-raw.ll ode-opt.ll results.txt VERBOSE=1 -f %s
 
 .PHONY: clean
+
+dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
 	rm -f *.ll *.o results.txt
@@ -13,8 +15,7 @@ clean:
 	opt $^ $(LOAD) -enzyme -o $@ -S
 
 %-opt.ll: %-raw.ll
-	opt $^ -o $@ -S
-	#opt $^ -O2 -o $@ -S
+	opt $^ $(LOAD) -o $@ -S
 
 ode.o: ode-opt.ll
 	clang++ -O2 $^ -o $@ $(BENCHLINK)

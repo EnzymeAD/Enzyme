@@ -1,4 +1,7 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" make -B ba-unopt.ll ba-raw.ll results.json -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadClangEnzyme" make -B ba.o results.json -f %s
+
+dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
+
 
 .PHONY: clean
 
@@ -16,8 +19,8 @@ clean:
 	opt $^ -o $@ -S
 	#opt $^ -O2 -o $@ -S
 
-ba.o: ba-opt.ll
-	clang++ -O2 $^ -o $@ $(BENCHLINK)
+ba.o: ba.cpp
+	clang++ $(LOAD) $(BENCH) ba.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o ba.o -lpthread $(BENCHLINK) -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.json: ba.o
 	./$^
