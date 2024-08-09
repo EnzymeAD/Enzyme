@@ -113,6 +113,7 @@ static const StringSet<> InactiveGlobals = {
     "ompi_mpi_double",
     "RSMPI_DOUBLE",
     "RSMPI_FLOAT",
+    "RSMPI_SUM",
     "ompi_mpi_comm_world",
     "__cxa_thread_atexit_impl",
     "stderr",

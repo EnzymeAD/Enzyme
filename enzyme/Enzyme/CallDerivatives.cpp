@@ -1150,7 +1150,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           C = CE->getOperand(0);
         }
         if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_op_sum") {
+          if (GV->getName() == "ompi_mpi_op_sum" ||
+              GV->getName() == "RSMPI_SUM") {
             isSum = true;
           }
         }
@@ -1391,7 +1392,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           C = CE->getOperand(0);
         }
         if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_op_sum") {
+          if (GV->getName() == "ompi_mpi_op_sum" ||
+              GV->getName() == "RSMPI_SUM") {
             isSum = true;
           }
         }
