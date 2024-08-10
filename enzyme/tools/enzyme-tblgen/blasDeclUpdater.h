@@ -112,9 +112,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "  if (nextFT != prevFT && F->empty()) {\n";
   os << "    auto F2 = llvm::Function::Create(nextFT, F->getLinkage(), \"\", "
         "F->getParent());\n";
-  os << "    for (auto &U : F->uses()) {\n";
-  os << "      U.set(llvm::ConstantExpr::getPointerCast(F2, F->getType()));\n";
-  os << "    }";
+  os << "    F->replaceAllUsesWith(llvm::ConstantExpr::getPointerCast(F2, "
+        "F->getType()));\n";
   os << "    F2->copyAttributesFrom(F);\n";
   os << "    llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 1> MD;\n";
   os << "    F->getAllMetadata(MD);\n";

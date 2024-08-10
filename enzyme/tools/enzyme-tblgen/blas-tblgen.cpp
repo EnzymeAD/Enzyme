@@ -1053,6 +1053,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         if (op != "Select" || i == 0)
           os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
              << i << ".size() == 1 ? 0 : i], byRef)";
+        else if (op == "Select" && i == 2)
+          os << "Builder2.CreateBitCast(marg_2[marg_2.size() == 1 ? 0 : i], "
+                "marg_1[marg_1.size() == 1 ? 0 : i]->getType())";
         else
           os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
       }
