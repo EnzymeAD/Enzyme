@@ -300,6 +300,15 @@ struct CacheAnalysis {
           n == "jl_get_ptls_states")
         return false;
     }
+    if (auto objli = dyn_cast<LoadInst>(obj)) {
+      auto obj2 = getBaseObject(objli->getOperand(0));
+      if (auto obj_op = dyn_cast<CallInst>(obj2)) {
+        auto n = getFuncNameFromCall(obj_op);
+        if (n == "julia.get_pgcstack" || n == "julia.ptls_states" ||
+            n == "jl_get_ptls_states")
+          return false;
+      }
+    }
 
     // Openmp bound and local thread id are unchanging
     // definitionally cacheable.
@@ -462,6 +471,9 @@ struct CacheAnalysis {
       return {};
 
     if (funcName == "julia.write_barrier_binding")
+      return {};
+
+    if (funcName == "julia.safepoint")
       return {};
 
     if (funcName == "enzyme_zerotype")

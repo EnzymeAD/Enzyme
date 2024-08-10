@@ -2492,7 +2492,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       auto TT = TR->query(li)[{-1}];
       if (TT != BaseType::Unknown && TT != BaseType::Anything) {
         if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-          auto TT2 = TR->query(si)[{-1}];
+          auto TT2 = TR->query(si->getValueOperand())[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+          auto &dl = li->getParent()->getParent()->getParent()->getDataLayout();
+          auto len =
+              (dl.getTypeSizeInBits(si->getValueOperand()->getType()) + 7) / 8;
+          TT2 = TR->query(si->getPointerOperand()).Lookup(len, dl)[{-1}];
           if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
             if (TT != TT2)
               return false;
