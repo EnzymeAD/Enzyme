@@ -304,14 +304,14 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
                       return /*earlyBreak*/ false;
 
                     for (auto LI : llhs)
-                      if (writesToMemoryReadBy(AA, TLI,
+                      if (writesToMemoryReadBy(nullptr, AA, TLI,
                                                /*maybeReader*/ LI,
                                                /*maybeWriter*/ I)) {
                         overwritten = true;
                         return /*earlyBreak*/ true;
                       }
                     for (auto LI : lrhs)
-                      if (writesToMemoryReadBy(AA, TLI,
+                      if (writesToMemoryReadBy(nullptr, AA, TLI,
                                                /*maybeReader*/ LI,
                                                /*maybeWriter*/ I)) {
                         overwritten = true;

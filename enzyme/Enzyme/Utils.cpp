@@ -2170,14 +2170,14 @@ bool overwritesToMemoryReadByLoop(
   return true;
 }
 
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
-                              ScalarEvolution &SE, llvm::LoopInfo &LI,
-                              llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI, ScalarEvolution &SE,
+                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope) {
   using namespace llvm;
-  if (!writesToMemoryReadBy(AA, TLI, maybeReader, maybeWriter))
+  if (!writesToMemoryReadBy(TR, AA, TLI, maybeReader, maybeWriter))
     return false;
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
@@ -2272,7 +2272,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter) {
   assert(maybeReader->getParent()->getParent() ==
@@ -2487,6 +2488,18 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   assert(maybeReader->mayReadFromMemory());
 
   if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+    if (TR) {
+      auto TT = TR->query(li)[{-1}];
+      if (TT != BaseType::Unknown && TT != BaseType::Anything) {
+        if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
+          auto TT2 = TR->query(si)[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+        }
+      }
+    }
     return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {

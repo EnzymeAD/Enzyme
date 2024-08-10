@@ -344,7 +344,7 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+        if (!overwritesToMemoryReadBy(&TR, AA, TLI, SE, OrigLI, OrigDT, &li,
                                       inst2)) {
           return false;
         }
@@ -367,7 +367,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
+                  if (!writesToMemoryReadBy(&TR, AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -1016,7 +1016,7 @@ void calculateUnusedValuesInFunction(
                   }
 
                   if (writesToMemoryReadBy(
-                          *gutils->OrigAA, TLI,
+                          &gutils->TR, *gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -1176,7 +1176,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      *gutils->OrigAA, TLI,
+                      &gutils->TR, *gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1576,7 +1576,7 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+        if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
 
@@ -1609,7 +1609,7 @@ bool legalCombinedForwardReverse(
       if (!post->mayWriteToMemory())
         return false;
 
-      if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+      if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {

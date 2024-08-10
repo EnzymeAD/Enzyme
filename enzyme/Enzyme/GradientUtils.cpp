@@ -3977,7 +3977,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                 const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                   if (I->mayWriteToMemory() &&
                       writesToMemoryReadBy(
-                          *OrigAA, TLI,
+                          &TR, *OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
@@ -4008,7 +4008,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                   const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
-                            *OrigAA, TLI,
+                            &TR, *OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
@@ -6651,7 +6651,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   *OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -6729,7 +6729,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   *OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
-                    if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
+                    if (!writesToMemoryReadBy(&TR, *OrigAA, TLI, origInst,
                                               potentialAlias))
                       return false;
 
@@ -6747,8 +6747,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               if (mid == SI)
                                 return false;
 
-                              if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
-                                                        mid)) {
+                              if (!writesToMemoryReadBy(&TR, *OrigAA, TLI,
+                                                        origInst, mid)) {
                                 return false;
                               }
                               lastStore = false;
@@ -6947,7 +6947,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       *OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
-                            writesToMemoryReadBy(*OrigAA, TLI,
+                            writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
                                                  /*maybeWriter*/ I)) {
                           failed = true;
@@ -6973,7 +6973,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         *OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
-                              writesToMemoryReadBy(*OrigAA, TLI,
+                              writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
                                                    /*maybeWriter*/ I)) {
                             failed = true;
@@ -7178,7 +7178,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -7207,7 +7207,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -8916,8 +8916,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, storingOps, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI,
-                                     res, outer)) {
+        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT,
+                                     LI, res, outer)) {
           EmitWarning("NotPromotable", *LI,
                       " Could not promote shadow allocation ", *V,
                       " due to pointer load ", *LI,
@@ -8971,8 +8971,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI, res,
-                                   outer)) {
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT, LI,
+                                   res, outer)) {
         EmitWarning("NotPromotable", *LI, " Could not promote allocation ", *V,
                     " due to load ", *LI,
                     " which does not postdominates store ", *res);
@@ -8987,7 +8987,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI.loadCall, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT,
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT,
                                    LI.loadCall, res, outer)) {
         EmitWarning("NotPromotable", *LI.loadCall,
                     " Could not promote allocation ", *V,
