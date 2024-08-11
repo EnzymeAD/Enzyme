@@ -1404,6 +1404,11 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           }
         }
       }
+      if (auto LI = dyn_cast<LoadInst>(orig_op)) {
+        if (auto GV = dyn_cast<GlobalVariable>(LI->getPointerOperand()))
+          if (GV->getName() == "RSMPI_SUM")
+            isSum = true;
+      }
       if (!isSum) {
         std::string s;
         llvm::raw_string_ostream ss(s);
