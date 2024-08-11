@@ -187,8 +187,8 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     differentials[val] =
         entryBuilder.CreateAlloca(type, nullptr, val->getName() + "'de");
     auto Alignment =
-        oldFunc->getParent()->getDataLayout().getPrefTypeAlignment(type);
-    differentials[val]->setAlignment(Align(Alignment));
+        oldFunc->getParent()->getDataLayout().getPrefTypeAlign(type);
+    differentials[val]->setAlignment(Alignment);
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
