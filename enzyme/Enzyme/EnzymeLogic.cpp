@@ -6194,6 +6194,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::__u::locale::~locale())",
+      "std::__u::locale::use_facet(std::__u::locale::id&) const",
+      "std::__u::ios_base::getloc() const",
+      "std::__u::ios_base::clear(unsigned int)",
+
       "std::basic_ostream<char, std::char_traits<char>>::basic_ostream(std::basic_streambuf<char, std::char_traits<char>>*)",
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&)",
