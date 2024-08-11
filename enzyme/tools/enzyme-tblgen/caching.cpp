@@ -272,8 +272,7 @@ uplostr = "        Value *uplo = arg_" + nameVec[dimensions[0]] + ";\n";
         } else if (startty == ArgType::side) {
 os
 << "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
-<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
-<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+<< "      M = N = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n";
         } else {
             assert(0 &&" unknown startty");
         }

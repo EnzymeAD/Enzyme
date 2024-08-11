@@ -435,7 +435,7 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                             (ISelect (is_left $side), $m, $n),
                             (ISelect (is_left $side), $n, $m),
                             $alpha,
-                            $B, (ld $B, Char<"N">, $ldb, $m, $n),
+                            $B, (ld $B, Char<"N">, $ldb, $m, $m),
                             (Shadow $C),
                             Constant<"1.0">, 
                             (Shadow $A)
@@ -457,7 +457,7 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                               (Add $lda, ConstantInt<1>)
                             )
                         ),
-                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $m, $n), (Shadow $C), Constant<"1">, (Shadow $B)),
+                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), (Shadow $C), Constant<"1">, (Shadow $B)),
                         /*beta*/ (AssertingInactiveArg),
                         /*C*/ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
                    ]>;
@@ -480,7 +480,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   [
                   
                   /* alpha */ (AssertingInactiveArg), /*(Seq<["AB", "product", "m", "n"], [], true> 
-                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $n, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),*/
                   /* A     */
                   (Seq<[], [], 1>

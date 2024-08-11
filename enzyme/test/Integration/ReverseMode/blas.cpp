@@ -811,10 +811,10 @@ static void trmmTests() {
 
         double* cacheB = (double*)foundCalls[0].pout_arg1;
 			
-		cblas_dlacpy(layout, '\0', M, N,
+		cblas_dlacpy(layout, '\0', is_left(side) ? M : N, is_left(side) ? M : N,
                 B,
-                incB, cacheB, M);
-		inputs[4] = BlasInfo(cacheB, layout, M, N, M);
+                incB, cacheB, is_left(side) ? M : N);
+		inputs[4] = BlasInfo(cacheB, layout, is_left(side) ? M : N, is_left(side) ? M : N, is_left(side) ? M : N);
         my_dtrmm(layout, side, uplo, (char)transA, diag, M, N, alpha, A, lda, B, incB);
 
         assert(foundCalls.size() >= 2);
@@ -1784,9 +1784,9 @@ static void symmTests() {
             cblas_dlacpy(layout, '\0', is_left(side) ? M : N, is_left(side) ? M : N, A, lda, cacheA, is_left(side) ? M : N);
             
             double *cacheB = (double *)foundCalls[1].pout_arg1;
-            inputs[5] = BlasInfo(cacheB, layout, M, N, N);
+            inputs[5] = BlasInfo(cacheB, layout, M, N, M);
             assert(inputs[5].ty == ValueType::Matrix);
-            cblas_dlacpy(layout, '\0', M, N, B, incB, cacheB, N);
+            cblas_dlacpy(layout, '\0', M, N, B, incB, cacheB, M);
 
             ow_symm(layout, side, uplo, M, N, alpha, A, lda, B, incB, beta, C, incC);
 
@@ -1809,7 +1809,7 @@ static void symmTests() {
                           is_left(side) ? N : M,
                           alpha,
                           cacheB,
-                          N,
+                          M,
                           dC,
                           incC,
                           1.0,
@@ -1839,7 +1839,6 @@ static void symmTests() {
 }
 
 int main() {
-    /*
   dotTests();
 
   nrm2Tests();
@@ -1859,7 +1858,6 @@ int main() {
   potrsTests();
 
   trtrsTests();
-  */
   
   symmTests();
 }
