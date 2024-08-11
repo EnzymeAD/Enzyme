@@ -1,6 +1,6 @@
 
 
-#if defined(__cplusplus) || defined(__APPLE__)
+#if defined(__cplusplus) || defined(__APPLE__) || defined(ENZ_HEADERS)
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

@@ -117,6 +117,7 @@ static const StringSet<> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZNSt3__u4coutE",
     "_ZNSt3__14coutE",
     "_ZNSt3__15wcoutE",
     "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
@@ -351,6 +352,9 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator",
+    "std::__u::locale",
+    "std::__u::ios_base",
+    "std::__u::basic_ostream",
     "absl::log_internal::LogMessage",
     "std::chrono::_V2::steady_clock::now",
     "std::string",
