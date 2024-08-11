@@ -420,10 +420,45 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                           [cblas_layout, side, uplo, len, len, fp, mld<["side", "m", "n"]>, mld<["m", "n"]>, fp, mld<["m", "n"]>],
                    [
                         /*alpha*/ (AssertingInactiveArg),
-                        /*A*/ (AssertingInactiveArg),
-                        /*B*/ (AssertingInactiveArg),
+                        /*A*/ (Seq<["tmp", "is_left", "side", "m", "n"], [], 1>
+                            (BlasCall<"copy">
+                              (ISelect (is_left $side), $m, $n), use<"tmp">,
+                              ConstantInt<1>,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>)
+                            ),
+                            (BlasCall<"syr2k">
+                            $layout,
+                            $uplo,
+                            (side_to_trans $side),
+                            (ISelect (is_left $side), $m, $n),
+                            (ISelect (is_left $side), $n, $m),
+                            $alpha,
+                            $B, (ld $B, Char<"N">, $ldb, $m, $n),
+                            (Shadow $C),
+                            Constant<"1.0">, 
+                            (Shadow $A)
+                            ),
+                            (BlasCall<"axpy"> 
+                              (ISelect (is_left $side), $m, $n), 
+                              Constant<"-1">,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>),
+                              use<"tmp">,
+                              ConstantInt<1>
+                            ),
+                            (BlasCall<"axpy"> 
+                              (ISelect (is_left $side), $m, $n), 
+                              Constant<"0.5">,
+                              use<"tmp">,
+                              ConstantInt<1>,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>)
+                            )
+                        ),
+                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $m, $n), (Shadow $C), (Shadow $B)),
                         /*beta*/ (AssertingInactiveArg),
-                        /*C*/ (AssertingInactiveArg),
+                        /*C*/ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
                    ]>;
 
 def syr2k : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),

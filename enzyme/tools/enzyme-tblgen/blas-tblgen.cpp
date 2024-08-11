@@ -1473,7 +1473,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   auto action = args[1];
   assert(action == "product" || action == "is_normal" ||
          action == "triangular" || action == "vector" ||
-         action == "zerotriangular");
+         action == "zerotriangular" || action == "is_left");
   if (action == "product") {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1496,6 +1496,19 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
        << ", byRef);\n";
     os << "    Value *size_" << vecName << " = " << builder
        << ".CreateSelect(is_normal(" << builder << ", " << trans
+       << ", byRef, cublas), len1, len2);\n";
+  } else if (action == "is_left") {
+    assert(args.size() == 5);
+    const auto vecName = args[0];
+    const auto trans = "arg_" + args[2];
+    const auto dim1 = "arg_" + args[3];
+    const auto dim2 = "arg_" + args[4];
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
+       << ", byRef);\n"
+       << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
+       << ", byRef);\n";
+    os << "    Value *size_" << vecName << " = " << builder
+       << ".CreateSelect(is_left(" << builder << ", " << trans
        << ", byRef, cublas), len1, len2);\n";
   } else if (action == "vector") {
     assert(args.size() == 3);
