@@ -74,6 +74,38 @@ enum class CBLAS_TRANSPOSE : char {
   CblasConjTrans = 113
 };
 
+bool is_left(char c) {
+  switch (c) {
+  case 'L':
+    return true;
+  case 'l':
+    return true;
+  case 'R':
+    return false;
+  case 'r':
+    return false;
+  default:
+    printf("Illegal isleft of '%c' %d\n", c, c);
+    exit(1);
+  }
+}
+
+char side_to_trans(char c) {
+  switch (c) {
+  case 'L':
+    return 'N';
+  case 'l':
+    return 'n';
+  case 'R':
+    return 'T';
+  case 'r':
+    return 't';
+  default:
+    printf("Illegal side_to_trans of '%c' %d\n", c, c);
+    exit(1);
+  }
+}
+
 bool is_normal(char c) {
   switch (c) {
   case 'N':
@@ -1102,6 +1134,8 @@ void printcall(BlasCall rcall) {
     printty(rcall.pin_arg2);
     printf(", ldb=");
     printty(rcall.iarg5);
+    printf(", beta=");
+    printty(rcall.farg2);
     printf(", C=");
     printty(rcall.pout_arg1);
     printf(", ldc=");
@@ -2845,7 +2879,7 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
     auto left = side_char == 'L' || side_char == 'l';
 
     checkMatrix(C, "C", layout, /*rows=*/M,
-                /*cols=*/N, /*ld=*/ldb, test, rcall, trace);
+                /*cols=*/N, /*ld=*/ldc, test, rcall, trace);
 
     checkMatrix(B, "B", layout, /*rows=*/M,
                 /*cols=*/N, /*ld=*/ldb, test, rcall, trace);
