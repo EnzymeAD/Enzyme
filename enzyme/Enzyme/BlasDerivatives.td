@@ -422,10 +422,11 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                         /*alpha*/ (AssertingInactiveArg),
                         /*A*/ (Seq<["tmp", "is_left", "side", "m", "n"], [], 1>
                             (BlasCall<"copy">
-                              (ISelect (is_left $side), $m, $n), use<"tmp">,
-                              ConstantInt<1>,
+                              (ISelect (is_left $side), $m, $n),
                               (First (Shadow $A)),
-                              (Add $lda, ConstantInt<1>)
+                              (Add $lda, ConstantInt<1>),
+                              use<"tmp">,
+                              ConstantInt<1>
                             ),
                             (BlasCall<"syr2k">
                             $layout,
@@ -456,7 +457,7 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                               (Add $lda, ConstantInt<1>)
                             )
                         ),
-                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $m, $n), (Shadow $C), (Shadow $B)),
+                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $m, $n), (Shadow $C), Constant<"1">, (Shadow $B)),
                         /*beta*/ (AssertingInactiveArg),
                         /*C*/ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
                    ]>;

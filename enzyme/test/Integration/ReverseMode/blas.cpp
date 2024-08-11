@@ -111,6 +111,24 @@ void ow_trtrs(char layout, char uplo, char trans, char diag, int N, int Nrhs,
   inDerivative = true;
 }
 
+void my_symm(char layout, char side, char uplo,
+                                           int M, int N, double alpha,
+                                           double * __restrict__ A, int lda, double * __restrict__ B,
+                                           int ldb, double beta, double * __restrict__ C,
+                                           int ldc) {
+  cblas_dsymm(layout, side, uplo, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
+  inDerivative = true;
+}
+
+void ow_symm(char layout, char side, char uplo,
+                                           int M, int N, double alpha,
+                                           double * A, int lda, double * B,
+                                           int ldb, double beta, double * C,
+                                           int ldc) {
+  cblas_dsymm(layout, side, uplo, M, N, alpha, A, lda, B, ldb, beta, C, ldc);
+  inDerivative = true;
+}
+
 static void dotTests() {
 
     std::string Test = "DOT active both ";
@@ -1624,7 +1642,204 @@ static void trtrsTests() {
   }
 }
 
+static void symmTests() {
+  int N = 17;
+  int M = 9;
+  // N means normal matrix, T means transposed
+  for (char layout : {CblasColMajor, CblasRowMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'})
+      for (auto side : {'L', 'l', 'R', 'r'}) {
+          BlasInfo inputs[6] = {
+              /*A*/ BlasInfo(A, layout, is_left(side) ? M : N, is_left(side) ? M : N, lda),
+              /*B*/ BlasInfo(B, layout, M, N, incB),
+              /*C*/ BlasInfo(C, layout, M, N, incC),
+              BlasInfo(),
+              BlasInfo(),
+              BlasInfo(),
+          };
+          {
+
+            std::string Test = "SYMM active A, B, C";
+            init();
+
+            my_symm(layout, side, uplo, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
+            assert(calls.size() == 1);
+            assert(calls[0].inDerivative == false);
+            assert(calls[0].type == CallType::SYMM);
+            assert(calls[0].pout_arg1 == C);
+            assert(calls[0].pin_arg1 == A);
+            assert(calls[0].pin_arg2 == B);
+            assert(calls[0].farg1 == alpha);
+            assert(calls[0].farg2 == beta);
+            assert(calls[0].layout == layout);
+            assert(calls[0].targ1 == UNUSED_TRANS);
+            assert(calls[0].targ2 == UNUSED_TRANS);
+            assert(calls[0].iarg1 == M);
+            assert(calls[0].iarg2 == N);
+            assert(calls[0].iarg3 == UNUSED_INT);
+            assert(calls[0].iarg4 == lda);
+            assert(calls[0].iarg5 == incB);
+            assert(calls[0].iarg6 == incC);
+            assert(calls[0].side == side);
+            assert(calls[0].uplo == uplo);
+            assert(calls[0].diag == UNUSED_TRANS);
+
+            // Check memory of primal on own.
+            checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+            init();
+            __enzyme_autodiff((void *)my_symm,
+                                enzyme_const, layout,
+                                enzyme_const, side,
+                                enzyme_const, uplo,
+                                enzyme_const, M,
+                                enzyme_const, N,
+                                enzyme_const, alpha,
+                                enzyme_dup, A, dA,
+                                enzyme_const, lda,
+                                enzyme_dup, B, dB,
+                                enzyme_const, incB,
+                                enzyme_const, beta,
+                                enzyme_dup, C, dC,
+                                enzyme_const, incC);
+            foundCalls = calls;
+            init();
+
+            my_symm(layout, side, uplo, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
+            inDerivative = true;
+
+
+            assert(foundCalls[1].type == CallType::COPY);
+            double *tmp = (double *)foundCalls[1].pout_arg1;
+			cblas_dcopy(is_left(side) ? M : N, dA, lda+1, tmp, 1);
+			inputs[3] = BlasInfo(tmp, is_left(side) ? M : N, 1);
+
+            //  ssyr2k(uplo, 'n', m, n, alpha,B,ldb,Ca,ldc, 1.0,Aa,lda)
+            //  ssyr2k(uplo,'t', n,m, alpha,B,ldb,Ca,ldc, 1.0,Aa,lda)
+            cblas_dsyr2k(layout,
+                          uplo,
+                          side_to_trans(side), 
+                          is_left(side) ? M : N,
+                          is_left(side) ? N : M,
+                          alpha,
+                          B,
+                          incB,
+                          dC,
+                          incC,
+                          1.0,
+                          dA,
+                          lda);
+
+            cblas_daxpy(is_left(side) ? M : N, -1, dA, lda+1, tmp, 1);
+            cblas_daxpy(is_left(side) ? M : N, 0.5, tmp, 1, dA, lda+1);
+            
+            cblas_dsymm(layout, side, uplo, M, N, alpha, A, lda, dC, incC, 1.0, dB, incB);
+        
+            cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0 );
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+          {
+
+            std::string Test = "SYMM overwriten active A, B, C";
+            init();
+
+            ow_symm(layout, side, uplo, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
+            // Check memory of primal on own.
+            checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+            init();
+            __enzyme_autodiff((void *)ow_symm,
+                                enzyme_const, layout,
+                                enzyme_const, side,
+                                enzyme_const, uplo,
+                                enzyme_const, M,
+                                enzyme_const, N,
+                                enzyme_const, alpha,
+                                enzyme_dup, A, dA,
+                                enzyme_const, lda,
+                                enzyme_dup, B, dB,
+                                enzyme_const, incB,
+                                enzyme_const, beta,
+                                enzyme_dup, C, dC,
+                                enzyme_const, incC);
+            foundCalls = calls;
+            init();
+
+            double *cacheA = (double *)foundCalls[0].pout_arg1;
+            inputs[4] = BlasInfo(cacheA, layout, is_left(side) ? M : N, is_left(side) ? M : N, is_left(side) ? M : N);
+            assert(inputs[4].ty == ValueType::Matrix);
+            cblas_dlacpy(layout, '\0', is_left(side) ? M : N, is_left(side) ? M : N, A, lda, cacheA, is_left(side) ? M : N);
+            
+            double *cacheB = (double *)foundCalls[1].pout_arg1;
+            inputs[5] = BlasInfo(cacheB, layout, M, N, N);
+            assert(inputs[5].ty == ValueType::Matrix);
+            cblas_dlacpy(layout, '\0', M, N, B, incB, cacheB, N);
+
+            ow_symm(layout, side, uplo, M, N, alpha, A, lda, B, incB, beta, C, incC);
+
+            inDerivative = true;
+
+            //cblas_dscal(1, 0.0, dA, lda);
+
+
+            //assert(foundCalls[1].type == CallType::COPY);
+            double *tmp = (double *)foundCalls[3].pout_arg1;
+			cblas_dcopy(is_left(side) ? M : N, dA, lda+1, tmp, 1);
+			inputs[3] = BlasInfo(tmp, is_left(side) ? M : N, 1);
+
+            //  ssyr2k(uplo, 'n', m, n, alpha,B,ldb,Ca,ldc, 1.0,Aa,lda)
+            //  ssyr2k(uplo,'t', n,m, alpha,B,ldb,Ca,ldc, 1.0,Aa,lda)
+            cblas_dsyr2k(layout,
+                          uplo,
+                          side_to_trans(side), 
+                          is_left(side) ? M : N,
+                          is_left(side) ? N : M,
+                          alpha,
+                          cacheB,
+                          N,
+                          dC,
+                          incC,
+                          1.0,
+                          dA,
+                          lda);
+
+            cblas_daxpy(is_left(side) ? M : N, -1, dA, lda+1, tmp, 1);
+            cblas_daxpy(is_left(side) ? M : N, 0.5, tmp, 1, dA, lda+1);
+            
+            cblas_dsymm(layout, side, uplo, M, N, alpha, cacheA, is_left(side) ? M : N, dC, incC, 1.0, dB, incB);
+        
+            cblas_dlascl(layout, 'G', 0, 0, 1.0, beta, M, N, dC, incC, 0 );
+
+            checkTest(Test);
+
+            SkipVecIncCheck = true;
+            // Check memory of primal of expected derivative
+            checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+            // Check memory of primal of our derivative (if equal above, it
+            // should be the same).
+            checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+            SkipVecIncCheck = false;
+          }
+        }
+  }
+}
+
 int main() {
+    /*
   dotTests();
 
   nrm2Tests();
@@ -1644,4 +1859,7 @@ int main() {
   potrsTests();
 
   trtrsTests();
+  */
+  
+  symmTests();
 }
