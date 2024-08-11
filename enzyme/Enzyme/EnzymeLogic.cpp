@@ -1765,6 +1765,7 @@ void clearFunctionAttributes(Function *f) {
     Attribute::NoUndef,
     Attribute::NonNull,
     Attribute::ZExt,
+    Attribute::SExt,
     Attribute::NoAlias
   };
   for (auto attr : attrs) {
@@ -2627,6 +2628,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     llvm::Attribute::NoUndef,
     llvm::Attribute::NonNull,
     llvm::Attribute::ZExt,
+    llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
 #if LLVM_VERSION_MAJOR >= 14
