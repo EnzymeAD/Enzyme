@@ -5658,18 +5658,41 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
-            auto drval = *differetIdx;
-            newip = (drval < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(augmentcall,
-                                                      {(unsigned)drval},
-                                                      call.getName() + "'ac");
-            assert(newip->getType() == placeholder->getType());
-            placeholder->replaceAllUsesWith(newip);
-            if (placeholder == &*BuilderZ.GetInsertPoint()) {
-              BuilderZ.SetInsertPoint(placeholder->getNextNode());
+            if (!differetIdx) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Did not have return index set when differentiating "
+                    "function\n";
+              ss << " call" << call << "\n";
+              ss << " augmentcall" << *augmentcall << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&call),
+                                   ErrorType::InternalError, nullptr, nullptr,
+                                   nullptr);
+              } else {
+                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                            ss.str());
+              }
+              placeholder->replaceAllUsesWith(
+                  UndefValue::get(placeholder->getType()));
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
+            } else {
+              auto drval = *differetIdx;
+              newip = (drval < 0)
+                          ? augmentcall
+                          : BuilderZ.CreateExtractValue(augmentcall,
+                                                        {(unsigned)drval},
+                                                        call.getName() + "'ac");
+              assert(newip->getType() == placeholder->getType());
+              placeholder->replaceAllUsesWith(newip);
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
             }
-            gutils->erase(placeholder);
           } else {
             newip = placeholder;
           }
