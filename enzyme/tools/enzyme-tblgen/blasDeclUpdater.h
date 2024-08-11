@@ -21,12 +21,12 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
   os << "  if (!F->empty())\n";
   os << "    return;\n";
+  os << "  llvm::Type *fpType = blas.fpType(F->getContext());\n";
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
   os << "const bool byRefFloat = byRef || blas.prefix == \"cublas\";\n";
   os << "(void)byRefFloat;\n";
-  if (lv23)
-    os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "  const bool cblas = blas.prefix == \"cblas_\";\n";
   os << "  const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
   os << "#if LLVM_VERSION_MAJOR >= 16\n"
@@ -77,23 +77,53 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << " ? 1 : 0);\n";
 
-  for (size_t i = 0; i < argTypeMap.size(); i++) {
-    std::string floatPtrPos = std::to_string(lv23 ? (i - 1) : i);
-    floatPtrPos += " + offset";
-
-    auto ty = argTypeMap.lookup(i);
-    if (ty == ArgType::vincData || ty == ArgType::mldData) {
-      os << "const bool julia_decl = !F->getFunctionType()->getParamType("
-         << floatPtrPos << ")->isPointerTy();\n";
-      break;
-    }
-    if (i + 1 == argTypeMap.size()) {
-      llvm::errs() << "Tablegen bug: BLAS fnc without vector of matrix!\n";
-      llvm_unreachable("Tablegen bug: BLAS fnc without vector of matrix!");
-    }
-  }
+  os << "  llvm::SmallVector<llvm::Type*, 1> argTys;\n";
+  os << "  auto prevFT = F->getFunctionType();\n";
+  os << "  if (offset) argTys.push_back(prevFT->getParamType(0));\n";
 
   size_t numArgs = argTypeMap.size();
+
+  int numChars = 0;
+  for (size_t argPos = 0; argPos < numArgs; argPos++) {
+    if (argPos == 0 && lv23)
+      continue;
+    auto typeOfArg = argTypeMap.lookup(argPos);
+    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
+      os << "  "
+            "argTys.push_back(llvm::isa<llvm::PointerType>(prevFT->"
+            "getParamType(argTys.size())) ? "
+            "prevFT->getParamType(argTys.size()) : "
+            "llvm::PointerType::getUnqual(fpType));\n";
+    } else {
+      os << "  argTys.push_back(prevFT->getParamType(argTys.size()));\n";
+      if (typeOfArg == ArgType::uplo || typeOfArg == ArgType::trans ||
+          typeOfArg == ArgType::diag || typeOfArg == ArgType::side) {
+        numChars++;
+      }
+    }
+  }
+  os << "  if (!cublas && !cblas) {\n";
+  for (int i = 0; i < numChars; i++) {
+    os << "  argTys.push_back(blas.intType(F->getContext()));\n";
+  }
+  os << "  }\n";
+  os << "  auto nextFT = llvm::FunctionType::get(prevFT->getReturnType(), "
+        "argTys, false);\n";
+  os << "  if (nextFT != prevFT && F->empty()) {\n";
+  os << "    auto F2 = llvm::Function::Create(nextFT, F->getLinkage(), \"\", "
+        "F->getParent());\n";
+  os << "    F->replaceAllUsesWith(llvm::ConstantExpr::getPointerCast(F2, "
+        "F->getType()));\n";
+  os << "    F2->copyAttributesFrom(F);\n";
+  os << "    llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 1> MD;\n";
+  os << "    F->getAllMetadata(MD);\n";
+  os << "    for (auto pair : MD)\n";
+  os << "      F2->addMetadata(pair.first, *pair.second);\n";
+  os << "    F2->takeName(F);\n";
+  os << "    F2->setCallingConv(F->getCallingConv());\n";
+  os << "    F->eraseFromParent();\n";
+  os << "    F = F2;\n";
+  os << "  }\n";
 
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
@@ -125,40 +155,21 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  os << "  // Julia declares double* pointers as Int64,\n"
-     << "  //  so LLVM won't let us add these Attributes.\n"
-     << "  if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < numArgs; argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "    F->addParamAttr(" << i << " + offset"
+      os << "  F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->removeParamAttr(" << i << " + offset"
+        os << "  F->removeParamAttr(" << i << " + offset"
            << ", llvm::Attribute::ReadNone);\n"
-           << "    F->addParamAttr(" << i << " + offset"
+           << "  F->addParamAttr(" << i << " + offset"
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }
   }
-  os << "  } else {\n";
-  for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
-    auto typeOfArg = argTypeMap.lookup(argPos);
-    size_t i = (lv23 ? argPos - 1 : argPos);
-    if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "    F->addParamAttr(" << i << " + offset"
-         << ", llvm::Attribute::get(F->getContext(), \"enzyme_NoCapture\"));\n";
-      if (mutableArgs.count(argPos) == 0) {
-        // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << i << " + offset"
-           << ", llvm::Attribute::get(F->getContext(), "
-              "\"enzyme_ReadOnly\"));\n";
-      }
-    }
-  }
-  os << "  }\n";
 
   if (has_active_return(name)) {
     // under cublas, these functions have an extra return ptr argument

@@ -300,6 +300,15 @@ struct CacheAnalysis {
           n == "jl_get_ptls_states")
         return false;
     }
+    if (auto objli = dyn_cast<LoadInst>(obj)) {
+      auto obj2 = getBaseObject(objli->getOperand(0));
+      if (auto obj_op = dyn_cast<CallInst>(obj2)) {
+        auto n = getFuncNameFromCall(obj_op);
+        if (n == "julia.get_pgcstack" || n == "julia.ptls_states" ||
+            n == "jl_get_ptls_states")
+          return false;
+      }
+    }
 
     // Openmp bound and local thread id are unchanging
     // definitionally cacheable.
@@ -344,7 +353,7 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+        if (!overwritesToMemoryReadBy(&TR, AA, TLI, SE, OrigLI, OrigDT, &li,
                                       inst2)) {
           return false;
         }
@@ -367,7 +376,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
+                  if (!writesToMemoryReadBy(&TR, AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -462,6 +471,9 @@ struct CacheAnalysis {
       return {};
 
     if (funcName == "julia.write_barrier_binding")
+      return {};
+
+    if (funcName == "julia.safepoint")
       return {};
 
     if (funcName == "enzyme_zerotype")
@@ -1016,7 +1028,7 @@ void calculateUnusedValuesInFunction(
                   }
 
                   if (writesToMemoryReadBy(
-                          *gutils->OrigAA, TLI,
+                          &gutils->TR, *gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -1176,7 +1188,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      *gutils->OrigAA, TLI,
+                      &gutils->TR, *gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1576,7 +1588,7 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+        if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
 
@@ -1609,7 +1621,7 @@ bool legalCombinedForwardReverse(
       if (!post->mayWriteToMemory())
         return false;
 
-      if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+      if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {

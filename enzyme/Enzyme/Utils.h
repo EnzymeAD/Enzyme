@@ -68,6 +68,8 @@
 
 #include "TypeAnalysis/ConcreteType.h"
 
+class TypeResults;
+
 namespace llvm {
 class ScalarEvolution;
 }
@@ -674,6 +676,9 @@ struct BlasInfo {
   std::string suffix;
   std::string function;
   bool is64;
+
+  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -968,7 +973,8 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter);
 
@@ -983,7 +989,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 //      load A[i-1]
 //      store A[i] = ...
 //   }
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI,
                               llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                               llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
