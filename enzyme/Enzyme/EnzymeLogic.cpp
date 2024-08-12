@@ -6239,6 +6239,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::basic_streambuf()",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_string()",
       "std::__u::basic_stringstream<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_stringstream()",
       "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::~basic_streambuf()",
@@ -6395,6 +6396,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
+      "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::ignore",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::get",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>::operator<<",
       "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::operator<<",
       "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
