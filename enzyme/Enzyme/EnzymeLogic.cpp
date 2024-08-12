@@ -6402,7 +6402,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
-      "std::__u::basic_streambuf<char, std::__u::char_traits<char> >::sputn",
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::sputn",
       "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::pubsetbuf",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::read",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
