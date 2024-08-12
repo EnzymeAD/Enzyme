@@ -6239,6 +6239,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::basic_filebuf()",
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::open(char const*, unsigned int)",
       "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::basic_streambuf()",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_string()",
       "std::__u::basic_stringstream<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_stringstream()",
@@ -6396,6 +6398,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
       "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
       "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
       "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",

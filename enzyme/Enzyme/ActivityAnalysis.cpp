@@ -353,6 +353,9 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
     // "std::allocator"
+    "std::__u::basic_streambuf",
+    "std::__u::basic_iostream",
+    "std::__u::basic_ios",
     "std::__u::basic_istream",
     "std::__u::basic_string",
     "std::__u::basic_filebuf",
