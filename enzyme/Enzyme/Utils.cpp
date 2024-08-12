@@ -581,6 +581,7 @@ Type *BlasInfo::fpType(LLVMContext &ctx) const {
     return VectorType::get(Type::getDoubleTy(ctx), 2, false);
   } else {
     assert(false && "Unreachable");
+    return nullptr;
   }
 }
 
