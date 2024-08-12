@@ -4433,6 +4433,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 #include "BlasTA.inc"
     }
 
+    // clang-format off
+    const char* NoTARecurStartsWith[] = {
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
+    };
+    // clang-format on
+    {
+      std::string demangledName = llvm::demangle(funcName.str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+      for (auto Name : NoTARecurStartsWith)
+        if (startsWith(demangledName, Name))
+          return;
+    }
+
     // Manual TT specification is non-interprocedural and already handled once
     // at the start.
 
