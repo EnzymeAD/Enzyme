@@ -352,7 +352,9 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
-    // "std::allocator",
+    // "std::allocator"
+    "std::__u::basic_string",
+    "std::__u::basic_filebuf",
     "std::__u::locale",
     "std::__u::ios_base",
     "std::__u::basic_ostream",
@@ -439,15 +441,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::io::stdio::_eprint",
 
 };
-  // clang-format on
+// clang-format on
 
-  if (CI.hasFnAttr("enzyme_inactive"))
+if (CI.hasFnAttr("enzyme_inactive"))
+  return true;
+
+if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
+  if (StringRef(iasm->getAsmString()).contains("exit") ||
+      StringRef(iasm->getAsmString()).contains("cpuid"))
     return true;
-
-  if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
-    if (StringRef(iasm->getAsmString()).contains("exit") ||
-        StringRef(iasm->getAsmString()).contains("cpuid"))
-      return true;
   }
 
   if (auto F = getFunctionFromCall(&CI)) {

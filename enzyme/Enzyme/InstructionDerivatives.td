@@ -326,7 +326,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["hypot", "hypotf", "hypotl"],
+                  ["hypot", "hypotf", "hypotl", "__hypot_finite"],
                   [
                     (FDiv (FMul (DiffeRet), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
                     (FDiv (FMul (DiffeRet), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))

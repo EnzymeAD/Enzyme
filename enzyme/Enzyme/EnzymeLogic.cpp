@@ -6239,6 +6239,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::__u::ios_base::init(void*)",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::put(wchar_t)",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>::put(char)",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::__put_character_sequence<char, std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*, unsigned long)",
       "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::operator<<<std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*)",
@@ -6388,6 +6390,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::operator<<",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::operator<<",
       "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",
       "std::__1::ios_base::imbue",
