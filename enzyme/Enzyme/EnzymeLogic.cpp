@@ -6083,6 +6083,37 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     return todiff;
 
   std::string demangledCall;
+
+  {
+    Value *mdiff = todiff;
+    while (auto LI = dyn_cast<LoadInst>(mdiff)) {
+      mdiff = LI->getPointerOperand();
+    }
+
+    if (auto CI = dyn_cast<CallInst>(todiff)) {
+      if (auto F = CI->getCalledFunction()) {
+
+        // clang-format off
+      const char* NoFreeDemanglesStartsWith[] = {
+          "std::__u::locale::use_facet(std::__u::locale::id&) const",
+      };
+        // clang-format on
+
+        demangledCall = llvm::demangle(F->getName().str());
+        // replace all '> >' with '>>'
+        size_t start = 0;
+        while ((start = demangledCall.find("> >", start)) !=
+               std::string::npos) {
+          demangledCall.replace(start, 3, ">>");
+        }
+
+        for (auto Name : NoFreeDemanglesStartsWith)
+          if (startsWith(demangledCall, Name))
+            return CI;
+      }
+    }
+  }
+
   if (auto CI = dyn_cast<CallInst>(todiff)) {
     TargetLibraryInfo &TLI =
         PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
@@ -6206,7 +6237,21 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
-      "std::__u::locale::~locale())",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::put(char)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::__put_character_sequence<char, std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*, unsigned long)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::operator<<<std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::operator<<<std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::sentry::sentry(std::__u::basic_ostream<char, std::__u::char_traits<char>>&)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::flush()",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::sentry::sentry(std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>&)",
+
+      "std::__u::locale::~locale()",
+      "std::__u::locale::operator=(std::__u::locale const&)",
+      "std::__u::locale::locale(std::__u::locale const&)",
+      "std::__u::locale::locale()",
+      "std::__u::locale::global(std::__u::locale const&)",
+      "std::__u::locale::locale(char const*)",
+      "std::__u::ios_base::imbue(std::__u::locale const&)",
       "std::__u::locale::use_facet(std::__u::locale::id&) const",
       "std::__u::ios_base::getloc() const",
       "std::__u::ios_base::clear(unsigned int)",
@@ -6341,6 +6386,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",
       "std::__1::ios_base::imbue",
       "std::__1::basic_streambuf<wchar_t, std::__1::char_traits<wchar_t>>::pubimbue",
