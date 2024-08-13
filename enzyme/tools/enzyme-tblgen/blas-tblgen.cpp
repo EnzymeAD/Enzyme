@@ -1436,8 +1436,8 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
       os << "\" + blas.suffix);\n";
 
     for (int i = 0; i < n; i++)
-      os << "           " << argName << ".push_back(ConstantInt::get(tmpF_"
-         << func << " ? tmpF_" << func << "->getFunctionType()->getParamType("
+      os << "           " << argName << ".push_back(ConstantInt::get((tmpF_"
+         << func << " && tmpF_" << func << "->getFunctionType()->getNumParams() > " << argName << ".size() ) ? tmpF_" << func << "->getFunctionType()->getParamType("
          << argName << ".size()) : intType, 1));\n";
   }
   os << "        }\n";
