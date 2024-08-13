@@ -445,15 +445,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::io::stdio::_eprint",
 
 };
-// clang-format on
+  // clang-format on
 
-if (CI.hasFnAttr("enzyme_inactive"))
-  return true;
-
-if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
-  if (StringRef(iasm->getAsmString()).contains("exit") ||
-      StringRef(iasm->getAsmString()).contains("cpuid"))
+  if (CI.hasFnAttr("enzyme_inactive"))
     return true;
+
+  if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
+    if (StringRef(iasm->getAsmString()).contains("exit") ||
+        StringRef(iasm->getAsmString()).contains("cpuid"))
+      return true;
   }
 
   if (auto F = getFunctionFromCall(&CI)) {

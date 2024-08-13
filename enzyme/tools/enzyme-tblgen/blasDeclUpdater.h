@@ -18,9 +18,10 @@ void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
 void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
-  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
+  os << "llvm::Constant* attribute_" << name
+     << "(BlasInfo blas, llvm::Function *F) {\n";
   os << "  if (!F->empty())\n";
-  os << "    return;\n";
+  os << "    return F;\n";
   os << "  llvm::Type *fpType = blas.fpType(F->getContext());\n";
   os << "  const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
@@ -77,6 +78,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << " ? 1 : 0);\n";
 
+  os << "  llvm::Constant *res = F;\n";
   os << "  llvm::SmallVector<llvm::Type*, 1> argTys;\n";
   os << "  auto prevFT = F->getFunctionType();\n";
   os << "  if (offset) argTys.push_back(prevFT->getParamType(0));\n";
@@ -104,7 +106,12 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "  if (!cublas && !cblas) {\n";
   for (int i = 0; i < numChars; i++) {
-    os << "  argTys.push_back(blas.intType(F->getContext()));\n";
+    os << "  if (prevFT->getNumParams() >= argTys.size())";
+    os << "    argTys.push_back(prevFT->getParamType(argTys.size()));\n";
+    os << "  else";
+    os << "    argTys.push_back(blas.intType(F->getContext()));\n";
+    os << "  F->addParamAttr(argTys.size()-1, "
+          "llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
   }
   os << "  }\n";
   os << "  auto nextFT = llvm::FunctionType::get(prevFT->getReturnType(), "
@@ -114,6 +121,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
         "F->getParent());\n";
   os << "    F->replaceAllUsesWith(llvm::ConstantExpr::getPointerCast(F2, "
         "F->getType()));\n";
+  os << "    res = llvm::ConstantExpr::getPointerCast(F2, "
+        "F->getType());\n";
   os << "    F2->copyAttributesFrom(F);\n";
   os << "    llvm::SmallVector<std::pair<unsigned, llvm::MDNode *>, 1> MD;\n";
   os << "    F->getAllMetadata(MD);\n";
@@ -183,6 +192,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
        << ", llvm::Attribute::NoCapture);\n"
        << "  }\n";
   }
+  os << "  return res;\n";
   os << "}\n";
 }
 

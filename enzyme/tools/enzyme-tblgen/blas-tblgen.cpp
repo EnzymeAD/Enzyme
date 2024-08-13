@@ -1136,7 +1136,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
          << ".getCallee()))\n"
          << "    {\n"
-         << "      attribute_" << dfnc_name << "(blas, F);\n"
+         << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
+         << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+         << dfnc_name << ".getFunctionType(), newF);\n"
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
@@ -1423,9 +1425,23 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
-  for (int i = 0; i < n; i++)
-    os << "           " << argName
-       << ".push_back(ConstantInt::get(intType, 1));\n";
+  if (n != 0) {
+    os << "    auto tmpF_" << func
+       << " = gutils->oldFunc->getParent()->getFunction(\n"
+       << "  blas.prefix + blas.floatType + \"" << func;
+
+    if (func == "copy")
+      os << "\" + (cublasv2 ? \"\" : blas.suffix));\n";
+    else
+      os << "\" + blas.suffix);\n";
+
+    for (int i = 0; i < n; i++)
+      os << "           " << argName << ".push_back(ConstantInt::get((tmpF_"
+         << func << " && tmpF_" << func
+         << "->getFunctionType()->getNumParams() > " << argName
+         << ".size() ) ? tmpF_" << func << "->getFunctionType()->getParamType("
+         << argName << ".size()) : intType, 1));\n";
+  }
   os << "        }\n";
   if (ty == ArgType::fp) {
     os << "           if (cublasv2) " << argName
@@ -1674,7 +1690,9 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
        << "    {\n"
-       << "      attribute_" << dfnc_name << "(blas, F);\n"
+       << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
+       << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+       << dfnc_name << ".getFunctionType(), newF);\n"
        << "    }\n\n";
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
        << dfnc_name << ", " << argPrefix << ", Defs));\n";
