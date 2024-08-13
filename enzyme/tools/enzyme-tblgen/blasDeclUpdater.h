@@ -105,7 +105,10 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "  if (!cublas && !cblas) {\n";
   for (int i = 0; i < numChars; i++) {
-    os << "  argTys.push_back(blas.intType(F->getContext()));\n";
+    os << "  if (prevFT->getNumParams() >= argTys.size())";
+    os << "    argTys.push_back(prevFT->getParamType(argTys.size()));\n";
+    os << "  else";
+    os << "    argTys.push_back(blas.intType(F->getContext()));\n";
     os << "  F->addParamAttr(argTys.size()-1, llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
   }
   os << "  }\n";

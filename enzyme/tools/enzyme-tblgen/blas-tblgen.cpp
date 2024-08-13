@@ -1424,9 +1424,20 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
+  if (n != 0) {
+    os << "    auto tmpF_" << func
+       << " = gutils->oldFunc->getParent()->getFunction(\n"
+       << "  blas.prefix + blas.floatType + \"" << func;
+
+    if (func == "copy")
+      os << "\" + (cublasv2 ? \"\" : blas.suffix));\n";
+    else
+      os << "\" + blas.suffix);\n";
+
   for (int i = 0; i < n; i++)
     os << "           " << argName
-       << ".push_back(ConstantInt::get(intType, 1));\n";
+       << ".push_back(ConstantInt::get(tmpF_" << func << " ? tmpF_" << func << "->getFunctionType()->getParamType(" << argName << ".size()) : intType, 1));\n";
+  }
   os << "        }\n";
   if (ty == ArgType::fp) {
     os << "           if (cublasv2) " << argName
