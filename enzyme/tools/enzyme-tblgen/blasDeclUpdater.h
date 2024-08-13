@@ -18,7 +18,8 @@ void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
 void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
-  os << "llvm::Constant* attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n";
+  os << "llvm::Constant* attribute_" << name
+     << "(BlasInfo blas, llvm::Function *F) {\n";
   os << "  if (!F->empty())\n";
   os << "    return F;\n";
   os << "  llvm::Type *fpType = blas.fpType(F->getContext());\n";
@@ -109,7 +110,8 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     os << "    argTys.push_back(prevFT->getParamType(argTys.size()));\n";
     os << "  else";
     os << "    argTys.push_back(blas.intType(F->getContext()));\n";
-    os << "  F->addParamAttr(argTys.size()-1, llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
+    os << "  F->addParamAttr(argTys.size()-1, "
+          "llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
   }
   os << "  }\n";
   os << "  auto nextFT = llvm::FunctionType::get(prevFT->getReturnType(), "

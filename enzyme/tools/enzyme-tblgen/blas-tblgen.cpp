@@ -1137,7 +1137,8 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
          << ".getCallee()))\n"
          << "    {\n"
          << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
-         << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_" << dfnc_name << ".getFunctionType(), newF);\n"
+         << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+         << dfnc_name << ".getFunctionType(), newF);\n"
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
@@ -1434,9 +1435,10 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     else
       os << "\" + blas.suffix);\n";
 
-  for (int i = 0; i < n; i++)
-    os << "           " << argName
-       << ".push_back(ConstantInt::get(tmpF_" << func << " ? tmpF_" << func << "->getFunctionType()->getParamType(" << argName << ".size()) : intType, 1));\n";
+    for (int i = 0; i < n; i++)
+      os << "           " << argName << ".push_back(ConstantInt::get(tmpF_"
+         << func << " ? tmpF_" << func << "->getFunctionType()->getParamType("
+         << argName << ".size()) : intType, 1));\n";
   }
   os << "        }\n";
   if (ty == ArgType::fp) {
@@ -1687,7 +1689,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
        << ".getCallee()))\n"
        << "    {\n"
        << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
-       << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_" << dfnc_name << ".getFunctionType(), newF);\n"
+       << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+       << dfnc_name << ".getFunctionType(), newF);\n"
        << "    }\n\n";
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
        << dfnc_name << ", " << argPrefix << ", Defs));\n";
