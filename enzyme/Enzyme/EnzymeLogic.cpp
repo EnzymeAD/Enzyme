@@ -4321,12 +4321,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
+  llvm::errs() << " newfunc6\n";
+  llvm::errs() << *gutils->newFunc << "\n";
+
   AdjointGenerator maker(key.mode, gutils, key.constant_args, key.retType,
                          getIndex, overwritten_args_map,
                          /*returnuses*/ nullptr, augmenteddata,
                          &replacedReturns, unnecessaryValues,
                          unnecessaryInstructions, unnecessaryStores,
                          guaranteedUnreachable, dretAlloca);
+
+  llvm::errs() << " newfunc5\n";
+  llvm::errs() << *gutils->newFunc << "\n";
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
@@ -4406,8 +4412,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              key.retType);
   }
 
+
+  llvm::errs() << " newfunc4\n";
+  llvm::errs() << *gutils->newFunc << "\n";
+
   if (key.mode == DerivativeMode::ReverseModeGradient)
     restoreCache(gutils, mapping, guaranteedUnreachable);
+
+  llvm::errs() << " newfunc3\n";
+  llvm::errs() << *gutils->newFunc << "\n";
 
   gutils->eraseFictiousPHIs();
 
@@ -4418,6 +4431,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   unsigned int SharedAddrSpace =
       Arch == Triple::amdgcn ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                              : 3;
+
+  llvm::errs() << " newfunc2\n";
+  llvm::errs() << *gutils->newFunc << "\n";
 
   if (key.mode == DerivativeMode::ReverseModeCombined) {
     BasicBlock *sharedBlock = nullptr;
@@ -4492,8 +4508,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
+  llvm::errs() << " newfunc1\n";
+  llvm::errs() << *gutils->newFunc << "\n";
+
   cleanupInversionAllocs(gutils, entry);
   clearFunctionAttributes(gutils->newFunc);
+
+  llvm::errs() << " newfunc0\n";
+  llvm::errs() << *gutils->newFunc << "\n";
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
