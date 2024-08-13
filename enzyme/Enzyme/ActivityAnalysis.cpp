@@ -445,15 +445,15 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::io::stdio::_eprint",
 
 };
-// clang-format on
+  // clang-format on
 
-if (CI.hasFnAttr("enzyme_inactive"))
-  return true;
-
-if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
-  if (StringRef(iasm->getAsmString()).contains("exit") ||
-      StringRef(iasm->getAsmString()).contains("cpuid"))
+  if (CI.hasFnAttr("enzyme_inactive"))
     return true;
+
+  if (auto iasm = dyn_cast<InlineAsm>(CI.getCalledOperand())) {
+    if (StringRef(iasm->getAsmString()).contains("exit") ||
+        StringRef(iasm->getAsmString()).contains("cpuid"))
+      return true;
   }
 
   if (auto F = getFunctionFromCall(&CI)) {
@@ -2101,8 +2101,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // SI->getPointerOperand());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << *Val << "\n";
+                         << " - " << *SI << " of " << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop) // && cop2)
             potentiallyActiveStore = SI;
@@ -2120,8 +2119,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           auto cop = !Hypothesis->isConstantInstruction(TR, I);
           if (EnzymePrintActivity)
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
-                         << " - " << *I << " of "
-                         << " Val=" << *Val << "\n";
+                         << " - " << *I << " of " << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop)
             potentiallyActiveStore = I;
