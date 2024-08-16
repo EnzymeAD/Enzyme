@@ -6673,9 +6673,11 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                           ar2->getStepRecurrence(*OrigSE)) {
 
                     LoopContext l1;
-                    getContext(getNewFromOriginal(ar1->getLoop()->getHeader()), l1);
+                    getContext(getNewFromOriginal(ar1->getLoop()->getHeader()),
+                               l1);
                     LoopContext l2;
-                    getContext(getNewFromOriginal(ar2->getLoop()->getHeader()), l2);
+                    getContext(getNewFromOriginal(ar2->getLoop()->getHeader()),
+                               l2);
                     if (l1.dynamic || l2.dynamic)
                       continue;
 
