@@ -300,6 +300,15 @@ struct CacheAnalysis {
           n == "jl_get_ptls_states")
         return false;
     }
+    if (auto objli = dyn_cast<LoadInst>(obj)) {
+      auto obj2 = getBaseObject(objli->getOperand(0));
+      if (auto obj_op = dyn_cast<CallInst>(obj2)) {
+        auto n = getFuncNameFromCall(obj_op);
+        if (n == "julia.get_pgcstack" || n == "julia.ptls_states" ||
+            n == "jl_get_ptls_states")
+          return false;
+      }
+    }
 
     // Openmp bound and local thread id are unchanging
     // definitionally cacheable.
@@ -344,7 +353,7 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+        if (!overwritesToMemoryReadBy(&TR, AA, TLI, SE, OrigLI, OrigDT, &li,
                                       inst2)) {
           return false;
         }
@@ -367,7 +376,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
+                  if (!writesToMemoryReadBy(&TR, AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -462,6 +471,9 @@ struct CacheAnalysis {
       return {};
 
     if (funcName == "julia.write_barrier_binding")
+      return {};
+
+    if (funcName == "julia.safepoint")
       return {};
 
     if (funcName == "enzyme_zerotype")
@@ -1016,7 +1028,7 @@ void calculateUnusedValuesInFunction(
                   }
 
                   if (writesToMemoryReadBy(
-                          *gutils->OrigAA, TLI,
+                          &gutils->TR, *gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -1176,7 +1188,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      *gutils->OrigAA, TLI,
+                      &gutils->TR, *gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1576,7 +1588,7 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+        if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
 
@@ -1609,7 +1621,7 @@ bool legalCombinedForwardReverse(
       if (!post->mayWriteToMemory())
         return false;
 
-      if (writesToMemoryReadBy(*gutils->OrigAA, gutils->TLI,
+      if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
@@ -1765,6 +1777,7 @@ void clearFunctionAttributes(Function *f) {
     Attribute::NoUndef,
     Attribute::NonNull,
     Attribute::ZExt,
+    Attribute::SExt,
     Attribute::NoAlias
   };
   for (auto attr : attrs) {
@@ -2627,6 +2640,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     llvm::Attribute::NoUndef,
     llvm::Attribute::NonNull,
     llvm::Attribute::ZExt,
+    llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -2994,7 +3008,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           ggep->setIsInBounds(true);
         }
         if (!(isa<ConstantExpr>(shadowRV) || isa<ConstantData>(shadowRV) ||
-              isa<ConstantAggregate>(shadowRV))) {
+              isa<ConstantAggregate>(shadowRV) ||
+              isa<GlobalVariable>(shadowRV))) {
           auto found = VMap.find(shadowRV);
           assert(found != VMap.end());
           shadowRV = found->second;
@@ -3282,7 +3297,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
 
   std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> targetToPreds;
   for (auto pred : predecessors(BB)) {
-    targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred);
+    targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].push_back(pred);
   }
 
   if (targetToPreds.size() == 0) {
@@ -3465,7 +3480,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                     gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
                 for (auto select : addedSelects)
-                  selects.emplace_back(select);
+                  selects.push_back(select);
               }
               break;
             }
@@ -3516,7 +3531,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                   gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
               for (auto select : addedSelects)
-                selects.emplace_back(select);
+                selects.push_back(select);
             }
           }
         }
@@ -3553,7 +3568,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
           for (auto select : addedSelects)
-            selects.emplace_back(select);
+            selects.push_back(select);
         }
       }
     }
@@ -3568,8 +3583,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     for (auto pred : predecessors(BB)) {
       if (pred == loopContext.preheader)
         continue;
-      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(
-          pred);
+      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].push_back(pred);
     }
 
     assert(targetToPreds.size() &&
@@ -3604,7 +3618,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     std::map<BasicBlock *, std::vector<std::pair<BasicBlock *, BasicBlock *>>>
         phiTargetToPreds;
     for (auto pair : replacePHIs) {
-      phiTargetToPreds[pair.first].emplace_back(std::make_pair(pair.first, BB));
+      phiTargetToPreds[pair.first].emplace_back(pair.first, BB);
     }
     BasicBlock *fakeTarget = nullptr;
     for (auto pred : predecessors(BB)) {
@@ -3612,7 +3626,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         continue;
       if (fakeTarget == nullptr)
         fakeTarget = pred;
-      phiTargetToPreds[fakeTarget].emplace_back(std::make_pair(pred, BB));
+      phiTargetToPreds[fakeTarget].emplace_back(pred, BB);
     }
     gutils->branchToCorrespondingTarget(BB, phibuilder, phiTargetToPreds,
                                         &replacePHIs);
@@ -3620,8 +3634,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     std::map<BasicBlock *, std::vector<std::pair<BasicBlock *, BasicBlock *>>>
         targetToPreds;
     for (auto pred : predecessors(BB)) {
-      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(
-          std::make_pair(pred, BB));
+      targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred,
+                                                                           BB);
     }
     BB2 = gutils->reverseBlocks[BB].back();
     Builder.SetInsertPoint(BB2);
@@ -4319,13 +4333,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
       SmallVector<BasicBlock *, 4> toRemove;
-      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
-        toRemove.push_back(
-            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
-      } else {
-        for (auto next : successors(&oBB)) {
-          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          toRemove.push_back(sucBB);
+      if (key.mode != DerivativeMode::ReverseModeCombined) {
+        if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
+          toRemove.push_back(cast<BasicBlock>(
+              gutils->getNewFromOriginal(II->getNormalDest())));
+        } else {
+          for (auto next : successors(&oBB)) {
+            auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
+            toRemove.push_back(sucBB);
+          }
         }
       }
 
@@ -4354,11 +4370,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             /*check*/ key.mode ==
                                 DerivativeMode::ReverseModeCombined);
       }
-      if (newBB->getTerminator())
-        gutils->erase(newBB->getTerminator());
-      IRBuilder<> builder(newBB);
-      builder.CreateUnreachable();
 
+      if (key.mode != DerivativeMode::ReverseModeCombined) {
+        if (newBB->getTerminator())
+          gutils->erase(newBB->getTerminator());
+        IRBuilder<> builder(newBB);
+        builder.CreateUnreachable();
+      }
       continue;
     }
 
@@ -5716,6 +5734,11 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       BasicBlock::Create(NewF->getContext(), "placeholders", NewF);
 
   IRBuilder<> PlaceholderBuilder(placeholderBB);
+#if LLVM_VERSION_MAJOR >= 18
+  auto It = PlaceholderBuilder.GetInsertPoint();
+  It.setHeadBit(true);
+  PlaceholderBuilder.SetInsertPoint(It);
+#endif
   PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
   ValueToValueMapTy vmap;
   auto DestArg = NewF->arg_begin();
@@ -5895,6 +5918,11 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
             new_val_1->getNextNode() ? new_val_1->getNextNode() : new_val_1;
         IRBuilder<> Builder2(insertPoint);
         Builder2.SetCurrentDebugLocation(DebugLoc());
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = Builder2.GetInsertPoint();
+        It.setHeadBit(true);
+        Builder2.SetInsertPoint(It);
+#endif
         for (unsigned i = 1; i < width; ++i) {
           PHINode *placeholder = Builder2.CreatePHI(I.getType(), 0);
           vectorizedValues[&I].push_back(placeholder);
@@ -6055,6 +6083,37 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     return todiff;
 
   std::string demangledCall;
+
+  {
+    Value *mdiff = todiff;
+    while (auto LI = dyn_cast<LoadInst>(mdiff)) {
+      mdiff = LI->getPointerOperand();
+    }
+
+    if (auto CI = dyn_cast<CallInst>(todiff)) {
+      if (auto F = CI->getCalledFunction()) {
+
+        // clang-format off
+      const char* NoFreeDemanglesStartsWith[] = {
+          "std::__u::locale::use_facet(std::__u::locale::id&) const",
+      };
+        // clang-format on
+
+        demangledCall = llvm::demangle(F->getName().str());
+        // replace all '> >' with '>>'
+        size_t start = 0;
+        while ((start = demangledCall.find("> >", start)) !=
+               std::string::npos) {
+          demangledCall.replace(start, 3, ">>");
+        }
+
+        for (auto Name : NoFreeDemanglesStartsWith)
+          if (startsWith(demangledCall, Name))
+            return CI;
+      }
+    }
+  }
+
   if (auto CI = dyn_cast<CallInst>(todiff)) {
     TargetLibraryInfo &TLI =
         PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
@@ -6088,6 +6147,8 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     if (GV->getName() == "_ZSt4cerr")
       return GV;
     if (GV->getName() == "_ZSt4cout")
+      return GV;
+    if (GV->getName() == "_ZNSt3__u5wcoutE")
       return GV;
   }
 
@@ -6178,6 +6239,42 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   // clang-format off
   StringSet<> NoFreeDemangles = {
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::~basic_istream()",
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::~basic_filebuf()",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::~basic_ostream()",
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::pubsync()",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::write(char const*, long)",
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::close()",
+      "std::__u::basic_ios<wchar_t, std::__u::char_traits<wchar_t>>::imbue(std::__u::locale const&)",
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::basic_filebuf()",
+      "std::__u::basic_filebuf<char, std::__u::char_traits<char>>::open(char const*, unsigned int)",
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::basic_streambuf()",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_string()",
+      "std::__u::basic_stringstream<char, std::__u::char_traits<char>, std::__u::allocator<char>>::~basic_stringstream()",
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::~basic_streambuf()",
+      "std::__u::basic_iostream<char, std::__u::char_traits<char>>::~basic_iostream()",
+      "std::__u::basic_ios<char, std::__u::char_traits<char>>::~basic_ios()",
+      "std::__u::ios_base::init(void*)",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::put(wchar_t)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::put(char)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::__put_character_sequence<char, std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*, unsigned long)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::operator<<<std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char const*)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>& std::__u::operator<<<std::__u::char_traits<char>>(std::__u::basic_ostream<char, std::__u::char_traits<char>>&, char)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::sentry::sentry(std::__u::basic_ostream<char, std::__u::char_traits<char>>&)",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::flush()",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::sentry::sentry(std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>&)",
+
+      "std::__u::locale::~locale()",
+      "std::__u::locale::operator=(std::__u::locale const&)",
+      "std::__u::locale::locale(std::__u::locale const&)",
+      "std::__u::locale::locale()",
+      "std::__u::locale::global(std::__u::locale const&)",
+      "std::__u::locale::locale(char const*)",
+      "std::__u::ios_base::imbue(std::__u::locale const&)",
+      "std::__u::locale::use_facet(std::__u::locale::id&) const",
+      "std::__u::ios_base::getloc() const",
+      "std::__u::ios_base::clear(unsigned int)",
+
       "std::basic_ostream<char, std::char_traits<char>>::basic_ostream(std::basic_streambuf<char, std::char_traits<char>>*)",
       "std::basic_ostream<char, std::char_traits<char>>::flush()",
       "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&)",
@@ -6308,6 +6405,19 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::sputn",
+      "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::pubsetbuf",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::read",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::resize",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>& std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__assign_no_alias",
+      "std::__u::basic_string<char, std::__u::char_traits<char>, std::__u::allocator<char>>::__init",
+      "std::__u::basic_stringbuf<char, std::__u::char_traits<char>, std::__u::allocator<char>>::str",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::operator>>",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::ignore",
+      "std::__u::basic_istream<char, std::__u::char_traits<char>>::get",
+      "std::__u::basic_ostream<char, std::__u::char_traits<char>>::operator<<",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>::operator<<",
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::operator<<",
       "std::__1::ios_base::imbue",
       "std::__1::basic_streambuf<wchar_t, std::__1::char_traits<wchar_t>>::pubimbue",
@@ -6333,10 +6443,13 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_streambuf<char, std::char_traits<char>>::sputn",
       "std::istream& std::istream::_M_extract",
       "std::ctype<char>::widen",
+      //Rust
+      "std::io::stdio::_eprint",
   };
 
   StringSet<> NoFrees = {"mpfr_greater_p",
                         "fprintf",
+                        "fputc",
                          "memchr",
                          "time",
                          "strlen",

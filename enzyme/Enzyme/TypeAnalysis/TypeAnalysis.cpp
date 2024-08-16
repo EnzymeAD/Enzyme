@@ -1003,6 +1003,11 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     return;
   }
 
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (hasMetadata(GV, "enzyme_ta_norecur"))
+      return;
+  }
+
   if (auto CE = dyn_cast<ConstantExpr>(Val)) {
     if (CE->isCast() && isa<ConstantInt>(CE->getOperand(0))) {
       return;
@@ -1417,8 +1422,8 @@ void TypeAnalyzer::considerTBAA() {
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
-          llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
-          assert(0 && "unknown tbaa call instruction user");
+          llvm::errs() << " unknown tbaa call instruction user inst: " << I
+                       << " vdptr: " << vdptr.str() << "\n";
         }
       } else if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto StoreSize =
@@ -4428,6 +4433,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 #include "BlasTA.inc"
     }
 
+    // clang-format off
+    const char* NoTARecurStartsWith[] = {
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
+    };
+    // clang-format on
+    {
+      std::string demangledName = llvm::demangle(funcName.str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+      for (auto Name : NoTARecurStartsWith)
+        if (startsWith(demangledName, Name))
+          return;
+    }
+
     // Manual TT specification is non-interprocedural and already handled once
     // at the start.
 
@@ -5544,7 +5566,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
-        funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
+        funcName == "vprintf" || funcName == "puts" || funcName == "fputc" ||
+        funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
 

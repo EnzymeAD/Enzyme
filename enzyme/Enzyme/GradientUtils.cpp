@@ -231,7 +231,7 @@ GradientUtils::GradientUtils(
     newToOriginalFn[originalToNewFn[&oArg]] = &oArg;
   }
   for (BasicBlock &BB : *newFunc) {
-    originalBlocks.emplace_back(&BB);
+    originalBlocks.push_back(&BB);
   }
   tape = nullptr;
   tapeidx = 0;
@@ -1368,7 +1368,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     for (unsigned i = 0; i < op->getNumArgOperands(); ++i)
 #endif
     {
-      args.emplace_back(getOp(op->getArgOperand(i)));
+      args.push_back(getOp(op->getArgOperand(i)));
       if (args[i] == nullptr)
         goto endCheck;
     }
@@ -3977,7 +3977,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                 const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                   if (I->mayWriteToMemory() &&
                       writesToMemoryReadBy(
-                          *OrigAA, TLI,
+                          &TR, *OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
@@ -4008,7 +4008,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                   const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
-                            *OrigAA, TLI,
+                            &TR, *OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
@@ -5308,7 +5308,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   }
 
-  if (isa<Argument>(oval) && TR.query(oval)[{-1}].isFloat()) {
+  if (isa<Argument>(oval) && !TR.anyPointer(oval)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   } else if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
@@ -6643,15 +6643,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               // llvm::errs() << "found potential candidate loads: oli:"
               //             << *origInst << " oli2: " << *orig2 << "\n";
 
-              auto scev1 = SE.getSCEV(origInst->getPointerOperand());
-              auto scev2 = SE.getSCEV(orig2->getPointerOperand());
+              auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
+              auto scev2 = OrigSE->getSCEV(orig2->getPointerOperand());
               // llvm::errs() << " scev1: " << *scev1 << " scev2: " << *scev2
               //             << "\n";
 
               allInstructionsBetween(
                   *OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -6673,9 +6673,11 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                           ar2->getStepRecurrence(*OrigSE)) {
 
                     LoopContext l1;
-                    getContext(ar1->getLoop()->getHeader(), l1);
+                    getContext(getNewFromOriginal(ar1->getLoop()->getHeader()),
+                               l1);
                     LoopContext l2;
-                    getContext(ar2->getLoop()->getHeader(), l2);
+                    getContext(getNewFromOriginal(ar2->getLoop()->getHeader()),
+                               l2);
                     if (l1.dynamic || l2.dynamic)
                       continue;
 
@@ -6729,7 +6731,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   *OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
-                    if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
+                    if (!writesToMemoryReadBy(&TR, *OrigAA, TLI, origInst,
                                               potentialAlias))
                       return false;
 
@@ -6747,8 +6749,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               if (mid == SI)
                                 return false;
 
-                              if (!writesToMemoryReadBy(*OrigAA, TLI, origInst,
-                                                        mid)) {
+                              if (!writesToMemoryReadBy(&TR, *OrigAA, TLI,
+                                                        origInst, mid)) {
                                 return false;
                               }
                               lastStore = false;
@@ -6947,7 +6949,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       *OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
-                            writesToMemoryReadBy(*OrigAA, TLI,
+                            writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
                                                  /*maybeWriter*/ I)) {
                           failed = true;
@@ -6973,7 +6975,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         *OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
-                              writesToMemoryReadBy(*OrigAA, TLI,
+                              writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
                                                    /*maybeWriter*/ I)) {
                             failed = true;
@@ -7178,7 +7180,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -7207,7 +7209,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(*OrigAA, TLI,
+                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
@@ -8059,8 +8061,16 @@ void GradientUtils::computeMinCache() {
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
           StringRef funcName = getFuncNameFromCall(CI);
-          if (isAllocationFunction(funcName, TLI))
-            Available[CI] = CI;
+          if (isAllocationFunction(funcName, TLI)) {
+            bool legal = true;
+            auto found = rematerializableAllocations.find(CI);
+            if (found != rematerializableAllocations.end()) {
+              if (found->second.nonRepeatableWritingCall)
+                legal = false;
+            }
+            if (legal)
+              Available[CI] = CI;
+          }
         }
       }
     }
@@ -8236,7 +8246,8 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement = getUndefinedValueForType(P->getType());
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
@@ -8705,6 +8716,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   bool promotable = true;
   bool shadowpromotable = true;
 
+  CallInst *nonRepeatableWritingCall = nullptr;
   SmallVector<Instruction *, 1> shadowPointerLoads;
 
   std::set<std::pair<Instruction *, Value *>> seen;
@@ -8856,6 +8868,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
             EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
                         *V, " due to unknown writing call ", *cur);
           }
+          if (!nonRepeatableWritingCall)
+            nonRepeatableWritingCall = CI;
           storingOps.insert(cur);
         }
 
@@ -8904,8 +8918,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, storingOps, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI,
-                                     res, outer)) {
+        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI,
+                                     *OrigDT, LI, res, outer)) {
           EmitWarning("NotPromotable", *LI,
                       " Could not promote shadow allocation ", *V,
                       " due to pointer load ", *LI,
@@ -8959,8 +8973,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT, LI, res,
-                                   outer)) {
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI, *OrigDT,
+                                   LI, res, outer)) {
         EmitWarning("NotPromotable", *LI, " Could not promote allocation ", *V,
                     " due to load ", *LI,
                     " which does not postdominates store ", *res);
@@ -8975,7 +8989,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI.loadCall, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(*OrigAA, TLI, SE, *OrigLI, *OrigDT,
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI, *OrigDT,
                                    LI.loadCall, res, outer)) {
         EmitWarning("NotPromotable", *LI.loadCall,
                     " Could not promote allocation ", *V,
@@ -8985,8 +8999,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       }
     }
   }
-  rematerializableAllocations[V] =
-      Rematerializer(loads, loadLikeCalls, stores, frees, outer);
+  rematerializableAllocations[V] = Rematerializer(
+      loads, loadLikeCalls, stores, frees, outer, nonRepeatableWritingCall);
 }
 
 BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,

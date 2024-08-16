@@ -246,16 +246,23 @@ public:
     // Loop scope (null if not loop scoped).
     llvm::Loop *LI;
 
+    // If non-null, a call which writes to the value which cannot be reproduced
+    // in the reverse pass. If any values of this allocation are needed in the
+    // reverse pass and this is non-null, this allocation cannot be
+    // rematerialized.
+    llvm::CallInst *nonRepeatableWritingCall;
+
     Rematerializer() : loads(), stores(), frees(), LI(nullptr) {}
     Rematerializer(llvm::ArrayRef<llvm::LoadInst *> loads,
                    llvm::ArrayRef<LoadLikeCall> loadLikeCalls,
                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &stores,
                    const llvm::SmallPtrSetImpl<llvm::Instruction *> &frees,
-                   llvm::Loop *LI)
+                   llvm::Loop *LI, llvm::CallInst *nonRepeatableWritingCall)
         : loads(loads.begin(), loads.end()),
           loadLikeCalls(loadLikeCalls.begin(), loadLikeCalls.end()),
           stores(stores.begin(), stores.end()),
-          frees(frees.begin(), frees.end()), LI(LI) {}
+          frees(frees.begin(), frees.end()), LI(LI),
+          nonRepeatableWritingCall(nonRepeatableWritingCall) {}
   };
 
   struct ShadowRematerializer {

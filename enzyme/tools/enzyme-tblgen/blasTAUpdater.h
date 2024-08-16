@@ -13,16 +13,7 @@ void emit_BLASTypes(raw_ostream &os) {
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
   os << "TypeTree ttFloat;\n"
-     << "llvm::Type *floatType; \n"
-     << "if (blas.floatType == \"s\" || blas.floatType == \"S\" || "
-        "blas.floatType == \"c\" || blas.floatType == \"C\") {\n"
-     << "  floatType = Type::getFloatTy(call.getContext());\n"
-     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\" || "
-        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-     << "  floatType = Type::getDoubleTy(call.getContext());\n"
-     << "} else {\n"
-     << "  llvm_unreachable(\"unknown float type of blas\");\n"
-     << "}\n"
+     << "llvm::Type *floatType = blas.fpType(call.getContext()); \n"
      << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
      << "  ttFloat.insert({-1,0},floatType);\n"

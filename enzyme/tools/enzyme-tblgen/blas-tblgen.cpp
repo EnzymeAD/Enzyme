@@ -113,22 +113,7 @@ void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
      << "  using llvm::Type;                                                \n"
      << "  bool result = true;                                              \n"
      << "  if (!gutils->isConstantInstruction(&call)) {                     \n"
-     << "    Type *fpType;                                                  \n"
-     << "    if (blas.floatType == \"d\" || blas.floatType == \"D\") {      \n"
-     << "      fpType = Type::getDoubleTy(call.getContext());               \n"
-     << "    } else if (blas.floatType == \"s\" || blas.floatType == \"S\"){\n"
-     << "      fpType = Type::getFloatTy(call.getContext());                \n"
-     << "    } else if (blas.floatType == \"c\" || blas.floatType == \"C\"){\n"
-     << "      fpType = "
-        "llvm::VectorType::get(Type::getFloatTy(call.getContext()), 2, false); "
-        "               \n"
-     << "    } else if (blas.floatType == \"z\" || blas.floatType == \"Z\"){\n"
-     << "      fpType = "
-        "llvm::VectorType::get(Type::getDoubleTy(call.getContext()), 2, "
-        "false);                \n"
-     << "    } else {                                                       \n"
-     << "      assert(false && \"Unreachable\");                            \n"
-     << "    }                                                              \n";
+     << "    Type *fpType = blas.fpType(call.getContext());                 \n";
   bool first = true;
   for (auto &&pattern : blasPatterns) {
     bool hasActive = false;
@@ -527,15 +512,7 @@ void emit_scalar_types(const TGPattern &pattern, raw_ostream &os) {
   assert(foundInt && "no int type found in blas call");
 
   os << "  // fpType already given by blas type (s, d, c, z) \n"
-     << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
-     << "  // TODO: add Fortran testcases for Fortran ABI\n"
-     << "  if (!intType) {\n"
-     << "    const auto PT = cast<PointerType>(type_" << name << ");\n"
-     << "    if (blas.is64)\n"
-     << "      intType = IntegerType::get(PT->getContext(), 64);\n"
-     << "    else\n"
-     << "      intType = IntegerType::get(PT->getContext(), 32);\n"
-     << "  }\n\n"
+     << "  IntegerType *intType = blas.intType(call.getContext());\n"
      << "  IntegerType *charType = IntegerType::get(intType->getContext(), "
         "8);\n\n";
   os << "  IntegerType *julia_decl_type = nullptr;\n"
@@ -1076,6 +1053,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
         if (op != "Select" || i == 0)
           os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
              << i << ".size() == 1 ? 0 : i], byRef)";
+        else if (op == "Select" && i == 2)
+          os << "Builder2.CreateBitCast(marg_2[marg_2.size() == 1 ? 0 : i], "
+                "marg_1[marg_1.size() == 1 ? 0 : i]->getType())";
         else
           os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
       }
@@ -1156,7 +1136,9 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
          << ".getCallee()))\n"
          << "    {\n"
-         << "      attribute_" << dfnc_name << "(blas, F);\n"
+         << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
+         << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+         << dfnc_name << ".getFunctionType(), newF);\n"
          << "    }\n\n";
       os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
          << dfnc_name << ", marg, Defs));\n";
@@ -1434,17 +1416,32 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
   os << "        if (byRef) {\n";
   int n = 0;
-  if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf")
+  if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf" ||
+      func == "lacpy" || func == "spmv" || func == "spr2")
     n = 1;
-  if (func == "gemm" || func == "syrk" || func == "syr2k")
+  if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
   if (func == "trmv" || func == "trtrs")
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
-  for (int i = 0; i < n; i++)
-    os << "           " << argName
-       << ".push_back(ConstantInt::get(intType, 1));\n";
+  if (n != 0) {
+    os << "    auto tmpF_" << func
+       << " = gutils->oldFunc->getParent()->getFunction(\n"
+       << "  blas.prefix + blas.floatType + \"" << func;
+
+    if (func == "copy")
+      os << "\" + (cublasv2 ? \"\" : blas.suffix));\n";
+    else
+      os << "\" + blas.suffix);\n";
+
+    for (int i = 0; i < n; i++)
+      os << "           " << argName << ".push_back(ConstantInt::get((tmpF_"
+         << func << " && tmpF_" << func
+         << "->getFunctionType()->getNumParams() > " << argName
+         << ".size() ) ? tmpF_" << func << "->getFunctionType()->getParamType("
+         << argName << ".size()) : intType, 1));\n";
+  }
   os << "        }\n";
   if (ty == ArgType::fp) {
     os << "           if (cublasv2) " << argName
@@ -1473,7 +1470,7 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
   auto action = args[1];
   assert(action == "product" || action == "is_normal" ||
          action == "triangular" || action == "vector" ||
-         action == "zerotriangular");
+         action == "zerotriangular" || action == "is_left");
   if (action == "product") {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1496,6 +1493,19 @@ void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
        << ", byRef);\n";
     os << "    Value *size_" << vecName << " = " << builder
        << ".CreateSelect(is_normal(" << builder << ", " << trans
+       << ", byRef, cublas), len1, len2);\n";
+  } else if (action == "is_left") {
+    assert(args.size() == 5);
+    const auto vecName = args[0];
+    const auto trans = "arg_" + args[2];
+    const auto dim1 = "arg_" + args[3];
+    const auto dim2 = "arg_" + args[4];
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
+       << ", byRef);\n"
+       << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
+       << ", byRef);\n";
+    os << "    Value *size_" << vecName << " = " << builder
+       << ".CreateSelect(is_left(" << builder << ", " << trans
        << ", byRef, cublas), len1, len2);\n";
   } else if (action == "vector") {
     assert(args.size() == 3);
@@ -1680,7 +1690,9 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
     os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
        << "    {\n"
-       << "      attribute_" << dfnc_name << "(blas, F);\n"
+       << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
+       << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
+       << dfnc_name << ".getFunctionType(), newF);\n"
        << "    }\n\n";
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_"
        << dfnc_name << ", " << argPrefix << ", Defs));\n";

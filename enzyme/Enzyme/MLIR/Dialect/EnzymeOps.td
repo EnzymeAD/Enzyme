@@ -27,6 +27,31 @@ include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 
+class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
+    : AttrDef<Enzyme_Dialect, name, traits> {
+  let mnemonic = attrMnemonic;
+}
+
+def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
+  let summary = "A pseudo alias class represents a memory allocation passed into a function.";
+
+  let parameters = (ins
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$argNumber,
+    "unsigned":$depth
+  );
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
+                                        "unsigned":$argNumber,
+                                        "unsigned":$depth), [{
+      return $_get(function.getContext(), function, argNumber, depth);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
+}
+
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
     [

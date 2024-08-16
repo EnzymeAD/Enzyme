@@ -189,8 +189,8 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     differentials[val] =
         entryBuilder.CreateAlloca(type, nullptr, val->getName() + "'de");
     auto Alignment =
-        oldFunc->getParent()->getDataLayout().getPrefTypeAlignment(type);
-    differentials[val]->setAlignment(Align(Alignment));
+        oldFunc->getParent()->getDataLayout().getPrefTypeAlign(type);
+    differentials[val]->setAlignment(Alignment);
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
@@ -395,7 +395,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
-          addedSelects.emplace_back(res);
+          addedSelects.push_back(res);
           return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
@@ -404,7 +404,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
-          addedSelects.emplace_back(res);
+          addedSelects.push_back(res);
           return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
@@ -422,7 +422,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                                select->getFalseValue(),
                                                bc->getDestTy()),
                            false)));
-            addedSelects.emplace_back(res);
+            addedSelects.push_back(res);
             return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }
@@ -436,7 +436,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                                bc->getDestTy()),
                            false),
                 old));
-            addedSelects.emplace_back(res);
+            addedSelects.push_back(res);
             return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }

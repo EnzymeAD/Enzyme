@@ -716,9 +716,13 @@ public:
             }
           }
           if (!dt.isKnown()) {
-            TR.dump();
-            llvm::errs() << " vd:" << vd.str() << " start:" << start
-                         << " size: " << size << " dt:" << dt.str() << "\n";
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of load " << I;
+            ss << " vd:" << vd.str() << " start:" << start << " size: " << size
+               << " dt:" << dt.str() << "\n";
+            EmitNoTypeError(str, I, gutils, BuilderZ);
+            continue;
           }
           assert(dt.isKnown());
 
@@ -2583,8 +2587,9 @@ public:
     case Instruction::Sub:
     case Instruction::Add: {
       if (looseTypeAnalysis) {
-        llvm::errs() << "warning: binary operator is integer and constant: "
-                     << BO << "\n";
+        llvm::errs()
+            << "warning: binary operator is integer and assumed constant: "
+            << BO << "\n";
         // if loose type analysis, assume this integer add is constant
         return;
       }
@@ -3341,6 +3346,14 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
+    for (size_t i = 0; i < MTI.getNumOperands(); i++)
+      if (MTI.getOperand(i) == orig_dst)
+        if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
+          auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
+          auto TT = TypeTree::parse(attr.getValueAsString(), MTI.getContext());
+          vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
+          break;
+        }
 
     bool errorIfNoType = true;
     if ((Mode == DerivativeMode::ForwardMode ||
@@ -3760,7 +3773,13 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
 #if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -3879,7 +3898,13 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
 #if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -3961,6 +3986,20 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+#if LLVM_VERSION_MAJOR >= 12
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
+#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         if (Intrinsic::isOverloaded(ID))
@@ -4719,6 +4758,7 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    Module &M = *call.getParent()->getParent()->getParent();
 
     bool foreignFunction = called == nullptr;
 
@@ -4816,7 +4856,7 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -5127,7 +5167,7 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        prearg = getUndefinedValueForType(argi->getType());
+        prearg = getUndefinedValueForType(M, argi->getType());
         preType = ValueType::None;
       }
       pre_args.push_back(prearg);
@@ -5145,7 +5185,7 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
           revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
@@ -5214,7 +5254,7 @@ public:
 
           if (writeOnlyNoCapture && !replaceFunction &&
               TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
-            darg = getUndefinedValueForType(argi->getType());
+            darg = getUndefinedValueForType(M, argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
@@ -5618,18 +5658,41 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
-            auto drval = *differetIdx;
-            newip = (drval < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(augmentcall,
-                                                      {(unsigned)drval},
-                                                      call.getName() + "'ac");
-            assert(newip->getType() == placeholder->getType());
-            placeholder->replaceAllUsesWith(newip);
-            if (placeholder == &*BuilderZ.GetInsertPoint()) {
-              BuilderZ.SetInsertPoint(placeholder->getNextNode());
+            if (!differetIdx) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Did not have return index set when differentiating "
+                    "function\n";
+              ss << " call" << call << "\n";
+              ss << " augmentcall" << *augmentcall << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&call),
+                                   ErrorType::InternalError, nullptr, nullptr,
+                                   nullptr);
+              } else {
+                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                            ss.str());
+              }
+              placeholder->replaceAllUsesWith(
+                  UndefValue::get(placeholder->getType()));
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
+            } else {
+              auto drval = *differetIdx;
+              newip = (drval < 0)
+                          ? augmentcall
+                          : BuilderZ.CreateExtractValue(augmentcall,
+                                                        {(unsigned)drval},
+                                                        call.getName() + "'ac");
+              assert(newip->getType() == placeholder->getType());
+              placeholder->replaceAllUsesWith(newip);
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
             }
-            gutils->erase(placeholder);
           } else {
             newip = placeholder;
           }

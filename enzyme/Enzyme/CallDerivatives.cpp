@@ -3009,8 +3009,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           if (!forwardsShadow) {
             if (Mode == DerivativeMode::ReverseModePrimal) {
               // Needs a stronger replacement check/assertion.
-              Value *replacement =
-                  getUndefinedValueForType(placeholder->getType());
+              Value *replacement = getUndefinedValueForType(
+                  *gutils->oldFunc->getParent(), placeholder->getType());
               gutils->replaceAWithB(placeholder, replacement);
               gutils->invertedPointers.erase(found);
               gutils->invertedPointers.insert(std::make_pair(

@@ -122,6 +122,8 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
                                           const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
   llvm::LibFunc libfunc;
+  if (name == "_ZdlPvmSt11align_val_t")
+    return true;
   if (!TLI.getLibFunc(name, libfunc)) {
     if (name == "free")
       return true;

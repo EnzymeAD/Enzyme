@@ -176,8 +176,6 @@ bool attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  changed |= attributeTablegen(F);
-
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
     changed = true;
@@ -348,6 +346,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
       "fprintf",
       "fwrite",
+      "fputc",
       "strtol",
       "getenv",
       "memchr",
@@ -376,6 +375,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  changed |= attributeTablegen(F);
   return changed;
 }
 
@@ -1686,11 +1686,17 @@ public:
     switch (mode) {
     case DerivativeMode::ForwardModeError:
     case DerivativeMode::ForwardMode:
-      newFunc = Logic.CreateForwardDiff(
-          context, fn, retType, constants, TA,
-          /*should return*/ primalReturn, mode, freeMemory, width,
-          /*addedType*/ nullptr, type_args, overwritten_args,
-          /*augmented*/ nullptr);
+      if (primalReturn && fn->getReturnType()->isVoidTy()) {
+        auto fnname = fn->getName();
+        EmitFailure("PrimalRetOfVoid", CI->getDebugLoc(), CI,
+                    "Requested primal result of void-returning function type ",
+                    *fn->getFunctionType(), " ", fnname, " ", *CI);
+      } else
+        newFunc = Logic.CreateForwardDiff(
+            context, fn, retType, constants, TA,
+            /*should return*/ primalReturn, mode, freeMemory, width,
+            /*addedType*/ nullptr, type_args, overwritten_args,
+            /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
@@ -2956,9 +2962,12 @@ public:
   bool run(Module &M) {
     Logic.clear();
 
+    for (Function &F : make_early_inc_range(M)) {
+      attributeKnownFunctions(F);
+    }
+
     bool changed = false;
     for (Function &F : M) {
-      attributeKnownFunctions(F);
       if (F.empty())
         continue;
       for (BasicBlock &BB : F) {

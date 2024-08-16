@@ -67,7 +67,8 @@ void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
 LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
                                       uint64_t *size) = nullptr;
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
-LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef, uint8_t) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMModuleRef, LLVMTypeRef,
+                                            uint8_t) = nullptr;
 
 LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
                                           LLVMBuilderRef,
@@ -477,6 +478,8 @@ static inline std::string tofltstr(Type *T) {
     return "double";
   case Type::X86_FP80TyID:
     return "x87d";
+  case Type::BFloatTyID:
+    return "bf16";
   case Type::FP128TyID:
     return "quad";
   case Type::PPC_FP128TyID:
@@ -565,6 +568,28 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                    getString(M, Message)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
+}
+
+Type *BlasInfo::fpType(LLVMContext &ctx) const {
+  if (floatType == "d" || floatType == "D") {
+    return Type::getDoubleTy(ctx);
+  } else if (floatType == "s" || floatType == "S") {
+    return Type::getFloatTy(ctx);
+  } else if (floatType == "c" || floatType == "C") {
+    return VectorType::get(Type::getFloatTy(ctx), 2, false);
+  } else if (floatType == "z" || floatType == "Z") {
+    return VectorType::get(Type::getDoubleTy(ctx), 2, false);
+  } else {
+    assert(false && "Unreachable");
+    return nullptr;
+  }
+}
+
+IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
+  if (is64)
+    return IntegerType::get(ctx, 64);
+  else
+    return IntegerType::get(ctx, 32);
 }
 
 /// Create function for type that is equivalent to memcpy but adds to
@@ -2146,14 +2171,14 @@ bool overwritesToMemoryReadByLoop(
   return true;
 }
 
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
-                              ScalarEvolution &SE, llvm::LoopInfo &LI,
-                              llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI, ScalarEvolution &SE,
+                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope) {
   using namespace llvm;
-  if (!writesToMemoryReadBy(AA, TLI, maybeReader, maybeWriter))
+  if (!writesToMemoryReadBy(TR, AA, TLI, maybeReader, maybeWriter))
     return false;
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
@@ -2248,7 +2273,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter) {
   assert(maybeReader->getParent()->getParent() ==
@@ -2463,6 +2489,26 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   assert(maybeReader->mayReadFromMemory());
 
   if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+    if (TR) {
+      auto TT = TR->query(li)[{-1}];
+      if (TT != BaseType::Unknown && TT != BaseType::Anything) {
+        if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
+          auto TT2 = TR->query(si->getValueOperand())[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+          auto &dl = li->getParent()->getParent()->getParent()->getDataLayout();
+          auto len =
+              (dl.getTypeSizeInBits(si->getValueOperand()->getType()) + 7) / 8;
+          TT2 = TR->query(si->getPointerOperand()).Lookup(len, dl)[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+        }
+      }
+    }
     return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
@@ -2653,7 +2699,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
               if (subOff != 0)
                 return options;
               for (const auto &pair3 : findAllUsersOf(subPtr)) {
-                todo.emplace_back(pair3);
+                todo.emplace_back(std::move(pair3));
               }
             }
             continue;
@@ -2685,7 +2731,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
             return options;
           }
           for (const auto &pair3 : findAllUsersOf(AI2)) {
-            todo.emplace_back(pair3);
+            todo.emplace_back(std::move(pair3));
           }
           continue;
         }
@@ -2928,10 +2974,11 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
   return {};
 }
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+                                         bool forceZero) {
   if (EnzymeUndefinedValueForType)
     return cast<Constant>(
-        unwrap(EnzymeUndefinedValueForType(wrap(T), forceZero)));
+        unwrap(EnzymeUndefinedValueForType(wrap(&M), wrap(T), forceZero)));
   else if (EnzymeZeroCache || forceZero)
     return Constant::getNullValue(T);
   else

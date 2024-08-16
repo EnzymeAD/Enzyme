@@ -2298,7 +2298,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     VMapO->getMDMap() = VMap.getMDMap();
   }
 
-  for (auto attr : {"enzyme_ta_norecur"})
+  for (auto attr : {"enzyme_ta_norecur", "frame-pointer"})
     if (F->getAttributes().hasAttribute(AttributeList::FunctionIndex, attr)) {
       NewF->addAttribute(
           AttributeList::FunctionIndex,
@@ -5666,8 +5666,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       auto notV = pushcse(B.CreateNot(SI->getCondition()));
       auto ncmp2 = pushcse(B.CreateAnd(notV, SI->getFalseValue()));
       auto ori = pushcse(B.CreateOr(ncmp1, ncmp2));
-      auto ext = pushcse(B.CreateUIToFP(ori, SI->getType()));
-      replaceAndErase(cur, ext);
+      replaceAndErase(cur, ori);
       return "SelectI1";
     }
 
@@ -7717,7 +7716,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto [PN, inductPN] = pair.second.first;
 
     auto ph = L->getLoopPreheader();
+#if LLVM_VERSION_MAJOR >= 20
+    CodeExtractor ext(L->getBlocks(), &DT);
+#else
     CodeExtractor ext(DT, *L);
+#endif
     CodeExtractorAnalysisCache cache(F);
     SetVector<Value *> Inputs, Outputs;
 #if LLVM_VERSION_MAJOR >= 14
