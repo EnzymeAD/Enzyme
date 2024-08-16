@@ -6643,8 +6643,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               // llvm::errs() << "found potential candidate loads: oli:"
               //             << *origInst << " oli2: " << *orig2 << "\n";
 
-              auto scev1 = SE.getSCEV(origInst->getPointerOperand());
-              auto scev2 = SE.getSCEV(orig2->getPointerOperand());
+              auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
+              auto scev2 = OrigSE->getSCEV(orig2->getPointerOperand());
               // llvm::errs() << " scev1: " << *scev1 << " scev2: " << *scev2
               //             << "\n";
 
