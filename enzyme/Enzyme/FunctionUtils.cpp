@@ -7692,7 +7692,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     auto [PN, inductPN] = pair.second.first;
 
     auto ph = L->getLoopPreheader();
+#if LLVM_VERSION_MAJOR >= 20
+    CodeExtractor ext(L->getBlocks(), &DT);
+#else
     CodeExtractor ext(DT, *L);
+#endif
     CodeExtractorAnalysisCache cache(F);
     SetVector<Value *> Inputs, Outputs;
 #if LLVM_VERSION_MAJOR >= 14
