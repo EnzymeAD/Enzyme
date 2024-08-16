@@ -8918,7 +8918,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, storingOps, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT,
+        if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI, *OrigDT,
                                      LI, res, outer)) {
           EmitWarning("NotPromotable", *LI,
                       " Could not promote shadow allocation ", *V,
@@ -8973,7 +8973,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT, LI,
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI, *OrigDT, LI,
                                    res, outer)) {
         EmitWarning("NotPromotable", *LI, " Could not promote allocation ", *V,
                     " due to load ", *LI,
@@ -8989,7 +8989,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     SmallVector<Instruction *, 2> results;
     mayExecuteAfter(results, LI.loadCall, storingOps, outer);
     for (auto res : results) {
-      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, SE, *OrigLI, *OrigDT,
+      if (overwritesToMemoryReadBy(&TR, *OrigAA, TLI, *OrigSE, *OrigLI, *OrigDT,
                                    LI.loadCall, res, outer)) {
         EmitWarning("NotPromotable", *LI.loadCall,
                     " Could not promote allocation ", *V,
