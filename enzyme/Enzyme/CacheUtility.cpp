@@ -489,6 +489,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
 
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
+  assert(BB->getParent() == newFunc);
   Loop *L = LI.getLoopFor(BB);
 
   // Not inside a loop
