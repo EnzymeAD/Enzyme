@@ -3351,6 +3351,10 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   IRBuilder<> phibuilder(BB2);
   bool setphi = false;
 
+  // We force loads of all phi nodes at once, to ensure correct results in the
+  // case that one phi node depends on others.
+  SmallVector<std::tuple<PHINode *, Value *, Type *>, 1> phis;
+
   // Ensure phi values have their derivatives propagated
   for (auto I = oBB->begin(), E = oBB->end(); I != E; ++I) {
     PHINode *orig = dyn_cast<PHINode>(&*I);
@@ -3409,7 +3413,6 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     }
 
     auto prediff = gutils->diffe(orig, Builder);
-
     bool handled = false;
 
     SmallVector<Instruction *, 4> activeUses;
@@ -3537,39 +3540,40 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         }
       }
     }
-
     if (!handled) {
       gutils->setDiffe(
           orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
           Builder);
+      phis.emplace_back(orig, prediff, PNfloatType);
+    }
+  }
 
-      for (BasicBlock *opred : predecessors(oBB)) {
-        auto oval = orig->getIncomingValueForBlock(opred);
-        if (gutils->isConstantValue(oval)) {
-          continue;
-        }
+  for (auto &&[orig, prediff, PNfloatType] : phis) {
 
-        if (orig->getNumIncomingValues() == 1) {
-          gutils->addToDiffe(oval, prediff, Builder, PNfloatType);
-        } else {
-          BasicBlock *pred =
-              cast<BasicBlock>(gutils->getNewFromOriginal(opred));
-          if (replacePHIs.find(pred) == replacePHIs.end()) {
-            replacePHIs[pred] = Builder.CreatePHI(
-                Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
-            if (!setphi) {
-              phibuilder.SetInsertPoint(replacePHIs[pred]);
-              setphi = true;
-            }
+    for (BasicBlock *opred : predecessors(oBB)) {
+      auto oval = orig->getIncomingValueForBlock(opred);
+      if (gutils->isConstantValue(oval)) {
+        continue;
+      }
+
+      if (orig->getNumIncomingValues() == 1) {
+        gutils->addToDiffe(oval, prediff, Builder, PNfloatType);
+      } else {
+        BasicBlock *pred = cast<BasicBlock>(gutils->getNewFromOriginal(opred));
+        if (replacePHIs.find(pred) == replacePHIs.end()) {
+          replacePHIs[pred] = Builder.CreatePHI(
+              Type::getInt1Ty(pred->getContext()), 1, "replacePHI");
+          if (!setphi) {
+            phibuilder.SetInsertPoint(replacePHIs[pred]);
+            setphi = true;
           }
-          auto dif = selectByWidth(Builder, gutils, replacePHIs[pred], prediff,
-                                   Constant::getNullValue(prediff->getType()));
-          auto addedSelects =
-              gutils->addToDiffe(oval, dif, Builder, PNfloatType);
-
-          for (auto select : addedSelects)
-            selects.push_back(select);
         }
+        auto dif = selectByWidth(Builder, gutils, replacePHIs[pred], prediff,
+                                 Constant::getNullValue(prediff->getType()));
+        auto addedSelects = gutils->addToDiffe(oval, dif, Builder, PNfloatType);
+
+        for (auto select : addedSelects)
+          selects.push_back(select);
       }
     }
   }
