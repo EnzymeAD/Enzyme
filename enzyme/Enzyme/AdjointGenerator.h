@@ -2949,7 +2949,16 @@ public:
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
-            cal->setAttributes(MS.getAttributes());
+
+            if (startsWith(funcName, "memset_pattern")) {
+                AttributeList NewAttrs;
+                for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
+                for (auto attr : Attrs.getAttributes(idx))
+                  NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                                   idx, attr);
+                cal->setAttributes(NewAttrs);
+            } else
+                cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
@@ -3275,7 +3284,16 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
-          cal->setAttributes(MS.getAttributes());
+
+            if (startsWith(funcName, "memset_pattern")) {
+            AttributeList NewAttrs;
+            for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
+            for (auto attr : Attrs.getAttributes(idx))
+              NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                               idx, attr);
+            cal->setAttributes(NewAttrs);
+            } else
+                cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
