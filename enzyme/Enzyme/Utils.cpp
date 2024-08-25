@@ -2718,22 +2718,33 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
     // all sub uses
     if (auto MTI = dyn_cast<MemTransferInst>(U)) {
       if (auto CI = dyn_cast<ConstantInt>(MTI->getLength())) {
-        if (MTI->getOperand(0) == ptr && suboff == 0 &&
-            CI->getValue().uge(offset + valSz)) {
-          size_t midoffset = 0;
-          auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
-          if (!AI2) {
-            legal = false;
-            return options;
+        if (MTI->getOperand(0) == ptr) {
+          auto storeSz = CI->getValue();
+
+          // If store is before the load would start
+          if ((storeSz + suboff).ule(offset))
+            continue;
+
+          // if store starts after load would start
+          if (offset + valSz <= suboff)
+            continue;
+
+          if (suboff == 0 && CI->getValue().uge(offset + valSz)) {
+            size_t midoffset = 0;
+            auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
+            if (!AI2) {
+              legal = false;
+              return options;
+            }
+            if (midoffset != 0) {
+              legal = false;
+              return options;
+            }
+            for (const auto &pair3 : findAllUsersOf(AI2)) {
+              todo.emplace_back(std::move(pair3));
+            }
+            continue;
           }
-          if (midoffset != 0) {
-            legal = false;
-            return options;
-          }
-          for (const auto &pair3 : findAllUsersOf(AI2)) {
-            todo.emplace_back(std::move(pair3));
-          }
-          continue;
         }
       }
     }
