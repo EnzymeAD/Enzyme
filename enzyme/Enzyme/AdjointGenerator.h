@@ -2954,8 +2954,13 @@ public:
                 AttributeList NewAttrs;
                 for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
                 for (auto attr : Attrs.getAttributes(idx))
+#if LLVM_VERSION_MAJOR >= 14
+                  NewAttrs = NewAttrs.addAttributeAtIndex(F->getContext(),
+                                                   idx, attr);
+#else
                   NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                                    idx, attr);
+#endif
                 cal->setAttributes(NewAttrs);
             } else
                 cal->setAttributes(MS.getAttributes());
@@ -3289,8 +3294,13 @@ public:
             AttributeList NewAttrs;
             for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
             for (auto attr : Attrs.getAttributes(idx))
-              NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                               idx, attr);
+#if LLVM_VERSION_MAJOR >= 14
+                  NewAttrs = NewAttrs.addAttributeAtIndex(F->getContext(),
+                                                   idx, attr);
+#else
+                  NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                                   idx, attr);
+#endif
             cal->setAttributes(NewAttrs);
             } else
                 cal->setAttributes(MS.getAttributes());
