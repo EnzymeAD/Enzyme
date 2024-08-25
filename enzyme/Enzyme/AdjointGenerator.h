@@ -2929,19 +2929,42 @@ public:
                                       ValueType::Primal, ValueType::Primal},
                                      BuilderZ, /*lookup*/ false);
 
+      auto funcName = getFuncNameFromCall(&MS);
       applyChainRule(
           BuilderZ,
           [&](Value *op0) {
             SmallVector<Value *, 4> args = {op0, op1, op2};
             if (op3)
               args.push_back(op3);
-            auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
+            CallInst *cal;
+            if (startsWith(funcName, "memset_pattern"))
+              cal = Builder2.CreateMemSet(
+                  op0, ConstantInt::get(Builder2.getInt8Ty(), 0), op2, {});
+            else
+              cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
-            cal->setAttributes(MS.getAttributes());
+
+            if (startsWith(funcName, "memset_pattern")) {
+              AttributeList NewAttrs;
+              for (auto idx :
+                   {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                    AttributeList::FirstArgIndex})
+                for (auto attr : MS.getAttributes().getAttributes(idx))
+#if LLVM_VERSION_MAJOR >= 14
+                  NewAttrs =
+                      NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
+#else
+                  NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
+#endif
+              cal->setAttributes(NewAttrs);
+            } else
+              cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
@@ -3267,7 +3290,22 @@ public:
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
-          cal->setAttributes(MS.getAttributes());
+
+          if (startsWith(funcName, "memset_pattern")) {
+            AttributeList NewAttrs;
+            for (auto idx :
+                 {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                  AttributeList::FirstArgIndex})
+              for (auto attr : MS.getAttributes().getAttributes(idx))
+#if LLVM_VERSION_MAJOR >= 14
+                NewAttrs =
+                    NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
+#else
+                NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
+#endif
+            cal->setAttributes(NewAttrs);
+          } else
+            cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };

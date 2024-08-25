@@ -905,12 +905,30 @@ public:
       constants.push_back(DIFFE_TYPE::DUP_ARG);
     }
 
+    ssize_t interleaved = -1;
+
+    size_t maxsize;
 #if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+    maxsize = CI->arg_size();
 #else
-    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+    maxsize = CI->getNumArgOperands();
 #endif
-    {
+    size_t num_args = maxsize;
+    for (unsigned i = 1 + sret; i < maxsize; ++i) {
+      Value *res = CI->getArgOperand(i);
+      auto metaString = getMetadataName(res);
+      if (metaString && startsWith(*metaString, "enzyme_")) {
+        if (*metaString == "enzyme_interleave") {
+          maxsize = i;
+          interleaved = i + 1;
+          break;
+        }
+      }
+    }
+
+    DIFFE_TYPE last_ty = DIFFE_TYPE::DUP_ARG;
+
+    for (ssize_t i = 1 + sret; (size_t)i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
 #if LLVM_VERSION_MAJOR > 16
@@ -1186,7 +1204,10 @@ public:
       overwritten_args[truei] = overwritten;
 
       auto PTy = FT->getParamType(truei);
-      DIFFE_TYPE ty = opt_ty ? *opt_ty : whatType(PTy, mode);
+      DIFFE_TYPE ty =
+          opt_ty ? *opt_ty
+                 : ((interleaved == -1) ? whatType(PTy, mode) : last_ty);
+      last_ty = ty;
 
       constants.push_back(ty);
 
@@ -1250,7 +1271,8 @@ public:
 
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        ++i;
+        if (interleaved == -1)
+          ++i;
 
         Value *res = nullptr;
 #if LLVM_VERSION_MAJOR >= 16
@@ -1260,22 +1282,19 @@ public:
 #endif
 
         for (unsigned v = 0; v < width; ++v) {
-#if LLVM_VERSION_MAJOR >= 14
-          if (i >= CI->arg_size())
-#else
-          if (i >= CI->getNumArgOperands())
-#endif
-          {
+          if ((size_t)((interleaved == -1) ? i : interleaved) >= num_args) {
             EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
                         "__enzyme_autodiff missing argument shadow at index ",
-                        i, ", need shadow of type ", *PTy,
+                        *((interleaved == -1) ? &i : &interleaved),
+                        ", need shadow of type ", *PTy,
                         " to shadow primal argument ", *args.back(),
                         " at call ", *CI);
             return {};
           }
 
           // cast diffe
-          Value *element = CI->getArgOperand(i);
+          Value *element =
+              CI->getArgOperand((interleaved == -1) ? i : interleaved);
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
@@ -1290,14 +1309,16 @@ public:
             } else {
               EmitFailure(
                   "NonPointerBatch", CI->getDebugLoc(), CI,
-                  "Batched argument at index ", i,
+                  "Batched argument at index ",
+                  *((interleaved == -1) ? &i : &interleaved),
                   " must be of pointer type, found: ", *element->getType());
               return {};
             }
           }
           if (PTy != element->getType()) {
-            element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
-                                                 element, truei);
+            element = castToDiffeFunctionArgType(
+                Builder, CI, FT, PTy, (interleaved == -1) ? i : interleaved,
+                mode, element, truei);
             if (!element) {
               return {};
             }
@@ -1310,13 +1331,16 @@ public:
                                                     element->getType(), width)),
                                                 element, {v});
 
-            if (v < width - 1 && !batch) {
+            if (v < width - 1 && !batch && (interleaved == -1)) {
               ++i;
             }
 
           } else {
             res = element;
           }
+
+          if (interleaved != -1)
+            interleaved++;
         }
 
         args.push_back(res);

@@ -1231,8 +1231,8 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B3.setFastMathFlags(getFast());
     Value *blasA = B3.CreatePointerCast(matA, BlasPT);
     Value *blasB = B3.CreatePointerCast(matB, BlasPT);
-    Value *fastSum = B3.CreateCall(
-        FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
+    Value *fastSum =
+        B3.CreateCall(FDot, {blasSize, blasA, blasOne, blasB, blasOne});
     B3.CreateBr(end);
 
     IRBuilder<> B4(body);
@@ -1251,7 +1251,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Value *AiDot = B4.CreatePointerCast(Ai, BlasPT);
     Value *BiDot = B4.CreatePointerCast(Bi, BlasPT);
     Value *newDot =
-        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
+        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne});
 
     Value *Anext = B4.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B4.CreateNUWAdd(Aidx, m, "Bidx.next");
@@ -2718,22 +2718,33 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
     // all sub uses
     if (auto MTI = dyn_cast<MemTransferInst>(U)) {
       if (auto CI = dyn_cast<ConstantInt>(MTI->getLength())) {
-        if (MTI->getOperand(0) == ptr && suboff == 0 &&
-            CI->getValue().uge(offset + valSz)) {
-          size_t midoffset = 0;
-          auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
-          if (!AI2) {
-            legal = false;
-            return options;
+        if (MTI->getOperand(0) == ptr) {
+          auto storeSz = CI->getValue();
+
+          // If store is before the load would start
+          if ((storeSz + suboff).ule(offset))
+            continue;
+
+          // if store starts after load would start
+          if (offset + valSz <= suboff)
+            continue;
+
+          if (suboff == 0 && CI->getValue().uge(offset + valSz)) {
+            size_t midoffset = 0;
+            auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
+            if (!AI2) {
+              legal = false;
+              return options;
+            }
+            if (midoffset != 0) {
+              legal = false;
+              return options;
+            }
+            for (const auto &pair3 : findAllUsersOf(AI2)) {
+              todo.emplace_back(std::move(pair3));
+            }
+            continue;
           }
-          if (midoffset != 0) {
-            legal = false;
-            return options;
-          }
-          for (const auto &pair3 : findAllUsersOf(AI2)) {
-            todo.emplace_back(std::move(pair3));
-          }
-          continue;
         }
       }
     }
