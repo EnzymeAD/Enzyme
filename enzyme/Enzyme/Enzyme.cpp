@@ -793,6 +793,19 @@ public:
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
+    if (fn->hasParamAttribute(0, Attribute::StructRet)) {
+      Type *Ty = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+      Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
+#else
+      Type *fnsrety = cast<PointerType>(FT->getParamType(0));
+      Ty = fnsrety->getPointerElementType();
+#endif
+      if (whatType(Ty, mode) != DIFFE_TYPE::CONSTANT) {
+        retType = DIFFE_TYPE::DUP_ARG;
+      }
+    }
+
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
 
@@ -863,9 +876,15 @@ public:
                 ->getPointerElementType();
 #endif
       auto FnSize = (DL.getTypeSizeInBits(Ty) / 8);
-      auto CSize = (DL.getTypeSizeInBits(CTy) / 8);
-      if (CSize < (width + primalReturn) * FnSize) {
-        auto count = width + primalReturn;
+      auto CSize = CTy ? (DL.getTypeSizeInBits(CTy) / 8) : 0;
+      auto count = ((mode == DerivativeMode::ForwardMode ||
+                     mode == DerivativeMode::ForwardModeSplit ||
+                     mode == DerivativeMode::ForwardModeError) &&
+                    (retType == DIFFE_TYPE::DUP_ARG ||
+                     retType == DIFFE_TYPE::DUP_NONEED)) *
+                       width +
+                   primalReturn;
+      if (CSize < count * FnSize) {
         EmitFailure(
             "IllegalByRefSize", CI->getDebugLoc(), CI, "Struct return type ",
             *CTy, " (", CSize, " bytes), not large enough to store ", count,
@@ -925,7 +944,7 @@ public:
       args.push_back(primal);
       if (retType != DIFFE_TYPE::CONSTANT)
         args.push_back(shadow);
-      if (retType == DIFFE_TYPE::DUP_ARG && !primalReturn)
+      if (retType == DIFFE_TYPE::DUP_ARG && !primalReturn && isWriteOnly(fn, 0))
         retType = DIFFE_TYPE::DUP_NONEED;
       constants.push_back(retType);
       retType = DIFFE_TYPE::CONSTANT;
