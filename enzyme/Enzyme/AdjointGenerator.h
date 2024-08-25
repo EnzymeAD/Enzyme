@@ -2929,13 +2929,21 @@ public:
                                       ValueType::Primal, ValueType::Primal},
                                      BuilderZ, /*lookup*/ false);
 
+      auto funcName = getFuncNameFromCall(&MS);
       applyChainRule(
           BuilderZ,
           [&](Value *op0) {
             SmallVector<Value *, 4> args = {op0, op1, op2};
             if (op3)
               args.push_back(op3);
-            auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
+            CallInst *cal;
+            if (startsWith(funcName, "memset_pattern"))
+              cal = Builder2.CreateMemSet(
+                  op0, ConstantInt::get(Builder2.getInt8Ty(), 0), op2, {});
+            else
+              cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
             cal->copyMetadata(MS, ToCopy2);
