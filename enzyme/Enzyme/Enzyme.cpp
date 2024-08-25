@@ -822,6 +822,12 @@ public:
         } else if (*metaString == "enzyme_dup_return") {
           retType = DIFFE_TYPE::DUP_ARG;
           continue;
+        } else if (*metaString == "enzyme_noret") {
+          returnUsed = false;
+          continue;
+        } else if (*metaString == "enzyme_primal_return") {
+          primalReturn = true;
+          continue;
         }
       }
     }
@@ -856,53 +862,74 @@ public:
       CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
                 ->getPointerElementType();
 #endif
-      AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
-                                          DL.getPrefTypeAlign(Ty));
+      auto FnSize = (DL.getTypeSizeInBits(Ty) / 8);
+      auto CSize = (DL.getTypeSizeInBits(CTy) / 8);
+      if (CSize < (width + primalReturn) * FnSize) {
+        auto count = width + primalReturn;
+        EmitFailure(
+            "IllegalByRefSize", CI->getDebugLoc(), CI, "Struct return type ",
+            *CTy, " (", CSize, " bytes), not large enough to store ", count,
+            " returns of type ", *Ty, " (", FnSize, " bytes), width=", width,
+            " primal requested=", primalReturn);
+      }
+      Value *primal = nullptr;
+      if (primalReturn) {
+        Value *sretPt = CI->getArgOperand(0);
+        PointerType *pty = cast<PointerType>(sretPt->getType());
+        primal = Builder.CreatePointerCast(
+            sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+      } else {
+        AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
+                                             nullptr, DL.getPrefTypeAlign(Ty));
+        primalA->insertBefore(CI);
+        primal = primalA;
+      }
 
-      primal->insertBefore(CI);
-
-      Value *shadow;
+      Value *shadow = nullptr;
       switch (mode) {
       case DerivativeMode::ForwardModeError:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
-        Value *sretPt = CI->getArgOperand(0);
-        if (width > 1) {
+        if (retType != DIFFE_TYPE::CONSTANT) {
+          Value *sretPt = CI->getArgOperand(0);
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(CTy)) {
-            Value *acc = UndefValue::get(
-                ArrayType::get(PointerType::get(sty->getElementType(0),
-                                                pty->getAddressSpace()),
-                               width));
+          auto shadowPtr = Builder.CreatePointerCast(
+              sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+          if (width == 1) {
+            if (primalReturn)
+              shadowPtr = Builder.CreateConstGEP1_64(Ty, shadowPtr, 1);
+            shadow = shadowPtr;
+          } else {
+            Value *acc = UndefValue::get(ArrayType::get(
+                PointerType::get(Ty, pty->getAddressSpace()), width));
             for (size_t i = 0; i < width; ++i) {
-              Value *elem = Builder.CreateStructGEP(sty, sretPt, i);
+              Value *elem =
+                  Builder.CreateConstGEP1_64(Ty, shadowPtr, i + primalReturn);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
-          } else {
-            EmitFailure(
-                "IllegalReturnType", CI->getDebugLoc(), CI,
-                "Return type of __enzyme_autodiff has to be a struct with",
-                width, "elements of the same type.");
-            return {};
           }
-        } else {
-          shadow = sretPt;
         }
         break;
       }
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
       case DerivativeMode::ReverseModeGradient: {
-        shadow = CI->getArgOperand(1);
+        if (retType != DIFFE_TYPE::CONSTANT)
+          shadow = CI->getArgOperand(1);
         sret = true;
         break;
       }
       }
 
       args.push_back(primal);
-      args.push_back(shadow);
-      constants.push_back(DIFFE_TYPE::DUP_ARG);
+      if (retType != DIFFE_TYPE::CONSTANT)
+        args.push_back(shadow);
+      if (retType == DIFFE_TYPE::DUP_ARG && !primalReturn)
+        retType = DIFFE_TYPE::DUP_NONEED;
+      constants.push_back(retType);
+      retType = DIFFE_TYPE::CONSTANT;
+      primalReturn = false;
     }
 
     ssize_t interleaved = -1;
@@ -994,7 +1021,6 @@ public:
         } else if (*metaString == "enzyme_const") {
           opt_ty = DIFFE_TYPE::CONSTANT;
         } else if (*metaString == "enzyme_noret") {
-          returnUsed = false;
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_allocated") {
@@ -1023,7 +1049,6 @@ public:
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_primal_return") {
-          primalReturn = true;
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_const_return") {
