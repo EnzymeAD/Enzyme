@@ -2951,19 +2951,20 @@ public:
               cal->setMetadata("enzyme_zerostack", m);
 
             if (startsWith(funcName, "memset_pattern")) {
-                AttributeList NewAttrs;
-                for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
-                for (auto attr : Attrs.getAttributes(idx))
+              AttributeList NewAttrs;
+              for (auto idx :
+                   {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                    AttributeList::FirstArgIndex})
+                for (auto attr : MS.getAttributes().getAttributes(idx))
 #if LLVM_VERSION_MAJOR >= 14
-                  NewAttrs = NewAttrs.addAttributeAtIndex(F->getContext(),
-                                                   idx, attr);
+                  NewAttrs =
+                      NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
 #else
-                  NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                                   idx, attr);
+                  NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
 #endif
-                cal->setAttributes(NewAttrs);
+              cal->setAttributes(NewAttrs);
             } else
-                cal->setAttributes(MS.getAttributes());
+              cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
@@ -3290,20 +3291,21 @@ public:
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
 
-            if (startsWith(funcName, "memset_pattern")) {
+          if (startsWith(funcName, "memset_pattern")) {
             AttributeList NewAttrs;
-            for (auto idx : {AttributeList::ReturnIndex, AttributeList::FunctionIndex, AttributeList::FirstArgIndex})
-            for (auto attr : Attrs.getAttributes(idx))
+            for (auto idx :
+                 {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                  AttributeList::FirstArgIndex})
+              for (auto attr : MS.getAttributes().getAttributes(idx))
 #if LLVM_VERSION_MAJOR >= 14
-                  NewAttrs = NewAttrs.addAttributeAtIndex(F->getContext(),
-                                                   idx, attr);
+                NewAttrs =
+                    NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
 #else
-                  NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                                   idx, attr);
+                NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
 #endif
             cal->setAttributes(NewAttrs);
-            } else
-                cal->setAttributes(MS.getAttributes());
+          } else
+            cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
