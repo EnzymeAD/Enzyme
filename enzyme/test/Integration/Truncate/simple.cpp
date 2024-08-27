@@ -5,6 +5,9 @@
 // RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang    -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
 // RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -g -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr.h -lm -lmpfr && %s.a.out ; fi
 
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang    -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr-test.h -lm -lmpfr && %s.a.out ; fi
+// RUN: if [ %llvmver -ge 12 ] && [ %hasMPFR == "yes" ] ; then %clang -g -DTRUNC_MEM -DTRUNC_OP -O2                %s -o %s.a.out %newLoadClangEnzyme -include enzyme/fprt/mpfr-test.h -lm -lmpfr && %s.a.out ; fi
+
 #include <math.h>
 
 #include "../test_utils.h"
