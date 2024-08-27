@@ -3021,6 +3021,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             } else if (inLoop) {
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   placeholder);
+              if (hasMetadata(&call, "enzyme_fromstack"))
+                isAlloca = true;
               goto endAnti;
             }
           }
