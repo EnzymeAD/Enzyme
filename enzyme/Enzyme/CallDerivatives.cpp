@@ -4140,6 +4140,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto rule = [&args](Value *tofree) { args.push_back(tofree); };
         applyChainRule(Builder2, rule, tofree);
 
+#if LLVM_VERSION_MAJOR >= 14
+        for (size_t i = 1; i < call.arg_size(); i++)
+#else
+        for (size_t i = 1; i < call.getNumArgOperands(); i++)
+#endif
+        {
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+        }
+
         auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
         frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 
