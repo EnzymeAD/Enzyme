@@ -61,7 +61,7 @@ if(ENZYME_ENABLE_HERBIE)
         GIT_TAG 5e640bd324ece7105804c7842c6026fd92808890
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/herbie.rkt
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
@@ -215,8 +215,8 @@ target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme
 add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
 target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
 
-# this custom target exists to prevent CMake from incorrectly assuming that 
-# targets that link depend on LLDEnzyme-XX can be built at the same time or 
+# this custom target exists to prevent CMake from incorrectly assuming that
+# targets that link depend on LLDEnzyme-XX can be built at the same time or
 # before LLDEnzyme-XX has finished.
 add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
@@ -224,8 +224,8 @@ add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
 add_library(ClangEnzymeFlags INTERFACE)
 target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 
-# this custom target exists to prevent CMake from incorrectly assuming that 
-# targets that link depend on ClangEnzyme-XX can be built at the same time or 
+# this custom target exists to prevent CMake from incorrectly assuming that
+# targets that link depend on ClangEnzyme-XX can be built at the same time or
 # before ClangEnzyme-XX has finished.
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
