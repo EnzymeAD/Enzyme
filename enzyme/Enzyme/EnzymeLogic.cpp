@@ -6461,6 +6461,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "MPI_Allreduce",
                          "lgamma",
                          "lgamma_r",
+                         "__assertfail",
                          "__kmpc_global_thread_num",
                          "nlopt_force_stop",
                          "cudaRuntimeGetVersion"

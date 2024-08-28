@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
+#include <memory>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -2122,12 +2123,12 @@ public:
     bool has_dynamic_interface = dynamic_interface != nullptr;
     bool needs_interface =
         mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
-    TraceInterface *interface = nullptr;
+    std::unique_ptr<TraceInterface> interface;
     if (has_dynamic_interface) {
-      interface =
-          new DynamicTraceInterface(dynamic_interface, CI->getFunction());
+      interface = std::make_unique<DynamicTraceInterface>(dynamic_interface,
+                                                          CI->getFunction());
     } else if (needs_interface) {
-      interface = new StaticTraceInterface(F->getParent());
+      interface = std::make_unique<StaticTraceInterface>(F->getParent());
     }
 
     // Find sample function
@@ -2189,7 +2190,7 @@ public:
 
     auto newFunc = Logic.CreateTrace(
         RequestContext(CI, &Builder), F, sampleFunctions, observeFunctions,
-        opt->ActiveRandomVariables, mode, autodiff, interface);
+        opt->ActiveRandomVariables, mode, autodiff, interface.get());
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2213,8 +2214,6 @@ public:
     bool status = HandleAutoDiff(
         CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
         newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
-
-    delete interface;
 
     return status;
   }
@@ -2921,11 +2920,11 @@ public:
         if (auto F = cur->getCalledFunction()) {
           if (!F->empty()) {
             // Garbage collect AC's created
-            SmallVector<AssumptionCache *, 2> ACAlloc;
+            SmallVector<std::unique_ptr<AssumptionCache>, 2> ACAlloc;
             auto getAC = [&](Function &F) -> llvm::AssumptionCache & {
-              auto AC = new AssumptionCache(F);
-              ACAlloc.push_back(AC);
-              return *AC;
+              auto AC = std::make_unique<AssumptionCache>(F);
+              ACAlloc.push_back(std::move(AC));
+              return *ACAlloc.back();
             };
             auto GetTLI =
                 [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
@@ -2950,9 +2949,6 @@ public:
                   }
                 }
               }
-            }
-            for (auto AC : ACAlloc) {
-              delete AC;
             }
           }
         }
