@@ -60,7 +60,6 @@ private:
       getIndex;
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
-  const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
   const AugmentedReturn *augmentedReturn;
   const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
 
@@ -69,7 +68,6 @@ private:
       &unnecessaryInstructions;
   const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores;
   const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable;
-  llvm::AllocaInst *dretAlloca;
 
 public:
   AdjointGenerator(
@@ -80,23 +78,20 @@ public:
           getIndex,
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
-      const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
       const AugmentedReturn *augmentedReturn,
       const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
       const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *>
           &unnecessaryInstructions,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
-      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
-      llvm::AllocaInst *dretAlloca)
+      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable)
       : Mode(Mode), gutils(gutils), constant_args(constant_args),
         retType(retType), getIndex(getIndex),
-        overwritten_args_map(overwritten_args_map), returnuses(returnuses),
+        overwritten_args_map(overwritten_args_map),
         augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
         unnecessaryValues(unnecessaryValues),
         unnecessaryInstructions(unnecessaryInstructions),
-        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable),
-        dretAlloca(dretAlloca) {
+        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable) {
     using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
@@ -5683,9 +5678,7 @@ public:
         bool hasNonReturnUse = false;
         for (auto use : call.users()) {
           if (Mode == DerivativeMode::ReverseModePrimal ||
-              !isa<ReturnInst>(
-                  use)) { // || returnuses.find(cast<Instruction>(use)) ==
-                          // returnuses.end()) {
+              !isa<ReturnInst>(use)) {
             hasNonReturnUse = true;
           }
         }
