@@ -55,12 +55,12 @@ template <typename ConsumerType>
 class EnzymeAction final : public clang::PluginASTAction {
 protected:
   std::unique_ptr<clang::ASTConsumer>
-  CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) {
+  CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) override {
     return std::unique_ptr<clang::ASTConsumer>(new ConsumerType(CI));
   }
 
   bool ParseArgs(const clang::CompilerInstance &CI,
-                 const std::vector<std::string> &args) {
+                 const std::vector<std::string> &args) override {
     return true;
   }
 
