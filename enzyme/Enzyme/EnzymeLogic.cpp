@@ -2484,7 +2484,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                          &returnuses,
                          &AugmentedCachedFunctions.find(tup)->second, nullptr,
                          unnecessaryValues, unnecessaryInstructions,
-                         unnecessaryStores, guaranteedUnreachable, nullptr);
+                         unnecessaryStores, guaranteedUnreachable);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     auto term = oBB.getTerminator();
@@ -4330,7 +4330,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                          /*returnuses*/ nullptr, augmenteddata,
                          &replacedReturns, unnecessaryValues,
                          unnecessaryInstructions, unnecessaryStores,
-                         guaranteedUnreachable, dretAlloca);
+                         guaranteedUnreachable);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
@@ -4860,8 +4860,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     maker = new AdjointGenerator(
         mode, gutils, constant_args, retType, getIndex, overwritten_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
-        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-        nullptr);
+        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable);
 
     if (additionalArg) {
       auto v = gutils->newFunc->arg_end();
@@ -4914,7 +4913,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         new AdjointGenerator(mode, gutils, constant_args, retType, nullptr, {},
                              /*returnuses*/ nullptr, nullptr, nullptr,
                              unnecessaryValues, unnecessaryInstructions,
-                             unnecessaryStores, guaranteedUnreachable, nullptr);
+                             unnecessaryStores, guaranteedUnreachable);
   }
 
   for (BasicBlock &oBB : *gutils->oldFunc) {

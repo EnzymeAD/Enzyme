@@ -69,7 +69,6 @@ private:
       &unnecessaryInstructions;
   const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores;
   const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable;
-  llvm::AllocaInst *dretAlloca;
 
 public:
   AdjointGenerator(
@@ -87,16 +86,14 @@ public:
       const llvm::SmallPtrSetImpl<const llvm::Instruction *>
           &unnecessaryInstructions,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
-      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
-      llvm::AllocaInst *dretAlloca)
+      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable)
       : Mode(Mode), gutils(gutils), constant_args(constant_args),
         retType(retType), getIndex(getIndex),
         overwritten_args_map(overwritten_args_map), returnuses(returnuses),
         augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
         unnecessaryValues(unnecessaryValues),
         unnecessaryInstructions(unnecessaryInstructions),
-        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable),
-        dretAlloca(dretAlloca) {
+        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable) {
     using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
