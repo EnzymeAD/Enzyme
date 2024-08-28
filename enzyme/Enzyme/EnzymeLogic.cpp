@@ -4324,11 +4324,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  AdjointGenerator maker(key.mode, gutils, key.constant_args, key.retType,
-                         getIndex, overwritten_args_map, augmenteddata,
-                         &replacedReturns, unnecessaryValues,
-                         unnecessaryInstructions, unnecessaryStores,
-                         guaranteedUnreachable);
+  AdjointGenerator maker(
+      key.mode, gutils, key.constant_args, key.retType, getIndex,
+      overwritten_args_map, augmenteddata, &replacedReturns, unnecessaryValues,
+      unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
@@ -4855,10 +4854,10 @@ Function *EnzymeLogic::CreateForwardDiff(
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                     unnecessaryInstructions, gutils, TLI);
 
-    maker = new AdjointGenerator(
-        mode, gutils, constant_args, retType, getIndex, overwritten_args_map,
-        augmenteddata, nullptr, unnecessaryValues, unnecessaryInstructions,
-        unnecessaryStores, guaranteedUnreachable);
+    maker = new AdjointGenerator(mode, gutils, constant_args, retType, getIndex,
+                                 overwritten_args_map, augmenteddata, nullptr,
+                                 unnecessaryValues, unnecessaryInstructions,
+                                 unnecessaryStores, guaranteedUnreachable);
 
     if (additionalArg) {
       auto v = gutils->newFunc->arg_end();
@@ -4907,11 +4906,10 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                     unnecessaryInstructions, gutils, TLI);
-    maker =
-        new AdjointGenerator(mode, gutils, constant_args, retType, nullptr, {},
-                             nullptr, nullptr, unnecessaryValues,
-                             unnecessaryInstructions, unnecessaryStores,
-                             guaranteedUnreachable);
+    maker = new AdjointGenerator(mode, gutils, constant_args, retType, nullptr,
+                                 {}, nullptr, nullptr, unnecessaryValues,
+                                 unnecessaryInstructions, unnecessaryStores,
+                                 guaranteedUnreachable);
   }
 
   for (BasicBlock &oBB : *gutils->oldFunc) {

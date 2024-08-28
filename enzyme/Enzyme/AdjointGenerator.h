@@ -5678,8 +5678,7 @@ public:
         bool hasNonReturnUse = false;
         for (auto use : call.users()) {
           if (Mode == DerivativeMode::ReverseModePrimal ||
-              !isa<ReturnInst>(
-                  use)) {
+              !isa<ReturnInst>(use)) {
             hasNonReturnUse = true;
           }
         }
