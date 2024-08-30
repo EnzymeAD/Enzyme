@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -85,6 +86,21 @@ public:
                     Value b) const {
     auto tenType = self.cast<TensorType>();
     auto ET = tenType.getElementType();
+
+    if (auto G = dyn_cast<ComplexType>(ET)) {
+      auto iface = cast<AutoDiffTypeInterface>(G);
+      auto output = TensorTypeInterface::createNullValue(self, builder, loc);
+      return builder
+          .create<linalg::MapOp>(
+              loc, ValueRange{a, b}, output,
+              [&](OpBuilder &builder, Location loc, ValueRange args) {
+                Value result =
+                    iface.createAddOp(builder, loc, args[0], args[1]);
+                builder.create<linalg::YieldOp>(loc, result);
+              })
+          .getResult()[0];
+    }
+
     auto iface = cast<AutoDiffTypeInterface>(ET);
     return iface.createAddOp(builder, loc, a, b);
   }
@@ -93,6 +109,20 @@ public:
                      Value a) const {
     auto tenType = self.cast<TensorType>();
     auto ET = tenType.getElementType();
+
+    if (auto G = dyn_cast<ComplexType>(ET)) {
+      auto iface = cast<AutoDiffTypeInterface>(G);
+      auto output = TensorTypeInterface::createNullValue(self, builder, loc);
+      return builder
+          .create<linalg::MapOp>(
+              loc, ValueRange{a}, output,
+              [&](OpBuilder &builder, Location loc, ValueRange args) {
+                Value result = iface.createConjOp(builder, loc, args[0]);
+                builder.create<linalg::YieldOp>(loc, result);
+              })
+          .getResult()[0];
+    }
+
     auto iface = cast<AutoDiffTypeInterface>(ET);
     auto added = iface.createConjOp(builder, loc, a);
     return added;

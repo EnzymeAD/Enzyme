@@ -15,6 +15,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 
 #include "Dialect/Dialect.h"
 
@@ -63,6 +64,10 @@ class ComplexDialect;
 namespace cf {
 class ControlFlowDialect;
 } // end namespace cf
+
+namespace linalg {
+class LinalgDialect;
+} // end namespace memref
 
 namespace scf {
 class SCFDialect;

@@ -16,7 +16,8 @@ def DifferentiatePass : Pass<"enzyme"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect"
+    "cf::ControlFlowDialect",
+    "linalg::LinalgDialect"
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
@@ -34,7 +35,8 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "arith::ArithDialect",
     "complex::ComplexDialect",
     "cf::ControlFlowDialect",
-    "enzyme::EnzymeDialect"
+    "enzyme::EnzymeDialect",
+    "linalg::LinalgDialect"
   ];
   let constructor = "mlir::enzyme::createDifferentiateWrapperPass()";
   let options = [
