@@ -208,6 +208,13 @@ target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangE
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
+set_property(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR}
+    PROPERTY PUBLIC_HEADER
+    ${PROJECT_SOURCE_DIR}/include/enzyme/enzyme
+    ${PROJECT_SOURCE_DIR}/include/enzyme/tuple
+    ${PROJECT_SOURCE_DIR}/include/enzyme/type_traits
+    ${PROJECT_SOURCE_DIR}/include/enzyme/utils)
+
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
