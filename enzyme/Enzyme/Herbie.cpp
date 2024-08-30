@@ -10,6 +10,8 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
+#include <llvm/Demangle/Demangle.h>
+
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
@@ -67,8 +69,11 @@ static cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
 static cl::opt<std::string>
-    LogPath("log-path", cl::init(""), cl::Hidden,
-            cl::desc("Which log to use in the FPOpt pass"));
+    FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
+                 cl::desc("Which log to use in the FPOpt pass"));
+static cl::opt<std::string> FPOptTargetFuncRegex(
+    "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
+    cl::desc("Regex pattern to match target functions in the FPOpt pass"));
 static cl::opt<bool> HerbieDisableNumerics(
     "herbie-disable-numerics", cl::init(false), cl::Hidden,
     cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
@@ -1347,7 +1352,7 @@ bool accuracyGreedySolver(
   InstructionCost totalComputationCost = 0;
 
   for (auto &AO : AOs) {
-    size_t bestCandidateIndex = -1;
+    int bestCandidateIndex = -1;
     double bestAccuracyCost = std::numeric_limits<double>::infinity();
     InstructionCost bestCandidateComputationCost;
 
@@ -1490,14 +1495,25 @@ bool accuracyDPSolver(
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
-  std::string functionName = F.getName().str();
+  const std::string functionName = F.getName().str();
+  const std::string demangledName = llvm::demangle(functionName);
 
   // TODO: Finer control
-  if (!LogPath.empty()) {
-    if (!isLogged(LogPath, functionName)) {
+  llvm::errs() << "Regex: " << FPOptTargetFuncRegex << "\n";
+  std::regex targetFuncRegex(FPOptTargetFuncRegex);
+  if (!std::regex_match(demangledName, targetFuncRegex)) {
+    if (EnzymePrintFPOpt)
+      llvm::errs() << "Skipping function: " << demangledName
+                   << " (demangled) since it does not match the target regex\n";
+    return false;
+  }
+
+  if (!FPOptLogPath.empty()) {
+    if (!isLogged(FPOptLogPath, functionName)) {
       if (EnzymePrintFPOpt)
-        llvm::errs() << "Skipping function: " << F.getName()
-                     << " since it is not logged\n";
+        llvm::errs()
+            << "Skipping matched function: " << functionName
+            << " since a log is provided but this function is not logged\n";
       return false;
     }
   }
@@ -1687,7 +1703,7 @@ B2:
             input_seen.insert(operand);
 
             // look up error log to get bounds of non-herbiable inputs
-            if (!LogPath.empty()) {
+            if (!FPOptLogPath.empty()) {
               ValueInfo valueInfo;
               auto blockIt = std::find_if(
                   I2->getFunction()->begin(), I2->getFunction()->end(),
@@ -1702,7 +1718,7 @@ B2:
                      "Instruction not found");
               size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
-              extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
+              extractValueFromLog(FPOptLogPath, functionName, blockIdx, instIdx,
                                   valueInfo);
               auto *node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
@@ -1778,7 +1794,7 @@ B2:
           }
         }
 
-        if (!LogPath.empty()) {
+        if (!FPOptLogPath.empty()) {
           for (auto &CC : newCCs) {
             // Extract grad and value info for all outputs. This implicitly
             // extracts the value info for herbiable intermediate `inputs` since
@@ -1801,8 +1817,8 @@ B2:
                      "Instruction not found");
               size_t instIdx =
                   std::distance(output->getParent()->begin(), instIt);
-              bool found = extractGradFromLog(LogPath, functionName, blockIdx,
-                                              instIdx, grad);
+              bool found = extractGradFromLog(FPOptLogPath, functionName,
+                                              blockIdx, instIdx, grad);
 
               auto *node = valueToNodeMap[output];
 
@@ -1810,8 +1826,8 @@ B2:
                 node->grad = grad;
 
                 ValueInfo valueInfo;
-                extractValueFromLog(LogPath, functionName, blockIdx, instIdx,
-                                    valueInfo);
+                extractValueFromLog(FPOptLogPath, functionName, blockIdx,
+                                    instIdx, valueInfo);
                 node->executions = valueInfo.executions;
                 node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
 
@@ -1880,7 +1896,7 @@ B2:
       unsigned executions = valueToNodeMap[output]->executions;
 
       // TODO: For now just skip if grad is 0
-      if (!LogPath.empty() && grad == 0.) {
+      if (!FPOptLogPath.empty() && grad == 0.) {
         continue;
       }
 
@@ -1899,7 +1915,7 @@ B2:
         llvm_unreachable("Unexpected dtype");
       }
 
-      if (!LogPath.empty()) {
+      if (!FPOptLogPath.empty()) {
         std::string precondition =
             getPrecondition(args, valueToNodeMap, symbolToValueMap);
         properties += " :pre " + precondition;
@@ -1965,7 +1981,7 @@ B2:
     }
   } else {
     // TODO: Solver
-    if (LogPath.empty()) {
+    if (FPOptLogPath.empty()) {
       llvm::errs() << "FPOpt: Solver enabled but no log file is provided\n";
       return false;
     }
