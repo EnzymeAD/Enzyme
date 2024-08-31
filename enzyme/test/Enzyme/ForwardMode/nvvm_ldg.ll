@@ -24,6 +24,6 @@ declare float @__enzyme_fwddiff(float (float addrspace(1)*)*, ...)
 
 ; CHECK: define internal float @fwddiffevmul(float addrspace(1)* %inp, float addrspace(1)* %"inp'")
 ; CHECK-NEXT: top:
-; CHECK-NEXT:   %[[res:.+]] = call float @llvm.nvvm.ldg.global.f.f32.p1f32(float addrspace(1)* %"inp'", i32 4)
+; CHECK-NEXT:   %[[res:.+]] = call{{( fast)?}} float @llvm.nvvm.ldg.global.f.f32.p1f32(float addrspace(1)* %"inp'", i32 4)
 ; CHECK-NEXT:   ret float %[[res]]
 ; CHECK-NEXT: }
