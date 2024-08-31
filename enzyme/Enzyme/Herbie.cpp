@@ -1409,8 +1409,8 @@ bool accuracyDPSolver(
   costToSolutionMap[0] = {};
 
   for (auto &AO : AOs) {
-    CostMap newAccuracy = costToAccuracyMap;
-    SolutionMap newSolutions = costToSolutionMap;
+    CostMap newCostToAccuracyMap = costToAccuracyMap;
+    SolutionMap newCostToSolutionMap = costToSolutionMap;
 
     llvm::errs() << "Processing " << AO.expr << "\n";
     for (const auto &pair : costToAccuracyMap) {
@@ -1427,47 +1427,40 @@ bool accuracyDPSolver(
         double newAccuracyCost = currentAccuracyCost + candidateAccuracyCost;
 
         if (newComputationCost <= FPOptComputationCostBudget) {
-          if (newAccuracy.find(newComputationCost) == newAccuracy.end() ||
-              newAccuracy[newComputationCost] > newAccuracyCost) {
+          if (costToAccuracyMap.find(newComputationCost) ==
+                  costToAccuracyMap.end() ||
+              costToAccuracyMap[newComputationCost] > newAccuracyCost) {
             // Maintain the way to achieve the lowest accuracy cost for each
             // achievable computation cost
-            newAccuracy[newComputationCost] = newAccuracyCost;
-            newSolutions[newComputationCost] =
-                costToSolutionMap[currentComputationCost]; // the previous
-                                                           // solution
-            newSolutions[newComputationCost].emplace_back(&AO, i);
+            newCostToAccuracyMap[newComputationCost] = newAccuracyCost;
+            newCostToSolutionMap[newComputationCost] =
+                costToSolutionMap[currentComputationCost];
+            newCostToSolutionMap[newComputationCost].emplace_back(&AO, i);
             llvm::errs() << "Updating accuracy map (candidate " << i
                          << "): computation cost " << newComputationCost
                          << " -> accuracy cost " << newAccuracyCost << "\n";
-            // llvm::errs() << "Current available solutions: ";
-            // for (const auto &solution : newSolutions[newComputationCost]) {
-            //   llvm::errs() << "\t" << solution.first->expr << " --> "
-            //                <<
-            //                solution.first->candidates[solution.second].expr
-            //                << "\n";
-            // }
           }
         }
       }
     }
 
     // Accuracy costs should be non-increasing
-    for (auto it = std::next(newAccuracy.begin()); it != newAccuracy.end();
-         ++it) {
+    for (auto it = std::next(newCostToAccuracyMap.begin());
+         it != newCostToAccuracyMap.end(); ++it) {
       auto prev = std::prev(it);
       if (it->second > prev->second) {
         // Lower accuracy cost is achieved by a lower computation cost; inherit
         // the solution of the lower computation cost
         it->second = prev->second;
-        newSolutions[it->first] = newSolutions[prev->first];
+        newCostToSolutionMap[it->first] = newCostToSolutionMap[prev->first];
         llvm::errs() << "Correcting accuracy cost for computation cost "
                      << it->first << " to " << it->second
                      << " which comes from " << prev->first << "\n";
       }
     }
 
-    costToAccuracyMap.swap(newAccuracy);
-    costToSolutionMap.swap(newSolutions);
+    costToAccuracyMap.swap(newCostToAccuracyMap);
+    costToSolutionMap.swap(newCostToSolutionMap);
   }
 
   llvm::errs() << "DP Table: \n";
