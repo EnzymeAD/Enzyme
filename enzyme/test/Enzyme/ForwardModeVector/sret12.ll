@@ -109,7 +109,6 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:    %"arrayinit.begin'ipg1" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP2]], i64 0, i32 0, i64 0
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 2
 ; CHECK-NEXT:    %"arrayinit.begin'ipg2" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP4]], i64 0, i32 0, i64 0
-; CHECK-NEXT:    [[ARRAYINIT_BEGIN:%.*]] = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[AGG_RESULT]], i64 0, i32 0, i64 0
 ; CHECK-NEXT:    [[MUL:%.*]] = fmul double [[X]], [[X]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:    [[TMP6:%.*]] = fmul fast double [[TMP5]], [[X]]
@@ -127,12 +126,9 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:    store double [[TMP7]], double* %"arrayinit.begin'ipg", align 8
 ; CHECK-NEXT:    store double [[TMP11]], double* %"arrayinit.begin'ipg1", align 8
 ; CHECK-NEXT:    store double [[TMP15]], double* %"arrayinit.begin'ipg2", align 8
-; CHECK-NEXT:    store double [[MUL]], double* [[ARRAYINIT_BEGIN]], align 8
 ; CHECK-NEXT:    %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP0]], i64 0, i32 0, i64 1
 ; CHECK-NEXT:    %"arrayinit.element'ipg3" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP2]], i64 0, i32 0, i64 1
 ; CHECK-NEXT:    %"arrayinit.element'ipg4" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP4]], i64 0, i32 0, i64 1
-; CHECK-NEXT:    [[ARRAYINIT_ELEMENT:%.*]] = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[AGG_RESULT]], i64 0, i32 0, i64 1
-; CHECK-NEXT:    [[MUL2:%.*]] = fmul double [[MUL]], [[X]]
 ; CHECK-NEXT:    [[TMP18:%.*]] = fmul fast double [[TMP7]], [[X]]
 ; CHECK-NEXT:    [[TMP22:%.*]] = fmul fast double [[TMP11]], [[X]]
 ; CHECK-NEXT:    [[TMP26:%.*]] = fmul fast double [[TMP15]], [[X]]
@@ -147,14 +143,11 @@ attributes #7 = { nounwind }
 ; CHECK-NEXT:    store double [[TMP20]], double* %"arrayinit.element'ipg", align 8
 ; CHECK-NEXT:    store double [[TMP24]], double* %"arrayinit.element'ipg3", align 8
 ; CHECK-NEXT:    store double [[TMP28]], double* %"arrayinit.element'ipg4", align 8
-; CHECK-NEXT:    store double [[MUL2]], double* [[ARRAYINIT_ELEMENT]], align 8
 ; CHECK-NEXT:    %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP0]], i64 0, i32 0, i64 2
 ; CHECK-NEXT:    %"arrayinit.element3'ipg5" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP2]], i64 0, i32 0, i64 2
 ; CHECK-NEXT:    %"arrayinit.element3'ipg6" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[TMP4]], i64 0, i32 0, i64 2
-; CHECK-NEXT:    [[ARRAYINIT_ELEMENT3:%.*]] = getelementptr inbounds %"struct.std::array", %"struct.std::array"* [[AGG_RESULT]], i64 0, i32 0, i64 2
 ; CHECK-NEXT:    store double [[TMP5]], double* %"arrayinit.element3'ipg", align 8
 ; CHECK-NEXT:    store double [[TMP9]], double* %"arrayinit.element3'ipg5", align 8
 ; CHECK-NEXT:    store double [[TMP13]], double* %"arrayinit.element3'ipg6", align 8
-; CHECK-NEXT:    store double [[X]], double* [[ARRAYINIT_ELEMENT3]], align 8
 ; CHECK-NEXT:    ret void
 ;

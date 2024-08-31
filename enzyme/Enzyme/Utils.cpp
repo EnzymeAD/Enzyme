@@ -1519,10 +1519,22 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
+  auto callname = getFuncNameFromCall(call);
+  if (callname != "free")
+    name += "_" + callname.str();
+
   SmallVector<Type *, 3> types;
   types.push_back(Ty);
   for (unsigned i = 0; i < width; i++) {
     types.push_back(Ty);
+  }
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 1; i < call->arg_size(); i++)
+#else
+  for (size_t i = 1; i < call->getNumArgOperands(); i++)
+#endif
+  {
+    types.push_back(call->getArgOperand(i)->getType());
   }
 
   FunctionType *FT =
@@ -1558,7 +1570,17 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
 
-  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
+  SmallVector<Value *, 1> args = {first_shadow};
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 1; i < call->arg_size(); i++)
+#else
+  for (size_t i = 1; i < call->getNumArgOperands(); i++)
+#endif
+  {
+    args.push_back(F->arg_begin() + width + i);
+  }
+
+  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, args);
   CI->setAttributes(FreeAttributes);
   CI->setCallingConv(CallingConvention);
 
@@ -1578,7 +1600,8 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                           ? Free0Builder.CreateAnd(isNotEqual, checkResult)
                           : isNotEqual;
 
-        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
+        args[0] = nextShadow;
+        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, args);
         CI->setAttributes(FreeAttributes);
         CI->setCallingConv(CallingConvention);
       }

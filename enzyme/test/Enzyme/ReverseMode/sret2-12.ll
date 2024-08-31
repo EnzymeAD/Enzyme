@@ -75,16 +75,9 @@ attributes #4 = { nounwind }
 ; CHECK: define internal { double } @diffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret" %agg.result, %"struct.std::array"* nocapture align 8 "enzyme_sret" %"agg.result'", double %x)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
-; CHECK-NEXT:   %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
-; CHECK-NEXT:   store double %x, double* %arrayinit.begin, align 8
 ; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 1
-; CHECK-NEXT:   %arrayinit.element = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %mul = fmul double %x, %x
-; CHECK-NEXT:   store double %mul, double* %arrayinit.element, align 8
 ; CHECK-NEXT:   %"arrayinit.element1'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 2
-; CHECK-NEXT:   %arrayinit.element1 = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 2
-; CHECK-NEXT:   %mul3 = fmul double %mul, %x
-; CHECK-NEXT:   store double %mul3, double* %arrayinit.element1, align 8
 ; CHECK-NEXT:   %0 = load double, double* %"arrayinit.element1'ipg", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayinit.element1'ipg", align 8
 ; CHECK-NEXT:   %[[m0diffemul:.+]] = fmul fast double %0, %x

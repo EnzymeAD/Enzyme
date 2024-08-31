@@ -6237,6 +6237,36 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     }
     return Out;
   }
+  if (auto AT = dyn_cast<VectorType>(ET)) {
+#if LLVM_VERSION_MAJOR >= 12
+    assert(!AT->getElementCount().isScalable());
+    size_t numElems = AT->getElementCount().getKnownMinValue();
+#else
+    size_t numElems = AT->getNumElements();
+#endif
+    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+
+    TypeTree Out;
+    for (size_t i = 0; i < numElems; i++) {
+      Value *vec[2] = {
+          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
+          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
+      };
+      auto g2 = GetElementPtrInst::Create(
+          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      int Off = (int)ai.getLimitedValue();
+      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
+      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    }
+    return Out;
+  }
   // Unhandled/unknown Type
   llvm::errs() << "Error Unknown Type: " << *ET << "\n";
   assert(0 && "Error Unknown Type: ");
