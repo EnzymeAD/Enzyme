@@ -1403,31 +1403,38 @@ bool accuracyDPSolver(
       std::map<InstructionCost,
                SmallVector<std::pair<ApplicableOutput *, size_t>>>;
 
-  CostMap accuracy;
-  accuracy[0] = 0.0;
-  SolutionMap solutions;
-  solutions[0] = {};
+  CostMap costToAccuracyMap;
+  costToAccuracyMap[0] = std::numeric_limits<double>::infinity();
+  SolutionMap costToSolutionMap;
+  costToSolutionMap[0] = {};
 
   for (auto &AO : AOs) {
-    CostMap newAccuracy = accuracy;
-    SolutionMap newSolutions = solutions;
+    CostMap newAccuracy = costToAccuracyMap;
+    SolutionMap newSolutions = costToSolutionMap;
 
     llvm::errs() << "Processing " << AO.expr << "\n";
-    for (const auto &pair : accuracy) {
+    for (const auto &pair : costToAccuracyMap) {
       for (auto &candidate : enumerate(AO.candidates)) {
+        InstructionCost currentComputationCost = pair.first;
+        double currentAccuracyCost = pair.second;
+
         size_t i = candidate.index();
         auto candidateComputationCost = AO.getComputationCost(i);
         auto candidateAccuracyCost = AO.getAccuracyCost(i);
 
         InstructionCost newComputationCost =
-            pair.first + candidateComputationCost;
-        double newAccuracyCost = pair.second + candidateAccuracyCost;
+            currentComputationCost + candidateComputationCost;
+        double newAccuracyCost = currentAccuracyCost + candidateAccuracyCost;
 
         if (newComputationCost <= FPOptComputationCostBudget) {
           if (newAccuracy.find(newComputationCost) == newAccuracy.end() ||
               newAccuracy[newComputationCost] > newAccuracyCost) {
+            // Maintain the way to achieve the lowest accuracy cost for each
+            // achievable computation cost
             newAccuracy[newComputationCost] = newAccuracyCost;
-            newSolutions[newComputationCost] = solutions[pair.first];
+            newSolutions[newComputationCost] =
+                costToSolutionMap[currentComputationCost]; // the previous
+                                                           // solution
             newSolutions[newComputationCost].emplace_back(&AO, i);
             llvm::errs() << "Updating accuracy map (candidate " << i
                          << "): computation cost " << newComputationCost
@@ -1449,6 +1456,8 @@ bool accuracyDPSolver(
          ++it) {
       auto prev = std::prev(it);
       if (it->second > prev->second) {
+        // Lower accuracy cost is achieved by a lower computation cost; inherit
+        // the solution of the lower computation cost
         it->second = prev->second;
         newSolutions[it->first] = newSolutions[prev->first];
         llvm::errs() << "Correcting accuracy cost for computation cost "
@@ -1457,22 +1466,22 @@ bool accuracyDPSolver(
       }
     }
 
-    accuracy.swap(newAccuracy);
-    solutions.swap(newSolutions);
+    costToAccuracyMap.swap(newAccuracy);
+    costToSolutionMap.swap(newSolutions);
   }
 
   llvm::errs() << "DP Table: \n";
-  for (const auto &entry : accuracy) {
+  for (const auto &entry : costToAccuracyMap) {
     llvm::errs() << "Computation cost: " << entry.first
                  << ", Accuracy cost: " << entry.second << "\n";
   }
 
   double minAccuracyCost = std::numeric_limits<double>::infinity();
   InstructionCost bestCost = 0;
-  for (const auto &entry : accuracy) {
-    if (entry.second < minAccuracyCost) {
-      minAccuracyCost = entry.second;
-      bestCost = entry.first;
+  for (const auto &pair : costToAccuracyMap) {
+    if (pair.second < minAccuracyCost) {
+      minAccuracyCost = pair.second;
+      bestCost = pair.first;
     }
   }
 
@@ -1480,9 +1489,9 @@ bool accuracyDPSolver(
                << "\n";
   llvm::errs() << "Computation cost budget used: " << bestCost << "\n";
 
-  assert(solutions.find(bestCost) != solutions.end() &&
+  assert(costToSolutionMap.find(bestCost) != costToSolutionMap.end() &&
          "FPOpt DP solver: expected a solution!");
-  for (const auto &solution : solutions[bestCost]) {
+  for (const auto &solution : costToSolutionMap[bestCost]) {
     auto *AO = solution.first;
     size_t i = solution.second;
     AO->apply(i, valueToNodeMap, symbolToValueMap);
