@@ -6078,7 +6078,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return applyChainRule(
           II->getType(), bb,
           [&](Value *ptr) {
-            Value *args[] = {ptr};
+            Value *args[] = {ptr, getNewFromOriginal(II->getArgOperand(1))};
             auto li = bb.CreateCall(II->getCalledFunction(), args);
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
