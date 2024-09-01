@@ -5744,7 +5744,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
               raw_string_ostream ss(str);
-              ss << "Mismatched activity for: " << arg << " const val: " << *op;
+              ss << "Mismatched activity for: " << *arg << " const val: " << *op;
               if (CustomErrorHandler)
                 ivops[i] = unwrap(CustomErrorHandler(
                     str.c_str(), wrap(arg), ErrorType::MixedActivityError, this,
