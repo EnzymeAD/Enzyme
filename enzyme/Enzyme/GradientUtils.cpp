@@ -5733,15 +5733,41 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<InsertValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    auto ip0 = invertPointerM(arg->getOperand(0), bb, nullShadow);
-    auto ip1 = invertPointerM(arg->getOperand(1), bb, nullShadow);
+    Value *ivops[2] = { nullptr, nullptr };
+    for (int i=0; i<2; i++) {
+	      auto op = arg->getOperand(i);
+    if (!EnzymeRuntimeActivityCheck && !isa<InsertValueInst>(op)) {
+	    
+	      if (isConstantValue(op)) {
+	      auto vd = TR.query(op);
+		if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
+		  if (!isa<UndefValue>(op) &&
+		      !isa<ConstantPointerNull>(op)) {
+		    std::string str;
+		    raw_string_ostream ss(str);
+		    ss << "Mismatched activity for: " << arg
+		       << " const val: " << *op;
+		    if (CustomErrorHandler)
+		      ivops[i] = unwrap(CustomErrorHandler(
+			  str.c_str(), wrap(&arg), ErrorType::MixedActivityError, gutils,
+			  wrap(op), wrap(&BuilderZ)));
+		    else
+		      EmitWarning("MixedActivityError", op, ss.str());
+		  }
+		}
+	      }
+     }
+    if (!ivops[i]) {
+      ivops[i] = invertPointerM(op, bb, nullShadow);
+    }
+    }
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
       return bb.CreateInsertValue(ip0, ip1, arg->getIndices(),
                                   arg->getName() + "'ipiv");
     };
 
-    Value *shadow = applyChainRule(arg->getType(), bb, rule, ip0, ip1);
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, ivops[0], ivops[1]);
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
