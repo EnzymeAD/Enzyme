@@ -2617,26 +2617,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
     
-    // Functions that only modify pointers and don't allocate memory,
-    // needs to be run on shadow in primal, but require all shadow args.
-    if (funcName == "julia.gc_loaded") {
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-        return true;
-      }
-      SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-      for (auto &arg : call.args())
-#else
-      for (auto &arg : call.arg_operands())
-#endif
-      {
-        args.push_back(gutils->invertPointerM(arg, BuilderZ));
-      }
-      BuilderZ.CreateCall(called, args);
-      return true;
-    }
-
     // Functions that initialize a shadow data structure (with no
     // other arguments) needs to be run on shadow in primal.
     if (funcName == "_ZNSt8ios_baseC2Ev" || funcName == "_ZNSt8ios_baseD2Ev" ||
@@ -3641,6 +3621,42 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     return true;
   }
+    
+    if (funcName == "julia.gc_loaded") {
+      if (gutils->isConstantValue(&call)) {
+        eraseIfUnused(call);
+        return true;
+      }
+    auto ifound = gutils->invertedPointers.find(&call);
+    assert(ifound != gutils->invertedPointers.end());
+
+    auto placeholder = cast<PHINode>(&*ifound->second);
+
+    bool needShadow =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
+            gutils, &call, Mode, oldUnreachable);
+    if (!needShadow) {
+      gutils->invertedPointers.erase(ifound);
+      gutils->erase(placeholder);
+      eraseIfUnused(call);
+      return true;
+    }
+
+    Value *ptr0shadow = gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
+    Value *ptr1shadow = gutils->invertPointerM(call.getArgOperand(1), BuilderZ);
+
+    Value *val = applyChainRule(
+        call.getType(), BuilderZ,
+        [&](Value *v1, Value *v2) -> Value * {
+	  Value *args[2] = {v1, v2};
+	  return BuilderZ.CreateCall(called, args); },
+        ptr0shadow, ptr1shadow);
+
+    gutils->replaceAWithB(placeholder, val);
+    gutils->erase(placeholder);
+    eraseIfUnused(call);
+    return true;
+    }
 
   if (funcName == "julia.pointer_from_objref") {
     if (gutils->isConstantValue(&call)) {
