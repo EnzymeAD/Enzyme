@@ -656,7 +656,7 @@ static inline void propagateArgumentInformation(
     propagateFromOperand(CI.getArgOperand(0));
     return;
   }
-  
+
   if (Name == "julia.gc_loaded") {
     propagateFromOperand(CI.getArgOperand(0));
     return;
