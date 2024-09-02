@@ -2616,6 +2616,26 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       BuilderZ.CreateCall(called, args);
       return true;
     }
+    
+    // Functions that only modify pointers and don't allocate memory,
+    // needs to be run on shadow in primal, but require all shadow args.
+    if (funcName == "julia.gc_loaded") {
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+      SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+      for (auto &arg : call.args())
+#else
+      for (auto &arg : call.arg_operands())
+#endif
+      {
+        args.push_back(gutils->invertPointerM(arg, BuilderZ));
+      }
+      BuilderZ.CreateCall(called, args);
+      return true;
+    }
 
     // Functions that initialize a shadow data structure (with no
     // other arguments) needs to be run on shadow in primal.
