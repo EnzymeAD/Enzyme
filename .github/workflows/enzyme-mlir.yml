@@ -55,13 +55,11 @@ jobs:
       if: steps.cache-mlir.outputs.cache-hit != 'true'
       working-directory: 'llvm-project'
       run: |
-        mkdir mlir-build && cd mlir-build
-        cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
+        mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
         -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
-        -DLLVM_OPTIMIZED_TABLEGEN=ON
-        ninja
+        -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
 
     - name: Enzyme build
       working-directory: 'Enzyme'
