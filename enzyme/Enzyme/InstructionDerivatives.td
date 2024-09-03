@@ -878,7 +878,7 @@ def : IntrPattern<(Op $x),
                   >;
 
 def : IntrPattern<(Op $x),
-                  [["exp"]],
+                  [["exp", "__nv_fast_expf"]],
                   [(FMul (DiffeRet), (Call<(SameFunc)> $x))],
                   (ForwardFromSummedReverse)                  
                   >;
