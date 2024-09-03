@@ -1426,10 +1426,12 @@ bool accuracyDPSolver(
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   const std::string functionName = F.getName().str();
-  const std::string demangledName = llvm::demangle(functionName);
+  std::string demangledName = llvm::demangle(functionName);
+  size_t pos = demangledName.find('(');
+  if (pos != std::string::npos) {
+    demangledName = demangledName.substr(0, pos);
+  }
 
-  // TODO: Finer control
-  llvm::errs() << "Regex: " << FPOptTargetFuncRegex << "\n";
   std::regex targetFuncRegex(FPOptTargetFuncRegex);
   if (!std::regex_match(demangledName, targetFuncRegex)) {
     if (EnzymePrintFPOpt)
