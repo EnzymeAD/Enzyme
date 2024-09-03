@@ -3,15 +3,9 @@
 // RUN: %clang++ -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 // RUN: %clang++ -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 
-#include <cmath>
-#include <iostream>
-#include <map>
-#include <string>
-#include <vector>
-
-#include "fp-logger.h"
-
 #include "../test_utils.h"
+
+#include <cmath>
 
 extern double __enzyme_error_estimate(void *, ...);
 
@@ -28,7 +22,6 @@ double fun(double x) {
 }
 
 int main() {
-  initializeLogger();
   double res = fun(1e-7);
   __enzyme_error_estimate((void *)fun, 2e-7, 0.0);
   __enzyme_error_estimate((void *)fun, 7e-7, 0.0);
@@ -36,6 +29,4 @@ int main() {
   printf("res = %.18e, abs error = %.18e, rel error = %.18e\n", res, error,
          fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
-  printLogger();
-  destroyLogger();
 }

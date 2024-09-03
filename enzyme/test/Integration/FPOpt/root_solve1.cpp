@@ -1,15 +1,11 @@
-// RUN: %clang++ -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
-// RUN: %clang++ -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
-// RUN: %clang++ -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
-// RUN: %clang++ -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -S | %lli -
-
-#include <cmath>
-#include <iostream>
-#include <map>
-#include <string>
-#include <vector>
+// RUN: %clang++ -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -fpopt-target-func-regex=fun -S | %lli -
+// RUN: %clang++ -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -fpopt-target-func-regex=fun -S | %lli -
+// RUN: %clang++ -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -fpopt-target-func-regex=fun -S | %lli -
+// RUN: %clang++ -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %fpopt -enzyme-print-herbie -enzyme-print-fpopt -fpopt-target-func-regex=fun -S | %lli -
 
 #include "../test_utils.h"
+
+#include <cmath>
 
 double fun(double a, double b, double c) {
   double discriminant = b * b - 4 * a * c;

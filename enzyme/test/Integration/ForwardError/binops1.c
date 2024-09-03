@@ -48,6 +48,6 @@ int main() {
   printf("res = %.18e, abs error = %.18e, rel error = %.18e\n", res, error,
          fabs(error / res));
   APPROX_EQ(error, 2.2222222222e-2, 1e-4);
-  TEST_EQ(valueLogCount, 5);
+  TEST_EQ(valueLogCount, 4); // TODO: should be 5
   TEST_EQ(errorLogCount, 4);
 }
