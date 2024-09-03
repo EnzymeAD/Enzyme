@@ -414,6 +414,13 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["__nv_fast_expf"],
+                  [(FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) )],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["exp10"],
                   [(FMul (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))],
                   (ForwardFromSummedReverse),
