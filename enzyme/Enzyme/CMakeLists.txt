@@ -208,33 +208,24 @@ target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangE
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
-set_property(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR}
-    PROPERTY PUBLIC_HEADER
-    ${PROJECT_SOURCE_DIR}/include/enzyme/enzyme
-    ${PROJECT_SOURCE_DIR}/include/enzyme/tuple
-    ${PROJECT_SOURCE_DIR}/include/enzyme/type_traits
-    ${PROJECT_SOURCE_DIR}/include/enzyme/utils)
-
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
 
 if (${Clang_FOUND})
 install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
 endif()
 install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
 
 if (ENZYME_MLIR)
