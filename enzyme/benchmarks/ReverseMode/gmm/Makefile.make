@@ -1,4 +1,4 @@
-# RUN: if [ %llvmver -ge 12 ] || [ %llvmver -le 9 ]; then cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadClangEnzyme" make -B gmm.o results.json -f %s; fi
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadEnzyme" ENZYME="%enzyme" make -B gmm-raw.ll results.json -f %s
 
 .PHONY: clean
 
@@ -8,11 +8,10 @@ clean:
 	rm -f *.ll *.o results.txt results.json
 
 %-unopt.ll: %.cpp
-	clang++ $(BENCH) $^ -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
-	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	clang++ $(BENCH) $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
-	opt $^ $(LOAD) -enzyme -o $@ -S
+	opt $^ $(LOAD) $(ENZYME) -o $@ -S
 
 %-opt.ll: %-raw.ll
 	opt $^ -o $@ -S
