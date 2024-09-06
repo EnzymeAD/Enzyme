@@ -67,17 +67,17 @@ config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck")
 config.substitutions.append(('%clang', eclang))
 config.substitutions.append(('%O0TBAA', "-O1 -Xclang -disable-llvm-passes"))
 
-oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 14 else "")
+oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) in (13,14,15) else "")
                                  + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 16 else ""))
-newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12) else "")
+newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (13,14,15) else "")
                                  + ' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 16 else ""))
 if len("@ENZYME_BINARY_DIR@") == 0:
-  oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) >= 14 else "")
+  oldPM = ((" --enable-new-pm=0" if int(config.llvm_ver) in(13,14,15) else "")
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 16 else ""))
-  newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12) else "")
+  newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (13,14,15) else "")
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 16 else ""))
 
 oldPMOP = oldPM
