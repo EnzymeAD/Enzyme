@@ -8,7 +8,7 @@ clean:
 	rm -f *.ll *.o results.txt results.json
 
 %-unopt.ll: %.cpp
-	clang++ $(BENCH) -opaque-pointers=0 $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	clang++ $(BENCH) -Xclang -no-opaque-pointers -opaque-pointers=0 $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
 	opt $^ $(LOAD) $(ENZYME) -o $@ -S
