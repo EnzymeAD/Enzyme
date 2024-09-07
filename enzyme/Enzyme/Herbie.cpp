@@ -1034,9 +1034,10 @@ public:
       llvm_unreachable("Invalid candidate index");
     }
 
-    // TODO: traverse the instructions in the range and do fptrunc/fpext to
-    // start/end instructions and knock down the precision of the intermediate
-    // instructions
+    // Traverse all the instructions to be changed precisions in a
+    // topological order with respect to operand dependencies. Insert FP casts
+    // between llvm::Value inputs and first level of instructions to be changed.
+    // Restore precisions of the last level of instructions to be changed.
 
     for (auto &change : candidateChanges[candidateIndex]) {
       SmallPtrSet<Instruction *, 8> seen;
@@ -1084,6 +1085,8 @@ public:
         }
       }
 
+      // Restore the precisions of the last level of instructions to be changed.
+      // Clean up old instructions.
       for (auto &[oldV, newV] : oldToNew) {
         if (!isa<Instruction>(oldV)) {
           continue;
@@ -1107,7 +1110,7 @@ public:
 
         // Assumes no external uses of the old value since all corresponding new
         // values are already restored to original precision and used to replace
-        // uses of their old value
+        // uses of their old value. This is also advantageous to the solvers.
         if (!oldV->use_empty()) {
           oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
         }
