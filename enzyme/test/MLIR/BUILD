@@ -5,6 +5,7 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 [
     lit_test(
         name = "%s.test" % src,
+        driver = "//test:run_lit",
         srcs = [src],
         data = [
             "//:enzymemlir-opt",
