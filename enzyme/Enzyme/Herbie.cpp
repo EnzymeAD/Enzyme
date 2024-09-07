@@ -1,6 +1,7 @@
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -40,6 +41,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -74,6 +76,12 @@ static cl::opt<std::string>
 static cl::opt<std::string> FPOptTargetFuncRegex(
     "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
     cl::desc("Regex pattern to match target functions in the FPOpt pass"));
+static cl::opt<bool> FPOptEnableHerbie(
+    "fpopt-enable-herbie", cl::init(true), cl::Hidden,
+    cl::desc("Use Herbie to rewrite floating-point expressions"));
+static cl::opt<bool> FPOptEnablePT(
+    "fpopt-enable-pt", cl::init(false), cl::Hidden,
+    cl::desc("Consider precision changes of floating-point expressions"));
 static cl::opt<bool> HerbieDisableNumerics(
     "herbie-disable-numerics", cl::init(false), cl::Hidden,
     cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
@@ -881,6 +889,247 @@ public:
   }
 };
 
+bool herbiable(const Value &Val) {
+  const Instruction *I = dyn_cast<Instruction>(&Val);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return funcName.startswith("llvm.sin") ||
+             funcName.startswith("llvm.cos") ||
+             funcName.startswith("llvm.tan") ||
+             funcName.startswith("llvm.exp") ||
+             funcName.startswith("llvm.log") ||
+             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
+             funcName.startswith("llvm.pow") ||
+             funcName.startswith("llvm.fma") ||
+             funcName.startswith("llvm.fmuladd");
+      // llvm.fabs is deliberately excluded
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+enum class PrecisionChangeType { FP16, FP32, FP64 };
+
+Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
+  switch (type) {
+  case PrecisionChangeType::FP16:
+    return Type::getHalfTy(context);
+  case PrecisionChangeType::FP32:
+    return Type::getFloatTy(context);
+  case PrecisionChangeType::FP64:
+    return Type::getDoubleTy(context);
+  default:
+    llvm_unreachable("Unsupported FP precision");
+  }
+}
+
+PrecisionChangeType getPrecisionChangeType(Type *type) {
+  if (type->isHalfTy()) {
+    return PrecisionChangeType::FP16;
+  } else if (type->isFloatTy()) {
+    return PrecisionChangeType::FP32;
+  } else if (type->isDoubleTy()) {
+    return PrecisionChangeType::FP64;
+  } else {
+    llvm_unreachable("Unsupported FP precision");
+  }
+}
+
+struct PrecisionChange {
+  SetVector<Instruction *> instructions;
+  PrecisionChangeType oldType;
+  PrecisionChangeType newType;
+
+  explicit PrecisionChange(SetVector<Instruction *> &instructions,
+                           PrecisionChangeType oldType,
+                           PrecisionChangeType newType)
+      : instructions(instructions), oldType(oldType), newType(newType) {}
+};
+
+void changePrecision(Instruction *I, PrecisionChange &change,
+                     MapVector<Value *, Value *> &oldToNew) {
+  if (!herbiable(*I)) {
+    llvm_unreachable("Trying to tune an instruction is not herbiable");
+  }
+
+  IRBuilder<> Builder(I);
+  Builder.setFastMathFlags(getFast());
+  Type *newType = getLLVMFPType(change.newType, I->getContext());
+  Value *newI = nullptr;
+
+  if (isa<UnaryOperator>(I) || isa<BinaryOperator>(I)) {
+    llvm::errs() << "PT Changing: " << *I << " to " << *newType << "\n";
+    SmallVector<Value *, 2> newOps;
+    for (auto &operand : I->operands()) {
+      Value *newOp = nullptr;
+      if (oldToNew.count(operand)) {
+        newOp = oldToNew[operand];
+      } else {
+        newOp = Builder.CreateFPCast(operand, newType, "fpopt.fpcast");
+        oldToNew[operand] = newOp;
+      }
+      newOps.push_back(newOp);
+    }
+    newI = Builder.CreateNAryOp(I->getOpcode(), newOps);
+  } else if (auto *CI = dyn_cast<CallInst>(I)) {
+    SmallVector<Value *, 4> newArgs;
+    for (auto &arg : CI->args()) {
+      Value *newArg = nullptr;
+      if (oldToNew.count(arg)) {
+        newArg = oldToNew[arg];
+      } else {
+        newArg = Builder.CreateFPCast(arg, newType, "fpopt.fpcast");
+        oldToNew[arg] = newArg;
+      }
+      newArgs.push_back(newArg);
+    }
+    Function *newFunc = Intrinsic::getDeclaration(
+        CI->getModule(), CI->getCalledFunction()->getIntrinsicID(), {newType});
+    newI = Builder.CreateCall(newFunc, newArgs);
+  } else {
+    llvm_unreachable("Unknown herbiable instruction");
+  }
+
+  oldToNew[I] = newI;
+  llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
+}
+
+class ApplicableFPCC {
+public:
+  FPCC &component;
+  double grad;
+  unsigned executions;
+  InstructionCost initialTTICost;    // Requires manual initialization
+  InstructionCost initialHerbieCost; // Requires manual initialization
+  double initialAccuracy;            // Requires manual initialization
+
+  SmallVector<SmallVector<PrecisionChange>>
+      candidateChanges; // Candidate MP allocations
+
+  explicit ApplicableFPCC(FPCC &fpcc) : component(fpcc) {}
+
+  // Record one possible MP allocation
+  void recordChange(SmallVector<PrecisionChange> &change) {
+    candidateChanges.push_back(change);
+  }
+
+  void apply(size_t candidateIndex) {
+    if (candidateIndex >= candidateChanges.size()) {
+      llvm_unreachable("Invalid candidate index");
+    }
+
+    // TODO: traverse the instructions in the range and do fptrunc/fpext to
+    // start/end instructions and knock down the precision of the intermediate
+    // instructions
+
+    for (auto &change : candidateChanges[candidateIndex]) {
+      SmallPtrSet<Instruction *, 8> seen;
+      SmallVector<Instruction *, 8> todo;
+      MapVector<Value *, Value *> oldToNew;
+
+      MapVector<Instruction *, int>
+          operandCount; // For topo ordering wrt operand dependencies
+      for (auto *I : change.instructions) {
+        int count = 0;
+        auto operands =
+            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+        for (auto &op : operands) {
+          if (auto *opI = dyn_cast<Instruction>(op);
+              change.instructions.contains(opI)) {
+            count++;
+          }
+        }
+        operandCount[I] = count;
+
+        if (0 == count) {
+          todo.push_back(I);
+        }
+      }
+
+      while (!todo.empty()) {
+        auto *cur = todo.pop_back_val();
+        llvm::errs() << "PT Processing: " << *cur << "\n";
+        if (!seen.insert(cur).second)
+          continue;
+
+        if (auto *I = dyn_cast<Instruction>(cur);
+            component.operations.contains(I)) {
+          changePrecision(I, change, oldToNew);
+        }
+
+        for (auto user : cur->users()) {
+          if (auto *userI = dyn_cast<Instruction>(user);
+              operandCount.count(userI)) {
+            if (0 == --operandCount[userI]) {
+              llvm::errs() << "PT Adding: " << *userI << "\n";
+              todo.push_back(userI);
+            }
+          }
+        }
+      }
+
+      for (auto &[oldV, newV] : oldToNew) {
+        if (!isa<Instruction>(oldV)) {
+          continue;
+        }
+
+        if (!change.instructions.contains(cast<Instruction>(oldV))) {
+          continue;
+        }
+
+        for (auto user : oldV->users()) {
+          if (auto *userI = dyn_cast<Instruction>(user);
+              !change.instructions.contains(userI)) {
+            IRBuilder<> builder(userI);
+
+            newV = builder.CreateFPCast(
+                newV, getLLVMFPType(change.oldType, builder.getContext()));
+
+            userI->replaceUsesOfWith(oldV, newV);
+          }
+        }
+
+        // Assumes no external uses of the old value since all corresponding new
+        // values are already restored to original precision and used to replace
+        // uses of their old value
+        if (!oldV->use_empty()) {
+          oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
+        }
+        cast<Instruction>(oldV)->eraseFromParent();
+      }
+    }
+  }
+
+  // TODO: Update
+  // Lower is better
+  // InstructionCost getComputationCost(size_t candidateIndex) {
+  //   // TODO: consider erasure of the old output
+  //   return candidates[candidateIndex].TTICost * executions;
+  // }
+
+  // // Lower is better
+  // double getAccuracyCost(size_t candidateIndex) {
+  //   return (initialAccuracy - candidates[candidateIndex].accuracy) *
+  //          std::fabs(grad);
+  // }
+};
+
 bool improveViaHerbie(
     const std::string &inputExpr, ApplicableOutput &AO, Module *M,
     const TargetTransformInfo &TTI,
@@ -1082,41 +1331,6 @@ std::string getHerbieOperator(const Instruction &I) {
   }
   default:
     assert(0 && "getHerbieOperator: Unknown operator");
-  }
-}
-
-bool herbiable(const Value &Val) {
-  const Instruction *I = dyn_cast<Instruction>(&Val);
-  if (!I)
-    return false;
-
-  switch (I->getOpcode()) {
-  case Instruction::FNeg:
-  case Instruction::FAdd:
-  case Instruction::FSub:
-  case Instruction::FMul:
-  case Instruction::FDiv:
-    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
-  case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(I);
-    if (CI && CI->getCalledFunction() &&
-        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
-      StringRef funcName = CI->getCalledFunction()->getName();
-      return funcName.startswith("llvm.sin") ||
-             funcName.startswith("llvm.cos") ||
-             funcName.startswith("llvm.tan") ||
-             funcName.startswith("llvm.exp") ||
-             funcName.startswith("llvm.log") ||
-             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
-             funcName.startswith("llvm.pow") ||
-             funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd");
-      // llvm.fabs is deliberately excluded
-    }
-    return false;
-  }
-  default:
-    return false;
   }
 }
 
@@ -1803,77 +2017,93 @@ B2:
   }
 
   SmallVector<ApplicableOutput> AOs;
+  SmallVector<ApplicableFPCC> AFs;
 
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
-    for (const auto &input : component.inputs) {
-      auto node = valueToNodeMap[input];
-      if (node->op == "__const") {
-        // Constants don't need a symbol
-        continue;
+    if (FPOptEnableHerbie) {
+      for (const auto &input : component.inputs) {
+        auto node = valueToNodeMap[input];
+        if (node->op == "__const") {
+          // Constants don't need a symbol
+          continue;
+        }
+        if (!node->hasSymbol()) {
+          node->symbol = getNextSymbol();
+        }
+        symbolToValueMap[node->symbol] = input;
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "assigning symbol: " << node->symbol << " to "
+                       << *input << "\n";
       }
-      if (!node->hasSymbol()) {
-        node->symbol = getNextSymbol();
+
+      assert(component.outputs.size() > 0 && "No outputs found for component");
+      for (auto &output : component.outputs) {
+        // 3) run fancy opts
+        double grad = valueToNodeMap[output]->grad;
+        unsigned executions = valueToNodeMap[output]->executions;
+
+        // TODO: For now just skip if grad is 0
+        if (!FPOptLogPath.empty() && grad == 0.) {
+          continue;
+        }
+
+        // TODO: Herbie properties
+        std::string expr =
+            valueToNodeMap[output]->toFullExpression(valueToNodeMap);
+        SmallSet<std::string, 8> args;
+        getUniqueArgs(expr, args);
+
+        std::string properties = ":herbie-conversions ([binary64 binary32])";
+        if (valueToNodeMap[output]->dtype == "f32") {
+          properties += " :precision binary32";
+        } else if (valueToNodeMap[output]->dtype == "f64") {
+          properties += " :precision binary64";
+        } else {
+          llvm_unreachable("Unexpected dtype");
+        }
+
+        if (!FPOptLogPath.empty()) {
+          std::string precondition =
+              getPrecondition(args, valueToNodeMap, symbolToValueMap);
+          properties += " :pre " + precondition;
+        }
+
+        std::string argStr;
+        for (const auto &arg : args) {
+          if (!argStr.empty())
+            argStr += " ";
+          argStr += arg;
+        }
+
+        std::string herbieInput =
+            "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
+        if (EnzymePrintHerbie)
+          llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+
+        ApplicableOutput AO(component, output, expr, grad, executions, TTI);
+        if (!improveViaHerbie(herbieInput, AO, F.getParent(), TTI,
+                              valueToNodeMap, symbolToValueMap)) {
+          if (EnzymePrintHerbie)
+            llvm::errs() << "Failed to optimize an expression using Herbie!\n";
+          continue;
+        }
+
+        AOs.push_back(std::move(AO));
       }
-      symbolToValueMap[node->symbol] = input;
-      if (EnzymePrintFPOpt)
-        llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
-                     << "\n";
     }
 
-    assert(component.outputs.size() > 0 && "No outputs found for component");
-    for (auto &output : component.outputs) {
-      // 3) run fancy opts
-      double grad = valueToNodeMap[output]->grad;
-      unsigned executions = valueToNodeMap[output]->executions;
+    if (FPOptEnablePT) {
+      // TODO: Precision tuning
+      ApplicableFPCC ACC(component);
 
-      // TODO: For now just skip if grad is 0
-      if (!FPOptLogPath.empty() && grad == 0.) {
-        continue;
-      }
+      PrecisionChange change(
+          component.operations,
+          getPrecisionChangeType(component.outputs[0]->getType()),
+          PrecisionChangeType::FP16);
 
-      // TODO: Herbie properties
-      std::string expr =
-          valueToNodeMap[output]->toFullExpression(valueToNodeMap);
-      SmallSet<std::string, 8> args;
-      getUniqueArgs(expr, args);
-
-      std::string properties = ":herbie-conversions ([binary64 binary32])";
-      if (valueToNodeMap[output]->dtype == "f32") {
-        properties += " :precision binary32";
-      } else if (valueToNodeMap[output]->dtype == "f64") {
-        properties += " :precision binary64";
-      } else {
-        llvm_unreachable("Unexpected dtype");
-      }
-
-      if (!FPOptLogPath.empty()) {
-        std::string precondition =
-            getPrecondition(args, valueToNodeMap, symbolToValueMap);
-        properties += " :pre " + precondition;
-      }
-
-      std::string argStr;
-      for (const auto &arg : args) {
-        if (!argStr.empty())
-          argStr += " ";
-        argStr += arg;
-      }
-
-      std::string herbieInput =
-          "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
-      if (EnzymePrintHerbie)
-        llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
-
-      ApplicableOutput AO(component, output, expr, grad, executions, TTI);
-      if (!improveViaHerbie(herbieInput, AO, F.getParent(), TTI, valueToNodeMap,
-                            symbolToValueMap)) {
-        if (EnzymePrintHerbie)
-          llvm::errs() << "Failed to optimize an expression using Herbie!\n";
-        continue;
-      }
-
-      AOs.push_back(std::move(AO));
+      ACC.candidateChanges.push_back({std::move(change)});
+      AFs.push_back(std::move(ACC));
     }
   }
 
@@ -1909,6 +2139,11 @@ B2:
   if (!FPOptEnableSolver) {
     for (auto &AO : AOs) {
       AO.apply(0, valueToNodeMap, symbolToValueMap);
+      changed = true;
+    }
+
+    for (auto &AF : AFs) {
+      AF.apply(0);
       changed = true;
     }
   } else {
