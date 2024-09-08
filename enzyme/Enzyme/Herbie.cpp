@@ -636,13 +636,14 @@ void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
 
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
 // (exclusive).
-InstructionCost getTTICost(Value *output, const SetVector<Value *> &inputs,
+InstructionCost getTTICost(const SmallVector<Value *> &outputs,
+                           const SetVector<Value *> &inputs,
                            const TargetTransformInfo &TTI) {
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
   InstructionCost cost = 0;
 
-  todo.push_back(output);
+  todo.insert(todo.end(), outputs.begin(), outputs.end());
   while (!todo.empty()) {
     auto cur = todo.pop_back_val();
     if (!seen.insert(cur).second)
@@ -705,7 +706,7 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
 
   // tempFunction->print(llvm::errs());
 
-  InstructionCost cost = getTTICost(newOutput, args, TTI);
+  InstructionCost cost = getTTICost({newOutput}, args, TTI);
 
   tempFunction->eraseFromParent();
   return cost;
@@ -839,7 +840,7 @@ public:
                             const TargetTransformInfo &TTI)
       : component(component), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions) {
-    initialTTICost = getTTICost(oldOutput, component.inputs, TTI);
+    initialTTICost = getTTICost({oldOutput}, component.inputs, TTI);
   }
 
   void apply(size_t candidateIndex,
