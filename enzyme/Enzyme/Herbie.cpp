@@ -172,13 +172,13 @@ public:
     llvm_unreachable(msg.c_str());
   }
 
-  virtual Value *getValue(IRBuilder<> &builder) {
+  virtual Value *getLLValue(IRBuilder<> &builder) {
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Generating new instruction for op: " << op << "\n";
     Module *M = builder.GetInsertBlock()->getModule();
 
     if (op == "if") {
-      Value *condValue = operands[0]->getValue(builder);
+      Value *condValue = operands[0]->getLLValue(builder);
       auto IP = builder.GetInsertPoint();
 
       Instruction *Then, *Else;
@@ -186,14 +186,14 @@ public:
 
       Then->getParent()->setName("herbie.then");
       builder.SetInsertPoint(Then);
-      Value *ThenVal = operands[1]->getValue(builder);
+      Value *ThenVal = operands[1]->getLLValue(builder);
       if (Instruction *I = dyn_cast<Instruction>(ThenVal)) {
         I->setName("herbie.then_val");
       }
 
       Else->getParent()->setName("herbie.else");
       builder.SetInsertPoint(Else);
-      Value *ElseVal = operands[2]->getValue(builder);
+      Value *ElseVal = operands[2]->getLLValue(builder);
       if (Instruction *I = dyn_cast<Instruction>(ElseVal)) {
         I->setName("herbie.else_val");
       }
@@ -209,7 +209,7 @@ public:
 
     SmallVector<Value *, 2> operandValues;
     for (auto *operand : operands) {
-      operandValues.push_back(operand->getValue(builder));
+      operandValues.push_back(operand->getLLValue(builder));
     }
 
     Value *val = nullptr;
@@ -380,7 +380,7 @@ public:
     } else if (op == "FALSE") {
       val = ConstantInt::getFalse(builder.getContext());
     } else {
-      std::string msg = "FPNode getValue: Unexpected operator " + op;
+      std::string msg = "FPNode getLLValue: Unexpected operator " + op;
       llvm_unreachable(msg.c_str());
     }
 
@@ -431,7 +431,7 @@ public:
   double getLowerBound() const override { return lb; }
   double getUpperBound() const override { return ub; }
 
-  Value *getValue(IRBuilder<> &builder) override { return value; }
+  Value *getLLValue(IRBuilder<> &builder) override { return value; }
 
   bool isExpression() const override { return false; }
 };
@@ -494,7 +494,7 @@ public:
 
   double getUpperBound() const override { return getLowerBound(); }
 
-  virtual Value *getValue(IRBuilder<> &builder) override {
+  virtual Value *getLLValue(IRBuilder<> &builder) override {
     Type *Ty;
     if (dtype == "f64") {
       Ty = builder.getDoubleTy();
@@ -702,7 +702,7 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
   IRBuilder<> builder(ReturnInst);
 
   builder.setFastMathFlags(getFast());
-  Value *newOutput = parsedNode->getValue(builder);
+  Value *newOutput = parsedNode->getLLValue(builder);
 
   // tempFunction->print(llvm::errs());
 
@@ -862,7 +862,7 @@ public:
     // TODO ponder fast math
     builder.setFastMathFlags(getFast());
 
-    Value *newOutput = parsedNode->getValue(builder);
+    Value *newOutput = parsedNode->getLLValue(builder);
     assert(newOutput && "Failed to get value from parsed node");
 
     if (EnzymePrintFPOpt)
@@ -1133,6 +1133,34 @@ public:
   //          std::fabs(grad);
   // }
 };
+
+double
+getUnifiedAccuracy(ApplicableFPCC &component, Module *M,
+                   std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+                   std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  // Materialize the changes in a temporary function
+
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
+  Function *tempFunction =
+      Function::Create(FT, Function::InternalLinkage, "getTTICost_temp", M);
+  BasicBlock *entry =
+      BasicBlock::Create(M->getContext(), "entry", tempFunction);
+  Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
+
+  IRBuilder<> builder(ReturnInst);
+  builder.setFastMathFlags(getFast()); // TODO: ponder fast math flags
+
+  // Extract operand bounds from FPNodes
+  // Sample points from operand bounds
+
+  // For each bound:
+  // 1. Compute the correct FP64 answers with MPFR (extend the precision
+  // until first 64 bits don't change)
+  // 2. Calculate the accuracy of the expression with MPFR
+
+  tempFunction->eraseFromParent();
+  return 0;
+}
 
 bool improveViaHerbie(
     const std::string &inputExpr, ApplicableOutput &AO, Module *M,
