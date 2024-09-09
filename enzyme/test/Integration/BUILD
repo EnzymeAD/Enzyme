@@ -5,6 +5,7 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 exclude_tests = [
     "**/*omp*.c",
 ]
+
 stdlib_tests = [
     "**/gh_issue_1904.cpp",
     "**/CppSugar/sret.cpp",
