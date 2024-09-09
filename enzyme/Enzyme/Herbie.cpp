@@ -11,24 +11,16 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
-#include <llvm/Demangle/Demangle.h>
+#include "llvm/Demangle/Demangle.h"
 
-#include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
-#include "llvm/ExecutionEngine/Orc/LLJIT.h"
-#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-
-#include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Verifier.h"
 
-#include "llvm/Support/Host.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include <llvm/Support/JSON.h>
 
@@ -122,6 +114,12 @@ static cl::opt<int> FPOptMaxFPCCDepth(
 
 class FPNode {
 public:
+  enum class NodeType { Node, LLValue, Const };
+
+private:
+  const NodeType ntype;
+
+public:
   std::string op;
   std::string dtype;
   std::string symbol;
@@ -129,14 +127,23 @@ public:
   double grad;
   unsigned executions;
 
-  FPNode(const std::string &op) = delete;
   explicit FPNode(const std::string &op, const std::string &dtype)
-      : op(op), dtype(dtype) {}
+      : ntype(NodeType::Node), op(op), dtype(dtype) {}
+  explicit FPNode(NodeType ntype, const std::string &op,
+                  const std::string &dtype)
+      : ntype(ntype), op(op), dtype(dtype) {}
   virtual ~FPNode() = default;
+
+  NodeType getType() const { return ntype; }
 
   void addOperand(FPNode *operand) { operands.push_back(operand); }
 
-  bool hasSymbol() const { return !symbol.empty(); }
+  virtual bool hasSymbol() const {
+    std::string msg = "Unexpected invocation of `hasSymbol` on an "
+                      "unmaterialized " +
+                      op + " FPNode";
+    llvm_unreachable(msg.c_str());
+  }
 
   virtual std::string
   toFullExpression(std::unordered_map<Value *, FPNode *> &valueToNodeMap) {
@@ -400,7 +407,9 @@ class FPLLValue : public FPNode {
 public:
   explicit FPLLValue(Value *value, const std::string &op,
                      const std::string &dtype)
-      : FPNode(op, dtype), value(value) {}
+      : FPNode(NodeType::LLValue, op, dtype), value(value) {}
+
+  bool hasSymbol() const override { return !symbol.empty(); }
 
   std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
@@ -433,7 +442,11 @@ public:
 
   Value *getLLValue(IRBuilder<> &builder) override { return value; }
 
-  bool isExpression() const override { return false; }
+  static bool classof(const FPNode *N) {
+    return N->getType() == NodeType::LLValue;
+  }
+
+  // double getUnifiedAccuracy() override { return 0; }
 };
 
 double stringToDouble(const std::string &str) {
@@ -457,11 +470,16 @@ class FPConst : public FPNode {
 
 public:
   explicit FPConst(const std::string &strValue, const std::string &dtype)
-      : FPNode("__const", dtype), strValue(strValue) {}
+      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
   std::string toFullExpression(
       std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
     return strValue;
+  }
+
+  bool hasSymbol() const override {
+    std::string msg = "Unexpected invocation of `hasSymbol` on an FPConst";
+    llvm_unreachable(msg.c_str());
   }
 
   void markAsInput() override { return; }
@@ -530,7 +548,9 @@ public:
     return ConstantFP::get(Ty, constantValue);
   }
 
-  bool isExpression() const override { return false; }
+  static bool classof(const FPNode *N) {
+    return N->getType() == NodeType::Const;
+  }
 };
 
 FPNode *
