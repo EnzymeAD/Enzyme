@@ -15,10 +15,10 @@ clean:
 
 %-opt.ll: %-raw.ll
 	opt $^ -o $@ -S
-	#opt $^ -O2 -o $@ -S
 
-gmm.o: gmm.cpp
-	clang++ $(LOADCLANG) $(BENCH) gmm.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o gmm.o -lpthread $(BENCHLINK) -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
+gmm.o: gmm-opt.ll
+	clang++ -pthread -O2 $^ -o $@ $(BENCHLINK) -lm
+	#clang++ $(LOADCLANG) $(BENCH) gmm.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o gmm.o -lpthread $(BENCHLINK) -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.json: gmm.o
 	./$^
