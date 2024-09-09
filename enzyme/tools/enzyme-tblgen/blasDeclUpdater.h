@@ -225,7 +225,7 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   os << "  }\n";
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
-    for (const Record *pattern : patterns) {
+    for (Record *pattern : patterns) {
       DagInit *tree = pattern->getValueAsDag("PatternToMatch");
       os << "  if ((";
       bool prev = false;

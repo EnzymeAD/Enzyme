@@ -1,6 +1,6 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@llvm-project//llvm:tblgen.bzl", "gentbl")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 licenses(["notice"])
 
@@ -22,13 +22,13 @@ cc_library(
 cc_binary(
     name = "enzyme-tblgen",
     srcs = glob(["tools/enzyme-tblgen/*.cpp"]),
-    visibility = ["//visibility:public"],
     deps = [
         ":enzyme-tblgen-hdrs",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:TableGen",
         "@llvm-project//llvm:config",
     ],
+    visibility = ["//visibility:public"],
 )
 
 gentbl(
@@ -144,12 +144,12 @@ cc_library(
     data = ["@llvm-project//clang:builtin_headers_gen"],
     visibility = ["//visibility:public"],
     deps = [
+        ":bundled-includes",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
         ":blas-diffuseanalysis",
         ":blas-typeanalysis",
-        ":bundled-includes",
         ":call-derivatives",
         ":inst-derivatives",
         ":intr-derivatives",
@@ -176,6 +176,7 @@ cc_library(
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//llvm:config",
     ],
+    alwayslink = 1,
 )
 
 # Modified from llvm_driver_cc_binary since that can't be used
@@ -186,7 +187,6 @@ expand_template(
     substitutions = {"@TOOL_NAME@": "clang"},
     template = "@llvm-project//llvm:cmake/modules/llvm-driver-template.cpp.in",
 )
-
 cc_binary(
     name = "enzyme-clang",
     srcs = ["enzyme-clang-driver.cpp"],
@@ -206,8 +206,9 @@ genrule(
     name = "bundled-includes",
     srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
     outs = ["bundled_includes.h"],
-    cmd = "$(location :scripts/bundle-includes.sh) $(location :include/enzyme/enzyme) $@",
+    cmd = "$(location :scripts/bundle-includes.sh) $(location :include/enzyme/enzyme) $@"
 )
+
 
 genrule(
     name = "gen_enzyme-clang++",
@@ -566,8 +567,8 @@ cc_library(
         ":arith-derivatives",
         ":cf-derivatives",
         ":complex-derivatives",
-        ":func-derivatives",
         ":llvm-derivatives",
+        ":func-derivatives",
         ":math-derivatives",
         ":memref-derivatives",
         ":nvvm-derivatives",
@@ -611,8 +612,8 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
-        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:ViewLikeInterface",
     ],
 )
@@ -648,3 +649,4 @@ cc_binary(
 )
 
 exports_files(["run_lit.sh"])
+

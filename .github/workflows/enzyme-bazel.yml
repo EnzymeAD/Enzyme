@@ -1,0 +1,60 @@
+name: Bazel
+
+on:
+  schedule:
+    - cron: 0 0 * * *
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  merge_group:
+
+concurrency: 
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    name: Bazel ${{ matrix.build }} ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ["Release"]
+        llbuild: ["Release"]
+        os: [ubuntu-latest]
+  
+    timeout-minutes: 500 
+    steps:
+    
+    - name: Prep
+      run: |
+          python -m pip install lit
+    
+    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+      with:
+        repository: 'llvm/llvm-project'
+        path: 'llvm-project'
+
+    - name: Cache Bazel
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/bazel
+          ~/.cache/bazel-disk-cache
+        key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}
+        restore-keys: |
+          ${{ runner.os }}-bazel-
+
+    - name: Build
+      run: |
+          cd enzyme
+          bazel build --disk_cache=~/.cache/bazel-disk-cache :EnzymeStatic :enzymemlir-opt
+    - name: Test
+      run: |
+          cd enzyme
+          bazel test --disk_cache=~/.cache/bazel-disk-cache --test_output=errors ...

@@ -196,7 +196,7 @@ struct VariableSetting {
   StringMap<std::vector<int>> extractions;
 
   std::tuple<std::string, bool, std::vector<int>>
-  lookup(StringRef name, const Record *pattern, Init *resultRoot) {
+  lookup(StringRef name, Record *pattern, Init *resultRoot) {
     auto ord = nameToOrdinal.find(name);
     if (ord == nameToOrdinal.end())
       PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
@@ -219,13 +219,13 @@ struct VariableSetting {
 
 #define INDENT "  "
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            const Record *pattern, Init *resultTree, StringRef builder,
+            Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
             ArrayRef<unsigned> retidx, StringRef origName, bool newFromOriginal,
             ActionType intrinsic);
 
 SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
-                                 const Twine &argName, const Record *pattern,
+                                 const Twine &argName, Record *pattern,
                                  DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
@@ -300,7 +300,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
 
 // Returns whether value generated is a vector value or not.
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            const Record *pattern, Init *resultTree, StringRef builder,
+            Record *pattern, Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
             ArrayRef<unsigned> retidx, StringRef origName, bool newFromOriginal,
             ActionType intrinsic) {
@@ -1405,9 +1405,10 @@ void printDiffUse(
   }
 }
 
-static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
-                            DagInit *tree, ActionType intrinsic,
-                            StringRef origName, ListInit *argOps) {
+static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
+                            ActionType intrinsic, StringRef origName,
+                            ListInit *argOps) {
+
   auto opName = pattern->getValueAsString("opName");
   auto dialect = pattern->getValueAsString("dialect");
   os << "struct " << opName << "RevDerivative : \n";
@@ -1521,9 +1522,9 @@ static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
   return nameToOrdinal;
 }
 
-static void emitReverseCommon(raw_ostream &os, const Record *pattern,
-                              DagInit *tree, ActionType intrinsic,
-                              StringRef origName, ListInit *argOps) {
+static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
+                              ActionType intrinsic, StringRef origName,
+                              ListInit *argOps) {
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
   bool seen = false;
@@ -1745,7 +1746,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (const Record *pattern : patterns) {
+  for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
     DagInit *duals = pattern->getValueAsDag("ArgDuals");
@@ -2496,7 +2497,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
-    for (const Record *pattern : patterns) {
+    for (Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2504,13 +2505,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
     }
-    for (const Record *pattern : actpatterns) {
+    for (Record *pattern : actpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "Activity>(*context);\n";
     }
-    for (const Record *pattern : cfpatterns) {
+    for (Record *pattern : cfpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2518,7 +2519,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (const Record *pattern : mempatterns) {
+    for (Record *pattern : mempatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2534,25 +2535,25 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
            << opName << "RevDerivative>(*context);\n";
       }
     }
-    for (const Record *pattern : brpatterns) {
+    for (Record *pattern : brpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingBranchInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (const Record *pattern : regtpatterns) {
+    for (Record *pattern : regtpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (const Record *pattern : retpatterns) {
+    for (Record *pattern : retpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingReturnInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (const Record *pattern : allocpatterns) {
+    for (Record *pattern : allocpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingAllocationInterface<" << dialect
@@ -2588,7 +2589,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (const Record *pattern : patterns) {
+  for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
     // Emit RewritePattern for Pattern.

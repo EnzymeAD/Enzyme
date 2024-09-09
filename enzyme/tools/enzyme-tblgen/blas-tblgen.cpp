@@ -80,7 +80,7 @@ bool hasAdjoint(const TGPattern &pattern, Init *resultTree, StringRef argName) {
 }
 
 static void checkBlasCallsInDag(const RecordKeeper &RK,
-                                ArrayRef<const Record *> blasPatterns,
+                                ArrayRef<Record *> blasPatterns,
                                 StringRef blasName, const DagInit *toSearch) {
 
   // For nested FAdd, ... rules which don't directly call a blass fnc
@@ -95,7 +95,7 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
 /// blas function will use the correct amount of args
 /// Later we might check for "types" too.
 static void checkBlasCalls(const RecordKeeper &RK,
-                           ArrayRef<const Record *> blasPatterns) {
+                           ArrayRef<Record *> blasPatterns) {
   for (auto &&pattern : blasPatterns) {
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
     // for each possibly active parameter

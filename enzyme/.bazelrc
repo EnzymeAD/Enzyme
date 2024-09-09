@@ -1,0 +1,18 @@
+build --announce_rc
+
+build --experimental_repo_remote_exec
+build --cxxopt=-std=c++17 --host_cxxopt=-std=c++17
+build --cxxopt=-w --host_cxxopt=-w
+#build --features=external_include_paths
+
+build --define=grpc_no_ares=true
+build --define=tsl_link_protobuf=true
+build --define open_source_build=true
+
+build --define framework_shared_object=true
+build --define tsl_protobuf_header_only=true
+build --define=use_fast_cpp_protos=true
+build --define=allow_oversize_protos=true
+
+build -c opt
+
