@@ -624,8 +624,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-    for (size_t i = 0; i < CI->arg_size(); i++)
-    {
+    for (size_t i = 0; i < CI->arg_size(); i++) {
       if (val == CI->getArgOperand(i)) {
         if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
@@ -935,8 +934,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
-          for (size_t i = 0; i < CI->arg_size(); i++)
-          {
+          for (size_t i = 0; i < CI->arg_size(); i++) {
             if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
               captures = true;
               break;
@@ -1058,8 +1056,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
       // Next test if any allocation could be stored into one of the
       // arguments.
       if (!escapingNeededAllocation)
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

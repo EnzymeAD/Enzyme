@@ -677,8 +677,7 @@ public:
   {
     unsigned width = 1;
 
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
-    {
+    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i) {
       Value *arg = CI->getArgOperand(i);
 
       if (auto MDName = getMetadataName(arg)) {
@@ -690,8 +689,7 @@ public:
             return {};
           }
 
-          if (i + 1 >= CI->arg_size())
-          {
+          if (i + 1 >= CI->arg_size()) {
             EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
                         "constant integer followong enzyme_width is missing",
                         *CI->getArgOperand(i), " in", *CI);
@@ -795,8 +793,7 @@ public:
         fn->getFunctionType()->getNumParams(),
         !(mode == DerivativeMode::ReverseModeCombined));
 
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-    {
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
       // handle metadata
@@ -1515,8 +1512,7 @@ public:
       arg_types.push_back(BATCH_TYPE::VECTOR);
     }
 
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-    {
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
@@ -1572,8 +1568,7 @@ public:
         bool batch = batchOffset.count(i - 1) != 0;
 
         for (unsigned v = 0; v < width; ++v) {
-          if (i >= CI->arg_size())
-          {
+          if (i >= CI->arg_size()) {
             EmitFailure("MissingVectorArg", CI->getDebugLoc(), CI,
                         "__enzyme_batch missing vector argument at index ", i,
                         ", need argument of type ", *PTy, " at call ", *CI);
@@ -2738,8 +2733,7 @@ public:
       Value *fn = CI->getArgOperand(0);
       SmallVector<Value *, 4> Args;
       SmallVector<Type *, 4> ArgTypes;
-      for (size_t i = 1; i < CI->arg_size(); ++i)
-      {
+      for (size_t i = 1; i < CI->arg_size(); ++i) {
         Args.push_back(CI->getArgOperand(i));
         ArgTypes.push_back(CI->getArgOperand(i)->getType());
       }
@@ -3269,8 +3263,8 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
 #include "llvm/Transforms/IPO/ConstantMerge.h"
 #include "llvm/Transforms/IPO/CrossDSOCFI.h"
@@ -3306,8 +3300,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
-static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
-{
+static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
 
@@ -3330,9 +3323,7 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
   auto PB0 = new llvm::PassBuilder(PB);
-  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level)
-  {
-
+  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level) {
     FunctionPassManager OptimizePM;
     OptimizePM.addPass(Float2IntPass());
     OptimizePM.addPass(LowerConstantIntrinsicsPass());
@@ -3359,8 +3350,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
   };
 
-  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
-  {
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level) {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
     if (!EnzymeEnable)
@@ -3396,11 +3386,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
     MPM.addPass(GlobalOptPass());
   };
-// TODO need for perf reasons to move Enzyme pass to the pre vectorization.
+  // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
-  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
-  { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
+  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel) { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+  };
 
   // We should register at vectorizer start for consistency, however,
   // that requires a functionpass, and we have a modulepass.

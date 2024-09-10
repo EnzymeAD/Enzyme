@@ -195,8 +195,7 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
     return false;
 
   auto arg = F->arg_begin();
-  for (size_t i = 0, size = CI->arg_size(); i < size; i++)
-  {
+  for (size_t i = 0, size = CI->arg_size(); i < size; i++) {
     if (val == CI->getArgOperand(i)) {
       // This is a vararg, assume captured
       if (arg == F->arg_end()) {
@@ -437,8 +436,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       IRBuilder<> B(CI);
       auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
-      for (size_t i = 0; i < CI->arg_size(); i++)
-      {
+      for (size_t i = 0; i < CI->arg_size(); i++) {
         if (CI->getArgOperand(i) == prev) {
           CI->setArgOperand(i, Addr);
         }
@@ -1543,8 +1541,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       if (inF) {
         bool activeCall = false;
         bool hasWrite = false;
-        MemoryLocation
-            Loc = MemoryLocation(&g, LocationSize::beforeOrAfterPointer());
+        MemoryLocation Loc =
+            MemoryLocation(&g, LocationSize::beforeOrAfterPointer());
 
         for (CallInst *CI : Calls) {
           if (isa<IntrinsicInst>(CI))

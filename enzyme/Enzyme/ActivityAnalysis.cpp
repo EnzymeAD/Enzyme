@@ -555,8 +555,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   bool all_inactive = val != CI->getCalledOperand();
 
-  for (size_t i = 0; i < CI->arg_size(); i++)
-  {
+  for (size_t i = 0; i < CI->arg_size(); i++) {
     if (val == CI->getArgOperand(i)) {
       if (!CI->getAttributes().hasParamAttr(i, "enzyme_inactive") &&
           !(F && F->getCallingConv() == CI->getCallingConv() &&
@@ -655,8 +654,7 @@ static inline void propagateArgumentInformation(
   }
 
   if (Name == "julia.call" || Name == "julia.call2") {
-    for (size_t i = 1; i < CI.arg_size(); i++)
-    {
+    for (size_t i = 1; i < CI.arg_size(); i++) {
       propagateFromOperand(CI.getOperand(i));
     }
     return;
@@ -695,8 +693,7 @@ static inline void propagateArgumentInformation(
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
   size_t i = 0;
-  for (auto &a : CI.args())
-  {
+  for (auto &a : CI.args()) {
 
     if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive") ||
         (F && F->getCallingConv() == CI.getCallingConv() &&
@@ -2953,8 +2950,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       auto F = getFunctionFromCall(call);
 
       size_t idx = 0;
-      for (auto &arg : call->args())
-      {
+      for (auto &arg : call->args()) {
         if (arg != parent) {
           idx++;
           continue;
@@ -3113,8 +3109,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (isa<LoadInst>(operand)) {
           bool legal = true;
 
-          for (unsigned i = 0; i < call->arg_size() + 1; ++i)
-          {
+          for (unsigned i = 0; i < call->arg_size() + 1; ++i) {
             Value *a = call->getOperand(i);
 
             if (isa<ConstantInt>(a))

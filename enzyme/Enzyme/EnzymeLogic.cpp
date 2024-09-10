@@ -504,8 +504,7 @@ struct CacheAnalysis {
     // function to the callee.
     //   because memory location x modified after parent returns => x modified
     //   after callee returns.
-    for (unsigned i = 0; i < callsite_op->arg_size(); ++i)
-    {
+    for (unsigned i = 0; i < callsite_op->arg_size(); ++i) {
       args.push_back(callsite_op->getArgOperand(i));
 
       // If the UnderlyingObject is from one of this function's arguments, then
@@ -807,8 +806,7 @@ void calculateUnusedValuesInFunction(
               if (shouldDisableNoWrite(CI)) {
                 writeOnlyNoCapture = false;
               }
-              for (size_t i = 0; i < CI->arg_size(); i++)
-              {
+              for (size_t i = 0; i < CI->arg_size(); i++) {
                 if (cur == CI->getArgOperand(i)) {
                   if (!isNoCapture(CI, i)) {
                     writeOnlyNoCapture = false;
@@ -1081,8 +1079,7 @@ void calculateUnusedValuesInFunction(
             if (shouldDisableNoWrite(CI)) {
               writeOnlyNoCapture = false;
             }
-            for (size_t i = 0; i < CI->arg_size(); i++)
-            {
+            for (size_t i = 0; i < CI->arg_size(); i++) {
               if (val == CI->getArgOperand(i)) {
                 if (!isNoCapture(CI, i)) {
                   writeOnlyNoCapture = false;
@@ -1318,8 +1315,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
   if (!called || called->empty())
     modifyPrimal = true;
 
-  for (unsigned i = 0; i < op->arg_size(); ++i)
-  {
+  for (unsigned i = 0; i < op->arg_size(); ++i) {
     if (gutils->isConstantValue(op->getArgOperand(i)) && called &&
         !called->empty()) {
       continue;
@@ -1719,8 +1715,7 @@ void clearFunctionAttributes(Function *f) {
   if (f->hasFnAttribute(Attribute::OptimizeNone))
     f->removeFnAttr(Attribute::OptimizeNone);
 
-  if (f->getAttributes().getRetDereferenceableBytes())
-  {
+  if (f->getAttributes().getRetDereferenceableBytes()) {
     f->removeRetAttr(Attribute::Dereferenceable);
   }
 
@@ -2546,8 +2541,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
     gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
 
-  if (gutils->newFunc->getAttributes().getRetDereferenceableBytes())
-  {
+  if (gutils->newFunc->getAttributes().getRetDereferenceableBytes()) {
     gutils->newFunc->removeRetAttr(Attribute::Dereferenceable);
   }
 

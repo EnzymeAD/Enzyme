@@ -321,16 +321,15 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     auto rval = ExprValueKind::VK_PRValue;
     StringRef cstr = Literal->getString();
     Expr *exprs[2] = {
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval, FPOptionsOverride()),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval, FPOptionsOverride())
-    };
+        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                 DR, nullptr, rval, FPOptionsOverride()),
+        ImplicitCastExpr::Create(
+            AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+            StringLiteral::Create(
+                AST, cstr, stringkind,
+                /*Pascal*/ false,
+                AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+            nullptr, rval, FPOptionsOverride())};
     auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
     V->setInit(IL);
     IL->setType(T);

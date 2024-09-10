@@ -2356,8 +2356,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         SmallVector<Value *, 1> args;
-        for (auto &arg : begin_call->args())
-        {
+        for (auto &arg : begin_call->args()) {
           bool primalUsed = false;
           bool shadowUsed = false;
           gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
@@ -2397,8 +2396,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
     if (funcName == "llvm.julia.gc_preserve_begin") {
       SmallVector<Value *, 1> args;
-      for (auto &arg : call.args())
-      {
+      for (auto &arg : call.args()) {
         bool primalUsed = false;
         bool shadowUsed = false;
         gutils->getReturnDiffeType(arg, &primalUsed, &shadowUsed);
@@ -2582,8 +2580,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (gutils->isConstantValue(call.getArgOperand(3)))
         return true;
       SmallVector<Value *, 2> args;
-      for (auto &arg : call.args())
-      {
+      for (auto &arg : call.args()) {
         if (gutils->isConstantValue(arg))
           args.push_back(gutils->getNewFromOriginal(arg));
         else
@@ -2659,8 +2656,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             else {
               SmallVector<Value *, 2> args;
               size_t i = 0;
-              for (auto &arg : call.args())
-              {
+              for (auto &arg : call.args()) {
                 if (gutils->isConstantValue(arg) ||
                     (funcName == "__dynamic_cast" && i > 0) ||
                     (funcName == "jl_ptr_to_array_1d" && i != 1) ||
@@ -2754,8 +2750,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
           SmallVector<Value *, 1> iargs;
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-          for (auto &arg : call.args())
-          {
+          for (auto &arg : call.args()) {
             if (!gutils->isConstantValue(arg)) {
               Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
               applyChainRule(
@@ -2936,8 +2931,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       IRBuilder<> bb(placeholder);
 
       SmallVector<Value *, 8> args;
-      for (auto &arg : call.args())
-      {
+      for (auto &arg : call.args()) {
         args.push_back(gutils->getNewFromOriginal(arg));
       }
 
@@ -3226,8 +3220,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         getForwardBuilder(Builder2);
 
         SmallVector<Value *, 2> args;
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           auto arg = call.getArgOperand(i);
           args.push_back(gutils->getNewFromOriginal(arg));
         }
@@ -3338,7 +3331,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           replacement = B.CreatePointerCast(
               replacement,
               PointerType::getUnqual(call.getType()->getPointerElementType()));
-
       }
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
@@ -3802,8 +3794,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         SmallVector<ValueType, 1> valtys;
         args.push_back(ptrshadow);
         valtys.push_back(ValueType::Shadow);
-        for (size_t i = 1; i < call.arg_size(); ++i)
-        {
+        for (size_t i = 1; i < call.arg_size(); ++i) {
           args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
           valtys.push_back(ValueType::Primal);
         }
@@ -4066,8 +4057,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto rule = [&args](Value *tofree) { args.push_back(tofree); };
         applyChainRule(Builder2, rule, tofree);
 
-        for (size_t i = 1; i < call.arg_size(); i++)
-        {
+        for (size_t i = 1; i < call.arg_size(); i++) {
           args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
         }
 

@@ -2826,8 +2826,7 @@ public:
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
       Value *op3 = nullptr;
-      if (3 < MS.arg_size())
-      {
+      if (3 < MS.arg_size()) {
         op3 = gutils->getNewFromOriginal(MS.getOperand(3));
       }
 
@@ -3068,8 +3067,7 @@ public:
     Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
     Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
     Value *op3 = nullptr;
-    if (3 < MS.arg_size())
-    {
+    if (3 < MS.arg_size()) {
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
@@ -4000,8 +3998,7 @@ public:
     SmallVector<Value *, 4> OutTypes;
     SmallVector<Type *, 4> OutFPTypes;
 
-    for (unsigned i = 3; i < call.arg_size(); ++i)
-    {
+    for (unsigned i = 3; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -4680,13 +4677,11 @@ public:
       std::map<int, Type *> gradByVal;
       std::map<int, std::vector<Attribute>> structAttrs;
 
-      for (unsigned i = 0; i < call.arg_size(); ++i)
-      {
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           structAttrs[args.size()].push_back(
-              Attribute::get(call.getContext(), "enzyme_sret")
-          );
+              Attribute::get(call.getContext(), "enzyme_sret"));
           // TODO
           // structAttrs[args.size()].push_back(Attribute::get(
           //     call.getContext(), Attribute::AttrKind::ElementType,
@@ -4765,7 +4760,8 @@ public:
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
+                // orig->getParamAttr(i,
+                // Attribute::StructRet).getValueAsType());
             );
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
@@ -4774,8 +4770,7 @@ public:
             //     Attribute::StructRet).getValueAsType()));
           } else {
             structAttrs[args.size()].push_back(
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-            );
+                Attribute::get(call.getContext(), "enzyme_sret_v"));
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
             //     call.getContext(), Attribute::AttrKind::ElementType,
@@ -4967,8 +4962,7 @@ public:
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
 
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -4984,8 +4978,8 @@ public:
         structAttrs[pre_args.size()].push_back(
             // TODO persist types
             Attribute::get(call.getContext(), "enzyme_sret")
-        // Attribute::get(orig->getContext(), "enzyme_sret",
-        // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
+            // Attribute::get(orig->getContext(), "enzyme_sret",
+            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
         );
       }
       for (auto ty : PrimalParamAttrsToPreserve)
@@ -5082,16 +5076,17 @@ public:
             structAttrs[pre_args.size()].push_back(
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
-            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
+                // Attribute::get(orig->getContext(), "enzyme_sret",
+                // orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType());
             );
           } else {
             structAttrs[pre_args.size()].push_back(
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret_v")
-            // Attribute::get(orig->getContext(), "enzyme_sret_v",
-            // gutils->getShadowType(orig->getParamAttr(ii,
-            // Attribute::StructRet).getValueAsType()));
+                // Attribute::get(orig->getContext(), "enzyme_sret_v",
+                // gutils->getShadowType(orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType()));
             );
           }
         }
@@ -5132,8 +5127,7 @@ public:
     }
     if (called) {
       if (call.arg_size() !=
-          cast<Function>(called)->getFunctionType()->getNumParams())
-      {
+          cast<Function>(called)->getFunctionType()->getNumParams()) {
         llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
@@ -5767,8 +5761,7 @@ public:
         structidx++;
     }
 
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
       if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
         Value *diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
         ++structidx;
@@ -6212,8 +6205,7 @@ public:
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

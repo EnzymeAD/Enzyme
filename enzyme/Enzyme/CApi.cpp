@@ -1080,8 +1080,7 @@ void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
   size_t argremsz = 0;
   size_t nexti = 0;
   SmallVector<Value *, 1> vals;
-  for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-  {
+  for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
     if (argremsz < num_argrem) {
       if (i == argrem[argremsz]) {
         argremsz++;
@@ -1418,8 +1417,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
                                        AttributeList::ReturnIndex, attr);
 
     SmallVector<Value *, 1> vals;
-    for (size_t j = 0, end = CI->arg_size(); j < end; j++)
-    {
+    for (size_t j = 0, end = CI->arg_size(); j < end; j++) {
 
       auto T = CI->getArgOperand(j)->getType();
       if (auto AT = dyn_cast<ArrayType>(T)) {
@@ -1876,8 +1874,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
     SmallVector<Value *, 1> sret_vals;
     SmallVector<Value *, 1> sretv_vals;
-    for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-    {
+    for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
       if (rroots.count(i) || rroots_v.count(i)) {
         continue;
       }
