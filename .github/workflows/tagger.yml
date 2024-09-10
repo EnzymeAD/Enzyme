@@ -37,7 +37,7 @@ jobs:
           git add .
     - name: Create Pull Request
       id: cpr
-      uses: peter-evans/create-pull-request@v6
+      uses: peter-evans/create-pull-request@v7
       with:
         path: ygg
         commit-message: "Upgrade enzyme to ${{ github.ref }}"
