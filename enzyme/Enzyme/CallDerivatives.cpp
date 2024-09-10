@@ -439,11 +439,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                   Builder2, /*lookup*/ true));
       cal->setCallingConv(dwait->getCallingConv());
       cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 14
       cal->addFnAttr(Attribute::AlwaysInline);
-#else
-      cal->addAttribute(AttributeList::FunctionIndex, Attribute::AlwaysInline);
-#endif
       Builder2.CreateBr(endBlock);
       {
         auto found = gutils->reverseBlockToPrimal.find(endBlock);
@@ -605,11 +601,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                      Builder2, /*lookup*/ true));
       cal->setCallingConv(dwait->getCallingConv());
       cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-#if LLVM_VERSION_MAJOR >= 14
       cal->addFnAttr(Attribute::AlwaysInline);
-#else
-      cal->addAttribute(AttributeList::FunctionIndex, Attribute::AlwaysInline);
-#endif
       Builder2.CreateBr(eloopBlock);
 
       Builder2.SetInsertPoint(eloopBlock);
@@ -689,9 +681,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
       if (called->getContext().supportsTypedPointers()) {
-#endif
         if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
@@ -704,9 +694,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
             statusType = PT->getPointerElementType();
         }
-#if LLVM_VERSION_MAJOR >= 15
       }
-#endif
 #endif
       if (statusType == nullptr) {
         statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
@@ -2368,11 +2356,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         SmallVector<Value *, 1> args;
-#if LLVM_VERSION_MAJOR >= 14
         for (auto &arg : begin_call->args())
-#else
-        for (auto &arg : begin_call->arg_operands())
-#endif
         {
           bool primalUsed = false;
           bool shadowUsed = false;
@@ -2413,11 +2397,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
     if (funcName == "llvm.julia.gc_preserve_begin") {
       SmallVector<Value *, 1> args;
-#if LLVM_VERSION_MAJOR >= 14
       for (auto &arg : call.args())
-#else
-      for (auto &arg : call.arg_operands())
-#endif
       {
         bool primalUsed = false;
         bool shadowUsed = false;
@@ -2602,11 +2582,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (gutils->isConstantValue(call.getArgOperand(3)))
         return true;
       SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
       for (auto &arg : call.args())
-#else
-      for (auto &arg : call.arg_operands())
-#endif
       {
         if (gutils->isConstantValue(arg))
           args.push_back(gutils->getNewFromOriginal(arg));
@@ -2683,11 +2659,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             else {
               SmallVector<Value *, 2> args;
               size_t i = 0;
-#if LLVM_VERSION_MAJOR >= 14
               for (auto &arg : call.args())
-#else
-              for (auto &arg : call.arg_operands())
-#endif
               {
                 if (gutils->isConstantValue(arg) ||
                     (funcName == "__dynamic_cast" && i > 0) ||
@@ -2782,11 +2754,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
           SmallVector<Value *, 1> iargs;
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-#if LLVM_VERSION_MAJOR >= 14
           for (auto &arg : call.args())
-#else
-          for (auto &arg : call.arg_operands())
-#endif
           {
             if (!gutils->isConstantValue(arg)) {
               Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
@@ -2968,11 +2936,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       IRBuilder<> bb(placeholder);
 
       SmallVector<Value *, 8> args;
-#if LLVM_VERSION_MAJOR >= 14
       for (auto &arg : call.args())
-#else
-      for (auto &arg : call.arg_operands())
-#endif
       {
         args.push_back(gutils->getNewFromOriginal(arg));
       }
@@ -3067,17 +3031,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               cast<CallInst>(anti)->setDebugLoc(dbgLoc);
 
               if (anti->getType()->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 14
                 cast<CallInst>(anti)->addAttributeAtIndex(
                     AttributeList::ReturnIndex, Attribute::NoAlias);
                 cast<CallInst>(anti)->addAttributeAtIndex(
                     AttributeList::ReturnIndex, Attribute::NonNull);
-#else
-                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                   Attribute::NoAlias);
-                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                   Attribute::NonNull);
-#endif
 
                 if (funcName == "malloc" || funcName == "_Znwm" ||
                     funcName == "??2@YAPAXI@Z" ||
@@ -3086,7 +3043,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                     unsigned derefBytes = ci->getLimitedValue();
                     CallInst *cal =
                         cast<CallInst>(gutils->getNewFromOriginal(&call));
-#if LLVM_VERSION_MAJOR >= 14
                     cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                     cal->addDereferenceableRetAttr(derefBytes);
 #if !defined(FLANG) && !defined(ROCM)
@@ -3104,20 +3060,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                                              Attribute::NoAlias);
                     cal->addAttributeAtIndex(AttributeList::ReturnIndex,
                                              Attribute::NonNull);
-#else
-                    cast<CallInst>(anti)->addDereferenceableAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addDereferenceableAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cast<CallInst>(anti)->addDereferenceableOrNullAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addDereferenceableOrNullAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addAttribute(AttributeList::ReturnIndex,
-                                      Attribute::NoAlias);
-                    cal->addAttribute(AttributeList::ReturnIndex,
-                                      Attribute::NonNull);
-#endif
                   }
                 }
                 if (funcName == "julia.gc_alloc_obj" ||
@@ -3171,9 +3113,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 Type *elTy = Type::getInt8Ty(call.getContext());
                 std::string name = "";
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
                 if (call.getContext().supportsTypedPointers()) {
-#endif
                   for (auto U : call.users()) {
                     if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
                       elTy = U->getType()->getPointerElementType();
@@ -3188,9 +3128,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                       break;
                     }
                   }
-#if LLVM_VERSION_MAJOR >= 13
                 }
-#endif
 #endif
                 auto rule = [&](Value *anti) {
                   bb.SetInsertPoint(cast<Instruction>(anti));
@@ -3208,36 +3146,28 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                         ->setAlignment(Align(Alignment));
                   }
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
                   if (call.getContext().supportsTypedPointers()) {
-#endif
                     if (anti->getType()->getPointerElementType() != elTy)
                       replacement = bb.CreatePointerCast(
                           replacement,
                           PointerType::getUnqual(
                               anti->getType()->getPointerElementType()));
-#if LLVM_VERSION_MAJOR >= 13
                   }
-#endif
 #endif
                   if (int AS = cast<PointerType>(anti->getType())
                                    ->getAddressSpace()) {
                     llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
                     if (call.getContext().supportsTypedPointers()) {
-#endif
                       PT = PointerType::get(
                           anti->getType()->getPointerElementType(), AS);
 #endif
-#if LLVM_VERSION_MAJOR >= 13
 #if LLVM_VERSION_MAJOR < 17
                     } else {
 #endif
                       PT = PointerType::get(anti->getContext(), AS);
 #if LLVM_VERSION_MAJOR < 17
                     }
-#endif
 #endif
                     replacement = bb.CreateAddrSpaceCast(replacement, PT);
                     cast<Instruction>(replacement)
@@ -3285,13 +3215,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             auto CI = freeKnownAllocation(Builder2, tofree, funcName, dbgLoc,
                                           gutils->TLI, &call, gutils);
             if (CI)
-#if LLVM_VERSION_MAJOR >= 14
               CI->addAttributeAtIndex(AttributeList::FirstArgIndex,
                                       Attribute::NonNull);
-#else
-              CI->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
           };
           applyChainRule(Builder2, rule, tofree);
         }
@@ -3301,11 +3226,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         getForwardBuilder(Builder2);
 
         SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
         for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
         {
           auto arg = call.getArgOperand(i);
           args.push_back(gutils->getNewFromOriginal(arg));
@@ -3381,9 +3302,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       Type *elTy = Type::getInt8Ty(call.getContext());
       Instruction *I = nullptr;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
       if (call.getContext().supportsTypedPointers()) {
-#endif
         for (auto U : call.users()) {
           if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
             elTy = U->getType()->getPointerElementType();
@@ -3398,9 +3317,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             break;
           }
         }
-#if LLVM_VERSION_MAJOR >= 15
       }
-#endif
 #endif
       Value *replacement = B.CreateAlloca(elTy, Size);
       if (I)
@@ -3416,34 +3333,26 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
       }
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
       if (call.getContext().supportsTypedPointers()) {
-#endif
         if (call.getType()->getPointerElementType() != elTy)
           replacement = B.CreatePointerCast(
               replacement,
               PointerType::getUnqual(call.getType()->getPointerElementType()));
 
-#if LLVM_VERSION_MAJOR >= 13
       }
-#endif
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
         llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
         if (call.getContext().supportsTypedPointers()) {
-#endif
           PT = PointerType::get(call.getType()->getPointerElementType(), AS);
 #endif
-#if LLVM_VERSION_MAJOR >= 13
 #if LLVM_VERSION_MAJOR < 17
         } else {
 #endif
           PT = PointerType::get(call.getContext(), AS);
 #if LLVM_VERSION_MAJOR < 17
         }
-#endif
 #endif
         replacement = B.CreateAddrSpaceCast(replacement, PT);
         cast<Instruction>(replacement)
@@ -3716,11 +3625,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     SmallVector<Value *, 3> args;
     for (size_t i = 0; i < 2; i++)
       args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-#if LLVM_VERSION_MAJOR >= 14
     for (size_t i = 2; i < call.arg_size(); ++i)
-#else
-    for (size_t i = 2; i < call.getNumArgOperands(); ++i)
-#endif
       args.push_back(gutils->invertPointerM(call.getArgOperand(0), BuilderZ));
 
     Value *res = UndefValue::get(gutils->getShadowType(call.getType()));
@@ -3729,11 +3634,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     } else {
       for (size_t w = 0; w < gutils->getWidth(); ++w) {
         SmallVector<Value *, 3> targs = {args[0], args[1]};
-#if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 2; i < call.arg_size(); ++i)
-#else
-        for (size_t i = 2; i < call.getNumArgOperands(); ++i)
-#endif
           targs.push_back(GradientUtils::extractMeta(BuilderZ, args[i], w));
 
         auto tres = BuilderZ.CreateCall(called, targs);
@@ -3812,14 +3713,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     Value *val = nullptr;
     llvm::Type *PT = getInt8PtrTy(call.getContext());
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
     if (call.getContext().supportsTypedPointers()) {
-#endif
       if (isa<PointerType>(call.getArgOperand(0)->getType()))
         PT = call.getArgOperand(0)->getType()->getPointerElementType();
-#if LLVM_VERSION_MAJOR >= 15
     }
-#endif
 #endif
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
@@ -3879,14 +3776,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     Value *val;
     llvm::Type *PT = getInt8PtrTy(call.getContext());
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
     if (call.getContext().supportsTypedPointers()) {
-#endif
       if (isa<PointerType>(call.getArgOperand(0)->getType()))
         PT = call.getArgOperand(0)->getType()->getPointerElementType();
-#if LLVM_VERSION_MAJOR >= 15
     }
-#endif
 #endif
     if (!constval) {
       Value *stream = nullptr;
@@ -3909,11 +3802,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         SmallVector<ValueType, 1> valtys;
         args.push_back(ptrshadow);
         valtys.push_back(ValueType::Shadow);
-#if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 1; i < call.arg_size(); ++i)
-#else
-        for (size_t i = 1; i < call.getNumArgOperands(); ++i)
-#endif
         {
           args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
           valtys.push_back(ValueType::Primal);
@@ -4177,11 +4066,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         auto rule = [&args](Value *tofree) { args.push_back(tofree); };
         applyChainRule(Builder2, rule, tofree);
 
-#if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 1; i < call.arg_size(); i++)
-#else
-        for (size_t i = 1; i < call.getNumArgOperands(); i++)
-#endif
         {
           args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
         }
@@ -4298,11 +4183,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     IRBuilder<> Builder2(&call);
     getReverseBuilder(Builder2);
 
-#if LLVM_VERSION_MAJOR >= 14
     auto trace = call.getArgOperand(call.arg_size() - 1);
-#else
-    auto trace = call.getArgOperand(call.getNumArgOperands() - 1);
-#endif
     auto address = call.getArgOperand(0);
 
     auto dtrace = lookup(gutils->getNewFromOriginal(trace), Builder2);

@@ -594,11 +594,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
       if (shadow) {
-#if LLVM_VERSION_MAJOR >= 14
         auto sz = CI->arg_size();
-#else
-        auto sz = CI->getNumArgOperands();
-#endif
         bool isStored = false;
         // First pointer is the destination
         for (size_t i = 1; i < sz; i++)
@@ -628,11 +624,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-#if LLVM_VERSION_MAJOR >= 14
     for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-    for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
     {
       if (val == CI->getArgOperand(i)) {
         if (!isNoCapture(CI, i)) {
@@ -943,11 +935,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
-#if LLVM_VERSION_MAJOR >= 14
           for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
           {
             if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
               captures = true;
@@ -1070,11 +1058,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
       // Next test if any allocation could be stored into one of the
       // arguments.
       if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
         for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
         {
           Value *a = call.getOperand(i);
 
