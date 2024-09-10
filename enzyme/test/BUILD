@@ -29,4 +29,3 @@ exports_files(
     ["lit.cfg.py"],
     visibility = [":__subpackages__"],
 )
-
