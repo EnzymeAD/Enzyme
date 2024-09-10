@@ -3326,7 +3326,6 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 #define EnableMatrix false
 #define EnableModuleInliner false
 } // namespace llvm
-#endif
 
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
