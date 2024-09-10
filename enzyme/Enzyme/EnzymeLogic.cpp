@@ -6044,7 +6044,6 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
 		break;
 	      }
 	      continue;
-	    }
       }
       demangledCall = "";
       illegal = op;
