@@ -966,6 +966,7 @@ Function *CreateMPIWrapper(Function *F) {
     Attribute::InaccessibleMemOnly
 #endif
   };
+  for (auto attr : attrs) {
     W->addFnAttr(attr);
   }
 #if LLVM_VERSION_MAJOR >= 16
