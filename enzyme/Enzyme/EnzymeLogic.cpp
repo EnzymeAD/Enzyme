@@ -6039,10 +6039,10 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
               legal = true;
               break;
             }
-	  if (!legal) {
+          if (!legal) {
             illegal = op;
             break;
-	  }
+          }
         }
         continue;
       }
