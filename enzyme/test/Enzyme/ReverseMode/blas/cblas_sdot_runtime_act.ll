@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -enzyme-runtime-activity=1 -S | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-runtime-activity=1 -S | FileCheck %s
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -10,37 +10,37 @@ declare float @cblas_sdot(i32, float*, i32, float*, i32)
 
 define void @active(i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
   ret void
 }
 
 define void @inactiveFirst(i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, metadata !"enzyme_const", float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, i32 %len, metadata !"enzyme_const", float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
   ret void
 }
 
 define void @inactiveSecond(i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, float* noalias %n, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, metadata !"enzyme_const", float* noalias %n, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @f, i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, metadata !"enzyme_const", float* noalias %n, i32 %incn)
   ret void
 }
 
 define void @activeMod(i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, metadata !"enzyme_runtime_activity", i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, i32 %len, float* noalias %m, float* %dm, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
   ret void
 }
 
 define void @inactiveModFirst(i32 %len, float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, metadata !"enzyme_runtime_activity", i32 %len, metadata !"enzyme_const", float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, i32 %len, metadata !"enzyme_const", float* noalias %m, i32 %incm, float* noalias %n, float* %dn, i32 %incn)
   ret void
 }
 
 define void @inactiveModSecond(i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, float* noalias %n, i32 %incn) {
 entry:
-  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, metadata !"enzyme_runtime_activity", i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, metadata !"enzyme_const", float* noalias %n, i32 %incn)
+  call void (...) @__enzyme_autodiff(float (i32, float*, i32, float*, i32)* @modf, i32 %len, float* noalias %m, float* noalias %dm, i32 %incm, metadata !"enzyme_const", float* noalias %n, i32 %incn)
   ret void
 }
 

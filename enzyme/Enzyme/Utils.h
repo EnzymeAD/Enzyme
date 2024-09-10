@@ -687,9 +687,6 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #endif
 
-std::vector<std::tuple<llvm::Type *, size_t, size_t>>
-parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
-
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
@@ -1159,7 +1156,7 @@ static inline llvm::StringRef getFuncName(llvm::Function *called) {
     return called->getName();
 }
 
-static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
+template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_math"))
@@ -1173,23 +1170,11 @@ static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   return "";
 }
 
-static inline bool hasNoCache(llvm::Value *op) {
-  using namespace llvm;
-  if (auto CB = dyn_cast<CallBase>(op)) {
-    if (auto called = getFunctionFromCall(CB)) {
-      if (called->hasFnAttribute("enzyme_nocache"))
-        return true;
-    }
-  }
-  return false;
-}
-
+template <typename T>
 #if LLVM_VERSION_MAJOR >= 16
-static inline std::optional<size_t>
-getAllocationIndexFromCall(const llvm::CallBase *op)
+static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
 #else
-static inline llvm::Optional<size_t>
-getAllocationIndexFromCall(const llvm::CallBase *op)
+static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
 #endif
 {
   auto AttrList =

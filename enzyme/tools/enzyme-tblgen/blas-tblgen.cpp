@@ -370,7 +370,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
      << "  // returns true, or if runtimeActivity is on and the\n"
      << "  // shadow points to the primal arg.\n";
 
-  os << "  if(gutils->runtimeActivity && cacheMode) {\n";
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
   for (size_t i = 0; i < actArgs.size(); i++) {
     auto name = nameVec[actArgs[i]];
 
@@ -805,7 +805,7 @@ SmallString<80> ValueType_helper(const TGPattern &pattern, ssize_t actPos,
 void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
                             StringRef B, bool isFP, raw_ostream &os) {
   os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
-     << tab << "if (gutils->runtimeActivity && cacheMode"
+     << tab << "if (EnzymeRuntimeActivityCheck && cacheMode"
      << (isFP ? " && byRefFloat" : "") << ") {\n"
      << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
      << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
@@ -1038,11 +1038,18 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       }
       os << "SmallVector<Value*, 1> vals;\n";
       os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
-         << ".size(); i++) {\n";
+         << ".size(); i++) vals.push_back(";
+      if (op != "Select")
+        os << "to_blas_callconv(Builder2, ";
+      if (op == "Select")
+        os << " CreateSelect(Builder2, ";
+      else
+        os << "Builder2.Create" << op << "(";
 
       const auto tys = Def->getValueAsListOfStrings("tys");
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
-        os << "  auto subarg_" << i << " = ";
+        if (i != 0)
+          os << ", ";
         if (op != "Select" || i == 0)
           os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
              << i << ".size() == 1 ? 0 : i], byRef)";
@@ -1051,21 +1058,6 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
                 "marg_1[marg_1.size() == 1 ? 0 : i]->getType())";
         else
           os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
-        os << ";\n";
-      }
-
-      os << "  vals.push_back(";
-      if (op != "Select")
-        os << "to_blas_callconv(Builder2, ";
-      if (op == "Select")
-        os << " CreateSelect(Builder2, ";
-      else
-        os << "Builder2.Create" << op << "(";
-
-      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
-        if (i != 0)
-          os << ", ";
-        os << "subarg_" << i;
       }
       if (op != "Select")
         os << "), byRef, cublas, julia_decl_type, "
@@ -1073,7 +1065,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
            << Def->getValueAsString("s") << "\" )";
       else
         os << ")";
-      os << ");\n }\n vals; })";
+      os << ");\n vals; })";
       return;
     }
     if (Def->isSubClassOf("BIntrinsic")) {
@@ -1425,7 +1417,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   os << "        if (byRef) {\n";
   int n = 0;
   if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf" ||
-      func == "lacpy" || func == "spmv" || func == "spr2" || func == "symv")
+      func == "lacpy" || func == "spmv" || func == "spr2")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
@@ -1876,7 +1868,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       Init *subArg = ruleDag->getArg(i);
       DagInit *sub_Dag = cast<DagInit>(subArg);
       os << "      Value *sub_" << i << " = nullptr;\n";
-      emit_dag(forward, llvm::Twine("sub_") + std::to_string(i), sub_Dag,
+      auto resultVarName2 = llvm::Twine("sub_") + std::to_string(i);
+      emit_dag(forward, resultVarName2, sub_Dag,
                argName + "_" + std::to_string(i), os, argName, actArg, pattern,
                /*runtimeChecked*/ false, vars);
       os << "       if(sub_" << i << " && " << resultVarName << ") "
@@ -1928,7 +1921,8 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       Init *subArg = ruleDag->getArg(i);
       DagInit *sub_Dag = cast<DagInit>(subArg);
       os << "      Value *sub_" << i << " = nullptr;\n";
-      emit_dag(forward, llvm::Twine("sub_") + std::to_string(i), sub_Dag,
+      auto resultVarName2 = llvm::Twine("sub_") + std::to_string(i);
+      emit_dag(forward, resultVarName2, sub_Dag,
                argName + "_" + std::to_string(i), os, argName, actArg, pattern,
                runtimeChecked, vars);
     }
@@ -2031,7 +2025,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "                                                    \n"
      << "    auto callval = call.getCalledOperand();       \n\n";
 
-  os << "  if (gutils->runtimeActivity) {\n"
+  os << "  if (EnzymeRuntimeActivityCheck) {\n"
      << "    std::string s;\n"
      << "    llvm::raw_string_ostream ss(s);\n"
      << "    ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
@@ -2193,7 +2187,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
 
-  os << "  if(gutils->runtimeActivity && cacheMode) {\n";
+  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto name = nameVec[activeArgs[i]];
 

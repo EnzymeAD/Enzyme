@@ -48,6 +48,7 @@ list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
@@ -167,8 +168,15 @@ add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
+set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
+if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
+endif()
+
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+if (${LLVM_VERSION_MAJOR} GREATER 14)
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+endif()
 
 add_library(LLDEnzymeAssumeUnknownNoFree INTERFACE)
 target_link_options(LLDEnzymeAssumeUnknownNoFree INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")

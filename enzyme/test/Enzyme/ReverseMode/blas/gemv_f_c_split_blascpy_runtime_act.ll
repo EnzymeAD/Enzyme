@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1  -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s
 
 ; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
 ; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.
@@ -41,7 +41,7 @@ declare dso_local void @__enzyme_autodiff(...)
 
 define void @active(i8* %y, i8* %dy, i8* %A, i8* %dA, i8* %x, i8* %dx, i8* %alpha, i8* %dalpha, i8* %beta, i8* %dbeta) {
 entry:
-  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_runtime_activity", metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_const", i8* %x, metadata !"enzyme_const", i8* %alpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
+  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_const", i8* %x, metadata !"enzyme_const", i8* %alpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
   ret void
 }
 

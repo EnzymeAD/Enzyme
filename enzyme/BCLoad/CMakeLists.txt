@@ -81,6 +81,15 @@ set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()
 
 if ((NOT ("${BC_LOAD_HEADER}" STREQUAL "")) OR ${Clang_FOUND})
+if (${LLVM_VERSION_MAJOR} LESS 8)
+    add_llvm_loadable_module( BCPass-${LLVM_VERSION_MAJOR}
+        BCLoader.cpp ClangBCLoader.cpp
+        DEPENDS
+        intrinsics_gen
+        PLUGIN_TOOL
+        opt
+    )
+else()
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
     add_llvm_library( BCPass-${LLVM_VERSION_MAJOR}
@@ -102,6 +111,7 @@ else()
         opt
         BUILDTREE_ONLY
     )
+endif()
 endif()
 
 add_dependencies(BCPass-${LLVM_VERSION_MAJOR} blasheaders)

@@ -47,8 +47,8 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %[[i5]] = add nuw nsw i32 %[[i4]], 1
 ; CHECK-NEXT:   %[[i6:.+]] = getelementptr inbounds double, double* %[[i1]], i32 %[[i4]]
 ; CHECK-NEXT:   %[[i7:.+]] = getelementptr inbounds double, double* %"a4'", i32 %[[i4]]
-; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i6]], align 8
 ; CHECK-NEXT:   %[[i8:.+]] = load double, double* %[[i7]], align 8
+; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[i6]], align 8
 ; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %[[i9]], %[[i8]]
 ; CHECK-NEXT:   %[[p12]] = fadd fast double %[[p5]], %[[i10]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[i7]], align 8

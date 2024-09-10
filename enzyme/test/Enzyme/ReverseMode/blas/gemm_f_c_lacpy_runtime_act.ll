@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-lapack-copy=1  -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-lapack-copy=1 -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s
 
 declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i64, i64) 
 
@@ -37,7 +37,7 @@ declare dso_local void @__enzyme_autodiff(...)
 
 define void @active(i8* %C, i8* %dC, i8* %A, i8* %dA, i8* %B, i8* %dB, i8* %alpha, i8* %dalpha, i8* %beta, i8* %dbeta) {
 entry:
-  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @f, metadata !"enzyme_runtime_activity", metadata !"enzyme_dup", i8* %C, i8* %dC, metadata !"enzyme_dup", i8* %A, i8* %A, metadata !"enzyme_dup", i8* %B, i8* %dB, metadata !"enzyme_dup", i8* %alpha, i8* %dalpha, metadata !"enzyme_dup", i8* %beta, i8* %beta)
+  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @f, metadata !"enzyme_dup", i8* %C, i8* %dC, metadata !"enzyme_dup", i8* %A, i8* %A, metadata !"enzyme_dup", i8* %B, i8* %dB, metadata !"enzyme_dup", i8* %alpha, i8* %dalpha, metadata !"enzyme_dup", i8* %beta, i8* %beta)
   ret void
 }
 

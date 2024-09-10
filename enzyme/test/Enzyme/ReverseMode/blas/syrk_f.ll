@@ -120,13 +120,12 @@ entry:
 ; CHECK-NEXT:   %[[i27:.+]] = mul i64 %[[i26]], %[[i17]]
 ; CHECK-NEXT:   %[[i28:.+]] = add i64 %[[i23]], %[[i27]]
 ; CHECK-NEXT:   %[[i15:.+]] = bitcast i8* %"C'" to double*
-
 ; CHECK-NEXT:   %[[i29:.+]] = getelementptr double, double* %[[i15]], i64 %[[i28]]
 ; CHECK-NEXT:   %[[zz:.+]] = bitcast double* %[[i29]] to i8*
-; CHECK-NEXT:   %[[i31:.+]] = bitcast i8* %alpha_p to double*
-; CHECK-NEXT:   %[[i32:.+]] = load double, double* %[[i31]], align 8
 ; CHECK-NEXT:   %[[mm:.+]] = bitcast i8* %[[zz]] to double*
 ; CHECK-NEXT:   %[[i30:.+]] = load double, double* %[[mm]], align 8
+; CHECK-NEXT:   %[[i31:.+]] = bitcast i8* %alpha_p to double*
+; CHECK-NEXT:   %[[i32:.+]] = load double, double* %[[i31]], align 8
 ; CHECK-NEXT:   %[[i33:.+]] = fmul fast double %[[i32]], %[[i30]]
 ; CHECK-NEXT:   store double %[[i33]], double* %byref.FMul, align 8
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0, align 4
