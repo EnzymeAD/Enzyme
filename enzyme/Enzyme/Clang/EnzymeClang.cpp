@@ -47,8 +47,6 @@ constexpr auto StructKind = clang::TagTypeKind::Struct;
 constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
 #endif
 
-constexpr auto stringkind = clang::StringLiteral::StringKind::Ascii;
-
 template <typename ConsumerType>
 class EnzymeAction final : public clang::PluginASTAction {
 protected:
