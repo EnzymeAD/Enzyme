@@ -5614,11 +5614,6 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
       BasicBlock::Create(NewF->getContext(), "placeholders", NewF);
 
   IRBuilder<> PlaceholderBuilder(placeholderBB);
-#if LLVM_VERSION_MAJOR >= 18
-  auto It = PlaceholderBuilder.GetInsertPoint();
-  It.setHeadBit(true);
-  PlaceholderBuilder.SetInsertPoint(It);
-#endif
   PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
   ValueToValueMapTy vmap;
   auto DestArg = NewF->arg_begin();
@@ -5990,6 +5985,16 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
     }
   }
 
+  // clang-format off
+  const char* NoFreeDemanglesStartsWith[] = {
+    "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
+    "std::basic_ostream<char, std::char_traits<char>>::operator<<",
+    "std::ostream::operator<<",
+    "std::ostream& std::ostream::_M_insert",
+    "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert",
+  };
+  // clang-format on
+  
   if (auto CI = dyn_cast<CallInst>(todiff)) {
     TargetLibraryInfo &TLI =
         PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
@@ -5997,14 +6002,6 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
       return CI;
     if (auto F = CI->getCalledFunction()) {
 
-      // clang-format off
-      const char* NoFreeDemanglesStartsWith[] = {
-          "std::basic_ostream<char, std::char_traits<char>>& std::__ostream_insert<char, std::char_traits<char>>",
-          "std::basic_ostream<char, std::char_traits<char>>::operator<<",
-          "std::ostream::operator<<",
-          "std::ostream& std::ostream::_M_insert",
-      };
-      // clang-format on
 
       demangledCall = llvm::demangle(F->getName().str());
       // replace all '> >' with '>>'
@@ -6017,6 +6014,45 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
         if (startsWith(demangledCall, Name))
           return CI;
     }
+  }
+  if (auto PN = dyn_cast<PHINode>(todiff)) {
+    Value *illegal = nullptr;
+    for (auto &op : PN->incoming_values()) {
+      
+      if (auto CI = dyn_cast<CallInst>(op)) {
+	    TargetLibraryInfo &TLI =
+		PPC.FAM.getResult<TargetLibraryAnalysis>(*CI->getParent()->getParent());
+	    if (isAllocationFunction(getFuncNameFromCall(CI), TLI))
+	      continue;
+	    if (auto F = CI->getCalledFunction()) {
+
+
+	      demangledCall = llvm::demangle(F->getName().str());
+	      // replace all '> >' with '>>'
+	      size_t start = 0;
+	      while ((start = demangledCall.find("> >", start)) != std::string::npos) {
+		demangledCall.replace(start, 3, ">>");
+	      }
+
+	      bool legal = false;
+	      for (auto Name : NoFreeDemanglesStartsWith)
+		if (startsWith(demangledCall, Name)) {
+		  legal = true;
+		  break;
+		}
+	        illegal = op;
+		break;
+	      }
+	      continue;
+	    }
+      }
+      demangledCall = "";
+      illegal = op;
+      break;
+    }
+    if (!illegal)
+	return PN;
+
   }
 
   if (auto GV = dyn_cast<GlobalVariable>(todiff)) {
@@ -6072,7 +6108,12 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
   std::string s;
   llvm::raw_string_ostream ss(s);
   ss << "No create nofree of unknown value\n";
-  ss << *todiff << "\n";
+  ss << *todiff << "\n"; 
+  if (auto PN = dyn_cast<PHINode>(todiff)) {
+	for (auto &op : PN->incoming_values()) {
+		ss << " - " << *op << "\n";
+	}
+  }
   if (demangledCall.size()) {
     ss << " demangled (" << demangledCall << ")\n";
   }
