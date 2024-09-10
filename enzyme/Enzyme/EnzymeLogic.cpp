@@ -6043,7 +6043,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
 	        illegal = op;
 		break;
 	      }
-	      continue;
+              continue;
       }
       demangledCall = "";
       illegal = op;
