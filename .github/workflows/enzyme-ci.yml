@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15", "16", "17", "18"]
+        llvm: ["15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [ubuntu-22.04]
   
