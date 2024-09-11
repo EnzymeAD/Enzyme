@@ -19,7 +19,7 @@ jobs:
       matrix:
         llvm: ["15", "16", "17", "18"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [ubuntu-22.04]
+        os: [ubuntu-20.04]
     
     timeout-minutes: 45
     
