@@ -2534,10 +2534,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 PointerType::getUnqual(types[2])),
             idxs);
 
-        auto acc = Builder2.CreateFAdd(
-            acc_idx,
-            Builder2.CreateFMul(Builder2.CreateLoad(types[2], dtmp_idx),
-                                Builder2.CreateLoad(types[2], d_req)));
+        auto l0 = Builder2.CreateLoad(types[2], dtmp_idx);
+        auto l1 = Builder2.CreateLoad(types[2], d_req);
+        auto acc = Builder2.CreateFAdd(acc_idx, Builder2.CreateFMul(l0, l1));
         Builder2.CreateStore(Constant::getNullValue(types[2]), d_req);
 
         acc_idx->addIncoming(acc, loopBlock);
