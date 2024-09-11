@@ -54,12 +54,10 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
 
-#if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
-#endif
 
 using namespace llvm;
 
@@ -964,8 +962,6 @@ void EnzymeDumpModuleRef(LLVMModuleRef M) {
   llvm::errs() << *unwrap(M) << "\n";
 }
 
-#if LLVM_VERSION_MAJOR >= 15
-
 static bool runAttributorOnFunctions(InformationCache &InfoCache,
                                      SetVector<Function *> &Functions,
                                      AnalysisGetter &AG,
@@ -1023,11 +1019,6 @@ extern "C++" char MyAttributorLegacyPass::ID = 0;
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(new MyAttributorLegacyPass());
 }
-#else
-void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createAttributorLegacyPass());
-}
-#endif
 
 LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   auto M = cast<MDNode>(unwrap(MD));
@@ -1089,12 +1080,7 @@ void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
   size_t argremsz = 0;
   size_t nexti = 0;
   SmallVector<Value *, 1> vals;
-#if LLVM_VERSION_MAJOR >= 14
-  for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-#else
-  for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
-#endif
-  {
+  for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
     if (argremsz < num_argrem) {
       if (i == argrem[argremsz]) {
         argremsz++;
@@ -1188,13 +1174,8 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   if (!keepReturn) {
     for (auto &B : *NewF) {
@@ -1405,13 +1386,8 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   {
     IRBuilder<> EB(&*NewF->getEntryBlock().begin());
@@ -1441,12 +1417,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
                                        AttributeList::ReturnIndex, attr);
 
     SmallVector<Value *, 1> vals;
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t j = 0, end = CI->arg_size(); j < end; j++)
-#else
-    for (size_t j = 0, end = CI->getNumArgOperands(); j < end; j++)
-#endif
-    {
+    for (size_t j = 0, end = CI->arg_size(); j < end; j++) {
 
       auto T = CI->getArgOperand(j)->getType();
       if (auto AT = dyn_cast<ArrayType>(T)) {
@@ -1695,13 +1666,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   SmallVector<CallInst *, 1> callers;
   for (auto U : F->users()) {
@@ -1747,11 +1713,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       }
       return offset;
     } else if (auto VT = dyn_cast<VectorType>(T)) {
-#if LLVM_VERSION_MAJOR >= 12
       size_t count = VT->getElementCount().getKnownMinValue();
-#else
-      size_t count = VT->getNumElements();
-#endif
       for (size_t i = 0; i < count; i++) {
         offset = recur(B, B.CreateExtractElement(V, i), offset);
       }
@@ -1912,12 +1874,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
     SmallVector<Value *, 1> sret_vals;
     SmallVector<Value *, 1> sretv_vals;
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-#else
-    for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
-#endif
-    {
+    for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
       if (rroots.count(i) || rroots_v.count(i)) {
         continue;
       }

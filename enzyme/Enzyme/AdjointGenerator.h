@@ -171,7 +171,6 @@ public:
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NoAlias);
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
@@ -180,20 +179,6 @@ public:
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
-#if LLVM_VERSION_MAJOR < 14
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::ArgMemOnly);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
     auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Type_size", FT, AL),
@@ -201,12 +186,8 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
     CI->setOnlyAccessesArgMemory();
 #else
-#if LLVM_VERSION_MAJOR >= 14
     CI->addAttributeAtIndex(AttributeList::FunctionIndex,
                             Attribute::ArgMemOnly);
-#else
-    CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
-#endif
 #endif
     return B.CreateLoad(intType, alloc);
   }
@@ -230,28 +211,14 @@ public:
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoFree);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
@@ -277,28 +244,14 @@ public:
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoFree);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
@@ -334,14 +287,12 @@ public:
                  Constant::getNullValue(gutils->getShadowType(inst.getType())),
                  Builder2);
     }
-#if LLVM_VERSION_MAJOR >= 12
     if (!inst.getType()->isVoidTy()) {
       for (auto &U :
            make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
         U.set(UndefValue::get(inst.getType()));
       }
     }
-#endif
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -799,15 +750,9 @@ public:
           if (!gutils->isConstantInstruction(&I)) {
             assert(ptr);
             AtomicRMWInst *rmw = nullptr;
-#if LLVM_VERSION_MAJOR >= 13
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
                                            I.getSyncScopeID());
-#else
-            rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
-                                           I.getOrdering(), I.getSyncScopeID());
-            rmw->setAlignment(I.getAlign());
-#endif
             rmw->setVolatile(I.isVolatile());
             if (gutils->isConstantValue(&I))
               return Constant::getNullValue(dif->getType());
@@ -904,14 +849,12 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-#if LLVM_VERSION_MAJOR >= 12
     if (!I.getType()->isVoidTy()) {
       for (auto &U :
            make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
         U.set(UndefValue::get(I.getType()));
       }
     }
-#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -1555,11 +1498,7 @@ public:
                 Value *inc = lookup(lc.incvar, Builder2);
                 if (VectorType *VTy =
                         dyn_cast<VectorType>(SI.getOperand(0)->getType())) {
-#if LLVM_VERSION_MAJOR >= 12
                   inc = Builder2.CreateVectorSplat(VTy->getElementCount(), inc);
-#else
-                  inc = Builder2.CreateVectorSplat(VTy->getNumElements(), inc);
-#endif
                 }
                 Value *dif = CreateSelect(
                     Builder2,
@@ -1774,15 +1713,10 @@ public:
       getReverseBuilder(Builder2);
 
       auto loaded = diffe(&SVI, Builder2);
-#if LLVM_VERSION_MAJOR >= 12
       auto count =
           cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
       assert(!count.isScalable());
       size_t l1 = count.getKnownMinValue();
-#else
-      size_t l1 =
-          cast<VectorType>(SVI.getOperand(0)->getType())->getNumElements();
-#endif
       uint64_t instidx = 0;
 
       for (size_t idx : SVI.getShuffleMask()) {
@@ -2482,19 +2416,11 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2724,19 +2650,10 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2909,12 +2826,7 @@ public:
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
       Value *op3 = nullptr;
-#if LLVM_VERSION_MAJOR >= 14
-      if (3 < MS.arg_size())
-#else
-      if (3 < MS.getNumArgOperands())
-#endif
-      {
+      if (3 < MS.arg_size()) {
         op3 = gutils->getNewFromOriginal(MS.getOperand(3));
       }
 
@@ -2951,12 +2863,8 @@ public:
                    {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
                     AttributeList::FirstArgIndex})
                 for (auto attr : MS.getAttributes().getAttributes(idx))
-#if LLVM_VERSION_MAJOR >= 14
                   NewAttrs =
                       NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
-#else
-                  NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
-#endif
               cal->setAttributes(NewAttrs);
             } else
               cal->setAttributes(MS.getAttributes());
@@ -3159,12 +3067,7 @@ public:
     Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
     Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
     Value *op3 = nullptr;
-#if LLVM_VERSION_MAJOR >= 14
-    if (3 < MS.arg_size())
-#else
-    if (3 < MS.getNumArgOperands())
-#endif
-    {
+    if (3 < MS.arg_size()) {
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
@@ -3292,12 +3195,8 @@ public:
                  {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
                   AttributeList::FirstArgIndex})
               for (auto attr : MS.getAttributes().getAttributes(idx))
-#if LLVM_VERSION_MAJOR >= 14
                 NewAttrs =
                     NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
-#else
-                NewAttrs = NewAttrs.addAttribute(MS.getContext(), idx, attr);
-#endif
             cal->setAttributes(NewAttrs);
           } else
             cal->setAttributes(MS.getAttributes());
@@ -3805,7 +3704,6 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-#if LLVM_VERSION_MAJOR >= 12
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
             ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
@@ -3818,7 +3716,6 @@ public:
                         "failed to deduce type of intrinsic ", I);
             return false;
           }
-#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -3889,7 +3786,6 @@ public:
         return false;
       }
 
-#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
@@ -3926,11 +3822,9 @@ public:
         }
         return false;
       }
-#endif
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-#if LLVM_VERSION_MAJOR >= 12
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
             ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
@@ -3943,23 +3837,16 @@ public:
                         "failed to deduce type of intrinsic ", I);
             return false;
           }
-#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
         ss << *gutils->newFunc << "\n";
         if (Intrinsic::isOverloaded(ID))
-#if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID, ArrayRef<Type *>(),
                                    gutils->oldFunc->getParent(), nullptr)
              << "\n"
              << I;
-#else
-          ss << "cannot handle (reverse) unknown intrinsic\n"
-             << Intrinsic::getName(ID, ArrayRef<Type *>()) << "\n"
-             << I;
-#endif
         else
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
@@ -3978,7 +3865,6 @@ public:
 
       switch (ID) {
 
-#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (gutils->isConstantInstruction(&I))
           return false;
@@ -4015,11 +3901,9 @@ public:
         setDiffe(&I, dif, Builder2);
         return false;
       }
-#endif
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-#if LLVM_VERSION_MAJOR >= 12
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
             ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
@@ -4032,21 +3916,14 @@ public:
                         "failed to deduce type of intrinsic ", I);
             return false;
           }
-#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         if (Intrinsic::isOverloaded(ID))
-#if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID, ArrayRef<Type *>(),
                                    gutils->oldFunc->getParent(), nullptr)
              << "\n"
              << I;
-#else
-          ss << "cannot handle (forward) unknown intrinsic\n"
-             << Intrinsic::getName(ID, ArrayRef<Type *>()) << "\n"
-             << I;
-#endif
         else
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
@@ -4121,12 +3998,7 @@ public:
     SmallVector<Value *, 4> OutTypes;
     SmallVector<Type *, 4> OutFPTypes;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 3; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 3; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 3; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -4579,39 +4451,20 @@ public:
             MaybeAlign align;
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
-#if LLVM_VERSION_MAJOR >= 12
               assert(!vt->getElementCount().isScalable());
               size_t numElems = vt->getElementCount().getKnownMinValue();
-#else
-              size_t numElems = vt->getNumElements();
-#endif
               for (size_t i = 0; i < numElems; ++i) {
                 auto vdif = B.CreateExtractElement(dif, i);
                 Value *Idxs[] = {
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
                 auto vptr = B.CreateInBoundsGEP(vt, ptr, Idxs);
-#if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
-#else
-                AtomicRMWInst *rmw =
-                    B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                      SyncScope::System);
-                if (align)
-                  rmw->setAlignment(align.getValue());
-#endif
               }
             } else {
-#if LLVM_VERSION_MAJOR >= 13
               B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
                                 SyncScope::System);
-#else
-              AtomicRMWInst *rmw = B.CreateAtomicRMW(
-                  op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
-              if (align)
-                rmw->setAlignment(align.getValue());
-#endif
             }
           }
           B.CreateRetVoid();
@@ -4824,27 +4677,15 @@ public:
       std::map<int, Type *> gradByVal;
       std::map<int, std::vector<Attribute>> structAttrs;
 
-#if LLVM_VERSION_MAJOR >= 14
-      for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-      for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-      {
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
-              Attribute::get(call.getContext(), "enzyme_sret")
-#else
-              Attribute::get(call.getContext(), "enzyme_sret")
-#endif
-          );
-#if LLVM_VERSION_MAJOR >= 13
+              Attribute::get(call.getContext(), "enzyme_sret"));
           // TODO
           // structAttrs[args.size()].push_back(Attribute::get(
           //     call.getContext(), Attribute::AttrKind::ElementType,
           //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
-#endif
         }
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
                           "enzymejl_parmtype_ref", "enzyme_type"})
@@ -4918,35 +4759,23 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
-#else
-                Attribute::get(call.getContext(), "enzyme_sret")
-#endif
+                // orig->getParamAttr(i,
+                // Attribute::StructRet).getValueAsType());
             );
-#if LLVM_VERSION_MAJOR >= 13
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
             //     call.getContext(), Attribute::AttrKind::ElementType,
             //     call.getParamAttr(i,
             //     Attribute::StructRet).getValueAsType()));
-#endif
           } else {
             structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
-                Attribute::get(call.getContext(), "enzyme_sret")
-#else
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-#endif
-            );
-#if LLVM_VERSION_MAJOR >= 13
+                Attribute::get(call.getContext(), "enzyme_sret_v"));
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
             //     call.getContext(), Attribute::AttrKind::ElementType,
             //     call.getParamAttr(i,
             //     Attribute::StructRet).getValueAsType()));
-#endif
           }
         }
 
@@ -5133,12 +4962,7 @@ public:
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -5152,16 +4976,10 @@ public:
         }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
         structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
             // TODO persist types
             Attribute::get(call.getContext(), "enzyme_sret")
-        // Attribute::get(orig->getContext(), "enzyme_sret",
-        // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
-#else
-            // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret")
-        // Attribute::get(orig->getContext(), "enzyme_sret");
-#endif
+            // Attribute::get(orig->getContext(), "enzyme_sret",
+            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
         );
       }
       for (auto ty : PrimalParamAttrsToPreserve)
@@ -5256,26 +5074,19 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
-            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
-#else
-                Attribute::get(call.getContext(), "enzyme_sret")
-#endif
+                // Attribute::get(orig->getContext(), "enzyme_sret",
+                // orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType());
             );
           } else {
             structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret_v")
-            // Attribute::get(orig->getContext(), "enzyme_sret_v",
-            // gutils->getShadowType(orig->getParamAttr(ii,
-            // Attribute::StructRet).getValueAsType()));
-#else
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-#endif
+                // Attribute::get(orig->getContext(), "enzyme_sret_v",
+                // gutils->getShadowType(orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType()));
             );
           }
         }
@@ -5315,14 +5126,8 @@ public:
       BundleTypes.push_back(revType);
     }
     if (called) {
-#if LLVM_VERSION_MAJOR >= 14
       if (call.arg_size() !=
-          cast<Function>(called)->getFunctionType()->getNumParams())
-#else
-      if (call.getNumArgOperands() !=
-          cast<Function>(called)->getFunctionType()->getNumParams())
-#endif
-      {
+          cast<Function>(called)->getFunctionType()->getNumParams()) {
         llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
@@ -5956,12 +5761,7 @@ public:
         structidx++;
     }
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
       if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
         Value *diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
         ++structidx;
@@ -6405,12 +6205,7 @@ public:
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

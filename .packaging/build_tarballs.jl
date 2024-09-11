@@ -11,7 +11,7 @@ repo = "https://github.com/EnzymeAD/Enzyme.git"
 auto_version = "%ENZYME_VERSION%"
 version = VersionNumber(split(auto_version, "/")[end])
 
-llvm_versions = [v"11.0.1", v"12.0.1", v"13.0.1", v"14.0.2", v"15.0.7", v"16.0.6", v"17.0.6"]
+llvm_versions = [v"15.0.7", v"16.0.6", v"17.0.6"]
 
 # Collection of sources required to build attr
 sources = [
@@ -167,6 +167,6 @@ for (i,build) in enumerate(builds)
     build_tarballs(i == lastindex(builds) ? non_platform_ARGS : non_reg_ARGS,
                    name, version, sources, script,
                    build.platforms, build.products, build.dependencies;
-                   preferred_gcc_version=build.gcc_version, julia_compat="1.6",
+                   preferred_gcc_version=build.gcc_version, julia_compat="1.10",
                    augment_platform_block, lazy_artifacts=true) # drop when julia_compat >= 1.7
 end

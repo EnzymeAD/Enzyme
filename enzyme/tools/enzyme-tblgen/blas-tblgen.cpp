@@ -1038,18 +1038,11 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
       }
       os << "SmallVector<Value*, 1> vals;\n";
       os << "for(size_t i=0; i<marg_" << (Dag->getNumArgs() - 1)
-         << ".size(); i++) vals.push_back(";
-      if (op != "Select")
-        os << "to_blas_callconv(Builder2, ";
-      if (op == "Select")
-        os << " CreateSelect(Builder2, ";
-      else
-        os << "Builder2.Create" << op << "(";
+         << ".size(); i++) {\n";
 
       const auto tys = Def->getValueAsListOfStrings("tys");
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
-        if (i != 0)
-          os << ", ";
+        os << "  auto subarg_" << i << " = ";
         if (op != "Select" || i == 0)
           os << "load_if_ref(Builder2, " << tys[i] << ", marg_" << i << "[marg_"
              << i << ".size() == 1 ? 0 : i], byRef)";
@@ -1058,6 +1051,21 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
                 "marg_1[marg_1.size() == 1 ? 0 : i]->getType())";
         else
           os << "marg_" << i << "[marg_" << i << ".size() == 1 ? 0 : i]";
+        os << ";\n";
+      }
+
+      os << "  vals.push_back(";
+      if (op != "Select")
+        os << "to_blas_callconv(Builder2, ";
+      if (op == "Select")
+        os << " CreateSelect(Builder2, ";
+      else
+        os << "Builder2.Create" << op << "(";
+
+      for (size_t i = 0; i < Dag->getNumArgs(); i++) {
+        if (i != 0)
+          os << ", ";
+        os << "subarg_" << i;
       }
       if (op != "Select")
         os << "), byRef, cublas, julia_decl_type, "
@@ -1065,7 +1073,7 @@ void rev_call_arg(bool forward, DagInit *ruleDag, const TGPattern &pattern,
            << Def->getValueAsString("s") << "\" )";
       else
         os << ")";
-      os << ");\n vals; })";
+      os << ");\n }\n vals; })";
       return;
     }
     if (Def->isSubClassOf("BIntrinsic")) {
