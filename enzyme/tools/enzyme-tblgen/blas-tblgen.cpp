@@ -1876,8 +1876,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       Init *subArg = ruleDag->getArg(i);
       DagInit *sub_Dag = cast<DagInit>(subArg);
       os << "      Value *sub_" << i << " = nullptr;\n";
-      auto resultVarName2 = llvm::Twine("sub_") + std::to_string(i);
-      emit_dag(forward, resultVarName2, sub_Dag,
+      emit_dag(forward, llvm::Twine("sub_") + std::to_string(i), sub_Dag,
                argName + "_" + std::to_string(i), os, argName, actArg, pattern,
                /*runtimeChecked*/ false, vars);
       os << "       if(sub_" << i << " && " << resultVarName << ") "
@@ -1929,8 +1928,7 @@ void emit_dag(bool forward, Twine resultVarName, DagInit *ruleDag,
       Init *subArg = ruleDag->getArg(i);
       DagInit *sub_Dag = cast<DagInit>(subArg);
       os << "      Value *sub_" << i << " = nullptr;\n";
-      auto resultVarName2 = llvm::Twine("sub_") + std::to_string(i);
-      emit_dag(forward, resultVarName2, sub_Dag,
+      emit_dag(forward, llvm::Twine("sub_") + std::to_string(i), sub_Dag,
                argName + "_" + std::to_string(i), os, argName, actArg, pattern,
                runtimeChecked, vars);
     }
