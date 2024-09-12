@@ -535,8 +535,7 @@ public:
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
-      bool runtimeActivity,
-      unsigned width, bool AtomicAdd, bool omp = false);
+      bool runtimeActivity, unsigned width, bool AtomicAdd, bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -658,9 +657,9 @@ public:
   llvm::Function *CreateForwardDiff(
       RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-      bool returnValue, DerivativeMode mode, bool freeMemory, bool runtimeActivity, unsigned width,
-      llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
-      const std::vector<bool> _overwritten_args,
+      bool returnValue, DerivativeMode mode, bool freeMemory,
+      bool runtimeActivity, unsigned width, llvm::Type *additionalArg,
+      const FnTypeInfo &typeInfo, const std::vector<bool> _overwritten_args,
       const AugmentedReturn *augmented, bool omp = false);
 
   /// Create a function batched in its inputs.

@@ -1929,8 +1929,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
-    bool runtimeActivity,
-    unsigned width, bool AtomicAdd, bool omp) {
+    bool runtimeActivity, unsigned width, bool AtomicAdd, bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
@@ -1947,7 +1946,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            returnUsed,    shadowReturnUsed,
                            oldTypeInfo,   forceAnonymousTape,
                            AtomicAdd,     omp,
-                           width, runtimeActivity};
+                           width,         runtimeActivity};
 
   if (_overwritten_args.size() != todiff->arg_size()) {
     std::string s;
@@ -2290,7 +2289,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo, retType, constant_args,
+      *this, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo, retType,
+      constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
 
@@ -3004,7 +3004,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     auto GV = pair.first;
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
-        context, *this, TLI, TA, todiff, pair.second, gutils->runtimeActivity, width, gutils->AtomicAdd);
+        context, *this, TLI, TA, todiff, pair.second, gutils->runtimeActivity,
+        width, gutils->AtomicAdd);
     SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
     GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
@@ -3640,7 +3641,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.overwritten_args,
-          /*forceAnonymousTape*/ false, key.runtimeActivity, key.width, key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.runtimeActivity, key.width,
+          key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3681,21 +3683,22 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){.todiff = key.todiff,
-                            .retType = key.retType,
-                            .constant_args = key.constant_args,
-                            .overwritten_args = key.overwritten_args,
-                            .returnUsed = false,
-                            .shadowReturnUsed = false,
-                            .mode = DerivativeMode::ReverseModeGradient,
-                            .width = key.width,
-                            .freeMemory = key.freeMemory,
-                            .AtomicAdd = key.AtomicAdd,
-                            .additionalType = tape ? tape->getType() : nullptr,
-                            .forceAnonymousTape = key.forceAnonymousTape,
-                            .typeInfo = key.typeInfo,
-                            .runtimeActivity = key.runtimeActivity,
-                          },
+          (ReverseCacheKey){
+              .todiff = key.todiff,
+              .retType = key.retType,
+              .constant_args = key.constant_args,
+              .overwritten_args = key.overwritten_args,
+              .returnUsed = false,
+              .shadowReturnUsed = false,
+              .mode = DerivativeMode::ReverseModeGradient,
+              .width = key.width,
+              .freeMemory = key.freeMemory,
+              .AtomicAdd = key.AtomicAdd,
+              .additionalType = tape ? tape->getType() : nullptr,
+              .forceAnonymousTape = key.forceAnonymousTape,
+              .typeInfo = key.typeInfo,
+              .runtimeActivity = key.runtimeActivity,
+          },
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -3764,21 +3767,22 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){.todiff = key.todiff,
-                            .retType = key.retType,
-                            .constant_args = next_constant_args,
-                            .overwritten_args = key.overwritten_args,
-                            .returnUsed = key.returnUsed,
-                            .shadowReturnUsed = false,
-                            .mode = DerivativeMode::ReverseModeGradient,
-                            .width = key.width,
-                            .freeMemory = key.freeMemory,
-                            .AtomicAdd = key.AtomicAdd,
-                            .additionalType = nullptr,
-                            .forceAnonymousTape = key.forceAnonymousTape,
-                            .typeInfo = key.typeInfo,
-                            .runtimeActivity = key.runtimeActivity,
-                          },
+          (ReverseCacheKey){
+              .todiff = key.todiff,
+              .retType = key.retType,
+              .constant_args = next_constant_args,
+              .overwritten_args = key.overwritten_args,
+              .returnUsed = key.returnUsed,
+              .shadowReturnUsed = false,
+              .mode = DerivativeMode::ReverseModeGradient,
+              .width = key.width,
+              .freeMemory = key.freeMemory,
+              .AtomicAdd = key.AtomicAdd,
+              .additionalType = nullptr,
+              .forceAnonymousTape = key.forceAnonymousTape,
+              .typeInfo = key.typeInfo,
+              .runtimeActivity = key.runtimeActivity,
+          },
           TA, augmenteddata, omp);
 
       {
@@ -4006,7 +4010,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.runtimeActivity, key.width, key.todiff, TLI, TA, oldTypeInfo, key.retType,
+      *this, key.mode, key.runtimeActivity, key.width, key.todiff, TLI, TA,
+      oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
@@ -4450,9 +4455,9 @@ Function *EnzymeLogic::CreateForwardDiff(
       mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
 
-  ForwardCacheKey tup = {todiff,     retType, constant_args, _overwritten_args,
-                         returnUsed, mode,    width,         additionalArg,
-                         oldTypeInfo, runtimeActivity};
+  ForwardCacheKey tup = {
+      todiff, retType, constant_args, _overwritten_args, returnUsed,
+      mode,   width,   additionalArg, oldTypeInfo,       runtimeActivity};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -4650,7 +4655,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo, retType,
+      *this, mode, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo,
+      retType,
       /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
       additionalArg, omp);
 

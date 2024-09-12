@@ -1696,7 +1696,8 @@ public:
       } else
         newFunc = Logic.CreateForwardDiff(
             context, fn, retType, constants, TA,
-            /*should return*/ primalReturn, mode, freeMemory, options.runtimeActivity, width,
+            /*should return*/ primalReturn, mode, freeMemory,
+            options.runtimeActivity, width,
             /*addedType*/ nullptr, type_args, overwritten_args,
             /*augmented*/ nullptr);
       break;
@@ -1741,7 +1742,8 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
-          /*should return*/ primalReturn, mode, freeMemory, options.runtimeActivity, width,
+          /*should return*/ primalReturn, mode, freeMemory,
+          options.runtimeActivity, width,
           /*addedType*/ tapeType, type_args, overwritten_args, aug);
       break;
     }
@@ -1762,8 +1764,7 @@ public:
                             .additionalType = nullptr,
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
-                            .runtimeActivity = options.runtimeActivity
-                          },
+                            .runtimeActivity = options.runtimeActivity},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1778,7 +1779,8 @@ public:
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
-          type_args, overwritten_args, forceAnonymousTape, options.runtimeActivity, width,
+          type_args, overwritten_args, forceAnonymousTape,
+          options.runtimeActivity, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1830,8 +1832,7 @@ public:
                               .additionalType = tapeType,
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
-                              .runtimeActivity = options.runtimeActivity
-                            },
+                              .runtimeActivity = options.runtimeActivity},
             TA, aug);
     }
     }
@@ -2801,7 +2802,7 @@ public:
       auto val = GradientUtils::GetOrCreateShadowConstant(
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*runtimeActivity*/false, /*width*/ 1, AtomicAdd);
+          pair.second, /*runtimeActivity*/ false, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;

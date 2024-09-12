@@ -127,8 +127,8 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
         "CI->getArgOperand(" + std::to_string(ptrRetArg) + " + offset)";
     os << "  if (cublas) {\n";
     os << "    if (!gutils->isConstantValue(" << retarg << "))\n";
-    os << "      if ((shadow || gutils->runtimeActivity) && val == "
-       << retarg << ") return true;\n";
+    os << "      if ((shadow || gutils->runtimeActivity) && val == " << retarg
+       << ") return true;\n";
     os << "    if (mode != DerivativeMode::ReverseModeGradient && !shadow && "
           "val == "
        << retarg << ") return true;\n";

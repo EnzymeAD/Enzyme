@@ -62,8 +62,8 @@ DiffeGradientUtils::DiffeGradientUtils(
     DerivativeMode mode, bool runtimeActivity, unsigned width, bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn,
-                    shadowReturnUsed, constant_values, origToNew_, mode, runtimeActivity, width,
-                    omp) {
+                    shadowReturnUsed, constant_values, origToNew_, mode,
+                    runtimeActivity, width, omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
@@ -84,11 +84,11 @@ DiffeGradientUtils::DiffeGradientUtils(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity, unsigned width, Function *todiff,
-    TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool shadowReturn, bool diffeReturnArg,
-    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
-    Type *additionalArg, bool omp) {
+    EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
+    unsigned width, Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool shadowReturn,
+    bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+    ReturnType returnValue, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||

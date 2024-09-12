@@ -77,9 +77,10 @@ public:
   llvm::ValueMap<const llvm::Value *, llvm::TrackingVH<llvm::AllocaInst>>
       differentials;
   static DiffeGradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity, unsigned width,
-                  llvm::Function *todiff, llvm::TargetLibraryInfo &TLI,
-                  TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
+                  unsigned width, llvm::Function *todiff,
+                  llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                  FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool shadowReturnArg, bool diffeReturnArg,
                   llvm::ArrayRef<DIFFE_TYPE> constant_args,
                   ReturnType returnValue, llvm::Type *additionalArg, bool omp);

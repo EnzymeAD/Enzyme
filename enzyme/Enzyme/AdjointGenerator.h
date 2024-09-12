@@ -4105,8 +4105,7 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
-            gutils->runtimeActivity,
-            gutils->getWidth(),
+            gutils->runtimeActivity, gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -4316,23 +4315,23 @@ public:
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
             RequestContext(&call, &Builder2),
-            (ReverseCacheKey){.todiff = cast<Function>(called),
-                              .retType = subretType,
-                              .constant_args = argsInverted,
-                              .overwritten_args = overwritten_args,
-                              .returnUsed = false,
-                              .shadowReturnUsed = false,
-                              .mode = DerivativeMode::ReverseModeGradient,
-                              .width = gutils->getWidth(),
-                              .freeMemory = true,
-                              .AtomicAdd = true,
-                              .additionalType =
-                                  tape ? PointerType::getUnqual(tape->getType())
-                                       : nullptr,
-                              .forceAnonymousTape = false,
-                              .typeInfo = nextTypeInfo,
-                              .runtimeActivity = gutils->runtimeActivity,
-                          },
+            (ReverseCacheKey){
+                .todiff = cast<Function>(called),
+                .retType = subretType,
+                .constant_args = argsInverted,
+                .overwritten_args = overwritten_args,
+                .returnUsed = false,
+                .shadowReturnUsed = false,
+                .mode = DerivativeMode::ReverseModeGradient,
+                .width = gutils->getWidth(),
+                .freeMemory = true,
+                .AtomicAdd = true,
+                .additionalType =
+                    tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+                .forceAnonymousTape = false,
+                .typeInfo = nextTypeInfo,
+                .runtimeActivity = gutils->runtimeActivity,
+            },
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -4829,8 +4828,8 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
-            gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
+            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
+            overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
@@ -5218,7 +5217,8 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              overwritten_args, false, gutils->runtimeActivity, gutils->getWidth(), gutils->AtomicAdd);
+              overwritten_args, false, gutils->runtimeActivity,
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
