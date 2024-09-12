@@ -184,7 +184,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (EnzymeRuntimeActivityCheck) {
+      if (gutils->runtimeActivity) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();

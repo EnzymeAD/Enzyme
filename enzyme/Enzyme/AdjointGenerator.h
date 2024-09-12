@@ -441,7 +441,7 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (EnzymeRuntimeActivityCheck && vd[{-1}].isFloat()) {
+          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
             // TODO handle mask
             assert(!mask);
 
@@ -997,7 +997,7 @@ public:
         }
 
       Value *diff = nullptr;
-      if (!EnzymeRuntimeActivityCheck && constantval) {
+      if (!gutils->runtimeActivity && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
@@ -1227,7 +1227,7 @@ public:
           Value *valueop = nullptr;
 
           if (constantval) {
-            if (!EnzymeRuntimeActivityCheck) {
+            if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
                     !isa<ConstantPointerNull>(orig_val)) {
@@ -3290,7 +3290,7 @@ public:
     bool errorIfNoType = true;
     if ((Mode == DerivativeMode::ForwardMode ||
          Mode == DerivativeMode::ForwardModeError) &&
-        (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
+        (!gutils->isConstantValue(orig_src) && !gutils->runtimeActivity)) {
       errorIfNoType = false;
     }
 
@@ -3432,7 +3432,7 @@ public:
               Legal = true;
             }
             if (!gutils->isConstantValue(orig_src) &&
-                !EnzymeRuntimeActivityCheck) {
+                !gutils->runtimeActivity) {
               Legal = true;
             }
           }
@@ -3513,7 +3513,7 @@ public:
               Type::getInt8Ty(ddst->getContext()), ddst, start);
         }
         CallInst *call;
-        // TODO add EnzymeRuntimeActivity (correctness)
+        // TODO add gutils->runtimeActivity (correctness)
         if (dt.isFloat() && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
@@ -4105,7 +4105,7 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
-            gutils->getWidth(),
+            gutils->runtimeActivity, gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -4315,21 +4315,23 @@ public:
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
             RequestContext(&call, &Builder2),
-            (ReverseCacheKey){.todiff = cast<Function>(called),
-                              .retType = subretType,
-                              .constant_args = argsInverted,
-                              .overwritten_args = overwritten_args,
-                              .returnUsed = false,
-                              .shadowReturnUsed = false,
-                              .mode = DerivativeMode::ReverseModeGradient,
-                              .width = gutils->getWidth(),
-                              .freeMemory = true,
-                              .AtomicAdd = true,
-                              .additionalType =
-                                  tape ? PointerType::getUnqual(tape->getType())
-                                       : nullptr,
-                              .forceAnonymousTape = false,
-                              .typeInfo = nextTypeInfo},
+            (ReverseCacheKey){
+                .todiff = cast<Function>(called),
+                .retType = subretType,
+                .constant_args = argsInverted,
+                .overwritten_args = overwritten_args,
+                .returnUsed = false,
+                .shadowReturnUsed = false,
+                .mode = DerivativeMode::ReverseModeGradient,
+                .width = gutils->getWidth(),
+                .freeMemory = true,
+                .AtomicAdd = true,
+                .additionalType =
+                    tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+                .forceAnonymousTape = false,
+                .typeInfo = nextTypeInfo,
+                .runtimeActivity = gutils->runtimeActivity,
+            },
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -4825,8 +4827,9 @@ public:
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
-            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
+            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
+            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
+            overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
@@ -5214,7 +5217,8 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
+              overwritten_args, false, gutils->runtimeActivity,
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -5645,7 +5649,8 @@ public:
                             .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .forceAnonymousTape = false,
-                            .typeInfo = nextTypeInfo},
+                            .typeInfo = nextTypeInfo,
+                            .runtimeActivity = gutils->runtimeActivity},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;

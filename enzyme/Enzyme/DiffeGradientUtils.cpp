@@ -59,11 +59,11 @@ DiffeGradientUtils::DiffeGradientUtils(
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
     bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
-    DerivativeMode mode, unsigned width, bool omp)
+    DerivativeMode mode, bool runtimeActivity, unsigned width, bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn,
-                    shadowReturnUsed, constant_values, origToNew_, mode, width,
-                    omp) {
+                    shadowReturnUsed, constant_values, origToNew_, mode,
+                    runtimeActivity, width, omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
@@ -84,11 +84,11 @@ DiffeGradientUtils::DiffeGradientUtils(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
-    TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool shadowReturn, bool diffeReturnArg,
-    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
-    Type *additionalArg, bool omp) {
+    EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
+    unsigned width, Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool shadowReturn,
+    bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+    ReturnType returnValue, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -162,7 +162,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   auto res = new DiffeGradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
-      mode, width, omp);
+      mode, runtimeActivity, width, omp);
 
   return res;
 }
@@ -1175,7 +1175,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         // are distinct statically as they are allocas/mallocs, if not compare
         // the pointers and conditionally execute.
         if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
-            EnzymeRuntimeActivityCheck && !merge) {
+            runtimeActivity && !merge) {
           Value *shadow = Builder2.CreateICmpNE(
               lookupM(getNewFromOriginal(origptr), Builder2),
               lookupM(invertPointerM(origptr, Builder2), Builder2));

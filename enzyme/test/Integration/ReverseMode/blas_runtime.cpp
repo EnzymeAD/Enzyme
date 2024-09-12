@@ -1,11 +1,11 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity | %lli -; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity  | %lli -; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity |  %lli -; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity -S | %lli -; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity -S | %lli -; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -mllvm -enzyme-runtime-activity  -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-lapack-copy=1 | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-lapack-copy=1 |  %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-inline=1 -mllvm -enzyme-lapack-copy=1 -S | %lli -; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme | %lli - ; fi
@@ -18,6 +18,7 @@
 int enzyme_dup;
 int enzyme_out;
 int enzyme_const;
+int enzyme_runtime_activity;
 template<typename ...T>
 void __enzyme_autodiff(void*, T...);
 
@@ -62,6 +63,7 @@ static void dotTests() {
 
     init();
     __enzyme_autodiff((void*) my_ddot,
+                        enzyme_runtime_activity,
                             enzyme_const, N,
                             enzyme_dup, A, dA,
                             enzyme_const, incA,
@@ -129,6 +131,7 @@ static void gemvTests() {
 
     init();
     __enzyme_autodiff((void*) my_dgemv,
+                        enzyme_runtime_activity,
                             enzyme_const, layout,
                             enzyme_const, transA,
                             enzyme_const, M,
@@ -165,6 +168,7 @@ static void gemvTests() {
     
         init();
         __enzyme_autodiff((void*) my_dgemv,
+                        enzyme_runtime_activity,
                                 enzyme_const, layout,
                                 enzyme_const, transA,
                                 enzyme_const, M,
@@ -204,6 +208,7 @@ static void gemvTests() {
     
         init();
         __enzyme_autodiff((void*) my_dgemv,
+                        enzyme_runtime_activity,
                                 enzyme_const, layout,
                                 enzyme_const, transA,
                                 enzyme_const, M,
@@ -297,6 +302,7 @@ static void gemmTests() {
 
     init();
     __enzyme_autodiff((void*) my_dgemm,
+                        enzyme_runtime_activity,
                             enzyme_const, layout,
                             enzyme_const, transA,
                             enzyme_const, transB,
