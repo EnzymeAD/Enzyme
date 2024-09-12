@@ -70,7 +70,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
     auto name = nameVec[arg];
     os << "  bool active_" << name << " = !gutils->isConstantValue(arg_" << name
        << ");\n";
-    os << "  if (!shadow && EnzymeRuntimeActivityCheck && active_" << name
+    os << "  if (!shadow && gutils->runtimeActivity && active_" << name
        << ") return true;\n";
   }
 
@@ -127,7 +127,7 @@ void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
         "CI->getArgOperand(" + std::to_string(ptrRetArg) + " + offset)";
     os << "  if (cublas) {\n";
     os << "    if (!gutils->isConstantValue(" << retarg << "))\n";
-    os << "      if ((shadow || EnzymeRuntimeActivityCheck) && val == "
+    os << "      if ((shadow || gutils->runtimeActivity) && val == "
        << retarg << ") return true;\n";
     os << "    if (mode != DerivativeMode::ReverseModeGradient && !shadow && "
           "val == "

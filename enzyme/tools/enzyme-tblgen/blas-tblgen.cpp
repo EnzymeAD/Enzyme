@@ -370,7 +370,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
      << "  // returns true, or if runtimeActivity is on and the\n"
      << "  // shadow points to the primal arg.\n";
 
-  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
+  os << "  if(gutils->runtimeActivity && cacheMode) {\n";
   for (size_t i = 0; i < actArgs.size(); i++) {
     auto name = nameVec[actArgs[i]];
 
@@ -805,7 +805,7 @@ SmallString<80> ValueType_helper(const TGPattern &pattern, ssize_t actPos,
 void emit_runtime_condition(DagInit *ruleDag, StringRef name, StringRef tab,
                             StringRef B, bool isFP, raw_ostream &os) {
   os << tab << "BasicBlock *nextBlock_" << name << " = nullptr;\n"
-     << tab << "if (EnzymeRuntimeActivityCheck && cacheMode"
+     << tab << "if (gutils->runtimeActivity && cacheMode"
      << (isFP ? " && byRefFloat" : "") << ") {\n"
      << tab << "  BasicBlock *current = Builder2.GetInsertBlock();\n"
      << tab << "  auto activeBlock = gutils->addReverseBlock(current,"
@@ -2033,7 +2033,7 @@ void emit_fwd_rewrite_rules(const TGPattern &pattern, raw_ostream &os) {
      << "                                                    \n"
      << "    auto callval = call.getCalledOperand();       \n\n";
 
-  os << "  if (EnzymeRuntimeActivityCheck) {\n"
+  os << "  if (gutils->runtimeActivity) {\n"
      << "    std::string s;\n"
      << "    llvm::raw_string_ostream ss(s);\n"
      << "    ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
@@ -2195,7 +2195,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     }
   }
 
-  os << "  if(EnzymeRuntimeActivityCheck && cacheMode) {\n";
+  os << "  if(gutils->runtimeActivity && cacheMode) {\n";
   for (size_t i = 0; i < activeArgs.size(); i++) {
     auto name = nameVec[activeArgs[i]];
 
