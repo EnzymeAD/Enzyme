@@ -431,7 +431,7 @@ bool enzyme::sortAttributes(Attribute a, Attribute b) {
 
 void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
     ForwardOriginsMap *lattice) {
-  auto *block = dyn_cast<Block *>(lattice->getAnchor());
+  auto *block = dyn_cast<Block *>(lattice->getAnchor().get<ProgramPoint>());
   if (!block)
     return;
 
@@ -687,7 +687,8 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
     BackwardOriginsMap *lattice) {
-  auto *block = dyn_cast<Block *>(lattice->getAnchor());
+  // FIXME: clean up how we access the (potential) block here
+  auto *block = dyn_cast<Block *>(lattice->getAnchor().get<ProgramPoint>());
   if (!block)
     return;
 
