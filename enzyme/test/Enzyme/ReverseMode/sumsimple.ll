@@ -40,10 +40,6 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK: define internal {{(dso_local )?}}void @diffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = add {{(nuw )?}}i64 %n, 1
-; CHECK-NEXT:   %1 = add nuw i64 %0, 1
-; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %1, 8
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; CHECK-NEXT:   %[[antimallocs:.+]] = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.cond:
@@ -53,18 +49,14 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %invertfor.cond
 
 ; CHECK: for.body:
-; CHECK-NEXT:   %2 = load double, double* %x
-; CHECK-NEXT:   %[[ipload:.+]] = load double*, double** %"y'"
+; CHECK-NEXT:   %[[x2:.+]] = load double, double* %x
 ; CHECK-NEXT:   %[[yload:.+]] = load double*, double** %y
 ; CHECK-NEXT:   %[[finaly:.+]] = load double, double* %[[yload]]
-; CHECK-NEXT:   %add = fadd fast double %[[finaly]], %2
+; CHECK-NEXT:   %add = fadd fast double %[[finaly]], %[[x2]]
 ; CHECK-NEXT:   store double %add, double* %[[yload]]
-; CHECK-NEXT:   %[[cachegep:.+]] = getelementptr inbounds double*, double** %[[antimallocs]], i64 %iv
-; CHECK-NEXT:   store double* %[[ipload]], double** %[[cachegep]], align 8, !invariant.group ![[g0:[0-9]+]]
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: invertentry:
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.cond:
@@ -74,15 +66,12 @@ attributes #0 = { noinline nounwind uwtable }
 
 ; CHECK: incinvertfor.cond:
 ; CHECK-NEXT:   %[[sub]] = add nsw i64 %[[ivp]], -1
-; CHECK-NEXT:   %8 = getelementptr inbounds double*, double** %[[antimallocs]], i64 %[[sub]]
-; CHECK-NEXT:   %9 = load double*, double** %8, align 8, !invariant.group ![[g0]]
-; CHECK-NEXT:   %10 = load double, double* %9
-; CHECK-NEXT:   store double %10, double* %9
-; CHECK-NEXT:   %11 = load double, double* %"x'"
-; CHECK-NEXT:   %12 = fadd fast double %11, %10
-; CHECK-NEXT:   store double %12, double* %"x'"
+; CHECK-NEXT:   %[[ipload:.+]] = load double*, double** %"y'"
+; CHECK-NEXT:   %[[x10:.+]] = load double, double* %[[ipload]]
+; CHECK-NEXT:   store double %[[x10]], double* %[[ipload]]
+; CHECK-NEXT:   %[[x11:.+]] = load double, double* %"x'"
+; CHECK-NEXT:   %[[x12:.+]] = fadd fast double %[[x11]], %[[x10]]
+; CHECK-NEXT:   store double %[[x12]], double* %"x'"
 ; CHECK-NEXT:   br label %invertfor.cond
 ; CHECK-NEXT: }
 
-
-; CHECK: ![[g0]] = distinct !{}

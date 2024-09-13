@@ -429,7 +429,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 
 ArrayRef<SMLoc> TGPattern::getLoc() const { return record->getLoc(); }
 
-TGPattern::TGPattern(Record *r)
+TGPattern::TGPattern(const Record *r)
     : record(r), blasName(r->getNameInitAsString()) {
   fillArgs(r, args, argNameToPos);
   fillArgTypes(r, argTypes);

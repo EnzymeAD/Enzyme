@@ -1,5 +1,7 @@
 #pragma once
 
+extern int enzyme_interleave;
+
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 extern int enzyme_out;
@@ -240,6 +242,54 @@ namespace enzyme {
 
     template < typename T >
     __attribute__((always_inline))
+    auto expand_primals(const enzyme::Duplicated<T> & arg) {
+        return enzyme::tuple{enzyme_dup, arg.value};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_primals(const enzyme::DuplicatedNoNeed<T> & arg) {
+        return enzyme::tuple{enzyme_dupnoneed, arg.value};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_primals(const enzyme::Active<T> & arg) {
+        return enzyme::tuple<int, T>{enzyme_out, arg.value};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_primals(const enzyme::Const<T> & arg) {
+        return enzyme::tuple{enzyme_const, arg.value};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_shadows(const enzyme::Duplicated<T> & arg) {
+        return enzyme::tuple{arg.shadow};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_shadows(const enzyme::DuplicatedNoNeed<T> & arg) {
+        return enzyme::tuple{arg.shadow};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_shadows(const enzyme::Active<T> & arg) {
+        return enzyme::tuple{};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
+    auto expand_shadows(const enzyme::Const<T> & arg) {
+        return enzyme::tuple{};
+    }
+
+    template < typename T >
+    __attribute__((always_inline))
     auto primal_args(const enzyme::Duplicated<T> & arg) {
         return enzyme::tuple<T>{arg.value};
     }
@@ -279,7 +329,7 @@ namespace enzyme {
 
         template<typename function, typename RT, typename ...T>
         struct templated_call<function, RT(T...)> {
-            static RT wrap(T... args, function* __restrict__ f) {
+            static RT wrap(function* __restrict__ f, T... args) {
                 return (*f)(args...);
             }
         };
@@ -311,7 +361,7 @@ namespace enzyme {
         template <class return_type, class Tuple, std::size_t... I, typename... ExtraArgs>
         __attribute__((always_inline))
         static constexpr decltype(auto) impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>, ExtraArgs... args) {
-            return push_return_last(__enzyme_autodiff<return_type>(f, ret_attr, enzyme::get<I>(impl::forward<Tuple>(t))..., args...));
+            return push_return_last(__enzyme_autodiff<return_type>(f, ret_attr, args..., enzyme::get<I>(impl::forward<Tuple>(t))...));
         }
         };
 
@@ -320,7 +370,7 @@ namespace enzyme {
         template <class return_type, class Tuple, std::size_t... I, typename... ExtraArgs>
         __attribute__((always_inline))
         static constexpr return_type impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>, ExtraArgs... args) {
-            return __enzyme_fwddiff<return_type>(f, ret_attr, enzyme::get<I>(impl::forward<Tuple>(t))..., args...);
+            return __enzyme_fwddiff<return_type>(f, ret_attr, args..., enzyme::get<I>(impl::forward<Tuple>(t))...);
         }
         };
 
@@ -420,6 +470,11 @@ namespace enzyme {
           );
         };
 
+        template<class T>
+        struct is_function_or_function_ptr : std::is_function<T> {};
+         
+        template<class T>
+        struct is_function_or_function_ptr<T*> : std::is_function<T> {};
     }  // namespace detail
 
     template < typename return_type, typename function, typename ... enz_arg_types >
@@ -434,7 +489,7 @@ namespace enzyme {
         return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!std::is_function_v<typename remove_cvref< function >::type>, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
@@ -443,7 +498,7 @@ namespace enzyme {
             std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{}, &enzyme_const, &f);
     }
 
-    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<std::is_function_v<typename remove_cvref< function >::type>, int> = 0>
+    template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
@@ -461,7 +516,7 @@ namespace enzyme {
         using primal_return_type = decltype(f(arg_type(args)...));
         using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
-        return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
+        return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
     }
 
     template < typename DiffMode, typename function, typename ... arg_types>
@@ -476,7 +531,7 @@ namespace enzyme {
         using functy = typename detail::function_type<primal_return_type, decltype(arg_type(args))...>::type;
         using RetActivity = typename detail::default_ret_activity<DiffMode, primal_return_type>::type;
         using return_type = typename autodiff_return<DiffMode, RetActivity, arg_types...>::type;
-        return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_args(args)...));
+        return autodiff_impl<return_type, DiffMode, function, functy, RetActivity>(impl::forward<function>(f), enzyme::tuple_cat(enzyme::tuple{detail::ret_used<DiffMode, RetActivity>::value}, expand_primals(args)..., enzyme::tuple{enzyme_interleave}, expand_shadows(args)...));
     }
 #pragma clang diagnostic pop
 

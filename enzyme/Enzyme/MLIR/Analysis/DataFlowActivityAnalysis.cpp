@@ -382,17 +382,19 @@ public:
     propagateIfChanged(lattice, lattice->join(ValueActivity()));
   }
 
-  void visitOperation(Operation *op,
-                      ArrayRef<const ForwardValueActivity *> operands,
-                      ArrayRef<ForwardValueActivity *> results) override {
+  LogicalResult
+  visitOperation(Operation *op, ArrayRef<const ForwardValueActivity *> operands,
+                 ArrayRef<ForwardValueActivity *> results) override {
     if (op->hasTrait<OpTrait::ConstantLike>())
-      return;
+      return success();
 
     // Bail out if this op affects memory.
     if (!isPure(op))
-      return;
+      return success();
 
     transfer(op, operands, results);
+
+    return success();
   }
 
   void visitExternalCall(CallOpInterface call,
@@ -415,7 +417,7 @@ public:
       if (joinedResult.isActiveVal())
         propagateIfChanged(result,
                            result->join(isa<FloatType, ComplexType>(
-                                            result->getPoint().getType())
+                                            result->getAnchor().getType())
                                             ? joinedResult
                                             : ValueActivity::getConstant()));
       else
@@ -445,15 +447,16 @@ public:
         meet(operand, *result);
   }
 
-  void
+  LogicalResult
   visitOperation(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                  ArrayRef<const BackwardValueActivity *> results) override {
     // Bail out if the op propagates memory
     if (!isPure(op)) {
-      return;
+      return success();
     }
 
     transfer(op, operands, results);
+    return success();
   }
 
   void
@@ -511,8 +514,9 @@ public:
       : DenseForwardDataFlowAnalysis(solver), entryBlock(entryBlock),
         argumentActivity(argumentActivity) {}
 
-  void visitOperation(Operation *op, const ForwardMemoryActivity &before,
-                      ForwardMemoryActivity *after) override {
+  LogicalResult visitOperation(Operation *op,
+                               const ForwardMemoryActivity &before,
+                               ForwardMemoryActivity *after) override {
     join(after, before);
     ChangeResult result = ChangeResult::NoChange;
 
@@ -528,7 +532,7 @@ public:
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
-      return;
+      return success();
 
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
@@ -539,7 +543,7 @@ public:
       // If we see an effect on anything other than a value, assume we can't
       // deduce anything about the activity.
       if (!value)
-        return;
+        return success();
 
       // In forward-flow, a value is active if loaded from a memory resource
       // that has previously been actively stored to.
@@ -621,6 +625,7 @@ public:
       }
     }
     propagateIfChanged(after, result);
+    return success();
   }
 
   void visitCallControlFlowTransfer(CallOpInterface call,
@@ -632,25 +637,26 @@ public:
 
   /// Initialize the entry block with the supplied argument activities.
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    if (auto *block = dyn_cast_if_present<Block *>(lattice->getPoint());
-        block && block == entryBlock) {
-      for (const auto &[arg, activity] :
-           llvm::zip(block->getArguments(), argumentActivity)) {
-        if (activity != enzyme::Activity::enzyme_dup &&
-            activity != enzyme::Activity::enzyme_dupnoneed)
-          continue;
-        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
-        ChangeResult changed =
-            argAliasClasses->getAliasClassesObject().foreachElement(
-                [lattice](DistinctAttr argAliasClass,
-                          enzyme::AliasClassSet::State state) {
-                  if (state == enzyme::AliasClassSet::State::Undefined)
-                    return ChangeResult::NoChange;
-                  return lattice->setActiveIn(argAliasClass);
-                });
-        propagateIfChanged(lattice, changed);
+    if (auto pp = dyn_cast_if_present<ProgramPoint>(lattice->getAnchor()))
+      if (Block *block = llvm::dyn_cast_if_present<Block *>(pp);
+          block && block == entryBlock) {
+        for (const auto &[arg, activity] :
+             llvm::zip(block->getArguments(), argumentActivity)) {
+          if (activity != enzyme::Activity::enzyme_dup &&
+              activity != enzyme::Activity::enzyme_dupnoneed)
+            continue;
+          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
+          ChangeResult changed =
+              argAliasClasses->getAliasClassesObject().foreachElement(
+                  [lattice](DistinctAttr argAliasClass,
+                            enzyme::AliasClassSet::State state) {
+                    if (state == enzyme::AliasClassSet::State::Undefined)
+                      return ChangeResult::NoChange;
+                    return lattice->setActiveIn(argAliasClass);
+                  });
+          propagateIfChanged(lattice, changed);
+        }
       }
-    }
   }
 
 private:
@@ -671,8 +677,9 @@ public:
       : DenseBackwardDataFlowAnalysis(solver, symbolTable), parentOp(parentOp),
         argumentActivity(argumentActivity) {}
 
-  void visitOperation(Operation *op, const BackwardMemoryActivity &after,
-                      BackwardMemoryActivity *before) override {
+  LogicalResult visitOperation(Operation *op,
+                               const BackwardMemoryActivity &after,
+                               BackwardMemoryActivity *before) override {
 
     // TODO: If we know this is inactive by definition
     // if (auto ifaceOp = dyn_cast<enzyme::ActivityOpInterface>(op)) {
@@ -726,7 +733,7 @@ public:
     // If we can't reason about the memory effects, then conservatively assume
     // we can't deduce anything about activity via side-effects.
     if (!memory)
-      return;
+      return success();
 
     SmallVector<MemoryEffects::EffectInstance> effects;
     memory.getEffects(effects);
@@ -737,7 +744,7 @@ public:
       // If we see an effect on anything other than a value, assume we can't
       // deduce anything about the activity.
       if (!value)
-        return;
+        return success();
 
       // In backward-flow, a value is active if stored into a memory resource
       // that has subsequently been actively loaded from.
@@ -793,6 +800,7 @@ public:
       }
     }
     propagateIfChanged(before, result);
+    return success();
   }
 
   void visitCallControlFlowTransfer(CallOpInterface call,

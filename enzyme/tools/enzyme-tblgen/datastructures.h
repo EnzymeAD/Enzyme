@@ -94,7 +94,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 /// A single Blas function, including replacement rules. E.g. scal, axpy, ...
 class TGPattern {
 private:
-  Record *record;
+  const Record *record;
   std::string blasName;
   bool BLASLevel2or3;
 
@@ -123,7 +123,7 @@ private:
   DenseMap<size_t, SmallVector<size_t, 3>> relatedLengths;
 
 public:
-  TGPattern(Record *r);
+  TGPattern(const Record *r);
   SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg,
                                               bool hideuplo = false) const;
   bool isBLASLevel2or3() const;

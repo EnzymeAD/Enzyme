@@ -2008,7 +2008,7 @@ unsigned fake::SCEVExpander::replaceCongruentIVs(
       if (V->getType() != Phi->getType())
         continue;
       Phi->replaceAllUsesWith(V);
-      DeadInsts.emplace_back(Phi);
+      DeadInsts.push_back(Phi);
       ++NumElim;
       DEBUG_WITH_TYPE(DebugType, dbgs() << "INDVARS: Eliminated constant iv: "
                                         << *Phi << '\n');
@@ -2085,7 +2085,7 @@ unsigned fake::SCEVExpander::replaceCongruentIVs(
                 OrigInc, IsomorphicInc->getType(), IVName);
           }
           IsomorphicInc->replaceAllUsesWith(NewInc);
-          DeadInsts.emplace_back(IsomorphicInc);
+          DeadInsts.push_back(IsomorphicInc);
         }
       }
     }
@@ -2099,7 +2099,7 @@ unsigned fake::SCEVExpander::replaceCongruentIVs(
       NewIV = Builder.CreateTruncOrBitCast(OrigPhiRef, Phi->getType(), IVName);
     }
     Phi->replaceAllUsesWith(NewIV);
-    DeadInsts.emplace_back(Phi);
+    DeadInsts.push_back(Phi);
   }
   return NumElim;
 }
@@ -2196,7 +2196,7 @@ bool fake::SCEVExpander::isHighCostExpansionHelper(
     const SCEV *Op = CastExpr->getOperand();
     BudgetRemaining -= TTI.getCastInstrCost(Opcode, /*Dst=*/S->getType(),
                                             /*Src=*/Op->getType(), CostKind);
-    Worklist.emplace_back(Op);
+    Worklist.push_back(Op);
     return false; // Will answer upon next entry into this function.
   }
 
@@ -2209,7 +2209,7 @@ bool fake::SCEVExpander::isHighCostExpansionHelper(
         // Note that we don't count the cost of RHS, because it is a constant,
         // and we consider those to be free. But if that changes, we would need
         // to log2() it first before calling isHighCostExpansionHelper().
-        Worklist.emplace_back(UDivExpr->getLHS());
+        Worklist.push_back(UDivExpr->getLHS());
         return false; // Will answer upon next entry into this function.
       }
     }

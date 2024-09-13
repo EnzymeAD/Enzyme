@@ -28,6 +28,7 @@
 #include <deque>
 
 #include <llvm/Config/llvm-config.h>
+#include <memory>
 
 #include "llvm/ADT/ImmutableSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -64,12 +65,10 @@
 
 using namespace llvm;
 
-#if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
-#endif
 
 extern "C" {
 cl::opt<bool>
@@ -116,6 +115,8 @@ static const StringSet<> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZNSt3__u4coutE",
+    "_ZNSt3__u5wcoutE",
     "_ZNSt3__14coutE",
     "_ZNSt3__15wcoutE",
     "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
@@ -210,7 +211,6 @@ const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
-    "__cxa_thread_atexit_impl",
     "getenv",
     "strtol",
     "fwrite",
@@ -222,6 +222,7 @@ const StringSet<> KnownInactiveFunctions = {
     "vprintf",
     "vsnprintf",
     "puts",
+    "fputc",
     "fflush",
     "__kmpc_for_static_init_4",
     "__kmpc_for_static_init_4u",
@@ -298,9 +299,7 @@ const StringSet<> KnownInactiveFunctions = {
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
-#if LLVM_VERSION_MAJOR >= 12
     Intrinsic::experimental_noalias_scope_decl,
-#endif
     Intrinsic::objectsize,
     Intrinsic::floor,
     Intrinsic::ceil,
@@ -349,7 +348,16 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
-    // "std::allocator",
+    // "std::allocator"
+    "std::__u::basic_streambuf",
+    "std::__u::basic_iostream",
+    "std::__u::basic_ios",
+    "std::__u::basic_istream",
+    "std::__u::basic_string",
+    "std::__u::basic_filebuf",
+    "std::__u::locale",
+    "std::__u::ios_base",
+    "std::__u::basic_ostream",
     "absl::log_internal::LogMessage",
     "std::chrono::_V2::steady_clock::now",
     "std::string",
@@ -428,6 +436,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
+
+    // Rust
+    "std::io::stdio::_eprint",
 
 };
   // clang-format on
@@ -544,12 +555,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   bool all_inactive = val != CI->getCalledOperand();
 
-#if LLVM_VERSION_MAJOR >= 14
-  for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-  {
+  for (size_t i = 0; i < CI->arg_size(); i++) {
     if (val == CI->getArgOperand(i)) {
       if (!CI->getAttributes().hasParamAttr(i, "enzyme_inactive") &&
           !(F && F->getCallingConv() == CI->getCallingConv() &&
@@ -608,6 +614,9 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
     return val != CI->getOperand(1);
 
+  if (Name == "julia.gc_loaded")
+    return val != CI->getOperand(1);
+
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -639,13 +648,13 @@ static inline void propagateArgumentInformation(
     return;
   }
 
+  if (Name == "julia.gc_loaded") {
+    propagateFromOperand(CI.getArgOperand(0));
+    return;
+  }
+
   if (Name == "julia.call" || Name == "julia.call2") {
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 1; i < CI.arg_size(); i++)
-#else
-    for (size_t i = 1; i < CI.getNumArgOperands(); i++)
-#endif
-    {
+    for (size_t i = 1; i < CI.arg_size(); i++) {
       propagateFromOperand(CI.getOperand(i));
     }
     return;
@@ -684,12 +693,7 @@ static inline void propagateArgumentInformation(
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
   size_t i = 0;
-#if LLVM_VERSION_MAJOR >= 14
-  for (auto &a : CI.args())
-#else
-  for (auto &a : CI.arg_operands())
-#endif
-  {
+  for (auto &a : CI.args()) {
 
     if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive") ||
         (F && F->getCallingConv() == CI.getCallingConv() &&
@@ -893,7 +897,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
 
   // Analyzer for inductive assumption where we attempt to prove this is
   // inactive from a lack of active users
-  std::shared_ptr<ActivityAnalyzer> DownHypothesis;
+  std::unique_ptr<ActivityAnalyzer> DownHypothesis;
 
   // If this instruction does not write to memory that outlives itself
   // (potentially propagating derivative information), the only way to propagate
@@ -962,7 +966,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
           return true;
         }
       } else {
-        DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+        DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
         if (DownHypothesis->isValueInactiveFromUsers(TR, I,
@@ -978,7 +982,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     }
   }
 
-  std::shared_ptr<ActivityAnalyzer> UpHypothesis;
+  std::unique_ptr<ActivityAnalyzer> UpHypothesis;
   if (directions & UP) {
     // If this instruction has no active operands, the instruction
     // is active.
@@ -988,7 +992,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     // active memory, where we have assumed that the only active memory
     // we care about is accessible from arguments passed (and thus not globals)
     UpHypothesis =
-        std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
+        std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     UpHypothesis->ConstantInstructions.insert(I);
     assert(directions & UP);
     if (UpHypothesis->isInstructionInactiveFromOrigin(TR, I, false)) {
@@ -1264,7 +1268,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           } else {
             Instruction *LoadReval = nullptr;
             Instruction *StoreReval = nullptr;
-            auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+            auto DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
                 new ActivityAnalyzer(*this, DOWN));
             DownHypothesis->ConstantValues.insert(Val);
             if (DownHypothesis->isValueInactiveFromUsers(
@@ -1504,7 +1508,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
 
       UpHypothesis =
-          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
+          std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
       UpHypothesis->ConstantValues.insert(Val);
 
       // If our origin is a load of a known inactive (say inactive argument), we
@@ -1840,9 +1844,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // Assume the value (not instruction) is itself active
     // In spite of that can we show that there are either no active stores
     // or no active loads
-    std::shared_ptr<ActivityAnalyzer> Hypothesis =
-        std::shared_ptr<ActivityAnalyzer>(
-            new ActivityAnalyzer(*this, directions));
+    auto Hypothesis = std::unique_ptr<ActivityAnalyzer>(
+        new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
       if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI, true)) {
@@ -1903,13 +1906,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
 
-#if LLVM_VERSION_MAJOR >= 12
       auto AARes = AA.getModRefInfo(
           I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
-#else
-      auto AARes =
-          AA.getModRefInfo(I, MemoryLocation(memval, LocationSize::unknown()));
-#endif
 
       // Still having failed to replace the location used by AA, fall back to
       // getModref against any location.
@@ -2206,8 +2204,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // We never verify that an origin wasn't stored somewhere or returned.
       // to remedy correctness for now let's do something extremely simple
-      std::shared_ptr<ActivityAnalyzer> DownHypothesis =
-          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, DOWN));
+      auto DownHypothesis =
+          std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, DOWN));
       DownHypothesis->ConstantValues.insert(Val);
       DownHypothesis->insertConstantsFrom(TR, *Hypothesis);
       bool ActiveDown =
@@ -2218,9 +2216,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         if (isa<Argument>(TmpOrig) || isa<GlobalVariable>(TmpOrig) ||
             isa<AllocaInst>(TmpOrig) || isAllocationCall(TmpOrig, TLI)) {
-          std::shared_ptr<ActivityAnalyzer> DownHypothesis2 =
-              std::shared_ptr<ActivityAnalyzer>(
-                  new ActivityAnalyzer(*DownHypothesis, DOWN));
+          auto DownHypothesis2 = std::unique_ptr<ActivityAnalyzer>(
+              new ActivityAnalyzer(*DownHypothesis, DOWN));
           DownHypothesis2->ConstantValues.insert(TmpOrig);
           if (DownHypothesis2->isValueActivelyStoredOrReturned(TR, TmpOrig)) {
             if (EnzymePrintActivity)
@@ -2303,7 +2300,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   if (directions & UP) {
     if (!UpHypothesis)
       UpHypothesis =
-          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
+          std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     if (directions == UP && !isa<PHINode>(Val)) {
       if (isInstructionInactiveFromOrigin(TR, Val, true)) {
         InsertConstantValue(TR, Val);
@@ -2356,7 +2353,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
     } else {
       auto DownHypothesis =
-          std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, DOWN));
+          std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, DOWN));
       DownHypothesis->ConstantValues.insert(Val);
       if (DownHypothesis->isValueInactiveFromUsers(TR, Val,
                                                    UseActivity::None)) {
@@ -2937,12 +2934,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       auto F = getFunctionFromCall(call);
 
       size_t idx = 0;
-#if LLVM_VERSION_MAJOR >= 14
-      for (auto &arg : call->args())
-#else
-      for (auto &arg : call->arg_operands())
-#endif
-      {
+      for (auto &arg : call->args()) {
         if (arg != parent) {
           idx++;
           continue;
@@ -3101,12 +3093,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (isa<LoadInst>(operand)) {
           bool legal = true;
 
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call->arg_size() + 1; ++i)
-#else
-          for (unsigned i = 0; i < call->getNumArgOperands() + 1; ++i)
-#endif
-          {
+          for (unsigned i = 0; i < call->arg_size() + 1; ++i) {
             Value *a = call->getOperand(i);
 
             if (isa<ConstantInt>(a))

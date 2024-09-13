@@ -60,7 +60,6 @@ private:
       getIndex;
   const std::map<llvm::CallInst *, const std::vector<bool>>
       overwritten_args_map;
-  const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
   const AugmentedReturn *augmentedReturn;
   const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
 
@@ -69,7 +68,6 @@ private:
       &unnecessaryInstructions;
   const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores;
   const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable;
-  llvm::AllocaInst *dretAlloca;
 
 public:
   AdjointGenerator(
@@ -80,23 +78,20 @@ public:
           getIndex,
       const std::map<llvm::CallInst *, const std::vector<bool>>
           overwritten_args_map,
-      const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
       const AugmentedReturn *augmentedReturn,
       const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
       const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *>
           &unnecessaryInstructions,
       const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
-      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
-      llvm::AllocaInst *dretAlloca)
+      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable)
       : Mode(Mode), gutils(gutils), constant_args(constant_args),
         retType(retType), getIndex(getIndex),
-        overwritten_args_map(overwritten_args_map), returnuses(returnuses),
+        overwritten_args_map(overwritten_args_map),
         augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
         unnecessaryValues(unnecessaryValues),
         unnecessaryInstructions(unnecessaryInstructions),
-        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable),
-        dretAlloca(dretAlloca) {
+        unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable) {
     using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
@@ -176,7 +171,6 @@ public:
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NoAlias);
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
@@ -185,20 +179,6 @@ public:
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
-#if LLVM_VERSION_MAJOR < 14
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::ArgMemOnly);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
     auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Type_size", FT, AL),
@@ -206,12 +186,8 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
     CI->setOnlyAccessesArgMemory();
 #else
-#if LLVM_VERSION_MAJOR >= 14
     CI->addAttributeAtIndex(AttributeList::FunctionIndex,
                             Attribute::ArgMemOnly);
-#else
-    CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
-#endif
 #endif
     return B.CreateLoad(intType, alloc);
   }
@@ -235,28 +211,14 @@ public:
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoFree);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
@@ -282,28 +244,14 @@ public:
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoUnwind);
-#endif
-#if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoFree);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoSync);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
                                 Attribute::AttrKind::WillReturn);
-#else
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoFree);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::NoSync);
-    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
-                         Attribute::AttrKind::WillReturn);
-#endif
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
@@ -339,14 +287,12 @@ public:
                  Constant::getNullValue(gutils->getShadowType(inst.getType())),
                  Builder2);
     }
-#if LLVM_VERSION_MAJOR >= 12
     if (!inst.getType()->isVoidTy()) {
       for (auto &U :
            make_early_inc_range(gutils->getNewFromOriginal(&inst)->uses())) {
         U.set(UndefValue::get(inst.getType()));
       }
     }
-#endif
     eraseIfUnused(inst, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -495,7 +441,7 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (EnzymeRuntimeActivityCheck && vd[{-1}].isFloat()) {
+          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
             // TODO handle mask
             assert(!mask);
 
@@ -716,9 +662,13 @@ public:
             }
           }
           if (!dt.isKnown()) {
-            TR.dump();
-            llvm::errs() << " vd:" << vd.str() << " start:" << start
-                         << " size: " << size << " dt:" << dt.str() << "\n";
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of load " << I;
+            ss << " vd:" << vd.str() << " start:" << start << " size: " << size
+               << " dt:" << dt.str() << "\n";
+            EmitNoTypeError(str, I, gutils, BuilderZ);
+            continue;
           }
           assert(dt.isKnown());
 
@@ -800,15 +750,9 @@ public:
           if (!gutils->isConstantInstruction(&I)) {
             assert(ptr);
             AtomicRMWInst *rmw = nullptr;
-#if LLVM_VERSION_MAJOR >= 13
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
                                            I.getSyncScopeID());
-#else
-            rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
-                                           I.getOrdering(), I.getSyncScopeID());
-            rmw->setAlignment(I.getAlign());
-#endif
             rmw->setVolatile(I.isVolatile());
             if (gutils->isConstantValue(&I))
               return Constant::getNullValue(dif->getType());
@@ -905,14 +849,12 @@ public:
         setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
                  BuilderZ);
     }
-#if LLVM_VERSION_MAJOR >= 12
     if (!I.getType()->isVoidTy()) {
       for (auto &U :
            make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
         U.set(UndefValue::get(I.getType()));
       }
     }
-#endif
     eraseIfUnused(I, /*erase*/ true, /*check*/ false);
     return;
   }
@@ -1055,7 +997,7 @@ public:
         }
 
       Value *diff = nullptr;
-      if (!EnzymeRuntimeActivityCheck && constantval) {
+      if (!gutils->runtimeActivity && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
               !isa<ConstantPointerNull>(orig_val)) {
@@ -1285,7 +1227,7 @@ public:
           Value *valueop = nullptr;
 
           if (constantval) {
-            if (!EnzymeRuntimeActivityCheck) {
+            if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
                 if (!isa<UndefValue>(orig_val) &&
                     !isa<ConstantPointerNull>(orig_val)) {
@@ -1556,11 +1498,7 @@ public:
                 Value *inc = lookup(lc.incvar, Builder2);
                 if (VectorType *VTy =
                         dyn_cast<VectorType>(SI.getOperand(0)->getType())) {
-#if LLVM_VERSION_MAJOR >= 12
                   inc = Builder2.CreateVectorSplat(VTy->getElementCount(), inc);
-#else
-                  inc = Builder2.CreateVectorSplat(VTy->getNumElements(), inc);
-#endif
                 }
                 Value *dif = CreateSelect(
                     Builder2,
@@ -1775,15 +1713,10 @@ public:
       getReverseBuilder(Builder2);
 
       auto loaded = diffe(&SVI, Builder2);
-#if LLVM_VERSION_MAJOR >= 12
       auto count =
           cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
       assert(!count.isScalable());
       size_t l1 = count.getKnownMinValue();
-#else
-      size_t l1 =
-          cast<VectorType>(SVI.getOperand(0)->getType())->getNumElements();
-#endif
       uint64_t instidx = 0;
 
       for (size_t idx : SVI.getShuffleMask()) {
@@ -2483,19 +2416,11 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2583,8 +2508,9 @@ public:
     case Instruction::Sub:
     case Instruction::Add: {
       if (looseTypeAnalysis) {
-        llvm::errs() << "warning: binary operator is integer and constant: "
-                     << BO << "\n";
+        llvm::errs()
+            << "warning: binary operator is integer and assumed constant: "
+            << BO << "\n";
         // if loose type analysis, assume this integer add is constant
         return;
       }
@@ -2724,19 +2650,10 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
             FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2909,12 +2826,7 @@ public:
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
       Value *op3 = nullptr;
-#if LLVM_VERSION_MAJOR >= 14
-      if (3 < MS.arg_size())
-#else
-      if (3 < MS.getNumArgOperands())
-#endif
-      {
+      if (3 < MS.arg_size()) {
         op3 = gutils->getNewFromOriginal(MS.getOperand(3));
       }
 
@@ -2924,19 +2836,38 @@ public:
                                       ValueType::Primal, ValueType::Primal},
                                      BuilderZ, /*lookup*/ false);
 
+      auto funcName = getFuncNameFromCall(&MS);
       applyChainRule(
           BuilderZ,
           [&](Value *op0) {
             SmallVector<Value *, 4> args = {op0, op1, op2};
             if (op3)
               args.push_back(op3);
-            auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
+            CallInst *cal;
+            if (startsWith(funcName, "memset_pattern"))
+              cal = Builder2.CreateMemSet(
+                  op0, ConstantInt::get(Builder2.getInt8Ty(), 0), op2, {});
+            else
+              cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
             cal->copyMetadata(MS, ToCopy2);
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
-            cal->setAttributes(MS.getAttributes());
+
+            if (startsWith(funcName, "memset_pattern")) {
+              AttributeList NewAttrs;
+              for (auto idx :
+                   {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                    AttributeList::FirstArgIndex})
+                for (auto attr : MS.getAttributes().getAttributes(idx))
+                  NewAttrs =
+                      NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
+              cal->setAttributes(NewAttrs);
+            } else
+              cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
@@ -3136,12 +3067,7 @@ public:
     Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
     Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
     Value *op3 = nullptr;
-#if LLVM_VERSION_MAJOR >= 14
-    if (3 < MS.arg_size())
-#else
-    if (3 < MS.getNumArgOperands())
-#endif
-    {
+    if (3 < MS.arg_size()) {
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
@@ -3250,13 +3176,30 @@ public:
           SmallVector<Value *, 4> args = {op0, op1l, length};
           if (op3l)
             args.push_back(op3l);
-          auto cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
+          CallInst *cal;
+          auto funcName = getFuncNameFromCall(&MS);
+          if (startsWith(funcName, "memset_pattern"))
+            cal = Builder2.CreateMemSet(
+                op0, ConstantInt::get(Builder2.getInt8Ty(), 0), length, {});
+          else
+            cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           cal->copyMetadata(MS, ToCopy2);
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
-          cal->setAttributes(MS.getAttributes());
+
+          if (startsWith(funcName, "memset_pattern")) {
+            AttributeList NewAttrs;
+            for (auto idx :
+                 {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
+                  AttributeList::FirstArgIndex})
+              for (auto attr : MS.getAttributes().getAttributes(idx))
+                NewAttrs =
+                    NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
+            cal->setAttributes(NewAttrs);
+          } else
+            cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
@@ -3335,11 +3278,19 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
+    for (size_t i = 0; i < MTI.getNumOperands(); i++)
+      if (MTI.getOperand(i) == orig_dst)
+        if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
+          auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
+          auto TT = TypeTree::parse(attr.getValueAsString(), MTI.getContext());
+          vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
+          break;
+        }
 
     bool errorIfNoType = true;
     if ((Mode == DerivativeMode::ForwardMode ||
          Mode == DerivativeMode::ForwardModeError) &&
-        (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
+        (!gutils->isConstantValue(orig_src) && !gutils->runtimeActivity)) {
       errorIfNoType = false;
     }
 
@@ -3481,7 +3432,7 @@ public:
               Legal = true;
             }
             if (!gutils->isConstantValue(orig_src) &&
-                !EnzymeRuntimeActivityCheck) {
+                !gutils->runtimeActivity) {
               Legal = true;
             }
           }
@@ -3562,7 +3513,7 @@ public:
               Type::getInt8Ty(ddst->getContext()), ddst, start);
         }
         CallInst *call;
-        // TODO add EnzymeRuntimeActivity (correctness)
+        // TODO add gutils->runtimeActivity (correctness)
         if (dt.isFloat() && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
@@ -3753,14 +3704,18 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-#if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
             return false;
           }
-#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
@@ -3831,7 +3786,6 @@ public:
         return false;
       }
 
-#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
@@ -3868,34 +3822,31 @@ public:
         }
         return false;
       }
-#endif
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-#if LLVM_VERSION_MAJOR >= 12
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax)
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
             return false;
           }
-#endif
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << *gutils->oldFunc << "\n";
         ss << *gutils->newFunc << "\n";
         if (Intrinsic::isOverloaded(ID))
-#if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID, ArrayRef<Type *>(),
                                    gutils->oldFunc->getParent(), nullptr)
              << "\n"
              << I;
-#else
-          ss << "cannot handle (reverse) unknown intrinsic\n"
-             << Intrinsic::getName(ID, ArrayRef<Type *>()) << "\n"
-             << I;
-#endif
         else
           ss << "cannot handle (reverse) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
@@ -3914,7 +3865,6 @@ public:
 
       switch (ID) {
 
-#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (gutils->isConstantInstruction(&I))
           return false;
@@ -3951,24 +3901,29 @@ public:
         setDiffe(&I, dif, Builder2);
         return false;
       }
-#endif
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
+            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::uadd_with_overflow ||
+            ID == Intrinsic::smul_with_overflow ||
+            ID == Intrinsic::umul_with_overflow ||
+            ID == Intrinsic::ssub_with_overflow ||
+            ID == Intrinsic::usub_with_overflow)
+          if (looseTypeAnalysis) {
+            EmitWarning("CannotDeduceType", I,
+                        "failed to deduce type of intrinsic ", I);
+            return false;
+          }
         std::string s;
         llvm::raw_string_ostream ss(s);
         if (Intrinsic::isOverloaded(ID))
-#if LLVM_VERSION_MAJOR >= 13
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID, ArrayRef<Type *>(),
                                    gutils->oldFunc->getParent(), nullptr)
              << "\n"
              << I;
-#else
-          ss << "cannot handle (forward) unknown intrinsic\n"
-             << Intrinsic::getName(ID, ArrayRef<Type *>()) << "\n"
-             << I;
-#endif
         else
           ss << "cannot handle (forward) unknown intrinsic\n"
              << Intrinsic::getName(ID) << "\n"
@@ -4043,12 +3998,7 @@ public:
     SmallVector<Value *, 4> OutTypes;
     SmallVector<Type *, 4> OutFPTypes;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 3; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 3; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 3; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -4155,7 +4105,7 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
-            gutils->getWidth(),
+            gutils->runtimeActivity, gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -4365,21 +4315,23 @@ public:
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
             RequestContext(&call, &Builder2),
-            (ReverseCacheKey){.todiff = cast<Function>(called),
-                              .retType = subretType,
-                              .constant_args = argsInverted,
-                              .overwritten_args = overwritten_args,
-                              .returnUsed = false,
-                              .shadowReturnUsed = false,
-                              .mode = DerivativeMode::ReverseModeGradient,
-                              .width = gutils->getWidth(),
-                              .freeMemory = true,
-                              .AtomicAdd = true,
-                              .additionalType =
-                                  tape ? PointerType::getUnqual(tape->getType())
-                                       : nullptr,
-                              .forceAnonymousTape = false,
-                              .typeInfo = nextTypeInfo},
+            (ReverseCacheKey){
+                .todiff = cast<Function>(called),
+                .retType = subretType,
+                .constant_args = argsInverted,
+                .overwritten_args = overwritten_args,
+                .returnUsed = false,
+                .shadowReturnUsed = false,
+                .mode = DerivativeMode::ReverseModeGradient,
+                .width = gutils->getWidth(),
+                .freeMemory = true,
+                .AtomicAdd = true,
+                .additionalType =
+                    tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+                .forceAnonymousTape = false,
+                .typeInfo = nextTypeInfo,
+                .runtimeActivity = gutils->runtimeActivity,
+            },
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -4501,39 +4453,20 @@ public:
             MaybeAlign align;
             AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
             if (auto vt = dyn_cast<VectorType>(dif->getType())) {
-#if LLVM_VERSION_MAJOR >= 12
               assert(!vt->getElementCount().isScalable());
               size_t numElems = vt->getElementCount().getKnownMinValue();
-#else
-              size_t numElems = vt->getNumElements();
-#endif
               for (size_t i = 0; i < numElems; ++i) {
                 auto vdif = B.CreateExtractElement(dif, i);
                 Value *Idxs[] = {
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
                 auto vptr = B.CreateInBoundsGEP(vt, ptr, Idxs);
-#if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
                                   AtomicOrdering::Monotonic, SyncScope::System);
-#else
-                AtomicRMWInst *rmw =
-                    B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                      SyncScope::System);
-                if (align)
-                  rmw->setAlignment(align.getValue());
-#endif
               }
             } else {
-#if LLVM_VERSION_MAJOR >= 13
               B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
                                 SyncScope::System);
-#else
-              AtomicRMWInst *rmw = B.CreateAtomicRMW(
-                  op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
-              if (align)
-                rmw->setAlignment(align.getValue());
-#endif
             }
           }
           B.CreateRetVoid();
@@ -4713,6 +4646,7 @@ public:
     BuilderZ.setFastMathFlags(getFast());
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    Module &M = *call.getParent()->getParent()->getParent();
 
     bool foreignFunction = called == nullptr;
 
@@ -4745,27 +4679,15 @@ public:
       std::map<int, Type *> gradByVal;
       std::map<int, std::vector<Attribute>> structAttrs;
 
-#if LLVM_VERSION_MAJOR >= 14
-      for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-      for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-      {
+      for (unsigned i = 0; i < call.arg_size(); ++i) {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
-              Attribute::get(call.getContext(), "enzyme_sret")
-#else
-              Attribute::get(call.getContext(), "enzyme_sret")
-#endif
-          );
-#if LLVM_VERSION_MAJOR >= 13
+              Attribute::get(call.getContext(), "enzyme_sret"));
           // TODO
           // structAttrs[args.size()].push_back(Attribute::get(
           //     call.getContext(), Attribute::AttrKind::ElementType,
           //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
-#endif
         }
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
                           "enzymejl_parmtype_ref", "enzyme_type"})
@@ -4810,7 +4732,7 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -4839,35 +4761,23 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
-#else
-                Attribute::get(call.getContext(), "enzyme_sret")
-#endif
+                // orig->getParamAttr(i,
+                // Attribute::StructRet).getValueAsType());
             );
-#if LLVM_VERSION_MAJOR >= 13
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
             //     call.getContext(), Attribute::AttrKind::ElementType,
             //     call.getParamAttr(i,
             //     Attribute::StructRet).getValueAsType()));
-#endif
           } else {
             structAttrs[args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
-                Attribute::get(call.getContext(), "enzyme_sret")
-#else
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-#endif
-            );
-#if LLVM_VERSION_MAJOR >= 13
+                Attribute::get(call.getContext(), "enzyme_sret_v"));
             // TODO
             // structAttrs[args.size()].push_back(Attribute::get(
             //     call.getContext(), Attribute::AttrKind::ElementType,
             //     call.getParamAttr(i,
             //     Attribute::StructRet).getValueAsType()));
-#endif
           }
         }
 
@@ -4917,8 +4827,9 @@ public:
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
-            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, overwritten_args,
+            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
+            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
+            overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
@@ -5054,12 +4965,7 @@ public:
     SmallVector<ValueType, 2> PreBundleTypes;
     SmallVector<ValueType, 2> BundleTypes;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
@@ -5073,16 +4979,10 @@ public:
         }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
         structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
             // TODO persist types
             Attribute::get(call.getContext(), "enzyme_sret")
-        // Attribute::get(orig->getContext(), "enzyme_sret",
-        // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
-#else
-            // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret")
-        // Attribute::get(orig->getContext(), "enzyme_sret");
-#endif
+            // Attribute::get(orig->getContext(), "enzyme_sret",
+            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
         );
       }
       for (auto ty : PrimalParamAttrsToPreserve)
@@ -5121,7 +5021,7 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        prearg = getUndefinedValueForType(argi->getType());
+        prearg = getUndefinedValueForType(M, argi->getType());
         preType = ValueType::None;
       }
       pre_args.push_back(prearg);
@@ -5139,7 +5039,7 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          argi = getUndefinedValueForType(argi->getType());
+          argi = getUndefinedValueForType(M, argi->getType());
           revType = ValueType::None;
         }
         args.push_back(lookup(argi, Builder2));
@@ -5177,26 +5077,19 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
-            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
-#else
-                Attribute::get(call.getContext(), "enzyme_sret")
-#endif
+                // Attribute::get(orig->getContext(), "enzyme_sret",
+                // orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType());
             );
           } else {
             structAttrs[pre_args.size()].push_back(
-#if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
                 Attribute::get(call.getContext(), "enzyme_sret_v")
-            // Attribute::get(orig->getContext(), "enzyme_sret_v",
-            // gutils->getShadowType(orig->getParamAttr(ii,
-            // Attribute::StructRet).getValueAsType()));
-#else
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-#endif
+                // Attribute::get(orig->getContext(), "enzyme_sret_v",
+                // gutils->getShadowType(orig->getParamAttr(ii,
+                // Attribute::StructRet).getValueAsType()));
             );
           }
         }
@@ -5208,7 +5101,7 @@ public:
 
           if (writeOnlyNoCapture && !replaceFunction &&
               TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
-            darg = getUndefinedValueForType(argi->getType());
+            darg = getUndefinedValueForType(M, argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
@@ -5236,14 +5129,8 @@ public:
       BundleTypes.push_back(revType);
     }
     if (called) {
-#if LLVM_VERSION_MAJOR >= 14
       if (call.arg_size() !=
-          cast<Function>(called)->getFunctionType()->getNumParams())
-#else
-      if (call.getNumArgOperands() !=
-          cast<Function>(called)->getFunctionType()->getNumParams())
-#endif
-      {
+          cast<Function>(called)->getFunctionType()->getNumParams()) {
         llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << call << "\n";
@@ -5330,7 +5217,8 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              overwritten_args, false, gutils->getWidth(), gutils->AtomicAdd);
+              overwritten_args, false, gutils->runtimeActivity,
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -5599,9 +5487,7 @@ public:
         bool hasNonReturnUse = false;
         for (auto use : call.users()) {
           if (Mode == DerivativeMode::ReverseModePrimal ||
-              !isa<ReturnInst>(
-                  use)) { // || returnuses.find(cast<Instruction>(use)) ==
-                          // returnuses.end()) {
+              !isa<ReturnInst>(use)) {
             hasNonReturnUse = true;
           }
         }
@@ -5612,18 +5498,41 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
-            auto drval = *differetIdx;
-            newip = (drval < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(augmentcall,
-                                                      {(unsigned)drval},
-                                                      call.getName() + "'ac");
-            assert(newip->getType() == placeholder->getType());
-            placeholder->replaceAllUsesWith(newip);
-            if (placeholder == &*BuilderZ.GetInsertPoint()) {
-              BuilderZ.SetInsertPoint(placeholder->getNextNode());
+            if (!differetIdx) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Did not have return index set when differentiating "
+                    "function\n";
+              ss << " call" << call << "\n";
+              ss << " augmentcall" << *augmentcall << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&call),
+                                   ErrorType::InternalError, nullptr, nullptr,
+                                   nullptr);
+              } else {
+                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                            ss.str());
+              }
+              placeholder->replaceAllUsesWith(
+                  UndefValue::get(placeholder->getType()));
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
+            } else {
+              auto drval = *differetIdx;
+              newip = (drval < 0)
+                          ? augmentcall
+                          : BuilderZ.CreateExtractValue(augmentcall,
+                                                        {(unsigned)drval},
+                                                        call.getName() + "'ac");
+              assert(newip->getType() == placeholder->getType());
+              placeholder->replaceAllUsesWith(newip);
+              if (placeholder == &*BuilderZ.GetInsertPoint()) {
+                BuilderZ.SetInsertPoint(placeholder->getNextNode());
+              }
+              gutils->erase(placeholder);
             }
-            gutils->erase(placeholder);
           } else {
             newip = placeholder;
           }
@@ -5740,7 +5649,8 @@ public:
                             .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .forceAnonymousTape = false,
-                            .typeInfo = nextTypeInfo},
+                            .typeInfo = nextTypeInfo,
+                            .runtimeActivity = gutils->runtimeActivity},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
@@ -5856,12 +5766,7 @@ public:
         structidx++;
     }
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-    for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 0; i < call.arg_size(); ++i) {
       if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
         Value *diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
         ++structidx;
@@ -6305,12 +6210,7 @@ public:
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

@@ -74,9 +74,10 @@ public:
 
   void setToEntryState(ForwardOriginsLattice *lattice) override;
 
-  void visitOperation(Operation *op,
-                      ArrayRef<const ForwardOriginsLattice *> operands,
-                      ArrayRef<ForwardOriginsLattice *> results) override;
+  LogicalResult
+  visitOperation(Operation *op,
+                 ArrayRef<const ForwardOriginsLattice *> operands,
+                 ArrayRef<ForwardOriginsLattice *> results) override;
 
   void visitExternalCall(CallOpInterface call,
                          ArrayRef<const ForwardOriginsLattice *> operands,
@@ -108,7 +109,7 @@ public:
 
   void setToExitState(BackwardOriginsLattice *lattice) override;
 
-  void
+  LogicalResult
   visitOperation(Operation *op, ArrayRef<BackwardOriginsLattice *> operands,
                  ArrayRef<const BackwardOriginsLattice *> results) override;
 
@@ -166,8 +167,8 @@ public:
 
   void setToEntryState(ForwardOriginsMap *lattice) override;
 
-  void visitOperation(Operation *op, const ForwardOriginsMap &before,
-                      ForwardOriginsMap *after) override;
+  LogicalResult visitOperation(Operation *op, const ForwardOriginsMap &before,
+                               ForwardOriginsMap *after) override;
 
   void visitCallControlFlowTransfer(CallOpInterface call,
                                     dataflow::CallControlFlowAction action,
@@ -191,8 +192,8 @@ class DenseBackwardActivityAnnotationAnalysis
 public:
   using DenseBackwardDataFlowAnalysis::DenseBackwardDataFlowAnalysis;
 
-  void visitOperation(Operation *op, const BackwardOriginsMap &after,
-                      BackwardOriginsMap *before) override;
+  LogicalResult visitOperation(Operation *op, const BackwardOriginsMap &after,
+                               BackwardOriginsMap *before) override;
 
   void visitCallControlFlowTransfer(CallOpInterface call,
                                     dataflow::CallControlFlowAction action,

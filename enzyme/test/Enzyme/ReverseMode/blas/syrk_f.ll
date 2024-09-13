@@ -104,7 +104,7 @@ entry:
 ; CHECK-NEXT:   %[[i9:.+]] = select i1 %[[i7:.+]], i64* %k, i64* %n
 ; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1, align 8
 ; CHECK-NEXT:   %fpcast.constant.fp.1 = bitcast double* %byref.constant.fp.1 to i8*
-; CHECK-NEXT:   call void @dsymm_64_(i8* %[[i4]], i8* %uplo, i64* %[[i8]], i64* %[[i9]], i8* %alpha_p, i8* %"C'", i64* %ldc, i8* %A, i64* %lda, i8* %fpcast.constant.fp.1, i8* %"A'", i64* %lda)
+; CHECK-NEXT:   call void @dsymm_64_(i8* %[[i4]], i8* %uplo, i64* %[[i8]], i64* %[[i9]], i8* %alpha_p, i8* %"C'", i64* %ldc, i8* %A, i64* %lda, i8* %fpcast.constant.fp.1, i8* %"A'", i64* %lda, i64 1, i64 1)
 ; CHECK-NEXT:   %[[i11:.+]] = load i64, i64* %n, align 4
 ; CHECK-NEXT:   %[[i12:.+]] = icmp eq i64 %[[i11]], 0
 ; CHECK-NEXT:   br i1 %[[i12]], label %invertentry_end, label %invertentry_loop
@@ -120,12 +120,13 @@ entry:
 ; CHECK-NEXT:   %[[i27:.+]] = mul i64 %[[i26]], %[[i17]]
 ; CHECK-NEXT:   %[[i28:.+]] = add i64 %[[i23]], %[[i27]]
 ; CHECK-NEXT:   %[[i15:.+]] = bitcast i8* %"C'" to double*
+
 ; CHECK-NEXT:   %[[i29:.+]] = getelementptr double, double* %[[i15]], i64 %[[i28]]
 ; CHECK-NEXT:   %[[zz:.+]] = bitcast double* %[[i29]] to i8*
-; CHECK-NEXT:   %[[mm:.+]] = bitcast i8* %[[zz]] to double*
-; CHECK-NEXT:   %[[i30:.+]] = load double, double* %[[mm]], align 8
 ; CHECK-NEXT:   %[[i31:.+]] = bitcast i8* %alpha_p to double*
 ; CHECK-NEXT:   %[[i32:.+]] = load double, double* %[[i31]], align 8
+; CHECK-NEXT:   %[[mm:.+]] = bitcast i8* %[[zz]] to double*
+; CHECK-NEXT:   %[[i30:.+]] = load double, double* %[[mm]], align 8
 ; CHECK-NEXT:   %[[i33:.+]] = fmul fast double %[[i32]], %[[i30]]
 ; CHECK-NEXT:   store double %[[i33]], double* %byref.FMul, align 8
 ; CHECK-NEXT:   store i64 0, i64* %byref.constant.int.0, align 4

@@ -60,6 +60,7 @@ typedef enum {
   DT_Double = 5,
   DT_Unknown = 6,
   DT_X86_FP80 = 7,
+  DT_BFloat16 = 8,
 } CConcreteType;
 
 struct CDataPair {
@@ -206,9 +207,10 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
-    CDerivativeMode mode, uint8_t freeMemory, unsigned width,
-    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented);
+    CDerivativeMode mode, uint8_t freeMemory, uint8_t runtimeActivity,
+    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented);
 
 #ifdef __cplusplus
 }

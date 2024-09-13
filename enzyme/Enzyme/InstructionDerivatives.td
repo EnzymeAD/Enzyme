@@ -251,6 +251,10 @@ def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
     // x86_fp80 has only 15 exponent bits, but we must also
     // retain the most-significant bit of the mantissa as
     // there is no implicit leading
+  } else if (ty->isBFloatTy()) {
+    tsize = 16;
+    high = tsize - 1;
+    low = high - 8;
   } else if (ty->isFP128Ty()) {
     tsize = 128;
     high = tsize - 1;
@@ -322,7 +326,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["hypot", "hypotf", "hypotl"],
+                  ["hypot", "hypotf", "hypotl", "__hypot_finite"],
                   [
                     (FDiv (FMul (DiffeRet), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
                     (FDiv (FMul (DiffeRet), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
@@ -405,6 +409,13 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["atanh", "atanhf", "atanhl", "__nv_atanh", "__nv_atanhf"],
                   [(FDiv (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["__nv_fast_expf"],
+                  [(FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) )],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;

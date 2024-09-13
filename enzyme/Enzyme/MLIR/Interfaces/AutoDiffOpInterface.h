@@ -20,6 +20,7 @@ namespace mlir {
 
 class OpBuilder;
 class Operation;
+class IRMapping;
 
 namespace enzyme {
 

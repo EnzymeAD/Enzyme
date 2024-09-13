@@ -54,7 +54,7 @@ enzyme::ForwardOriginsLattice::join(const AbstractSparseLattice &other) {
 
 void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
     ForwardOriginsLattice *lattice) {
-  auto arg = dyn_cast<BlockArgument>(lattice->getPoint());
+  auto arg = dyn_cast<BlockArgument>(lattice->getAnchor());
   if (!arg) {
     assert(lattice->isUndefined());
     return;
@@ -67,8 +67,8 @@ void enzyme::ForwardActivityAnnotationAnalysis::setToEntryState(
   auto origin = ArgumentOriginAttr::get(FlatSymbolRefAttr::get(funcOp),
                                         arg.getArgNumber());
   return propagateIfChanged(
-      lattice, lattice->join(
-                   ForwardOriginsLattice::single(lattice->getPoint(), origin)));
+      lattice, lattice->join(ForwardOriginsLattice::single(lattice->getAnchor(),
+                                                           origin)));
 }
 
 /// True iff all results differentially depend on all operands
@@ -86,7 +86,7 @@ static bool isNoOp(Operation *op) {
              LLVM::LifetimeEndOp, LLVM::AssumeOp>(op);
 }
 
-void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
+LogicalResult enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<const ForwardOriginsLattice *> operands,
     ArrayRef<ForwardOriginsLattice *> results) {
   if (isFullyActive(op)) {
@@ -95,12 +95,12 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
         join(result, *operand);
       }
     }
-    return;
+    return success();
   }
 
   // Expected to be handled through the diff dependency interface
   if (isPure(op) || isNoOp(op))
-    return;
+    return success();
 
   auto markResultsUnknown = [&]() {
     for (ForwardOriginsLattice *result : results) {
@@ -110,7 +110,8 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    return markResultsUnknown();
+    markResultsUnknown();
+    return success();
   }
 
   SmallVector<MemoryEffects::EffectInstance> effects;
@@ -126,6 +127,7 @@ void enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     }
     processMemoryRead(op, value, results);
   }
+  return success();
 }
 
 void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
@@ -147,7 +149,7 @@ void enzyme::ForwardActivityAnnotationAnalysis::processMemoryRead(
   // those origins to the read results.
   for (DistinctAttr srcClass : srcClasses->getAliasClasses()) {
     for (ForwardOriginsLattice *result : results) {
-      if (isPossiblyActive(result->getPoint().getType())) {
+      if (isPossiblyActive(result->getAnchor().getType())) {
         propagateIfChanged(result,
                            result->merge(originsMap->getOrigins(srcClass)));
       }
@@ -240,23 +242,23 @@ void enzyme::ForwardActivityAnnotationAnalysis::processCallToSummarizedFunc(
     } else {
       auto *denseOrigins = getOrCreateFor<ForwardOriginsMap>(call, call);
       auto *pointsTo = getOrCreateFor<PointsToSets>(call, call);
-      (void)returnOrigin.foreachElement([&](OriginAttr calleeOrigin,
-                                            ValueOriginSet::State state) {
-        assert(state == ValueOriginSet::State::Defined &&
-               "undefined and unknown must have been handled above");
-        auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
-        // If the caller is a pointer, need to join what it points to
-        const ForwardOriginsLattice *operandOrigins =
-            operands[calleeArgOrigin.getArgNumber()];
-        auto *callerAliasClass =
-            getOrCreateFor<AliasClassLattice>(call, operandOrigins->getPoint());
-        traversePointsToSets(callerAliasClass->getAliasClassesObject(),
-                             *pointsTo, [&](DistinctAttr aliasClass) {
-                               (void)callerOrigins.join(
-                                   denseOrigins->getOrigins(aliasClass));
-                             });
-        return callerOrigins.join(operandOrigins->getOriginsObject());
-      });
+      (void)returnOrigin.foreachElement(
+          [&](OriginAttr calleeOrigin, ValueOriginSet::State state) {
+            assert(state == ValueOriginSet::State::Defined &&
+                   "undefined and unknown must have been handled above");
+            auto calleeArgOrigin = cast<ArgumentOriginAttr>(calleeOrigin);
+            // If the caller is a pointer, need to join what it points to
+            const ForwardOriginsLattice *operandOrigins =
+                operands[calleeArgOrigin.getArgNumber()];
+            auto *callerAliasClass = getOrCreateFor<AliasClassLattice>(
+                call, operandOrigins->getAnchor());
+            traversePointsToSets(callerAliasClass->getAliasClassesObject(),
+                                 *pointsTo, [&](DistinctAttr aliasClass) {
+                                   (void)callerOrigins.join(
+                                       denseOrigins->getOrigins(aliasClass));
+                                 });
+            return callerOrigins.join(operandOrigins->getOriginsObject());
+          });
     }
     propagateIfChanged(result, result->merge(callerOrigins));
   }
@@ -267,18 +269,19 @@ void enzyme::BackwardActivityAnnotationAnalysis::setToExitState(
   propagateIfChanged(lattice, lattice->markUnknown());
 }
 
-void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
+LogicalResult enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<BackwardOriginsLattice *> operands,
     ArrayRef<const BackwardOriginsLattice *> results) {
   if (isFullyActive(op)) {
     for (BackwardOriginsLattice *operand : operands)
       for (const BackwardOriginsLattice *result : results)
         meet(operand, *result);
+    return success();
   }
 
   // Expected to be handled through the diff dependency interface
   if (isPure(op) || isNoOp(op))
-    return;
+    return success();
 
   auto markOperandsUnknown = [&]() {
     for (BackwardOriginsLattice *operand : operands) {
@@ -288,7 +291,8 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    return markOperandsUnknown();
+    markOperandsUnknown();
+    return success();
   }
 
   SmallVector<MemoryEffects::EffectInstance> effects;
@@ -312,6 +316,7 @@ void enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
                                     result->getOriginsObject());
     propagateIfChanged(originsMap, changed);
   }
+  return success();
 }
 
 void enzyme::BackwardActivityAnnotationAnalysis::visitExternalCall(
@@ -426,7 +431,7 @@ bool enzyme::sortAttributes(Attribute a, Attribute b) {
 
 void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
     ForwardOriginsMap *lattice) {
-  auto *block = dyn_cast<Block *>(lattice->getPoint());
+  auto *block = dyn_cast<Block *>(lattice->getAnchor());
   if (!block)
     return;
 
@@ -445,24 +450,27 @@ void enzyme::DenseActivityAnnotationAnalysis::setToEntryState(
 std::optional<Value> getStored(Operation *op);
 std::optional<Value> getCopySource(Operation *op);
 
-void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
+LogicalResult enzyme::DenseActivityAnnotationAnalysis::visitOperation(
     Operation *op, const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   join(after, before);
 
   if (isNoOp(op))
-    return;
+    return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    return propagateIfChanged(after, after->markAllOriginsUnknown());
+    propagateIfChanged(after, after->markAllOriginsUnknown());
+    return success();
   }
 
   SmallVector<MemoryEffects::EffectInstance> effects;
   memory.getEffects(effects);
   for (const auto &effect : effects) {
     Value value = effect.getValue();
-    if (!value)
-      return propagateIfChanged(after, after->markAllOriginsUnknown());
+    if (!value) {
+      propagateIfChanged(after, after->markAllOriginsUnknown());
+      return success();
+    }
 
     if (isa<MemoryEffects::Read>(effect.getEffect())) {
       // TODO: Really need that memory interface
@@ -505,6 +513,7 @@ void enzyme::DenseActivityAnnotationAnalysis::visitOperation(
       }
     }
   }
+  return success();
 }
 
 void enzyme::DenseActivityAnnotationAnalysis::processCopy(
@@ -678,7 +687,7 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
     BackwardOriginsMap *lattice) {
-  auto *block = dyn_cast<Block *>(lattice->getPoint());
+  auto *block = dyn_cast<Block *>(lattice->getAnchor());
   if (!block)
     return;
 
@@ -703,17 +712,18 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::setToExitState(
   propagateIfChanged(lattice, changed);
 }
 
-void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
+LogicalResult enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, const BackwardOriginsMap &after,
     BackwardOriginsMap *before) {
   meet(before, after);
 
   if (isNoOp(op))
-    return;
+    return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    return propagateIfChanged(before, before->markAllOriginsUnknown());
+    propagateIfChanged(before, before->markAllOriginsUnknown());
+    return success();
   }
 
   SmallVector<MemoryEffects::EffectInstance> effects;
@@ -723,8 +733,10 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
       continue;
 
     Value value = effect.getValue();
-    if (!value)
-      return propagateIfChanged(before, before->markAllOriginsUnknown());
+    if (!value) {
+      propagateIfChanged(before, before->markAllOriginsUnknown());
+      return success();
+    }
 
     if (std::optional<Value> stored = getStored(op)) {
       auto *addressClasses = getOrCreateFor<AliasClassLattice>(op, value);
@@ -755,6 +767,7 @@ void enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
       processCopy(op, *copySource, value, after, before);
     }
   }
+  return success();
 }
 
 void enzyme::DenseBackwardActivityAnnotationAnalysis::

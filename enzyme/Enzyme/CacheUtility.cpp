@@ -246,13 +246,8 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(
-        SE, Header->getParent()->getParent()->getDataLayout(), "enzyme");
-#endif
 
     // We place that at first non phi as it may produce a non-phi instruction
     // and must thus be expanded after all phi's
@@ -489,6 +484,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
 
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
+  assert(BB->getParent() == newFunc);
   Loop *L = LI.getLoopFor(BB);
 
   // Not inside a loop
@@ -721,13 +717,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     if (Limit->getType() != CanonicalIV->getType())
       Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
-                           "enzyme");
-#endif
     LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
@@ -763,13 +754,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
-                           "enzyme");
-#endif
 
     loopContexts[L].maxLimit =
         Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
@@ -840,7 +826,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     alloc->setAlignment(Align(align));
   }
   if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(types.back());
+    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
     if (!isa<UndefValue>(val))
       scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
   }
@@ -949,7 +935,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // TODO change this to a power-of-two allocation strategy
 
         auto zerostore = allocationBuilder.CreateStore(
-            getUndefinedValueForType(allocType, /*forceZero*/ true), storeInto);
+            getUndefinedValueForType(*newFunc->getParent(), allocType,
+                                     /*forceZero*/ true),
+            storeInto);
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
@@ -1135,7 +1123,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     if (!getContext(blk, idx, ctx.ReverseLimit)) {
       break;
     }
-    contexts.emplace_back(idx);
+    contexts.emplace_back(std::move(idx));
     blk = idx.preheader;
   }
 
@@ -1400,18 +1388,14 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   }
 
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
-#endif
     if (tostore->getType() != loc->getType()->getPointerElementType()) {
       llvm::errs() << "val: " << *val << "\n";
       llvm::errs() << "tostore: " << *tostore << "\n";
       llvm::errs() << "loc: " << *loc << "\n";
     }
     assert(tostore->getType() == loc->getType()->getPointerElementType());
-#if LLVM_VERSION_MAJOR >= 15
   }
-#endif
 #endif
 
   StoreInst *storeinst = v.CreateStore(tostore, loc);

@@ -68,6 +68,8 @@
 
 #include "TypeAnalysis/ConcreteType.h"
 
+class TypeResults;
+
 namespace llvm {
 class ScalarEvolution;
 }
@@ -583,6 +585,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
   }
   if (T->isHalfTy())
     return llvm::IntegerType::get(T->getContext(), 16);
+  if (T->isBFloatTy())
+    return llvm::IntegerType::get(T->getContext(), 16);
   if (T->isFloatTy())
     return llvm::IntegerType::get(T->getContext(), 32);
   if (T->isDoubleTy())
@@ -605,6 +609,7 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
     switch (ty->getBitWidth()) {
     case 16:
       return llvm::Type::getHalfTy(T->getContext());
+      // return llvm::Type::getBFloat16Ty(T->getContext());
     case 32:
       return llvm::Type::getFloatTy(T->getContext());
     case 64:
@@ -652,7 +657,7 @@ static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
 
 static inline bool isCertainPrint(const llvm::StringRef name) {
   if (name == "printf" || name == "puts" || name == "fprintf" ||
-      name == "putchar" ||
+      name == "putchar" || name == "fputc" ||
       startsWith(name,
                  "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
       startsWith(name, "_ZNSolsE") || startsWith(name, "_ZNSo9_M_insert") ||
@@ -671,6 +676,9 @@ struct BlasInfo {
   std::string suffix;
   std::string function;
   bool is64;
+
+  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -965,7 +973,8 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter);
 
@@ -980,7 +989,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 //      load A[i-1]
 //      store A[i] = ...
 //   }
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI,
                               llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                               llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
@@ -1118,7 +1128,6 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   using namespace llvm;
   const llvm::Value *callVal;
   callVal = op->getCalledOperand();
-
   while (!called) {
     if (auto castinst = dyn_cast<ConstantExpr>(callVal))
       if (castinst->isCast()) {
@@ -1130,7 +1139,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
       break;
     }
     if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
-      callVal = dyn_cast<Function>(alias->getAliasee());
+      callVal = alias->getAliasee();
       continue;
     }
     break;
@@ -1696,7 +1705,8 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
 
 bool attributeKnownFunctions(llvm::Function &F);
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+                                         bool forceZero = false);
 
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,

@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["13", "14", "15", "16"]
+        llvm: ["16", "17", "18"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [openstack18]
     timeout-minutes: 120 
@@ -33,10 +33,6 @@ jobs:
           sudo apt-get install -y python3-pip autoconf cmake gcc g++ libtool gfortran libblas-dev llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libeigen3-dev libboost-dev
           sudo python3 -m pip install lit pathlib
           sudo touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
-          if [[ '${{ matrix.llvm }}' == '13' ]]; then
-            sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-            sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-          fi
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build

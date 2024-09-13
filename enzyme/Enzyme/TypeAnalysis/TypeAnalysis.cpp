@@ -1003,6 +1003,11 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     return;
   }
 
+  if (auto GV = dyn_cast<GlobalVariable>(Val)) {
+    if (hasMetadata(GV, "enzyme_ta_norecur"))
+      return;
+  }
+
   if (auto CE = dyn_cast<ConstantExpr>(Val)) {
     if (CE->isCast() && isa<ConstantInt>(CE->getOperand(0))) {
       return;
@@ -1417,8 +1422,8 @@ void TypeAnalyzer::considerTBAA() {
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
-          llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
-          assert(0 && "unknown tbaa call instruction user");
+          llvm::errs() << " unknown tbaa call instruction user inst: " << I
+                       << " vdptr: " << vdptr.str() << "\n";
         }
       } else if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto StoreSize =
@@ -4428,6 +4433,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 #include "BlasTA.inc"
     }
 
+    // clang-format off
+    const char* NoTARecurStartsWith[] = {
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
+    };
+    // clang-format on
+    {
+      std::string demangledName = llvm::demangle(funcName.str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+      for (auto Name : NoTARecurStartsWith)
+        if (startsWith(demangledName, Name))
+          return;
+    }
+
     // Manual TT specification is non-interprocedural and already handled once
     // at the start.
 
@@ -5544,7 +5566,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
-        funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
+        funcName == "vprintf" || funcName == "puts" || funcName == "fputc" ||
+        funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
 
@@ -6196,6 +6219,36 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < AT->getNumElements(); i++) {
+      Value *vec[2] = {
+          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
+          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
+      };
+      auto g2 = GetElementPtrInst::Create(
+          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      int Off = (int)ai.getLimitedValue();
+      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
+      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    }
+    return Out;
+  }
+  if (auto AT = dyn_cast<VectorType>(ET)) {
+#if LLVM_VERSION_MAJOR >= 12
+    assert(!AT->getElementCount().isScalable());
+    size_t numElems = AT->getElementCount().getKnownMinValue();
+#else
+    size_t numElems = AT->getNumElements();
+#endif
+    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+
+    TypeTree Out;
+    for (size_t i = 0; i < numElems; i++) {
       Value *vec[2] = {
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),

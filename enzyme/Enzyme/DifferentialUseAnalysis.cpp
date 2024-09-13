@@ -184,7 +184,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (EnzymeRuntimeActivityCheck) {
+      if (gutils->runtimeActivity) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();
@@ -594,11 +594,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
       if (shadow) {
-#if LLVM_VERSION_MAJOR >= 14
         auto sz = CI->arg_size();
-#else
-        auto sz = CI->getNumArgOperands();
-#endif
         bool isStored = false;
         // First pointer is the destination
         for (size_t i = 1; i < sz; i++)
@@ -628,12 +624,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-    for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-    {
+    for (size_t i = 0; i < CI->arg_size(); i++) {
       if (val == CI->getArgOperand(i)) {
         if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
@@ -943,12 +934,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
-#if LLVM_VERSION_MAJOR >= 14
-          for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-          {
+          for (size_t i = 0; i < CI->arg_size(); i++) {
             if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
               captures = true;
               break;
@@ -972,6 +958,42 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           todo.push_back(nnode);
       }
     }
+  }
+
+  // Fix up non-repeatable writing calls that chain within rematerialized
+  // allocations. We could iterate from the keys of the valuemap, but that would
+  // be a non-determinstic ordering.
+  for (auto V : Intermediates) {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found == gutils->rematerializableAllocations.end())
+      continue;
+    if (!found->second.nonRepeatableWritingCall)
+      continue;
+
+    // We are already caching this allocation directly, we're fine
+    if (MinReq.count(V))
+      continue;
+
+    // If we are recomputing a load, we need to fix this.
+    bool needsLoad = false;
+    for (auto load : found->second.loads)
+      if (Intermediates.count(load) && !MinReq.count(load)) {
+        needsLoad = true;
+        break;
+      }
+    for (auto load : found->second.loadLikeCalls)
+      if (Intermediates.count(load.loadCall) && !MinReq.count(load.loadCall)) {
+        needsLoad = true;
+        break;
+      }
+
+    if (!needsLoad)
+      continue;
+
+    // Rewire the uses to cache the allocation directly.
+    // TODO: as further optimization, we can remove potentially unnecessary
+    // values that we are keeping for stores.
+    MinReq.insert(V);
   }
   return;
 }
@@ -1034,12 +1056,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
       // Next test if any allocation could be stored into one of the
       // arguments.
       if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))
