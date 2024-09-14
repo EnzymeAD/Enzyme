@@ -168,8 +168,8 @@ int main(const int argc, const char* argv[]) {
     std::vector<std::string> paths;// = { "1k/gmm_d10_K100.txt" };
 
     getTests(paths, "data/1k", "1k/");
-    getTests(paths, "data/2.5k", "2.5k/");
-    getTests(paths, "data/10k", "10k/");
+    //getTests(paths, "data/2.5k", "2.5k/");
+    //getTests(paths, "data/10k", "10k/");
     
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
     json test_results;
