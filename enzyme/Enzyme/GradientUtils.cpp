@@ -2554,6 +2554,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   assert(malloc);
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
   assert(isOriginalBlock(*BuilderQ.GetInsertBlock()));
+  assert(!hasNoCache(malloc));
   if (mode == DerivativeMode::ReverseModeCombined) {
     assert(!tape);
     return malloc;
