@@ -3066,8 +3066,35 @@ public:
         EmitNoTypeError(str, MS, gutils, BuilderZ);
         return;
       }
+    known:;
+      {
+        unsigned start = 0;
+        while (1) {
+          unsigned nextStart = size;
+
+          auto dt = vd[{-1}];
+          for (size_t i = start; i < size; ++i) {
+            bool Legal = true;
+            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
+            }
+          }
+          if (!dt.isKnown()) {
+            TR.dump();
+            llvm::errs() << " vd:" << vd.str() << " start:" << start
+                         << " size: " << size << " dt:" << dt.str() << "\n";
+          }
+          assert(dt.isKnown());
+          toIterate.emplace_back(dt.isFloat(), start, nextStart - start);
+
+          if (nextStart == size)
+            break;
+          start = nextStart;
+        }
+      }
     }
-  known:;
 
 #if 0
     unsigned dstalign = dstAlign.valueOrOne().value();
@@ -3378,6 +3405,7 @@ public:
         }
       }
 
+    known:;
       {
 
         unsigned start = 0;
@@ -3436,8 +3464,6 @@ public:
         }
       }
     }
-
-  known:;
 
     // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
     // vd.str() << "\n";

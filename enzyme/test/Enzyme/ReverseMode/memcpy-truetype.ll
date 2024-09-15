@@ -28,7 +28,7 @@ attributes #2 = { noinline nounwind uwtable }
 !0 = !{!"Float@float", i64 0, !"Integer", i64 8, !"Float@float", i64 50000, !"Integer", i64 50008}
 
 
-; CHECK-NEXT: define internal void @diffememcpy_float(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'")
+; CHECK: define internal void @diffememcpy_float(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = getelementptr inbounds i8, i8* %"dst'", i64 8
 ; CHECK-NEXT:   %1 = getelementptr inbounds i8, i8* %"src'", i64 8
@@ -36,7 +36,7 @@ attributes #2 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %2 = getelementptr inbounds i8, i8* %"dst'", i64 50008
 ; CHECK-NEXT:   %3 = getelementptr inbounds i8, i8* %"src'", i64 50008
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %2, i8* align 1 %3, i64 49992, i1 false)
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %dst, i8* align 1 %src, i64 100000, i1 false) #{{0-9:.+}}, !enzyme_truetype
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %dst, i8* align 1 %src, i64 100000, i1 false) #{{[0-9]+}}, !enzyme_truetype
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
