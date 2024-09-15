@@ -30,6 +30,8 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <mpfr.h>
+
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -39,6 +41,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <random>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -107,9 +110,18 @@ static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
 static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
-static cl::opt<int> FPOptMaxFPCCDepth(
+static cl::opt<unsigned> FPOptMaxFPCCDepth(
     "fpopt-max-fpcc-depth", cl::init(10), cl::Hidden,
     cl::desc("The maximum depth of a floating-point connected component"));
+static cl::opt<unsigned>
+    FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
+                    cl::desc("The random seed used in the FPOpt pass"));
+static cl::opt<unsigned>
+    FPOptNumSamples("fpopt-num-samples", cl::init(10), cl::Hidden,
+                    cl::desc("Number of sampled points for input hypercube"));
+static cl::opt<unsigned>
+    FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
+                     cl::desc("Max precision for MPFR gold value computation"));
 }
 
 class FPNode {
@@ -393,18 +405,17 @@ public:
 
     return val;
   }
-
-  virtual bool isExpression() const { return true; }
 };
 
 // Represents a true LLVM Value
 class FPLLValue : public FPNode {
-  Value *value;
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
   bool input = false; // Whether `llvm::Value` is an input of an FPCC
 
 public:
+  Value *value;
+
   explicit FPLLValue(Value *value, const std::string &op,
                      const std::string &dtype)
       : FPNode(NodeType::LLValue, op, dtype), value(value) {}
@@ -445,8 +456,6 @@ public:
   static bool classof(const FPNode *N) {
     return N->getType() == NodeType::LLValue;
   }
-
-  // double getUnifiedAccuracy() override { return 0; }
 };
 
 double stringToDouble(const std::string &str) {
@@ -1210,8 +1219,9 @@ bool improveViaHerbie(
   input.close();
 
   std::string Program = HERBIE_BINARY;
-  SmallVector<llvm::StringRef> Args = {Program,     "report",    "--seed",
-                                       "239778888", "--timeout", "60"};
+  SmallVector<llvm::StringRef> Args = {
+      Program,     "report", "--seed", std::to_string(FPOptRandomSeed),
+      "--timeout", "60"};
 
   Args.push_back("--disable");
   Args.push_back("generate:proofs"); // We can't show HTML reports
