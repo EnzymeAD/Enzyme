@@ -135,7 +135,7 @@ public:
   std::string op;
   std::string dtype;
   std::string symbol;
-  SmallVector<FPNode *, 2> operands;
+  SmallVector<std::shared_ptr<FPNode>, 2> operands;
   double grad;
   unsigned executions;
 
@@ -148,7 +148,9 @@ public:
 
   NodeType getType() const { return ntype; }
 
-  void addOperand(FPNode *operand) { operands.push_back(operand); }
+  void addOperand(std::shared_ptr<FPNode> operand) {
+    operands.push_back(operand);
+  }
 
   virtual bool hasSymbol() const {
     std::string msg = "Unexpected invocation of `hasSymbol` on an "
@@ -157,8 +159,8 @@ public:
     llvm_unreachable(msg.c_str());
   }
 
-  virtual std::string
-  toFullExpression(std::unordered_map<Value *, FPNode *> &valueToNodeMap) {
+  virtual std::string toFullExpression(
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
     std::string msg = "Unexpected invocation of `toFullExpression` on an "
                       "unmaterialized " +
                       op + " FPNode";
@@ -227,7 +229,7 @@ public:
     }
 
     SmallVector<Value *, 2> operandValues;
-    for (auto *operand : operands) {
+    for (auto operand : operands) {
       operandValues.push_back(operand->getLLValue(builder));
     }
 
@@ -423,7 +425,8 @@ public:
   bool hasSymbol() const override { return !symbol.empty(); }
 
   std::string toFullExpression(
-      std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
+      override {
     if (input) {
       assert(hasSymbol() && "FPLLValue has no symbol!");
       return symbol;
@@ -482,7 +485,8 @@ public:
       : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
   std::string toFullExpression(
-      std::unordered_map<Value *, FPNode *> &valueToNodeMap) override {
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
+      override {
     return strValue;
   }
 
@@ -562,9 +566,450 @@ public:
   }
 };
 
-FPNode *
-parseHerbieExpr(const std::string &expr,
-                std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+// Compute the expression with MPFR at `prec` precision
+// recursively. When operand is a FPConst, use its lower
+// bound. When operand is a FPLLValue, get its inputs from
+// `inputs`.
+void goldenValueHelper(std::shared_ptr<FPNode> node,
+                       const SmallMapVector<Value *, double, 4> &inputValues,
+                       const unsigned prec, mpfr_t &res) {
+  mpfr_set_prec(res, prec);
+
+  if (auto *constNode = dyn_cast<FPConst>(node.get())) {
+    double constVal = constNode->getLowerBound(); // TODO: Can be improved
+    mpfr_set_d(res, constVal, MPFR_RNDN);
+  } else if (auto *valueNode = dyn_cast<FPLLValue>(node.get())) {
+    assert(inputValues.count(valueNode->value) &&
+           "goldenValueHelper: Input value not found in `inputValues`");
+    double inputValue = inputValues.lookup(valueNode->value);
+    mpfr_set_d(res, inputValue, MPFR_RNDN);
+  } else if (node->op == "neg") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_neg(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "+") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_add(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "-") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_sub(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "*") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_mul(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "/") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_div(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "sin") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_sin(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "cos") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_cos(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "tan") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_tan(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "exp") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_exp(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "expm1") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_expm1(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "log") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_log(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "log1p") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_log1p(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "sqrt") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_sqrt(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "cbrt") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_cbrt(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "pow") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_pow(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "fma") {
+    mpfr_t operandResults[3];
+    for (int i = 0; i < 3; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_fma(res, operandResults[0], operandResults[1], operandResults[2],
+             MPFR_RNDN);
+    for (int i = 0; i < 3; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "fabs") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    mpfr_abs(res, operandResult, MPFR_RNDN);
+    mpfr_clear(operandResult);
+  } else if (node->op == "hypot") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    mpfr_hypot(res, operandResults[0], operandResults[1], MPFR_RNDN);
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "if") {
+    mpfr_t cond, then_val, else_val;
+    mpfr_init(cond);
+    mpfr_init(then_val);
+    mpfr_init(else_val);
+
+    // Evaluate the condition.
+    goldenValueHelper(node->operands[0], inputValues, prec, cond);
+
+    if (0 == mpfr_cmp_ui(cond, 1)) {
+      goldenValueHelper(node->operands[1], inputValues, prec, then_val);
+      mpfr_set(res, then_val, MPFR_RNDN);
+    } else {
+      goldenValueHelper(node->operands[2], inputValues, prec, else_val);
+      mpfr_set(res, else_val, MPFR_RNDN);
+    }
+
+    mpfr_clear(cond);
+    mpfr_clear(then_val);
+    mpfr_clear(else_val);
+  } else if (node->op == "==") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 == mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "!=") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 != mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "<") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 > mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == ">") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 < mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "<=") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 >= mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == ">=") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 <= mpfr_cmp(operandResults[0], operandResults[1])) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "and") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 == mpfr_cmp_ui(operandResults[0], 1) &&
+        0 == mpfr_cmp_ui(operandResults[1], 1)) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "or") {
+    mpfr_t operandResults[2];
+    for (int i = 0; i < 2; i++) {
+      mpfr_init(operandResults[i]);
+      goldenValueHelper(node->operands[i], inputValues, prec,
+                        operandResults[i]);
+    }
+    if (0 == mpfr_cmp_ui(operandResults[0], 1) ||
+        0 == mpfr_cmp_ui(operandResults[1], 1)) {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    }
+    for (int i = 0; i < 2; i++) {
+      mpfr_clear(operandResults[i]);
+    }
+  } else if (node->op == "not") {
+    mpfr_t operandResult;
+    mpfr_init(operandResult);
+    if (0 == mpfr_cmp_ui(operandResult, 1)) {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    } else {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    }
+    mpfr_clear(operandResult);
+  } else if (node->op == "TRUE") {
+    mpfr_set_ui(res, 1, MPFR_RNDN);
+  } else if (node->op == "FALSE") {
+    mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else {
+    std::string msg = "goldenValueHelper: Unexpected operator " + node->op;
+    llvm_unreachable(msg.c_str());
+  }
+}
+
+// If looking for ground truth, compute a "correct" answer with MPFR.
+//   For each sampled input configuration:
+//     0. Ignore `FPNode.dtype`.
+//     1. Compute the expression with MPFR at `prec` precision
+//        by calling `goldenValueHelper`. When operand is a FPConst, use its
+//        lower bound. When operand is a FPLLValue, get its inputs from
+//        `inputs`.
+//     2. Dynamically extend precisions
+//        until the first `groundTruthPrec` bits of significand don't change.
+double getGoldenValue(std::shared_ptr<FPNode> output,
+                      const SmallMapVector<Value *, double, 4> &inputValues,
+                      const unsigned groundTruthPrec = 53) {
+  assert(output);
+
+  unsigned curPrec = 64;
+  mpfr_t res;
+  mpfr_init2(res, curPrec);
+  mpfr_set_zero(res, 1);
+
+  mpfr_exp_t prevResExp = 0;
+  char *prevResStr = nullptr;
+  int prevResSign = 0;
+
+  while (true) {
+    goldenValueHelper(output, inputValues, curPrec, res);
+
+    int resSign = mpfr_sgn(res);
+
+    mpfr_exp_t resExp;
+    char *resStr =
+        mpfr_get_str(nullptr, &resExp, 2, groundTruthPrec, res, MPFR_RNDN);
+
+    if (prevResStr != nullptr && resSign == prevResSign &&
+        resExp == prevResExp && strcmp(resStr, prevResStr) == 0) {
+      llvm::errs() << "prevResStr: " << prevResStr << "\n";
+      llvm::errs() << "resStr: " << resStr << "\n";
+      mpfr_free_str(resStr);
+      mpfr_free_str(prevResStr);
+      llvm::errs() << "Golden value computed at precision " << curPrec << "\n";
+      break;
+    }
+
+    if (prevResStr != nullptr) {
+      mpfr_free_str(prevResStr);
+    }
+
+    prevResStr = resStr;
+    prevResExp = resExp;
+    prevResSign = resSign;
+
+    curPrec *= 2;
+
+    if (curPrec > FPOptMaxMPFRPrec) {
+      mpfr_free_str(prevResStr);
+      llvm::errs()
+          << "getGoldenValue: MPFR precision limit reached, returning NaN\n";
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    mpfr_set_prec(res, curPrec); // `mpfr_set_prec` makes values undefined
+  }
+
+  double goldenVal = mpfr_get_d(res, MPFR_RNDN);
+  mpfr_clear(res);
+
+  return goldenVal;
+}
+
+void getSampledPoints(
+    const SmallSet<std::string, 8> &args,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
+  std::mt19937 gen(FPOptRandomSeed);
+  std::uniform_real_distribution<> dis;
+
+  // Create a hypercube of input operands
+  SmallMapVector<Value *, SmallVector<double, 2>, 4> hypercube;
+  for (const auto &arg : args) {
+    const auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
+    Value *val = symbolToValueMap.at(arg);
+
+    double lower = node->getLowerBound();
+    double upper = node->getUpperBound();
+
+    hypercube.insert({val, {lower, upper}});
+  }
+
+  llvm::errs() << "Hypercube:\n";
+  for (const auto &entry : hypercube) {
+    Value *val = entry.first;
+    double lower = entry.second[0];
+    double upper = entry.second[1];
+    llvm::errs() << valueToNodeMap.at(val)->symbol << ": [" << lower << ", "
+                 << upper << "]\n";
+  }
+
+  // Sample `FPOptNumSamples` points from the hypercube. Store it in
+  // `sampledPoints`.
+  sampledPoints.clear();
+  sampledPoints.resize(FPOptNumSamples);
+  for (int i = 0; i < FPOptNumSamples; ++i) {
+    SmallMapVector<Value *, double, 4> point;
+    for (const auto &entry : hypercube) {
+      Value *val = entry.first;
+      double lower = entry.second[0];
+      double upper = entry.second[1];
+      double sample = dis(gen, decltype(dis)::param_type{lower, upper});
+      point.insert({val, sample});
+    }
+    sampledPoints[i] = point;
+    llvm::errs() << "Sample " << i << ":\n";
+    for (const auto &entry : point) {
+      llvm::errs() << valueToNodeMap.at(entry.first)->symbol << ": "
+                   << entry.second << "\n";
+    }
+  }
+}
+
+std::shared_ptr<FPNode> parseHerbieExpr(
+    const std::string &expr,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
                 std::unordered_map<std::string, Value *> &symbolToValueMap) {
   // if (EnzymePrintFPOpt)
   //   llvm::errs() << "Parsing: " << expr << "\n";
@@ -597,7 +1042,7 @@ parseHerbieExpr(const std::string &expr,
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Herbie expr parser: Found __const " << value
     //                << " with dtype " << dtype << "\n";
-    return new FPConst(value, dtype);
+    return std::make_shared<FPConst>(value, dtype);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -626,7 +1071,7 @@ parseHerbieExpr(const std::string &expr,
     // llvm::errs() << "Herbie expr parser: Found operator " << op << "\n";
   }
 
-  auto node = new FPNode(op, dtype);
+  auto node = std::make_shared<FPNode>(op, dtype);
 
   int depth = 0;
   auto start = trimmedExpr.find_first_not_of(" ", endOp);
@@ -708,7 +1153,7 @@ InstructionCost getTTICost(const SmallVector<Value *> &outputs,
 
 InstructionCost
 getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
-           std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+           std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
            std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
@@ -718,7 +1163,7 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
     args.insert(symbolToValueMap[argStr]);
   }
 
-  FPNode *parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
 
   // Materialize the expression in a temporary function
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
@@ -872,15 +1317,16 @@ public:
     initialTTICost = getTTICost({oldOutput}, component.inputs, TTI);
   }
 
-  void apply(size_t candidateIndex,
-             std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+  void
+  apply(size_t candidateIndex,
+        std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
              std::unordered_map<std::string, Value *> &symbolToValueMap) {
     // 4) parse the output string solution from herbieland
     // 5) convert into a solution in llvm vals/instructions
 
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
-    FPNode *parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
+    auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
                                          valueToNodeMap, symbolToValueMap);
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsed Herbie output: "
@@ -901,8 +1347,8 @@ public:
 
     oldOutput->replaceAllUsesWith(newOutput);
     symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
-    valueToNodeMap[newOutput] =
-        new FPLLValue(newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
+    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+        newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
     component.outputs_rewritten++;
   }
 
@@ -1163,9 +1609,37 @@ public:
   // }
 };
 
-double
-getUnifiedAccuracy(ApplicableFPCC &component, Module *M,
-                   std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+double getUnifiedAccuracy(
+    const std::string &expr, Module *M,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
+  SetVector<Value *> args;
+  for (const auto &argStr : argStrSet) {
+    args.insert(symbolToValueMap[argStr]);
+  }
+
+  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+
+  SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
+  getSampledPoints(argStrSet, valueToNodeMap, symbolToValueMap, sampledPoints);
+
+  for (const auto &point : sampledPoints) {
+    // Compute the "gold" value & real value for each sampled point
+    // Compute a geometric average of (difference * gradient)
+    // TODO: Complete this
+    double gold = getGoldenValue(parsedNode, point, 53);
+    llvm::errs() << "Gold value: " << gold << "\n";
+  }
+
+  return 0;
+}
+
+double getUnifiedAccuracy(
+    ApplicableFPCC &component, Module *M,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
                    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   // Materialize the changes in a temporary function
 
@@ -1194,7 +1668,7 @@ getUnifiedAccuracy(ApplicableFPCC &component, Module *M,
 bool improveViaHerbie(
     const std::string &inputExpr, ApplicableOutput &AO, Module *M,
     const TargetTransformInfo &TTI,
-    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SmallString<32> tmpin, tmpout;
 
@@ -1521,12 +1995,12 @@ bool isLogged(const std::string &logPath, const std::string &functionName) {
 
 std::string getPrecondition(
     const SmallSet<std::string, 8> &args,
-    const std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
   std::string preconditions;
 
   for (const auto &arg : args) {
-    const auto *node = valueToNodeMap.at(symbolToValueMap.at(arg));
+    const auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
 
@@ -1548,7 +2022,7 @@ std::string getPrecondition(
 // accuracy cost of the rewritten expressions.
 bool accuracyGreedySolver(
     SmallVector<ApplicableOutput> &AOs,
-    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
   llvm::errs() << "Starting accuracy greedy solver with computation budget: "
@@ -1596,7 +2070,7 @@ bool accuracyGreedySolver(
 
 bool accuracyDPSolver(
     SmallVector<ApplicableOutput> &AOs,
-    std::unordered_map<Value *, FPNode *> &valueToNodeMap,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
   llvm::errs() << "Starting accuracy DP solver with computation budget: "
@@ -1760,7 +2234,7 @@ B2:
 
   */
 
-  std::unordered_map<Value *, FPNode *> valueToNodeMap;
+  std::unordered_map<Value *, std::shared_ptr<FPNode>> valueToNodeMap;
   std::unordered_map<std::string, Value *> symbolToValueMap;
 
   llvm::errs() << "FPOpt: Starting Floodfill for " << F.getName() << "\n";
@@ -1768,7 +2242,8 @@ B2:
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!herbiable(I)) {
-        valueToNodeMap[&I] = new FPLLValue(&I, "__nh", "__nh"); // Non-herbiable
+        valueToNodeMap[&I] =
+            std::make_shared<FPLLValue>(&I, "__nh", "__nh"); // Non-herbiable
         if (EnzymePrintFPOpt)
           llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
                        << I << "\n";
@@ -1783,7 +2258,7 @@ B2:
       } else {
         llvm_unreachable("Unexpected floating point type for instruction");
       }
-      auto node = new FPLLValue(&I, getHerbieOperator(I), dtype);
+      auto node = std::make_shared<FPLLValue>(&I, getHerbieOperator(I), dtype);
 
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
@@ -1798,7 +2273,8 @@ B2:
             } else {
               llvm_unreachable("Unexpected floating point type for argument");
             }
-            valueToNodeMap[operand] = new FPLLValue(Arg, "__arg", dtype);
+            valueToNodeMap[operand] =
+                std::make_shared<FPLLValue>(Arg, "__arg", dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
                            << "\n";
@@ -1813,7 +2289,8 @@ B2:
             } else {
               llvm_unreachable("Unexpected floating point type for constant");
             }
-            valueToNodeMap[operand] = new FPConst(value.c_str(), dtype);
+            valueToNodeMap[operand] =
+                std::make_shared<FPConst>(value.c_str(), dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
@@ -1830,7 +2307,8 @@ B2:
               llvm_unreachable(
                   "Unexpected floating point type for global variable");
             }
-            valueToNodeMap[operand] = new FPLLValue(GV, "__gv", dtype);
+            valueToNodeMap[operand] =
+                std::make_shared<FPLLValue>(GV, "__gv", dtype);
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << "\n";
@@ -1928,7 +2406,7 @@ B2:
 
               extractValueFromLog(FPOptLogPath, functionName, blockIdx, instIdx,
                                   valueInfo);
-              auto *node = valueToNodeMap[operand];
+              auto node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
 
               if (EnzymePrintFPOpt) {
@@ -2028,7 +2506,7 @@ B2:
               bool found = extractGradFromLog(FPOptLogPath, functionName,
                                               blockIdx, instIdx, grad);
 
-              auto *node = valueToNodeMap[output];
+              auto node = valueToNodeMap[output];
 
               if (found) {
                 node->grad = grad;
@@ -2225,10 +2703,6 @@ B2:
   }
 
   llvm::errs() << "FPOpt: Finished optimizing " << F.getName() << "\n";
-
-  for (auto &[_, node] : valueToNodeMap) {
-    delete node;
-  }
 
   // Cleanup
   if (changed) {
