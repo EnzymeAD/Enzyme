@@ -1,26 +1,25 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme %enzyme" make -B ode-raw.ll ode-opt.ll results.txt VERBOSE=1 -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" PTR="%ptr" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" ENZYME="%enzyme" make -B ode-raw.ll ode-opt.ll results.json VERBOSE=1 -f %s
 
 .PHONY: clean
 
 dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
-	rm -f *.ll *.o results.txt
+	rm -f *.ll *.o results.txt results.json
 
 %-unopt.ll: %.cpp
-	clang++ $(BENCH) $^ -O2 -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
-	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	clang++ $(BENCH) $(PTR) $^ -O2 -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
-	opt $^ $(LOAD) -enzyme -o $@ -S
+	opt $^ $(LOAD) $(ENZYME) -o $@ -S
 
 %-opt.ll: %-raw.ll
-	opt $^ $(LOAD) -o $@ -S
+	opt $^ -o $@ -S
 
 ode.o: ode-opt.ll
-	clang++ -O2 $^ -o $@ $(BENCHLINK)
+	clang++ $(BENCH) -O2 $^ -o $@ $(BENCHLINK)
 
-results.txt: ode.o
+results.json: ode.o
 	./$^ 1000 | tee $@
 	./$^ 1000 >> $@
 	./$^ 1000 >> $@
