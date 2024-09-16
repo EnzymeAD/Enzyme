@@ -956,19 +956,35 @@ double getGoldenValue(std::shared_ptr<FPNode> output,
   return goldenVal;
 }
 
+void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
+  // TODO: Update it if we use let expr in the future
+  std::regex argPattern("v\\d+");
+
+  std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
+  std::sregex_iterator end;
+
+  while (begin != end) {
+    args.insert(begin->str());
+    ++begin;
+  }
+}
+
 void getSampledPoints(
-    const SmallSet<std::string, 8> &args,
+    const std::string &expr,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
   std::mt19937 gen(FPOptRandomSeed);
   std::uniform_real_distribution<> dis;
 
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
   // Create a hypercube of input operands
   SmallMapVector<Value *, SmallVector<double, 2>, 4> hypercube;
-  for (const auto &arg : args) {
-    const auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
-    Value *val = symbolToValueMap.at(arg);
+  for (const auto &argStr : argStrSet) {
+    const auto node = valueToNodeMap.at(symbolToValueMap.at(argStr));
+    Value *val = symbolToValueMap.at(argStr);
 
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
@@ -1010,7 +1026,7 @@ void getSampledPoints(
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-                std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   // if (EnzymePrintFPOpt)
   //   llvm::errs() << "Parsing: " << expr << "\n";
   std::string trimmedExpr = expr;
@@ -1093,19 +1109,6 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   }
 
   return node;
-}
-
-void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
-  // TODO: Update it if we use let expr in the future
-  std::regex argPattern("v\\d+");
-
-  std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
-  std::sregex_iterator end;
-
-  while (begin != end) {
-    args.insert(begin->str());
-    ++begin;
-  }
 }
 
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
@@ -1320,14 +1323,14 @@ public:
   void
   apply(size_t candidateIndex,
         std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-             std::unordered_map<std::string, Value *> &symbolToValueMap) {
+        std::unordered_map<std::string, Value *> &symbolToValueMap) {
     // 4) parse the output string solution from herbieland
     // 5) convert into a solution in llvm vals/instructions
 
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
     auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
-                                         valueToNodeMap, symbolToValueMap);
+                                      valueToNodeMap, symbolToValueMap);
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Parsed Herbie output: "
     //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
@@ -1613,18 +1616,11 @@ double getUnifiedAccuracy(
     const std::string &expr, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  SmallSet<std::string, 8> argStrSet;
-  getUniqueArgs(expr, argStrSet);
-
-  SetVector<Value *> args;
-  for (const auto &argStr : argStrSet) {
-    args.insert(symbolToValueMap[argStr]);
-  }
 
   auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
 
   SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
-  getSampledPoints(argStrSet, valueToNodeMap, symbolToValueMap, sampledPoints);
+  getSampledPoints(expr, valueToNodeMap, symbolToValueMap, sampledPoints);
 
   for (const auto &point : sampledPoints) {
     // Compute the "gold" value & real value for each sampled point
@@ -1640,7 +1636,7 @@ double getUnifiedAccuracy(
 double getUnifiedAccuracy(
     ApplicableFPCC &component, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-                   std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   // Materialize the changes in a temporary function
 
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
