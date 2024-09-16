@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["11", "12", "13", "14", "15", "16"]
+        llvm: ["15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
   
     timeout-minutes: 30 
 
@@ -28,10 +28,6 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
-          if [[ '${{ matrix.llvm }}' == '13' ]]; then
-            sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-            sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-          fi
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
@@ -61,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["12", "13", "14", "15", "16"]
+        llvm: ["15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -100,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["13"] #, "14"]
+        llvm: ["16"]
         build: ["Release"] # "RelWithDebInfo"
 
     timeout-minutes: 30

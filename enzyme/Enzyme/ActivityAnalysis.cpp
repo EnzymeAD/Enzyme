@@ -65,12 +65,10 @@
 
 using namespace llvm;
 
-#if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
-#endif
 
 extern "C" {
 cl::opt<bool>
@@ -301,9 +299,7 @@ const StringSet<> KnownInactiveFunctions = {
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
-#if LLVM_VERSION_MAJOR >= 12
     Intrinsic::experimental_noalias_scope_decl,
-#endif
     Intrinsic::objectsize,
     Intrinsic::floor,
     Intrinsic::ceil,
@@ -559,12 +555,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   bool all_inactive = val != CI->getCalledOperand();
 
-#if LLVM_VERSION_MAJOR >= 14
-  for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-  {
+  for (size_t i = 0; i < CI->arg_size(); i++) {
     if (val == CI->getArgOperand(i)) {
       if (!CI->getAttributes().hasParamAttr(i, "enzyme_inactive") &&
           !(F && F->getCallingConv() == CI->getCallingConv() &&
@@ -623,6 +614,9 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
     return val != CI->getOperand(1);
 
+  if (Name == "julia.gc_loaded")
+    return val != CI->getOperand(1);
+
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -654,13 +648,13 @@ static inline void propagateArgumentInformation(
     return;
   }
 
+  if (Name == "julia.gc_loaded") {
+    propagateFromOperand(CI.getArgOperand(0));
+    return;
+  }
+
   if (Name == "julia.call" || Name == "julia.call2") {
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 1; i < CI.arg_size(); i++)
-#else
-    for (size_t i = 1; i < CI.getNumArgOperands(); i++)
-#endif
-    {
+    for (size_t i = 1; i < CI.arg_size(); i++) {
       propagateFromOperand(CI.getOperand(i));
     }
     return;
@@ -699,12 +693,7 @@ static inline void propagateArgumentInformation(
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
   size_t i = 0;
-#if LLVM_VERSION_MAJOR >= 14
-  for (auto &a : CI.args())
-#else
-  for (auto &a : CI.arg_operands())
-#endif
-  {
+  for (auto &a : CI.args()) {
 
     if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive") ||
         (F && F->getCallingConv() == CI.getCallingConv() &&
@@ -1933,13 +1922,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
 
-#if LLVM_VERSION_MAJOR >= 12
       auto AARes = AA.getModRefInfo(
           I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
-#else
-      auto AARes =
-          AA.getModRefInfo(I, MemoryLocation(memval, LocationSize::unknown()));
-#endif
 
       // Still having failed to replace the location used by AA, fall back to
       // getModref against any location.
@@ -2966,12 +2950,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       auto F = getFunctionFromCall(call);
 
       size_t idx = 0;
-#if LLVM_VERSION_MAJOR >= 14
-      for (auto &arg : call->args())
-#else
-      for (auto &arg : call->arg_operands())
-#endif
-      {
+      for (auto &arg : call->args()) {
         if (arg != parent) {
           idx++;
           continue;
@@ -3130,12 +3109,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (isa<LoadInst>(operand)) {
           bool legal = true;
 
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < call->arg_size() + 1; ++i)
-#else
-          for (unsigned i = 0; i < call->getNumArgOperands() + 1; ++i)
-#endif
-          {
+          for (unsigned i = 0; i < call->arg_size() + 1; ++i) {
             Value *a = call->getOperand(i);
 
             if (isa<ConstantInt>(a))

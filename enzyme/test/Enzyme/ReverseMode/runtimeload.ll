@@ -1,11 +1,11 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-runtime-activity -enzyme-loose-types -enzyme -mem2reg -instsimplify -adce -simplifycfg -early-cse -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-runtime-activity -enzyme-loose-types -passes="enzyme,function(mem2reg,instsimplify,adce,%simplifycfg,early-cse)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-loose-types -enzyme -mem2reg -instsimplify -adce -simplifycfg -early-cse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-loose-types -passes="enzyme,function(mem2reg,instsimplify,adce,%simplifycfg,early-cse)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 
 define void @f() local_unnamed_addr {
 bb:
-  call void (...) @__enzyme_autodiff(void (double**, double**)* nonnull @julia___2553_inner.1, double* null, double* null, double* null, double* null)
+  call void (...) @__enzyme_autodiff(void (double**, double**)* nonnull @julia___2553_inner.1, metadata !"enzyme_runtime_activity", double* null, double* null, double* null, double* null)
   ret void
 }
 
