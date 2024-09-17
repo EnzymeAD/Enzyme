@@ -167,6 +167,17 @@ public:
     llvm_unreachable(msg.c_str());
   }
 
+  unsigned getMPFRPrec() const {
+    if (dtype == "f16")
+      return 11;
+    if (dtype == "f32")
+      return 24;
+    if (dtype == "f64")
+      return 53;
+    std::string msg = "getMPFRPrec: Unsupported dtype " + dtype;
+    llvm_unreachable(msg.c_str());
+  }
+
   virtual void markAsInput() {
     std::string msg = "Unexpected invocation of `markAsInput` on an "
                       "unmaterialized " +
@@ -570,32 +581,39 @@ public:
 // recursively. When operand is a FPConst, use its lower
 // bound. When operand is a FPLLValue, get its inputs from
 // `inputs`.
-void goldenValueHelper(std::shared_ptr<FPNode> node,
-                       const SmallMapVector<Value *, double, 4> &inputValues,
-                       const unsigned prec, mpfr_t &res) {
-  mpfr_set_prec(res, prec);
-
+void MPFRValueHelper(std::shared_ptr<FPNode> node,
+                     const SmallMapVector<Value *, double, 4> &inputValues,
+                     const unsigned prec, mpfr_t &res,
+                     bool groundTruth = true) {
   if (auto *constNode = dyn_cast<FPConst>(node.get())) {
     double constVal = constNode->getLowerBound(); // TODO: Can be improved
     mpfr_set_d(res, constVal, MPFR_RNDN);
-  } else if (auto *valueNode = dyn_cast<FPLLValue>(node.get())) {
-    assert(inputValues.count(valueNode->value) &&
-           "goldenValueHelper: Input value not found in `inputValues`");
+    return;
+  }
+
+  if (auto *valueNode = dyn_cast<FPLLValue>(node.get());
+      valueNode && inputValues.count(valueNode->value)) {
     double inputValue = inputValues.lookup(valueNode->value);
     mpfr_set_d(res, inputValue, MPFR_RNDN);
-  } else if (node->op == "neg") {
+    return;
+  }
+
+  if (node->op == "neg") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_neg(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "+") {
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_add(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
@@ -604,9 +622,10 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_sub(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
@@ -615,9 +634,10 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_mul(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
@@ -626,9 +646,10 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_div(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
@@ -636,64 +657,83 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
   } else if (node->op == "sin") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_sin(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "cos") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_cos(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "tan") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_tan(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "exp") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_exp(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "expm1") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_expm1(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "log") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_log(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "log1p") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_log1p(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "sqrt") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_sqrt(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "cbrt") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_cbrt(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "pow") {
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_pow(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
@@ -702,9 +742,10 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[3];
     for (int i = 0; i < 3; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_fma(res, operandResults[0], operandResults[1], operandResults[2],
              MPFR_RNDN);
     for (int i = 0; i < 3; i++) {
@@ -713,34 +754,40 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
   } else if (node->op == "fabs") {
     mpfr_t operandResult;
     mpfr_init(operandResult);
-    goldenValueHelper(node->operands[0], inputValues, prec, operandResult);
+    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
+                    groundTruth);
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_abs(res, operandResult, MPFR_RNDN);
     mpfr_clear(operandResult);
   } else if (node->op == "hypot") {
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
+    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
     mpfr_hypot(res, operandResults[0], operandResults[1], MPFR_RNDN);
     for (int i = 0; i < 2; i++) {
       mpfr_clear(operandResults[i]);
     }
   } else if (node->op == "if") {
+    // `if` does not have a dtype
     mpfr_t cond, then_val, else_val;
     mpfr_init(cond);
     mpfr_init(then_val);
     mpfr_init(else_val);
 
-    // Evaluate the condition.
-    goldenValueHelper(node->operands[0], inputValues, prec, cond);
+    // Evaluate the condition
+    MPFRValueHelper(node->operands[0], inputValues, prec, cond, groundTruth);
 
     if (0 == mpfr_cmp_ui(cond, 1)) {
-      goldenValueHelper(node->operands[1], inputValues, prec, then_val);
+      MPFRValueHelper(node->operands[1], inputValues, prec, then_val,
+                      groundTruth);
       mpfr_set(res, then_val, MPFR_RNDN);
     } else {
-      goldenValueHelper(node->operands[2], inputValues, prec, else_val);
+      MPFRValueHelper(node->operands[2], inputValues, prec, else_val,
+                      groundTruth);
       mpfr_set(res, else_val, MPFR_RNDN);
     }
 
@@ -751,8 +798,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 == mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -766,8 +813,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 != mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -781,8 +828,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 > mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -796,8 +843,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 < mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -811,8 +858,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 >= mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -826,8 +873,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 <= mpfr_cmp(operandResults[0], operandResults[1])) {
       mpfr_set_ui(res, 1, MPFR_RNDN);
@@ -841,8 +888,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 == mpfr_cmp_ui(operandResults[0], 1) &&
         0 == mpfr_cmp_ui(operandResults[1], 1)) {
@@ -857,8 +904,8 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
     mpfr_t operandResults[2];
     for (int i = 0; i < 2; i++) {
       mpfr_init(operandResults[i]);
-      goldenValueHelper(node->operands[i], inputValues, prec,
-                        operandResults[i]);
+      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
+                      groundTruth);
     }
     if (0 == mpfr_cmp_ui(operandResults[0], 1) ||
         0 == mpfr_cmp_ui(operandResults[1], 1)) {
@@ -883,7 +930,7 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
   } else if (node->op == "FALSE") {
     mpfr_set_ui(res, 0, MPFR_RNDN);
   } else {
-    std::string msg = "goldenValueHelper: Unexpected operator " + node->op;
+    std::string msg = "MPFRValueHelper: Unexpected operator " + node->op;
     llvm_unreachable(msg.c_str());
   }
 }
@@ -892,14 +939,15 @@ void goldenValueHelper(std::shared_ptr<FPNode> node,
 //   For each sampled input configuration:
 //     0. Ignore `FPNode.dtype`.
 //     1. Compute the expression with MPFR at `prec` precision
-//        by calling `goldenValueHelper`. When operand is a FPConst, use its
+//        by calling `MPFRValueHelper`. When operand is a FPConst, use its
 //        lower bound. When operand is a FPLLValue, get its inputs from
 //        `inputs`.
 //     2. Dynamically extend precisions
 //        until the first `groundTruthPrec` bits of significand don't change.
-double getGoldenValue(std::shared_ptr<FPNode> output,
-                      const SmallMapVector<Value *, double, 4> &inputValues,
-                      const unsigned groundTruthPrec = 53) {
+double getMPFRValue(std::shared_ptr<FPNode> output,
+                    const SmallMapVector<Value *, double, 4> &inputValues,
+                    bool groundTruth = false,
+                    const unsigned groundTruthPrec = 53) {
   assert(output);
 
   unsigned curPrec = 64;
@@ -907,12 +955,19 @@ double getGoldenValue(std::shared_ptr<FPNode> output,
   mpfr_init2(res, curPrec);
   mpfr_set_zero(res, 1);
 
+  if (!groundTruth) {
+    MPFRValueHelper(output, inputValues, curPrec, res, false);
+    double val = mpfr_get_d(res, MPFR_RNDN);
+    mpfr_clear(res);
+    return val;
+  }
+
   mpfr_exp_t prevResExp = 0;
   char *prevResStr = nullptr;
   int prevResSign = 0;
 
   while (true) {
-    goldenValueHelper(output, inputValues, curPrec, res);
+    MPFRValueHelper(output, inputValues, curPrec, res, true);
 
     int resSign = mpfr_sgn(res);
 
@@ -943,7 +998,7 @@ double getGoldenValue(std::shared_ptr<FPNode> output,
     if (curPrec > FPOptMaxMPFRPrec) {
       mpfr_free_str(prevResStr);
       llvm::errs()
-          << "getGoldenValue: MPFR precision limit reached, returning NaN\n";
+          << "getMPFRValue: MPFR precision limit reached, returning NaN\n";
       return std::numeric_limits<double>::quiet_NaN();
     }
 
@@ -1171,7 +1226,7 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
   // Materialize the expression in a temporary function
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
   Function *tempFunction =
-      Function::Create(FT, Function::InternalLinkage, "getTTICost_temp", M);
+      Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
   BasicBlock *entry =
       BasicBlock::Create(M->getContext(), "entry", tempFunction);
   Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
@@ -1193,11 +1248,12 @@ struct RewriteCandidate {
   // Only one rewrite candidate per output `llvm::Value` can be applied
   InstructionCost TTICost;
   double herbieCost; // Unused for now
-  double accuracy;
+  double herbieAccuracy;
+  double accuracyCost;
   std::string expr;
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
-      : herbieCost(cost), accuracy(accuracy), expr(expression) {}
+      : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 };
 
 // Floating-Point Connected Component
@@ -1307,9 +1363,10 @@ public:
   std::string expr;
   double grad;
   unsigned executions;
-  InstructionCost initialTTICost;    // Requires manual initialization
-  InstructionCost initialHerbieCost; // Requires manual initialization
-  double initialAccuracy;            // Requires manual initialization
+  InstructionCost initialTTICost;      // Requires manual initialization
+  InstructionCost initialHerbieCost;   // Requires manual initialization
+  InstructionCost initialAccuracyCost; // Requires manual initialization
+  double initialHerbieAccuracy;        // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
 
   explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
@@ -1363,7 +1420,8 @@ public:
 
   // Lower is better
   double getAccuracyCost(size_t candidateIndex) {
-    return (initialAccuracy - candidates[candidateIndex].accuracy) *
+    // TODO: Update this accuracy
+    return (initialHerbieAccuracy - candidates[candidateIndex].herbieAccuracy) *
            std::fabs(grad);
   }
 };
@@ -1496,7 +1554,7 @@ public:
   unsigned executions;
   InstructionCost initialTTICost;    // Requires manual initialization
   InstructionCost initialHerbieCost; // Requires manual initialization
-  double initialAccuracy;            // Requires manual initialization
+  double initialHerbieAccuracy;      // Requires manual initialization
 
   SmallVector<SmallVector<PrecisionChange>>
       candidateChanges; // Candidate MP allocations
@@ -1607,41 +1665,69 @@ public:
 
   // // Lower is better
   // double getAccuracyCost(size_t candidateIndex) {
-  //   return (initialAccuracy - candidates[candidateIndex].accuracy) *
+  //   return (initialHerbieAccuracy - candidates[candidateIndex].accuracy) *
   //          std::fabs(grad);
   // }
 };
 
-double getUnifiedAccuracy(
-    const std::string &expr, Module *M,
+double setUnifiedAccuracyCost(
+    ApplicableOutput &AO, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
-  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(AO.expr, argStrSet);
 
   SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
-  getSampledPoints(expr, valueToNodeMap, symbolToValueMap, sampledPoints);
+  getSampledPoints(AO.expr, valueToNodeMap, symbolToValueMap, sampledPoints);
 
-  for (const auto &point : sampledPoints) {
-    // Compute the "gold" value & real value for each sampled point
-    // Compute a geometric average of (difference * gradient)
-    // TODO: Complete this
-    double gold = getGoldenValue(parsedNode, point, 53);
-    llvm::errs() << "Gold value: " << gold << "\n";
+  SmallVector<double, 4> goldVals;
+  goldVals.resize(FPOptNumSamples);
+  double initialAC = 0.;
+  for (const auto &pair : enumerate(sampledPoints)) {
+    goldVals[pair.index()] =
+        getMPFRValue(valueToNodeMap[AO.oldOutput], pair.value(), true, 53);
+    double realVal =
+        getMPFRValue(valueToNodeMap[AO.oldOutput], pair.value(), false);
+    initialAC += std::fabs((goldVals[pair.index()] - realVal) * AO.grad);
+  }
+
+  AO.initialAccuracyCost = initialAC;
+
+  for (auto &candidate : AO.candidates) {
+    const auto &expr = candidate.expr;
+    auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+    double ac = 0.;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      // Compute the "gold" value & real value for each sampled point
+      // Compute an average of (difference * gradient)
+      // TODO: Consider geometric average???
+      assert(valueToNodeMap.count(AO.oldOutput));
+
+      llvm::errs() << "Computing real output for candidate: " << expr << "\n";
+      llvm::errs() << "Current input values:\n";
+      for (const auto &entry : pair.value()) {
+        llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
+                     << entry.second << "\n";
+      }
+      llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
+      double realVal = getMPFRValue(parsedNode, pair.value(), false);
+      llvm::errs() << "Real value: " << realVal << "\n";
+      ac += std::fabs((goldVals[pair.index()] - realVal) * AO.grad);
+    }
+    candidate.accuracyCost = ac;
   }
 
   return 0;
 }
 
-double getUnifiedAccuracy(
+double setUnifiedAccuracyCost(
     ApplicableFPCC &component, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  // Materialize the changes in a temporary function
-
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
   Function *tempFunction =
-      Function::Create(FT, Function::InternalLinkage, "getTTICost_temp", M);
+      Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
   BasicBlock *entry =
       BasicBlock::Create(M->getContext(), "entry", tempFunction);
   Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
@@ -1786,7 +1872,7 @@ bool improveViaHerbie(
   double initialCost = 1.0;
   double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
   AO.initialHerbieCost = initialCost;
-  AO.initialAccuracy = initialAccuracy;
+  AO.initialHerbieAccuracy = initialAccuracy;
 
   json::Array &best = *costAccuracy[1].getAsArray();
   double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
@@ -1796,16 +1882,6 @@ bool improveViaHerbie(
   bestCandidate.TTICost =
       getTTICost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
   AO.candidates.push_back(bestCandidate);
-
-  if (EnzymePrintHerbie) {
-    llvm::errs() << "Initial: TTICost = " << AO.initialTTICost
-                 << ", HerbieCost = " << initialCost
-                 << ", Accuracy = " << initialAccuracy << "\n";
-    llvm::errs() << "Best: TTICost = " << bestCandidate.TTICost
-                 << ", HerbieCost = " << bestCost
-                 << ", Accuracy = " << bestAccuracy
-                 << ", Expression = " << bestExpr << "\n";
-  }
 
   json::Array &alternatives = *costAccuracy[2].getAsArray();
 
@@ -1819,11 +1895,26 @@ bool improveViaHerbie(
     candidate.TTICost =
         getTTICost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
     AO.candidates.push_back(candidate);
-    if (EnzymePrintHerbie)
+  }
+
+  setUnifiedAccuracyCost(AO, M, valueToNodeMap, symbolToValueMap);
+
+  if (EnzymePrintHerbie) {
+    llvm::errs() << "Initial: "
+                 << "UnifiedAccuracyCost = " << AO.initialAccuracyCost
+                 << ", TTICost = " << AO.initialTTICost
+                 << ", HerbieCost = " << initialCost
+                 << ", HerbieAccuracy = " << initialAccuracy << "\n";
+    // The best candidate from Herbie is also printed below
+    for (size_t i = 0; i < AO.candidates.size(); ++i) {
+      auto &candidate = AO.candidates[i];
       llvm::errs() << "Alternative " << i + 1
-                   << ": TTICost = " << candidate.TTICost
-                   << ", HerbieCost = " << cost << ", Accuracy = " << accuracy
-                   << ", Expression = " << expr << "\n";
+                   << ": UnifiedAccuracyCost = " << candidate.accuracyCost
+                   << ", TTICost = " << candidate.TTICost
+                   << ", HerbieCost = " << candidate.herbieCost
+                   << ", HerbieAccuracy = " << candidate.herbieAccuracy
+                   << ", Expression = " << candidate.expr << "\n";
+    }
   }
 
   return true;
@@ -2655,17 +2746,22 @@ B2:
       // 5*. Custom error estimates of potential rewrites (TODO)
 
       llvm::errs() << "\n################################\n";
+      llvm::errs() << "Initial UnifiedAccuracyCost: " << AO.initialAccuracyCost
+                   << "\n";
       llvm::errs() << "Initial TTICost: " << AO.initialTTICost << "\n";
       llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
-      llvm::errs() << "Initial Accuracy: " << AO.initialAccuracy << "\n";
+      llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
+                   << "\n";
       llvm::errs() << "Initial Expression: " << AO.expr << "\n";
       llvm::errs() << "Grad: " << AO.grad << "\n\n";
       llvm::errs() << "Candidates:\n";
-      llvm::errs() << "TTICost\tHerbieCost\tAccuracy\tExpression\n";
+      llvm::errs()
+          << "UnifiedAccuracyCost\tTTICost\tHerbieCost\tAccuracy\tExpression\n";
       llvm::errs() << "--------------------------------\n";
       for (const auto &candidate : AO.candidates) {
-        llvm::errs() << candidate.TTICost << "\t" << candidate.herbieCost
-                     << "\t" << candidate.accuracy << "\t" << candidate.expr
+        llvm::errs() << candidate.accuracyCost << "\t" << candidate.TTICost
+                     << "\t" << candidate.herbieCost << "\t"
+                     << candidate.herbieAccuracy << "\t" << candidate.expr
                      << "\n";
       }
       llvm::errs() << "################################\n\n";
