@@ -418,10 +418,12 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerAffineDialectAutoDiffInterface(registry);
   enzyme::registerArithDialectAutoDiffInterface(registry);
   enzyme::registerBuiltinDialectAutoDiffInterface(registry);
+  enzyme::registerComplexDialectAutoDiffInterface(registry);
   enzyme::registerLLVMDialectAutoDiffInterface(registry);
   enzyme::registerNVVMDialectAutoDiffInterface(registry);
   enzyme::registerMathDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
+  enzyme::registerComplexDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
   enzyme::registerCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);

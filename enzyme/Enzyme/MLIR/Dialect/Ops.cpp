@@ -64,3 +64,15 @@ LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   return success();
 }
+
+LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}

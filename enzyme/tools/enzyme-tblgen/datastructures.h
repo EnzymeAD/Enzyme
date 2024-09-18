@@ -1,4 +1,3 @@
-
 #ifndef ENZYME_TBLGEN_DATASTRUCT_H
 #define ENZYME_TBLGEN_DATASTRUCT_H 1
 
@@ -27,7 +26,8 @@ enum class ArgType {
   uplo,
   trans,
   diag,
-  side
+  side,
+  info
 };
 
 bool is_char_arg(ArgType ty);
@@ -68,7 +68,7 @@ public:
        const DenseMap<size_t, ArgType> &patternTypes,
        const DenseSet<size_t> &patternMutables);
   bool isBLASLevel2or3() const;
-  DagInit *getRuleDag();
+  DagInit *getRuleDag() const;
   size_t getHandledArgIdx() const;
   const StringMap<size_t> &getArgNameMap() const;
   const DenseMap<size_t, ArgType> &getArgTypeMap() const;
@@ -94,7 +94,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 /// A single Blas function, including replacement rules. E.g. scal, axpy, ...
 class TGPattern {
 private:
-  Record *record;
+  const Record *record;
   std::string blasName;
   bool BLASLevel2or3;
 
@@ -123,8 +123,9 @@ private:
   DenseMap<size_t, SmallVector<size_t, 3>> relatedLengths;
 
 public:
-  TGPattern(Record *r);
-  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg) const;
+  TGPattern(const Record *r);
+  SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg,
+                                              bool hideuplo = false) const;
   bool isBLASLevel2or3() const;
   const DenseMap<size_t, DenseSet<size_t>> &getArgUsers() const;
   StringRef getName() const;
@@ -135,6 +136,8 @@ public:
   ArrayRef<size_t> getActiveArgs() const;
   ArrayRef<Rule> getRules() const;
   ArrayRef<SMLoc> getLoc() const;
+  ArgType getTypeOfArg(StringRef name) const;
+  DagInit *getDuals() const;
 };
 
 #endif

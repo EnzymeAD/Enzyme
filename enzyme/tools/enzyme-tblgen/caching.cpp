@@ -34,12 +34,6 @@ os << "  bool need_" << name << " = false;\n";
       bool first = true;
       for (size_t user: users) {
         auto userName = nameVec[user];
-        if (name == userName) {
-          llvm::errs() << pattern.getName() << "\n";
-          llvm::errs() << "user: " << userName << "\n";
-          PrintFatalError("scalar user is the same as the scalar itself");
-          assert(false);
-        }
         os << (first ? "" : " || ")
 << "active_" << userName;
         first = false;
@@ -65,38 +59,23 @@ os << "  bool need_" << name << " = false;\n";
 
 // TODO: maybe update to return set<StringRef>,
 // for the case of multiple inputs
-std::string get_input_mat(const DagInit *ruleDag) {
-  std::string toCache = "";
-  const auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
-  if (Def->isSubClassOf("Seq")) {
-    // handle seq rules
+void get_input_mat(const DagInit *ruleDag, StringSet<> &inputs) {
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
       Init *subArg = ruleDag->getArg(i);
-      DagInit *sub_Dag = cast<DagInit>(subArg);
-      for (size_t j = 0; j < sub_Dag->getNumArgs(); j++) {
-        Init *subArg = sub_Dag->getArg(j);
-        if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+      if (DagInit *sub_Dag = dyn_cast<DagInit>(subArg))
+          get_input_mat(sub_Dag, inputs);
+      else if (DefInit* def = dyn_cast<DefInit>(subArg)) {
           const auto Def = def->getDef();
-          if (Def->isSubClassOf("input")) {
-            toCache = Def->getValueAsString("name");
-            break;
-          }
-        }
-      }
-    }
-  } else {
-    for (size_t j = 0; j < ruleDag->getNumArgs(); j++) {
-      Init *subArg = ruleDag->getArg(j);
-      if (DefInit *def = dyn_cast<DefInit>(subArg)) {
-        const auto Def = def->getDef();
         if (Def->isSubClassOf("input")) {
-          toCache = Def->getValueAsString("name");
-          break;
+          inputs.insert(Def->getValueAsString("name"));
         }
       }
     }
-  }
-  return toCache;
+}
+StringSet<> get_input_mat(const DagInit *ruleDag) {
+    StringSet<> inputs;
+    get_input_mat(ruleDag, inputs);
+    return inputs;
 }
 
 void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
@@ -105,20 +84,22 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
   const auto nameVec = pattern.getArgNames();
   const auto activeArgs = pattern.getActiveArgs();
-  assert(rules.size() == activeArgs.size());
+  if (rules.size() != activeArgs.size()) {
+    llvm::errs() << " rules.size() = " << rules.size() << "   activeArgs.size()=" << activeArgs.size() << "\n";
+    PrintFatalError(pattern.getLoc(), "Wrong number of rules per number of input arguments");
+  }
   for (size_t i = 0; i < rules.size(); i++) {
     auto rule = rules[i];
     const auto activeArg = activeArgs[i];
     const auto name = nameVec[activeArg];
     const DagInit *ruleDag = rule.getRuleDag();
     // will update it directly in the next PR for nested rules
-    std::string toCache = get_input_mat(ruleDag);
-    if (toCache != "") {
+    for (auto &toCache : get_input_mat(ruleDag)) {
       os << "  // we cache the following matrix,\n"
-         << "  // since one rule uses input<" << toCache << ">\n"
+         << "  // since one rule uses input<" << toCache.getKey() << ">\n"
          << "  if (active_" << name << ") {\n"
-         << "    need_" << toCache << " = true;\n"
-         << "    cache_" << toCache << " = true;\n"
+         << "    need_" << toCache.getKey() << " = true;\n"
+         << "    cache_" << toCache.getKey() << " = true;\n"
          << "  }\n";
     }
 
@@ -139,7 +120,7 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     } else if (ty == ArgType::fp) {
       scalarType = "fpType";
     } else {
-      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty));
+      assert(ty == ArgType::cblas_layout || isVecLikeArg(ty) || ty == ArgType::info);
       continue;
     }
   os
@@ -211,8 +192,12 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *arg_malloc_size;\n";
 
     if (dimensions.size() == 3) {
-      os 
-<< "      malloc_size = select_vec_dims(BuilderZ, arg_" << nameVec[dimensions[0]] << ", arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ", byRef, cublas);\n";
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        (void)startty;
+        assert(startty == ArgType::trans);
+os
+<< "      auto norm = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      malloc_size = CreateSelect(BuilderZ, norm, arg_" << nameVec[dimensions[1]] << ", arg_" << nameVec[dimensions[2]] << ");\n";
     } else {
       os 
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n";
@@ -220,11 +205,14 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
     os
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\");\n"
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx) ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (cublas) {\n"
@@ -268,11 +256,26 @@ os << "      if (cublas) {\n"
 << "      auto charTy = IntegerType::get(intType->getContext(), 8);\n"
 << "      Value *M, *N;\n";
 
+    std::string uplostr = "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
+                          "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n";
     if (dimensions.size() == 3) {
+        auto startty = pattern.getTypeOfArg(nameVec[dimensions[0]]); 
+        if (startty == ArgType::trans) {
       os 
 << "      Value *normal = is_normal(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
 << "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
 << "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+        } else if (startty == ArgType::uplo) {
+os << "      M = " << dim1 << ";\n"
+<< "      N = " << dim2 << ";\n";
+uplostr = "        Value *uplo = arg_" + nameVec[dimensions[0]] + ";\n";
+        } else if (startty == ArgType::side) {
+os
+<< "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
+<< "      M = N = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n";
+        } else {
+            assert(0 &&" unknown startty");
+        }
     } else {
       os 
 << "      M = " << dim1 << ";\n"
@@ -283,16 +286,18 @@ os << "      if (cublas) {\n"
 << "      auto *len1 = load_if_ref(BuilderZ, intType, M, byRef);\n"
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\");\n"
+<< "      Instruction *SubZero = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", /*caller*/nullptr";
+    if (pattern.getName() == "potrf") os << ", &SubZero";
+    os << ");\n"
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
-    for (auto len_pos : dimensions ) {
+    for (auto len_pos : pattern.getRelatedLengthArgs(argIdx, /*hideuplo*/true) ) {
 os << "      if (byRef) valueTypes[" << len_pos << "] = ValueType::Primal;\n";
     }
 os << "      if (EnzymeLapackCopy) {\n"
-<< "        Value *uplo = llvm::ConstantInt::get(charTy, 0);\n" // garbage data, just should not match U or L
-<< "        uplo = to_blas_callconv(BuilderZ, uplo, byRef, cublas, nullptr, allocationBuilder, \"copy.garbage\");\n"
+<< uplostr
 << "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
@@ -326,7 +331,9 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
- 
+if (pattern.getName() == "potrf" || pattern.getName() == "trtrs") {
+os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode());\n";
+}
   os << "    if (byRef) {\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto ty = typeMap.lookup(i);
@@ -391,11 +398,14 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
      
     }
 
-    const DagInit *ruleDag = rule.getRuleDag();
-    std::string toCache = get_input_mat(ruleDag);
-    if (toCache != "") {
-      os << "  Value *input_" << toCache << " = nullptr;\n"
-         << "  Value *free_input_" << toCache << " = nullptr;\n";
+    bool seen = false;
+    for (auto rule2 : rules) {
+        auto inps = get_input_mat(rule2.getRuleDag());
+        seen |= inps.find(name) != inps.end();
+    }
+    if (seen) {
+      os << "  Value *input_" << name << " = nullptr;\n"
+         << "  Value *free_input_" << name << " = nullptr;\n";
     }
   }
 

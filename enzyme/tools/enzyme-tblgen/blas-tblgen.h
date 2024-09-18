@@ -5,5 +5,7 @@ class TGPattern;
 
 void emitBlasDerivatives(const llvm::RecordKeeper &RK, llvm::raw_ostream &os);
 bool hasDiffeRet(llvm::Init *resultTree);
-bool hasAdjoint(llvm::Init *resultTree, llvm::StringRef argName);
-llvm::SmallString<80> ValueType_helper(const TGPattern &pattern, size_t actPos);
+bool hasAdjoint(const TGPattern &pattern, llvm::Init *resultTree,
+                llvm::StringRef argName);
+llvm::SmallString<80> ValueType_helper(const TGPattern &pattern, ssize_t actPos,
+                                       llvm::DagInit *ruleDag);

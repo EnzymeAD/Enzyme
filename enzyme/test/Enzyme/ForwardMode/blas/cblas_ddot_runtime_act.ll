@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-runtime-activity=1 -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -enzyme-runtime-activity=1 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -10,19 +10,19 @@ declare double @cblas_ddot(i32, double*, i32, double*, i32)
 
 define double @active(i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn) {
 entry:
-  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
+  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
   ret double %r
 }
 
 define double @inactiveFirst(i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %dn, i32 %incn) {
 entry:
-  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, i32 %len, metadata !"enzyme_const", double* noalias %m, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
+  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, metadata !"enzyme_const", double* noalias %m, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
   ret double %r
 }
 
 define double @inactiveSecond(i32 %len, double* noalias %m, double* noalias %dm, i32 %incm, double* noalias %n, i32 %incn) {
 entry:
-  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, i32 %len, double* noalias %m, double* noalias %dm, i32 %incm, metadata !"enzyme_const", double* noalias %n, i32 %incn)
+  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f, metadata !"enzyme_runtime_activity", i32 %len, double* noalias %m, double* noalias %dm, i32 %incm, metadata !"enzyme_const", double* noalias %n, i32 %incn)
   ret double %r
 }
 
@@ -34,7 +34,7 @@ entry:
 
 define double @inactive(i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn) {
 entry:
-  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f2, i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
+  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f2, metadata !"enzyme_runtime_activity", i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
   ret double %r
 }
 

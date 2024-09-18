@@ -68,6 +68,8 @@
 
 #include "TypeAnalysis/ConcreteType.h"
 
+class TypeResults;
+
 namespace llvm {
 class ScalarEvolution;
 }
@@ -200,6 +202,17 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   }
   return nullptr;
 }
+
+class GradientUtils;
+struct RequestContext;
+llvm::Value *EmitNoDerivativeError(const std::string &message,
+                                   llvm::Instruction &inst,
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
+                           RequestContext &ctx);
+
+void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
+                     GradientUtils *gutils, llvm::IRBuilder<> &B);
 
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
@@ -572,6 +585,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
   }
   if (T->isHalfTy())
     return llvm::IntegerType::get(T->getContext(), 16);
+  if (T->isBFloatTy())
+    return llvm::IntegerType::get(T->getContext(), 16);
   if (T->isFloatTy())
     return llvm::IntegerType::get(T->getContext(), 32);
   if (T->isDoubleTy())
@@ -594,6 +609,7 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
     switch (ty->getBitWidth()) {
     case 16:
       return llvm::Type::getHalfTy(T->getContext());
+      // return llvm::Type::getBFloat16Ty(T->getContext());
     case 32:
       return llvm::Type::getFloatTy(T->getContext());
     case 64:
@@ -641,7 +657,7 @@ static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
 
 static inline bool isCertainPrint(const llvm::StringRef name) {
   if (name == "printf" || name == "puts" || name == "fprintf" ||
-      name == "putchar" ||
+      name == "putchar" || name == "fputc" ||
       startsWith(name,
                  "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
       startsWith(name, "_ZNSolsE") || startsWith(name, "_ZNSo9_M_insert") ||
@@ -660,6 +676,9 @@ struct BlasInfo {
   std::string suffix;
   std::string function;
   bool is64;
+
+  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -667,6 +686,9 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #endif
+
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
@@ -954,7 +976,8 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter);
 
@@ -969,7 +992,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 //      load A[i-1]
 //      store A[i] = ...
 //   }
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI,
                               llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                               llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
@@ -1107,7 +1131,6 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   using namespace llvm;
   const llvm::Value *callVal;
   callVal = op->getCalledOperand();
-
   while (!called) {
     if (auto castinst = dyn_cast<ConstantExpr>(callVal))
       if (castinst->isCast()) {
@@ -1119,7 +1142,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
       break;
     }
     if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
-      callVal = dyn_cast<Function>(alias->getAliasee());
+      callVal = alias->getAliasee();
       continue;
     }
     break;
@@ -1136,7 +1159,7 @@ static inline llvm::StringRef getFuncName(llvm::Function *called) {
     return called->getName();
 }
 
-template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
+static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_math"))
@@ -1150,11 +1173,23 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   return "";
 }
 
-template <typename T>
+static inline bool hasNoCache(llvm::Value *op) {
+  using namespace llvm;
+  if (auto CB = dyn_cast<CallBase>(op)) {
+    if (auto called = getFunctionFromCall(CB)) {
+      if (called->hasFnAttribute("enzyme_nocache"))
+        return true;
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
-static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
+static inline std::optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #else
-static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
+static inline llvm::Optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #endif
 {
   auto AttrList =
@@ -1685,7 +1720,8 @@ static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
 
 bool attributeKnownFunctions(llvm::Function &F);
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
+llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
+                                         bool forceZero = false);
 
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
@@ -1811,8 +1847,13 @@ void addValueToCache(llvm::Value *arg, bool cache_arg, llvm::Type *ty,
                      llvm::SmallVectorImpl<llvm::Value *> &cacheValues,
                      llvm::IRBuilder<> &BuilderZ, const llvm::Twine &name = "");
 
-llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::IntegerType *intType,
+llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
                          llvm::Value *V, bool byRef);
+
+void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                         BlasInfo blas, bool byRef, llvm::Value *layout,
+                         llvm::Value *uplo, llvm::Value *A, llvm::Value *lda,
+                         llvm::Value *N);
 
 // julia_decl null means not julia decl, otherwise it is the integer type needed
 // to cast to
@@ -1848,21 +1889,34 @@ static inline llvm::SmallVector<llvm::Value *, 1> concat_values(T &&...t) {
 
 llvm::Value *is_normal(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef,
                        bool cublas);
-llvm::Value *is_uper(llvm::IRBuilder<> &B, llvm::Value *trans, bool byRef);
-llvm::Value *select_vec_dims(llvm::IRBuilder<> &B, llvm::Value *trans,
-                             llvm::Value *dim1, llvm::Value *dim2, bool byRef,
-                             bool cublas);
+llvm::Value *is_left(llvm::IRBuilder<> &B, llvm::Value *side, bool byRef,
+                     bool cublas);
+llvm::Value *is_lower(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                      bool cublas);
+llvm::Value *is_nonunit(llvm::IRBuilder<> &B, llvm::Value *uplo, bool byRef,
+                        bool cublas);
+
+llvm::Value *lookup_with_layout(llvm::IRBuilder<> &B, llvm::Type *fpType,
+                                llvm::Value *layout, llvm::Value *base,
+                                llvm::Value *lda, llvm::Value *row,
+                                llvm::Value *col);
+
 // first one assume V is an Integer
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool cublas);
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool cublas);
 // secon one assume V is an Integer or a ptr to an int (depends on byRef)
-llvm::Value *transpose(llvm::IRBuilder<> &B, llvm::Value *V, bool byRef,
-                       bool cublas, llvm::IntegerType *IT,
-                       llvm::IRBuilder<> &entryBuilder,
+llvm::Value *transpose(std::string floatType, llvm::IRBuilder<> &B,
+                       llvm::Value *V, bool byRef, bool cublas,
+                       llvm::IntegerType *IT, llvm::IRBuilder<> &entryBuilder,
                        const llvm::Twine &name);
 llvm::SmallVector<llvm::Value *, 1>
 get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
              llvm::ArrayRef<llvm::Value *> row,
              llvm::ArrayRef<llvm::Value *> col, bool byRef, bool cublas);
+
+llvm::SmallVector<llvm::Value *, 1>
+get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
+             bool byRef, bool cublas);
 
 #ifdef __clang__
 #pragma clang diagnostic push

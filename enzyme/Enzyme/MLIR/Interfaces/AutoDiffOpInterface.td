@@ -133,4 +133,22 @@ def ActivityOpInterface
   ];
 }
 
+def BatchOpInterface : OpInterface<"BatchOpInterface"> {
+  let description = [{
+    A batchable MLIR operation.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+      Emits a batched version of a given operation.
+    }],
+    /*retTy=*/"::mlir::Operation*",
+    /*methodName=*/"createBatch",
+    /*args=*/(ins "::mlir::IRMapping &":$mapper, "::mlir::Operation::CloneOptions":$options, "::std::map<mlir::Operation*, mlir::Operation*>&":$opMap,  "::llvm::ArrayRef<int64_t>":$batchSizes)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES

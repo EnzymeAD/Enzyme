@@ -13,6 +13,9 @@
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
+
 #include "Dialect/Dialect.h"
 
 namespace mlir {
@@ -21,6 +24,8 @@ class RewritePatternSet;
 class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
+
+std::unique_ptr<Pass> createBatchPass();
 
 std::unique_ptr<Pass> createDifferentiateWrapperPass();
 
@@ -50,6 +55,10 @@ void registerDialect(DialectRegistry &registry);
 namespace arith {
 class ArithDialect;
 } // end namespace arith
+
+namespace complex {
+class ComplexDialect;
+} // end namespace complex
 
 namespace cf {
 class ControlFlowDialect;

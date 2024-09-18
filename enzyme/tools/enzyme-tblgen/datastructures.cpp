@@ -63,6 +63,8 @@ const char *TyToString(ArgType ty) {
     return "diag";
   case ArgType::side:
     return "side";
+  case ArgType::info:
+    return "info";
   default:
     return "unknown";
   }
@@ -77,6 +79,44 @@ bool isVecLikeArg(ArgType ty) {
 bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
                ArrayRef<std::string> nameVec,
                const DenseMap<size_t, ArgType> &argTypesFull) {
+  auto Def = cast<DefInit>(toSearch->getOperator())->getDef();
+
+  // shadow is unrelated, ignore it
+  // However, consider the extra added inc.
+  if (Def->getName() == "Shadow" || Def->isSubClassOf("Shadow")) {
+    if (toSearch->getNumArgs() != 1)
+      PrintFatalError(rule->getLoc(), "only single op shadow supported");
+    if (!toSearch->getArgName(0))
+      PrintFatalError(rule->getLoc(), "only shadow of arg name is supported");
+
+    auto name = toSearch->getArgName(0)->getAsUnquotedString();
+
+    size_t argPosition = (size_t)(-1);
+    for (size_t i = 0; i < nameVec.size(); i++) {
+      if (nameVec[i] == name) {
+        argPosition = i;
+        break;
+      }
+    }
+    if (argPosition == (size_t)(-1)) {
+      PrintFatalError(rule->getLoc(),
+                      Twine("arg '") + name +
+                          "' (pos=" + std::to_string(argPosition) +
+                          ") not in inverted nameMap isArgUsed(1)!");
+    }
+    auto ty = argTypesFull.lookup(argPosition);
+    if (ty == ArgType::vincData || ty == ArgType::mldData) {
+      auto incName = nameVec[argPosition + 1];
+      if (incName == toFind)
+        return true;
+    }
+
+    return false;
+  }
+  if (Def->getName() == "ShadowNoInc" || Def->isSubClassOf("ShadowNoInc")) {
+    return false;
+  }
+
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       // os << " Recursing. Magic!\n";
@@ -85,10 +125,10 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
     } else {
       auto name = toSearch->getArgNameStr(i);
       if (name == "") {
-        // handle input<"x">, adj<"x">, transpose<"transa"> and similar
+        // handle input<"x">, transpose<"transa"> and similar
         // we look up the trans arg inside of transpose<"transX">,
         // because it's based on the same trans arg.
-        // we ignore adj<"x"> because the shadow of x is not based on x
+        // we ignore input<"x"> because the cache of x is not based on x
         auto opName = toSearch->getArg(i)->getAsString();
         auto Def = cast<DefInit>(toSearch->getArg(i))->getDef();
         if (opName == "transpose" || Def->isSubClassOf("transpose")) {
@@ -96,9 +136,8 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
           if (toFind == transName) {
             return true;
           }
-        } else if (opName == "adj" || Def->isSubClassOf("adj") ||
-                   opName == "input" || Def->isSubClassOf("input")) {
-          // shadow is unrelated, ignore it
+        } else if (opName == "input" || Def->isSubClassOf("input")) {
+          // cache is unrelated, ignore it
           // However, consider the extra added inc.
 
           auto name = Def->getValueAsString("name");
@@ -117,9 +156,7 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
                                 ") not in inverted nameMap isArgUsed(1)!");
           }
           auto ty = argTypesFull.lookup(argPosition);
-          if (ty == ArgType::vincData ||
-              ((opName == "adj" || Def->isSubClassOf("adj")) &&
-               ty == ArgType::mldData)) {
+          if (ty == ArgType::vincData) {
             auto incName = nameVec[argPosition + 1];
             if (incName == toFind)
               return true;
@@ -129,18 +166,15 @@ bool isArgUsed(Rule *rule, StringRef toFind, const DagInit *toSearch,
         if (name == toFind) {
           return true;
         }
-        size_t argPosition = (size_t)(-1);
+        ssize_t argPosition = -1;
         for (size_t i = 0; i < nameVec.size(); i++) {
           if (nameVec[i] == name) {
             argPosition = i;
             break;
           }
         }
-        if (argPosition == (size_t)(-1)) {
-          PrintFatalError(rule->getLoc(),
-                          Twine("arg '") + name +
-                              "' (pos=" + std::to_string(argPosition) +
-                              ") not in inverted nameMap isArgUsed(2)!");
+        if (argPosition == -1) {
+          return false;
         }
         auto ty = argTypesFull.lookup(argPosition);
         if (ty == ArgType::vincData || ty == ArgType::mldData) {
@@ -209,7 +243,7 @@ ArrayRef<SMLoc> Rule::getLoc() const { return getPattern()->getLoc(); }
 
 bool Rule::isBLASLevel2or3() const { return BLASLevel2or3; }
 
-DagInit *Rule::getRuleDag() { return rewriteRule; }
+DagInit *Rule::getRuleDag() const { return rewriteRule; }
 
 size_t Rule::getHandledArgIdx() const { return activeArg; }
 
@@ -281,6 +315,8 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, ArgType> &argTypes) {
       auto name = val->getName();
       if (name == "len") {
         argTypes.insert(std::make_pair(pos, ArgType::len));
+      } else if (name == "info") {
+        argTypes.insert(std::make_pair(pos, ArgType::info));
       } else if (name == "fp") {
         argTypes.insert(std::make_pair(pos, ArgType::fp));
       } else if (name == "cblas_layout") {
@@ -361,7 +397,8 @@ void fillRelatedLenghts(
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
       } else {
         assert(argTypes.lookup(lengths[0]) == ArgType::trans ||
-               argTypes.lookup(lengths[0]) == ArgType::diag);
+               argTypes.lookup(lengths[0]) == ArgType::uplo ||
+               argTypes.lookup(lengths[0]) == ArgType::side);
         assert(argTypes.lookup(lengths[1]) == ArgType::len);
         assert(argTypes.lookup(lengths[2]) == ArgType::len);
       }
@@ -392,7 +429,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 
 ArrayRef<SMLoc> TGPattern::getLoc() const { return record->getLoc(); }
 
-TGPattern::TGPattern(Record *r)
+TGPattern::TGPattern(const Record *r)
     : record(r), blasName(r->getNameInitAsString()) {
   fillArgs(r, args, argNameToPos);
   fillArgTypes(r, argTypes);
@@ -421,7 +458,8 @@ TGPattern::TGPattern(Record *r)
   fillArgUserMap(rules, args, posActArgs, argUsers);
 }
 
-SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
+SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg,
+                                                       bool hideuplo) const {
   // other args are unrelated to length args
   assert(argTypes.lookup(arg) == ArgType::vincData ||
          argTypes.lookup(arg) == ArgType::mldData ||
@@ -432,8 +470,10 @@ SmallVector<size_t, 3> TGPattern::getRelatedLengthArgs(size_t arg) const {
 
   if (related.size() == 3) {
     auto argTy = argTypes.lookup(related[0]);
-    assert(argTy == ArgType::trans || argTy == ArgType::diag);
-    (void)argTy;
+    assert(argTy == ArgType::trans || argTy == ArgType::uplo ||
+           argTy == ArgType::side);
+    if (hideuplo && argTy == ArgType::uplo)
+      related.erase(related.begin());
   }
 
   return related;
@@ -462,3 +502,19 @@ const DenseSet<size_t> &TGPattern::getMutableArgs() const { return mutables; }
 ArrayRef<size_t> TGPattern::getActiveArgs() const { return posActArgs; }
 
 ArrayRef<Rule> TGPattern::getRules() const { return rules; }
+
+ArgType TGPattern::getTypeOfArg(StringRef argName) const {
+  assert(argNameToPos.count(argName) == 1);
+  size_t argPos = argNameToPos.lookup(argName);
+  auto found = argTypes.find(argPos);
+  if (found == argTypes.end()) {
+    PrintFatalError(getLoc(), Twine("Could not successfully find argName '") +
+                                  argName + " (index " +
+                                  std::to_string(argPos) + ") in patternTypes");
+  }
+  return found->second;
+}
+
+DagInit *TGPattern::getDuals() const {
+  return record->getValueAsDag("ArgDuals");
+}

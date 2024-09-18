@@ -14,14 +14,25 @@ include "mlir/Pass/PassBase.td"
 def DifferentiatePass : Pass<"enzyme"> {
   let summary = "Differentiate Passes";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect"
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def BatchPass : Pass<"enzyme-batch"> {
+  let summary = "Batch Passes";
+  let dependentDialects = [
+  ];
+  let constructor = "mlir::enzyme::createBatchPass()";
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "cf::ControlFlowDialect",
     "enzyme::EnzymeDialect"
   ];
@@ -74,6 +85,9 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect"
+  ];
   let options = [
     ListOption<
       /*C++ variable name=*/"funcsToAnalyze",
@@ -101,6 +115,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*type=*/"bool",
       /*default=*/"true",
       /*description=*/"Whether to use the new Dataflow activity analysis"
+    >,
+    Option<
+      /*C++ variable name=*/"relative",
+      /*CLI argument=*/"relative",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Use relative bottom-up activity analysis"
     >,
     Option<
       /*C++ variable name=*/"inactiveArgs",

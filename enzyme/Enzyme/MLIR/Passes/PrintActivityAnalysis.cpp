@@ -205,9 +205,16 @@ struct PrintActivityAnalysisPass
     if (annotate && dataflow) {
       // Infer the activity attributes from the __enzyme_autodiff call
       Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
-      if (!autodiff_decl)
-        autodiff_decl =
-            moduleOp.lookupSymbol("_Z17__enzyme_autodiffIdJPFddyEdyEET_DpT0_");
+      if (!autodiff_decl) {
+        for (auto &subOp : *moduleOp.getBody()) {
+          if (auto func = dyn_cast<FunctionOpInterface>(&subOp)) {
+            if (func.getName().contains("__enzyme_autodiff")) {
+              autodiff_decl = &subOp;
+              break;
+            }
+          }
+        }
+      }
       if (!autodiff_decl) {
         moduleOp.emitError("Failed to find __enzyme_autodiff symbol");
         return signalPassFailure();

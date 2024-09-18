@@ -2,6 +2,24 @@
 
 load("@llvm-project//llvm:lit_test.bzl", "lit_test")
 
+exclude_tests = [
+    "**/*omp*.c",
+]
+
+stdlib_tests = [
+    "**/gh_issue_1904.cpp",
+    "**/CppSugar/sret.cpp",
+    "**/ReverseMode/fbuff.cpp",
+    "**/*blas*.cpp",
+    "**/*ForwardMode/rosenbrock.cpp",
+    "**/*ReverseMode/map.cpp",
+    "**/*ReverseMode/multivecmax.cpp",
+    "**/*ReverseMode/vecmax.cpp",
+    "**/*Sparse/*",
+    "**/*eigen*.cpp",
+    "**/*integrate*.cpp",
+]
+
 [
     lit_test(
         name = "%s.test" % src,
@@ -22,8 +40,8 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test")
     for src in glob(
         [
             "**/*.c",
-            "**/.cpp",
+            "**/*.cpp",
         ],
-        exclude = ["**/*omp*.c"],
+        exclude = exclude_tests,
     )
 ]

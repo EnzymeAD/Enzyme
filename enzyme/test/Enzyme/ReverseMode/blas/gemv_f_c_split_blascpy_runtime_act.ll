@@ -1,10 +1,10 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -enzyme-runtime-activity=1 -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -S | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1  -S | FileCheck %s
 
 ; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
 ; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.
 ;                       trans,                  M,                       N,                     alpha,                  A,    lda,                    x,  , incx,                  beta,                    y,  incy
-declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly) 
+declare void @dgemv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8* , i8* nocapture readonly, i64) 
 
 define void @f(i8* noalias %y, i8* noalias %A, i8* noalias %x, i8* noalias %alpha, i8* noalias %beta) {
 entry:
@@ -25,7 +25,7 @@ entry:
   store i64 4, i64* %lda, align 16
   store i64 2, i64* %incx, align 16
   store i64 1, i64* %incy, align 16
-  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p)
+  call void @dgemv_64_(i8* %transa, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p, i64 1)
   ret void
 }
 
@@ -41,7 +41,7 @@ declare dso_local void @__enzyme_autodiff(...)
 
 define void @active(i8* %y, i8* %dy, i8* %A, i8* %dA, i8* %x, i8* %dx, i8* %alpha, i8* %dalpha, i8* %beta, i8* %dbeta) {
 entry:
-  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_const", i8* %x, metadata !"enzyme_const", i8* %alpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
+  call void (...) @__enzyme_autodiff(void (i8*,i8*,i8*,i8*,i8*)* @g, metadata !"enzyme_runtime_activity", metadata !"enzyme_dup", i8* %y, i8* %dy, metadata !"enzyme_dup", i8* %A, i8* %dA, metadata !"enzyme_const", i8* %x, metadata !"enzyme_const", i8* %alpha, metadata !"enzyme_dup", i8* %beta, i8* %dbeta)
   ret void
 }
 
@@ -110,7 +110,7 @@ entry:
 ; CHECK-NEXT:   %23 = insertvalue { double*, double* } undef, double* %cache.x, 0
 ; CHECK-NEXT:   %24 = insertvalue { double*, double* } %23, double* %cache.y, 1
 ; CHECK-NEXT:   store { double*, double* } %24, { double*, double* }* %0
-; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p)
+; CHECK-NEXT:   call void @dgemv_64_(i8* %malloccall, i8* %m_p, i8* %n_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %x, i8* %incx_p, i8* %beta, i8* %y, i8* %incy_p, i64 1)
 ; CHECK-NEXT:   %25 = load { double*, double* }, { double*, double* }* %0
 ; CHECK-NEXT:   ret { double*, double* } %25
 ; CHECK-NEXT: }
@@ -162,7 +162,6 @@ entry:
 ; CHECK-NEXT:   %tape.ext.y1 = extractvalue { double*, double* } %0, 1
 ; CHECK-NEXT:   %[[i13:.+]] = bitcast double* %tape.ext.y1 to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 ; CHECK-NEXT:   br i1 %rt.inactive.A, label %invertentry.A.done, label %invertentry.A.active
 
 ; CHECK: invertentry.A.active:                             ; preds = %invertentry
@@ -171,10 +170,12 @@ entry:
 ; CHECK-DAG:   %[[r23:.+]] = icmp eq i8 %ld.row.trans, 78
 ; CHECK-NEXT:   %[[r24:.+]] = or i1 %[[r23]], %[[r22]]
 ; CHECK-NEXT:   %[[r25:.+]] = select i1 %[[r24]], i8* %"y'", i8* %11
-; CHECK-NEXT:   %[[r29:.+]] = select i1 %[[r24]], i8* %incy_p, i8* %intcast.int.one
+; CHECK-NEXT:   %[[cast1:.+]] = bitcast i64* %byref.int.one to i8*
+; CHECK-NEXT:   %[[r29:.+]] = select i1 %[[r24]], i8* %incy_p, i8* %[[cast1]]
 ; CHECK-NEXT:   %[[r33:.+]] = select i1 %[[r24]], i8* %11, i8* %"y'"
-; CHECK-NEXT:   %[[r37:.+]] = select i1 %[[r24]], i8* %intcast.int.one, i8* %incy_p
-; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha, i8* %[[r25]], i8* %[[r29]], i8* %[[r33]], i8* %[[r37]], i8* %"A'", i8* %lda_p)
+; CHECK-NEXT:   %[[cast2:.+]] = bitcast i8* %incy_p to i64*
+; CHECK-NEXT:   %[[r37:.+]] = select i1 %[[r24]], i64* %byref.int.one, i64* %[[cast2]]
+; CHECK-NEXT:   call void @dger_64_(i8* %m_p, i8* %n_p, i8* %alpha, i8* %[[r25]], i8* %[[r29]], i8* %[[r33]], i64* %[[r37]], i8* %"A'", i8* %lda_p)
 ; CHECK-NEXT:   br label %invertentry.A.done
 
 ; CHECK: invertentry.A.done:                               ; preds = %invertentry.A.active, %invertentry
@@ -186,7 +187,7 @@ entry:
 ; CHECK-DAG:   %[[r40:.+]] = icmp eq i8 %ld.row.trans2, 78
 ; CHECK-NEXT:   %[[r41:.+]] = or i1 %[[r40]], %[[r39]]
 ; CHECK-NEXT:   %[[r42:.+]] = select i1 %[[r41]], i8* %m_p, i8* %n_p
-; CHECK-NEXT:   %[[r43:.+]] = call fast double @ddot_64_(i8* %[[r42]], i8* %"y'", i8* %incy_p, i8* %[[i12]], i8* %intcast.int.one)
+; CHECK-NEXT:   %[[r43:.+]] = call fast double @ddot_64_(i8* %[[r42]], i8* %"y'", i8* %incy_p, i8* %[[i12]], i64* %byref.int.one)
 ; CHECK-NEXT:   %[[r44:.+]] = bitcast i8* %"beta'" to double*
 ; CHECK-NEXT:   %[[r45:.+]] = load double, double* %[[r44]]
 ; CHECK-NEXT:   %[[r46:.+]] = fadd fast double %[[r45]], %[[r43]]

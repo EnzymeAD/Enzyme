@@ -8,7 +8,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 %struct.Prod = type { ptr, double }
 
-declare i32 @dgemm_(ptr nocapture noundef readonly %transa_t, ptr nocapture noundef readonly %transb_t, ptr nocapture noundef readonly %m, ptr nocapture noundef readonly %n, ptr nocapture noundef readonly %k, ptr nocapture noundef readonly %alpha, ptr nocapture noundef readonly %a, ptr nocapture noundef readonly %lda, ptr nocapture noundef readonly %b, ptr nocapture noundef readonly %ldb, ptr nocapture noundef readonly %beta, ptr nocapture noundef %c, ptr nocapture noundef readonly %ldc)
+declare i32 @dgemm_(ptr nocapture noundef readonly %transa_t, ptr nocapture noundef readonly %transb_t, ptr nocapture noundef readonly %m, ptr nocapture noundef readonly %n, ptr nocapture noundef readonly %k, ptr nocapture noundef readonly %alpha, ptr nocapture noundef readonly %a, ptr nocapture noundef readonly %lda, ptr nocapture noundef readonly %b, ptr nocapture noundef readonly %ldb, ptr nocapture noundef readonly %beta, ptr nocapture noundef %c, ptr nocapture noundef readonly %ldc, i32, i32)
 
 ; Function Attrs: mustprogress noinline nounwind uwtable
 define dso_local void @_Z3mulR4ProdPd(ptr nocapture noundef nonnull align 8 dereferenceable(16) %P, ptr noalias nocapture noundef readonly %rhs) {
@@ -22,9 +22,9 @@ entry:
   store i32 2, ptr %ten, align 4
   store double 1.000000e+00, ptr %one, align 8
   store double 0.000000e+00, ptr %zero, align 8
-  %call1 = call i32 @dgemm_(ptr noundef nonnull %N, ptr noundef nonnull %N, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %calloc, ptr noundef nonnull %ten)
+  %call1 = call i32 @dgemm_(ptr noundef nonnull %N, ptr noundef nonnull %N, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %calloc, ptr noundef nonnull %ten, i32 1, i32 1)
   %0 = load ptr, ptr %P, align 8
-  %call2 = call i32 @dgemm_(ptr noundef nonnull %N, ptr noundef nonnull %N, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %calloc, ptr noundef nonnull %ten, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef nonnull %zero, ptr noundef %0, ptr noundef nonnull %ten)
+  %call2 = call i32 @dgemm_(ptr noundef nonnull %N, ptr noundef nonnull %N, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %ten, ptr noundef nonnull %one, ptr noundef %calloc, ptr noundef nonnull %ten, ptr noundef %rhs, ptr noundef nonnull %ten, ptr noundef nonnull %zero, ptr noundef %0, ptr noundef nonnull %ten, i32 1, i32 1)
   %alpha = getelementptr inbounds %struct.Prod, ptr %P, i64 0, i32 1
   store double 0.000000e+00, ptr %alpha, align 8
   ret void
@@ -93,7 +93,7 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %"alpha'ipg", align 8
 ; CHECK-NEXT:   %ld.transb = load i8, ptr %malloccall, align 1
 ; CHECK-NEXT:   %[[i3:.+]] = icmp eq i8 %ld.transb, 110
-; CHECK-NEXT:   %[[i4:.+]] = select i1 %[[i3]], i8 116, i8 0
+; CHECK-NEXT:   %[[i4:.+]] = select i1 %[[i3]], i8 116, i8 78
 ; CHECK-NEXT:   %[[i5:.+]] = icmp eq i8 %ld.transb, 78
 ; CHECK-NEXT:   %[[i6:.+]] = select i1 %[[i5]], i8 84, i8 %[[i4]]
 ; CHECK-NEXT:   %[[i7:.+]] = icmp eq i8 %ld.transb, 116
@@ -112,7 +112,7 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   call void @dgemm_(ptr %malloccall, ptr %[[i14]], ptr %malloccall1, ptr %malloccall1, ptr %malloccall1, ptr %malloccall2, ptr %[[i15]], ptr %malloccall1, ptr %[[i16]], ptr %malloccall1, ptr %byref.constant.fp.1.0, ptr %"calloc'mi", ptr %malloccall1, i32 1, i32 1)
 ; CHECK-NEXT:   %ld.transa = load i8, ptr %malloccall, align 1
 ; CHECK-NEXT:   %[[i17:.+]] = icmp eq i8 %ld.transa, 110
-; CHECK-NEXT:   %[[i18:.+]] = select i1 %[[i17]], i8 116, i8 0
+; CHECK-NEXT:   %[[i18:.+]] = select i1 %[[i17]], i8 116, i8 78
 ; CHECK-NEXT:   %[[i19:.+]] = icmp eq i8 %ld.transa, 78
 ; CHECK-NEXT:   %[[i20:.+]] = select i1 %[[i19]], i8 84, i8 %[[i18]]
 ; CHECK-NEXT:   %[[i21:.+]] = icmp eq i8 %ld.transa, 116
@@ -137,7 +137,7 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   tail call void @free(ptr nonnull %[[i2]])
 ; CHECK-NEXT:   %ld.transb10 = load i8, ptr %malloccall, align 1
 ; CHECK-NEXT:   %[[i31:.+]] = icmp eq i8 %ld.transb10, 110
-; CHECK-NEXT:   %[[i32:.+]] = select i1 %[[i31]], i8 116, i8 0
+; CHECK-NEXT:   %[[i32:.+]] = select i1 %[[i31]], i8 116, i8 78
 ; CHECK-NEXT:   %[[i33:.+]] = icmp eq i8 %ld.transb10, 78
 ; CHECK-NEXT:   %[[i34:.+]] = select i1 %[[i33]], i8 84, i8 %[[i32]]
 ; CHECK-NEXT:   %[[i35:.+]] = icmp eq i8 %ld.transb10, 116
@@ -156,7 +156,7 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   call void @dgemm_(ptr %malloccall, ptr %[[i42]], ptr %malloccall1, ptr %malloccall1, ptr %malloccall1, ptr %malloccall2, ptr %[[i43]], ptr %malloccall1, ptr %[[i44]], ptr %malloccall1, ptr %byref.constant.fp.1.014, ptr %"rhs'", ptr %malloccall1, i32 1, i32 1)
 ; CHECK-NEXT:   %ld.transa15 = load i8, ptr %malloccall, align 1
 ; CHECK-NEXT:   %[[i45:.+]] = icmp eq i8 %ld.transa15, 110
-; CHECK-NEXT:   %[[i46:.+]] = select i1 %[[i45]], i8 116, i8 0
+; CHECK-NEXT:   %[[i46:.+]] = select i1 %[[i45]], i8 116, i8 78
 ; CHECK-NEXT:   %[[i47:.+]] = icmp eq i8 %ld.transa15, 78
 ; CHECK-NEXT:   %[[i48:.+]] = select i1 %[[i47]], i8 84, i8 %[[i46]]
 ; CHECK-NEXT:   %[[i49:.+]] = icmp eq i8 %ld.transa15, 116

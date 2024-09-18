@@ -214,6 +214,11 @@ public:
     return self;
   }
 
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
+  }
+
   bool isMutable(Type self) const { return true; }
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,

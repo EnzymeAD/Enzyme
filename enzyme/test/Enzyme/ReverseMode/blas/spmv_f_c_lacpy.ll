@@ -1,7 +1,7 @@
 ;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-lapack-copy=1 -S | FileCheck %s; fi
 ;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-lapack-copy=1 -S | FileCheck %s
 
-declare void @dspmv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly) 
+declare void @dspmv_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i64) 
 
 ; 	character  	UPLO,
 ;		integer  	N,
@@ -27,7 +27,7 @@ entry:
   store i64 4, i64* %n, align 16
   store i64 2, i64* %incx, align 16
   store i64 1, i64* %incy, align 16
-  call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p) 
+  call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p, i64 1) 
   %ptr = bitcast i8* %AP to double*
   store double 0.0000000e+00, double* %ptr, align 8
   ret void
@@ -51,7 +51,7 @@ entry:
 ; CHECK-NEXT:   %byref.constant.fp.0.0 = alloca double
 ; CHECK-NEXT:   %byref.constant.int.1 = alloca i64
 ; CHECK-NEXT:   %byref.constant.int.16 = alloca i64
-; CHECK-NEXT:   %byref.constant.fp.1.08 = alloca double
+; CHECK-NEXT:   %[[fp107:.+]] = alloca double
 ; CHECK-NEXT:   %uplo = alloca i8, align 1
 ; CHECK-NEXT:   %n = alloca i64, align 16
 ; CHECK-NEXT:   %n_p = bitcast i64* %n to i8*
@@ -76,7 +76,7 @@ entry:
 ; CHECK-NEXT:   %cache.y = bitcast i8* %malloccall2 to double*
 ; CHECK-NEXT:   store i64 1, i64* %byref.
 ; CHECK-NEXT:   call void @dcopy_64_(i8* %n_p, i8* %Y, i8* %incy_p, double* %cache.y, i64* %byref.)
-; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p)
+; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"AP'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %AP to double*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !0, !noalias !3
@@ -88,14 +88,11 @@ entry:
 ; CHECK-NEXT:   %[[i11:.+]] = bitcast double* %cache.y to i8*
 ; CHECK-NEXT:   %[[i12:.+]] = bitcast double* %cache.y to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.int.one
-; CHECK-NEXT:   %intcast.int.one = bitcast i64* %byref.int.one to i8*
 
 ; CHECK-NEXT:   %[[i6:.+]] = bitcast i8* %n_p to i64*
 ; CHECK-NEXT:   %[[i7:.+]] = load i64, i64* %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = add i64 %[[i7]], 1
-; CHECK-NEXT:   %square_mat_size_y0 = mul i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %size_y0 = udiv i64 %square_mat_size_y0, 2
-; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %size_y0, 8
+; CHECK-NEXT:   %[[i8:.+]] = mul i64 %[[i7]], %[[i7]]
+; CHECK-NEXT:   %mallocsize4 = mul nuw nsw i64 %[[i8]], 8
 ; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize4)
 ; CHECK-NEXT:   %[[mat_y0:.+]] = bitcast i8* %malloccall5 to double*
 ; CHECK-NEXT:   %[[i9:.+]] = bitcast double* %[[mat_y0]] to i8*
@@ -105,18 +102,16 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %byref.constant.fp.0.0
 ; CHECK-NEXT:   %fpcast.constant.fp.0.0 = bitcast double* %byref.constant.fp.0.0 to i8*
 ; CHECK-NEXT:   store i64 1, i64* %byref.constant.int.1
-; CHECK-NEXT:   %intcast.constant.int.1 = bitcast i64* %byref.constant.int.1 to i8*
-; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %[[i10]], i8* %X, i8* %incx_p, i8* %fpcast.constant.fp.0.0, i8* %[[i9]], i8* %intcast.constant.int.1)
+; CHECK-NEXT:   call void bitcast (void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i64)* @dspmv_64_ to void (i8*, i8*, i8*, i8*, i8*, i8*, i8*, i8*, i64*, i64)*)(i8* %uplo, i8* %n_p, i8* %fpcast.constant.fp.1.0, i8* %[[i10]], i8* %X, i8* %incx_p, i8* %fpcast.constant.fp.0.0, i8* %[[i9]], i64* %byref.constant.int.1, i64 1)
 ; CHECK-NEXT:   store i64 1, i64* %byref.constant.int.16
-; CHECK-NEXT:   %intcast.constant.int.17 = bitcast i64* %byref.constant.int.16 to i8*
-; CHECK-NEXT:   %[[i13:.+]] = call fast double @ddot_64_(i8* %n_p, i8* %"Y'", i8* %incy_p, i8* %[[i9]], i8* %intcast.constant.int.17)
+; CHECK-NEXT:   %[[i13:.+]] = call fast double @ddot_64_(i8* %n_p, i8* %"Y'", i8* %incy_p, i8* %[[i9]], i64* %byref.constant.int.16)
 ; CHECK-NEXT:   %[[i14:.+]] = bitcast i8* %"alpha'" to double*
 ; CHECK-NEXT:   %[[i15:.+]] = load double, double* %[[i14]]
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i13]]
 ; CHECK-NEXT:   store double %[[i16]], double* %[[i14]]
 ; CHECK-NEXT:   %[[forfree:.+]] = bitcast double* %[[mat_y0]] to i8* 
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[forfree]])
-; CHECK-NEXT:   call void @dspr2_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %X, i8* %incx_p, i8* %"Y'", i8* %incy_p, i8* %"AP'")
+; CHECK-NEXT:   call void @dspr2_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %X, i8* %incx_p, i8* %"Y'", i8* %incy_p, i8* %"AP'", i64 1)
 ; CHECK:   %[[i17:.+]] = load i64, i64* %n
 ; CHECK-NEXT:   %[[i18:.+]] = load i64, i64* %incx
 ; CHECK-NEXT:   %[[i19:.+]] = bitcast i8* %"Y'" to i64*
@@ -124,8 +119,8 @@ entry:
 ; CHECK-NEXT:   %[[i21:.+]] = bitcast i8* %alpha to double*
 ; CHECK-NEXT:   %[[i22:.+]] = load double, double* %[[i21]]
 ; CHECK-NEXT:   %loaded.trans.i = load i8, i8* %uplo
-; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans.i, 85
-; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans.i, 117
+; CHECK-DAG:   %[[i0:.+]] = icmp eq i8 %loaded.trans.i, 76
+; CHECK-DAG:   %[[i1:.+]] = icmp eq i8 %loaded.trans.i, 108
 ; CHECK-NEXT:   %[[i25:.+]] = or i1 %[[i1]], %[[i0]]
 ; CHECK-NEXT:   %[[i26:.+]] = icmp eq i64 %[[i17]], 0
 ; CHECK-NEXT:   br i1 %[[i26]], label %__enzyme_spmv_diagd_64_.exit, label %init.i
@@ -134,7 +129,7 @@ entry:
 ; CHECK-NEXT:   %[[i27:.+]] = bitcast i8* %X to double*
 ; CHECK-NEXT:   %[[i28:.+]] = bitcast i8* %incx_p to double*
 ; CHECK-NEXT:   %[[i29:.+]] = bitcast i8* %incy_p to double*
-; CHECK-NEXT:   br i1 %[[i25]], label %uper.i, label %lower.i
+; CHECK-NEXT:   br i1 %[[i25]], label %lower.i, label %uper.i 
 
 ; CHECK: uper.i:                                           ; preds = %uper.i, %init.i
 ; CHECK-NEXT:   %iteration.i = phi i64 [ 0, %init.i ], [ %iter.next.i, %uper.i ]
@@ -179,10 +174,10 @@ entry:
 ; CHECK-NEXT:   br i1 %[[i31]], label %__enzyme_spmv_diagd_64_.exit, label %lower.i
 
 ; CHECK: __enzyme_spmv_diagd_64_.exit:                     ; preds = %invertentry, %uper.i, %lower.i
-; CHECK-NEXT:   store double 1.000000e+00, double* %byref.constant.fp.1.08
-; CHECK-NEXT:   %fpcast.constant.fp.1.09 = bitcast double* %byref.constant.fp.1.08 to i8*
-; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %[[i10]], i8* %"Y'", i8* %incy_p, i8* %fpcast.constant.fp.1.09, i8* %"X'", i8* %incx_p)
-; CHECK-NEXT:   %[[i32:.+]] = call fast double @ddot_64_(i8* %n_p, i8* %"Y'", i8* %incy_p, i8* %[[i11]], i8* %intcast.int.one)
+; CHECK-NEXT:   store double 1.000000e+00, double* %[[fp107]]
+; CHECK-NEXT:   %[[fp108:.+]] = bitcast double* %[[fp107]] to i8*
+; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %[[i10]], i8* %"Y'", i8* %incy_p, i8* %[[fp108]], i8* %"X'", i8* %incx_p, i64 1)
+; CHECK-NEXT:   %[[i32:.+]] = call fast double @ddot_64_(i8* %n_p, i8* %"Y'", i8* %incy_p, i8* %[[i11]], i64* %byref.int.one)
 ; CHECK-NEXT:   %[[i33:.+]] = bitcast i8* %"beta'" to double*
 ; CHECK-NEXT:   %[[i34:.+]] = load double, double* %[[i33]]
 ; CHECK-NEXT:   %[[i35:.+]] = fadd fast double %[[i34]], %[[i32]]
@@ -206,8 +201,8 @@ entry:
 ; CHECK-NEXT:   %7 = bitcast i8* %blasalpha to double*
 ; CHECK-NEXT:   %8 = load double, double* %7
 ; CHECK-NEXT:   %loaded.trans = load i8, i8* %blasuplo
-; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans, 85
-; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans, 117
+; CHECK-DAG:   %[[i9:.+]] = icmp eq i8 %loaded.trans, 76
+; CHECK-DAG:   %[[i10:.+]] = icmp eq i8 %loaded.trans, 108
 ; CHECK-NEXT:   %11 = or i1 %[[i10]], %[[i9]]
 ; CHECK-NEXT:   %12 = icmp eq i64 %2, 0
 ; CHECK-NEXT:   br i1 %12, label %for.end, label %init
@@ -216,7 +211,7 @@ entry:
 ; CHECK-NEXT:   %13 = bitcast i8* %blasx to double*
 ; CHECK-NEXT:   %14 = bitcast i8* %blasdy to double*
 ; CHECK-NEXT:   %15 = bitcast i8* %blasdAP to double*
-; CHECK-NEXT:   br i1 %11, label %uper, label %lower
+; CHECK-NEXT:   br i1 %11, label %lower, label %uper
 
 ; CHECK: uper:                                             ; preds = %uper, %init
 ; CHECK-NEXT:   %iteration = phi i64 [ 0, %init ], [ %iter.next, %uper ]

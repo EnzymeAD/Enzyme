@@ -110,11 +110,17 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
   string type = type_;
 }
 
+class ConjIfComplex<string dialect_, string op_> : Operation</*primal*/1, /*shadow*/0> {
+  string dialect = dialect_;
+  string opName = op_;
+}
+
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
 
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
 
+class ComplexInst<string m> : Inst<m, "complex">;
 class ArithInst<string m> : Inst<m, "arith">;
 class MathInst<string m> : Inst<m, "math">;
 

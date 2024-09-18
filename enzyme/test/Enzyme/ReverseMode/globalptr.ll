@@ -38,9 +38,9 @@ attributes #2 = { nounwind }
 
 ; CHECK: define internal { double } @diffemulglobal(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call_augmented = call { double*, double*, double* } @augmented_myglobal()
-; CHECK:   %call = extractvalue { double*, double*, double* } %call_augmented, 1
-; CHECK:   %"call'ac" = extractvalue { double*, double*, double* } %call_augmented, 2
+; CHECK-NEXT:   %call_augmented = call { double*, double* } @augmented_myglobal()
+; CHECK:   %call = extractvalue { double*, double* } %call_augmented, 0
+; CHECK:   %"call'ac" = extractvalue { double*, double* } %call_augmented, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"call'ac", i64 2
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %call, i64 2
 ; CHECK-NEXT:   %0 = load double, double* %arrayidx, align 8
@@ -53,22 +53,20 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   ret { double } %[[i3]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double*, double*, double* } @augmented_myglobal()
+; CHECK: define internal { double*, double* } @augmented_myglobal()
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = alloca { double*, double*, double* }
-; CHECK-NEXT:   %1 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %0, i32 0, i32 0
+; CHECK-NEXT:   %0 = alloca { double*, double* }
 ; CHECK-NEXT:   %"ptr'ipl" = load double*, double** @dglobal, align 8
-; CHECK-NEXT:   store double* %"ptr'ipl", double** %1
 ; CHECK-NEXT:   %ptr = load double*, double** @global, align 8
-; CHECK-NEXT:   %2 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %0, i32 0, i32 1
-; CHECK-NEXT:   store double* %ptr, double** %2
-; CHECK-NEXT:   %3 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %0, i32 0, i32 2
-; CHECK-NEXT:   store double* %"ptr'ipl", double** %3
-; CHECK-NEXT:   %4 = load { double*, double*, double* }, { double*, double*, double* }* %0
-; CHECK-NEXT:   ret { double*, double*, double* } %4
+; CHECK-NEXT:   %[[a2:.+]] = getelementptr inbounds { double*, double* }, { double*, double* }* %0, i32 0, i32 0
+; CHECK-NEXT:   store double* %ptr, double** %[[a2]]
+; CHECK-NEXT:   %[[a3:.+]] = getelementptr inbounds { double*, double* }, { double*, double* }* %0, i32 0, i32 1
+; CHECK-NEXT:   store double* %"ptr'ipl", double** %[[a3]]
+; CHECK-NEXT:   %[[a4:.+]] = load { double*, double* }, { double*, double* }* %0
+; CHECK-NEXT:   ret { double*, double* } %[[a4]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffemyglobal(double* %"ptr'il_phi")
+; CHECK: define internal void @diffemyglobal()
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -447,7 +447,7 @@ static void gemmTests() {
 
         // TODO we are currently faking support here, this needs to be actually implemented
         double c10 = 1.0;
-        cublasDlascl(handle, (cublasOperation_t)'G', 0, 0, &c10, &beta, M, N,
+        cublasDlascl(handle, (cublasOperation_t)2, 0, 0, &c10, &beta, M, N,
                      dC, incC, 0);
 
         checkTest(Test);
