@@ -3488,7 +3488,7 @@ public:
       }
     }
 
-    for (auto &&[floatTy, seg_start, seg_size] : toIterate) {
+    for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
       auto floatTy = floatTy_ref;
       auto seg_start = seg_start_ref;
       auto seg_size = seg_size_ref;
