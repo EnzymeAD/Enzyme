@@ -109,14 +109,27 @@ void brusselator_2d_loop(double* __restrict du, double* __restrict dv, const dou
 
 typedef boost::array< double , 2 * N * N > state_type;
 
-void lorenz( const state_type &x , state_type &dxdt , double t )
+
+void lorenz( const state_type &x, state_type &dxdt, double t )
 {
     // Extract the parameters
   double p[3] = { /*A*/ 3.4, /*B*/ 1, /*alpha*/10. };
   brusselator_2d_loop(dxdt.c_array(), dxdt.c_array() + N * N, x.data(), x.data() + N * N, p, t);
 }
 
-// init_brusselator(x.c_array(), x.c_array() + N*N)
+extern "C" void rust_lorenz(const double* x, double* dxdt, double t);
+extern "C" void rust_dbrusselator_2d_loop(const double* x, double* dx, double* adjoint, const double* p, double* dp, double t);
+
+double rustfoobar(const double *p, /*const*/ state_type x, const state_type adjoint, double t) {
+  double dp[3] = { 0. };
+
+  state_type dx = { 0. };
+
+  state_type dadjoint_inp = adjoint;
+
+  rust_dbrusselator_2d_loop(dadjoint_inp.c_array(), x.c_array(), dx.c_array(), p, dp, t);
+  return dx[0];
+}
 
 double foobar(const double* p, const state_type x, const state_type adjoint, double t) {
     double dp[3] = { 0. };
@@ -128,10 +141,10 @@ double foobar(const double* p, const state_type x, const state_type adjoint, dou
     state_type dxdu;
 
     __enzyme_autodiff<void>(brusselator_2d_loop,
-//                            enzyme_dup, dxdu.c_array(), dadjoint_inp.c_array(),
-//                            enzyme_dup, dxdu.c_array() + N * N, dadjoint_inp.c_array() + N * N,
-                            enzyme_dupnoneed, nullptr, dadjoint_inp.data(),
-                            enzyme_dupnoneed, nullptr, dadjoint_inp.data() + N * N,
+                            enzyme_dup, dxdu.c_array(), dadjoint_inp.c_array(),
+                            enzyme_dup, dxdu.c_array() + N * N, dadjoint_inp.c_array() + N * N,
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp.data(),
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp.data() + N * N,
                             enzyme_dup, x.data(), dx.data(),
                             enzyme_dup, x.data() + N * N, dx.data() + N * N,
                             enzyme_dup, p, dp,
@@ -545,171 +558,47 @@ int main(int argc, char** argv) {
   res = foobar(p, x, adjoint, t);
 
   gettimeofday(&end, NULL);
-  printf("Enzyme combined %0.6f res=%f\n", tdiff(&start, &end), res);
+  printf("C++  Enzyme combined %0.6f res=%f\n", tdiff(&start, &end), res);
   }
+  
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+
+    double res;
+    for(int i=0; i<10000; i++)
+    res = rustfoobar(p, x, adjoint, t);
+
+    gettimeofday(&end, NULL);
+    printf("Rust Enzyme combined %0.6f res=%f\n", tdiff(&start, &end), res);
+  }
+
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    state_type x2;
+
+    for(int i=0; i<10000; i++) {
+      lorenz(x, x2, t);
+    }
+
+    gettimeofday(&end, NULL);
+    printf("C++  fwd %0.6f res=%f\n", tdiff(&start, &end), x2[0]);
+  }
+
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    state_type x2;
+
+    for(int i=0; i<10000; i++)
+    rust_lorenz(x.c_array(), x2.c_array(), t);
+
+    gettimeofday(&end, NULL);
+    printf("Rust fwd %0.6f res=%f\n\n", tdiff(&start, &end), x2[0]);
+  }
+
+
+
   //printf("res=%f\n", foobar(1000));
 }
-
-
-#if 0
-
-typedef boost::array< double , 6 > state_type;
-
-void lorenz( const state_type &x , state_type &dxdt , double t )
-{
-    // Extract the parameters
-    double k1 = x[3];
-    double k2 = x[4];
-    double k3 = x[5];
-
-    dxdt[0] = -k1 * x[0] + k3 * x[1] * x[2];
-    dxdt[1] = k1 * x[0] - k2 * x[1] * x[1] - k3 * x[1] * x[2];
-    dxdt[2] = k2 * x[1] * x[1];
-
-    // Don't change the parameters p
-    dxdt[3] = 0;
-    dxdt[4] = 0;
-    dxdt[5] = 0;
-}
-
-double foobar(double* p, uint64_t iters) {
-    state_type x = { 1.0, 0, 0, p[0], p[1], p[2] }; // initial conditions
-    double t = 1e5;
-    typedef controlled_runge_kutta< runge_kutta_dopri5< state_type , typename state_type::value_type , state_type , double > > stepper_type;
-    //typedef euler< state_type , typename state_type::value_type , state_type , double > stepper_type;
-    integrate_const( stepper_type(), lorenz , x , 0.0 , t, t/iters );
-
-    return x[0];
-}
-
-typedef boost::array< adouble , 6 > astate_type;
-
-void alorenz( const astate_type &x , astate_type &dxdt , adouble t )
-{
-    // Extract the parameters
-    adouble k1 = x[3];
-    adouble k2 = x[4];
-    adouble k3 = x[5];
-
-    dxdt[0] = -k1 * x[0] + k3 * x[1] * x[2];
-    dxdt[1] = k1 * x[0] - k2 * x[1] * x[1] - k3 * x[1] * x[2];
-    dxdt[2] = k2 * x[1] * x[1];
-
-    // Don't change the parameters p
-    dxdt[3] = 0;
-    dxdt[4] = 0;
-    dxdt[5] = 0;
-}
-
-adouble afoobar(adouble* p, uint64_t iters) {
-    astate_type x = { 1.0, 0, 0, p[0], p[1], p[2] }; // initial conditions
-    double t = 1e5;
-    typedef controlled_runge_kutta< runge_kutta_dopri5< astate_type , typename astate_type::value_type , astate_type , adouble > > stepper_type;
-    //typedef euler< astate_type , typename astate_type::value_type , astate_type , adouble > stepper_type;
-    integrate_const( stepper_type(), alorenz , x , 0.0 , t, t/iters );
-
-    return x[0];
-}
-
-static
-double afoobar_and_gradient(double* p_in, double* dp_out, uint64_t iters) {
-    adept::Stack stack;
-    adouble x[3] = { p_in[0], p_in[1], p_in[2] };
-    stack.new_recording();
-    adouble y = afoobar(x, iters);
-    y.set_gradient(1.0);
-    stack.compute_adjoint();
-    for(int i=0; i<3; i++)
-      dp_out[i] = x[i].get_gradient();
-    return y.value();
-}
-
-static void adept_sincos(uint64_t iters) {
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double p[3] = { 0.04,3e7,1e4 };
-  double res = foobar(p, iters);
-
-  gettimeofday(&end, NULL);
-  printf("Adept real %0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  adept::Stack stack;
-  adouble p[3] = { 0.04,3e7,1e4 };
- // stack.new_recording();
-  adouble resa = afoobar(p, iters);
-  double res = resa.value();
-
-  gettimeofday(&end, NULL);
-  printf("Adept forward %0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double p[3] = { 0.04,3e7,1e4 };
-  double dp[3] = { 0 };
-  afoobar_and_gradient(p, dp, iters);
-
-  gettimeofday(&end, NULL);
-  printf("Adept combined %0.6f res'=%f\n", tdiff(&start, &end), dp[0]);
-  }
-}
-
-static void enzyme_sincos(double inp, uint64_t iters) {
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double p[3] = { 0.04,3e7,1e4 };
-  double res = foobar(p, iters);
-
-  gettimeofday(&end, NULL);
-  printf("Enzyme real %0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double p[3] = { 0.04,3e7,1e4 };
-  double res = foobar(p, iters);
-
-  gettimeofday(&end, NULL);
-  printf("Enzyme forward %0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double p[3] = { 0.04,3e7,1e4 };
-  double dp[3] = { 0 };
-  __enzyme_autodiff<void>(foobar, p, dp, iters);
-
-  gettimeofday(&end, NULL);
-  printf("Enzyme combined %0.6f res'=%f\n", tdiff(&start, &end), dp[0]);
-  }
-}
-
-int main(int argc, char** argv) {
-
-  int max_iters = atoi(argv[1]) ;
-  double inp = 2.1;
-
-  //for(int iters=max_iters/20; iters<=max_iters; iters+=max_iters/20) {
-  auto iters = max_iters;
-    printf("iters=%d\n", iters);
-    adept_sincos(inp, iters);
-    enzyme_sincos(inp, iters);
-  //}
-}
-#endif

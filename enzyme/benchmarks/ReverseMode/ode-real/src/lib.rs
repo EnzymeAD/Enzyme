@@ -1,5 +1,4 @@
 #![feature(autodiff)]
-#![feature(slice_first_last_chunk)]
 #![feature(slice_as_chunks)]
 #![feature(iter_next_chunk)]
 #![allow(non_snake_case)]
@@ -26,12 +25,6 @@ fn get(x: &[f64], i: usize, j: usize) -> f64 {
     x[N * i + j]
 }
 
-//#define RANGE(min, max, i, N) ((max-min)/(N-1)*i + min)
-//#define GETnb(x, i, j) (x)[N*i+j]
-//#define GET(x, i, j) GETnb(x, i, j)
-// #define GET(x, i, j) ({ assert(i >=0); assert( j>=0); assert(j<N);
-// assert(j<N); GETnb(x, i, j); })
-
 fn brusselator_f(x: f64, y: f64, t: f64) -> f64 {
     let eq1 = (x - 0.3) * (x - 0.3) + (y - 0.6) * (y - 0.6) <= 0.1 * 0.1;
     let eq2 = t >= 1.1;
@@ -43,26 +36,21 @@ fn brusselator_f(x: f64, y: f64, t: f64) -> f64 {
 }
 
 fn init_brusselator(u: &mut [f64], v: &mut [f64]) {
+    assert!(u.len() == N * N);
+    assert!(v.len() == N * N);
     for i in 0..N {
         for j in 0..N {
             let x = range(xmin, xmax, i, N);
             let y = range(ymin, ymax, j, N);
-            u[N * i + j] = 22.0 * y * (1.0 - y) * (y * (1.0 - y)).sqrt();
-            v[N * i + j] = 27.0 * x * (1.0 - x) * (x * (1.0 - x)).sqrt();
+            u[N * i + j] = 22.0 * (y * (1.0 - y)) * (y * (1.0 - y)).sqrt();
+            v[N * i + j] = 27.0 * (x * (1.0 - x)) * (x * (1.0 - x)).sqrt();
         }
     }
 }
-//    __enzyme_autodiff<void>(brusselator_2d_loop,
-//                            enzyme_dupnoneed, nullptr, dadjoint_inp.data(),
-//                            enzyme_dupnoneed, nullptr, dadjoint_inp.data() + N * N,
-//                            enzyme_dup, x.data(), dx.data(),
-//                            enzyme_dup, x.data() + N * N, dx.data() + N * N,
-//                            enzyme_dup, p, dp,
-//                            enzyme_const, t);
 
-
+#[no_mangle]
 #[autodiff(dbrusselator_2d_loop, Reverse, Duplicated, Duplicated, Duplicated, Duplicated, Duplicated, Const)]
-fn brusselator_2d_loop(d_u: &mut [f64], d_v: &mut [f64], u: &[f64], v: &[f64], p: &[f64;3], t: f64) {
+fn brusselator_2d_loop(d_u: &mut [f64;N*N], d_v: &mut [f64;N*N], u: &[f64;N*N], v: &[f64;N*N], p: &[f64;3], t: f64) {
     let A = p[0];
     let B = p[1];
     let alpha = p[2];
@@ -85,96 +73,94 @@ fn brusselator_2d_loop(d_u: &mut [f64], d_v: &mut [f64], u: &[f64], v: &[f64], p
     }
 }
 
-type state_type = [f64; 2 * N * N];
+type StateType = [f64; 2 * N * N];
 
-fn lorenz(x: &state_type, dxdt: &mut state_type, t: f64) {
+#[no_mangle]
+pub extern "C" fn rust_lorenz(x: *const StateType, dxdt: *mut StateType, t: f64) {
+    let x: &StateType = unsafe { &*x };
+    let dxdt: &mut StateType = unsafe { &mut *dxdt };
+    lorenz(x, dxdt, t);
+}
+
+fn lorenz(x: &StateType, dxdt: &mut StateType, t: f64) {
     let p = [3.4, 1., 10.];
     let (tmp1, tmp2) = dxdt.split_at_mut(N * N);
     let mut dxdt1: [f64; N * N] = tmp1.try_into().unwrap();
     let mut dxdt2: [f64; N * N] = tmp2.try_into().unwrap();
-    brusselator_2d_loop(&mut dxdt1, &mut dxdt2, &x[..], &x[N * N..], &p, t);
+    let (tmp1, tmp2) = x.split_at(N * N);
+    let u: [f64; N * N] = tmp1.try_into().unwrap();
+    let v: [f64; N * N] = tmp2.try_into().unwrap();
+    brusselator_2d_loop(&mut dxdt1, &mut dxdt2, &u, &v, &p, t);
 }
 
 #[no_mangle]
-pub extern "C" fn rust_dbrusselator_2d_loop(p: *const f64, dp: *mut f64, x: *const state_type, dx: *mut state_type, adjoint: *mut state_type, t: f64) -> f64 {
-    let x = unsafe { *x };
-    let mut adjoint = unsafe { *adjoint };
-    let p: [f64;3] = unsafe { *p.cast::<[f64;3]>().as_ref().unwrap() };
-    let mut dp: [f64;3] = unsafe { dp.cast::<[f64;3]>().as_mut().unwrap() };
+pub extern "C" fn rust_dbrusselator_2d_loop(adjoint: *mut StateType, x: *const StateType, dx: *mut StateType, p: *const [f64;3], dp: *mut [f64;3], t: f64) {
+    let x: &StateType = unsafe { &*x };
+    let dx: &mut StateType = unsafe { &mut *dx };
+    let adjoint: &mut StateType = unsafe { &mut *adjoint };
 
-    let (mut dx1, mut dx2) = dx.split_at_mut(N * N);
-    //let mut dp = [0.; 3];
-    //let mut dx1 = [0.; N * N];
-    //let mut dx2 = [0.; N * N];
-    let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
+    let p: &[f64;3] = unsafe { &*p };
+    let dp: &mut [f64;3] = unsafe { &mut *dp };
+ 
+    //assert!(p[0] == 3.4);
+    //assert!(p[1] == 1.);
+    //assert!(p[2] == 10.);
+    //assert!(t == 2.1);
+
+    //let mut x1 = [0.; 2 * N * N];
+    //let mut dx1 = [0.; 2 *N * N];
+    //let (tmp1, tmp2) = x1.split_at_mut(N * N);
+    //let mut x1: [f64; N * N] = tmp1.try_into().unwrap();
+    //let mut x2: [f64; N * N] = tmp2.try_into().unwrap();
+    //init_brusselator(&mut x1, &mut x2);
+    //for i in 0..N*N {
+    //    let tmp = (x1[i] - x[i]).abs();
+    //    if (tmp / x[i] > 1e-5) {
+    //        dbg!(tmp);
+    //        dbg!(tmp / x[i]);
+    //        dbg!(i);
+    //        dbg!(x1[i]);
+    //        dbg!(x[i]);
+    //        println!("x1[{}] = {} != x[{}] = {}", i, x1[i], i, x[i]);
+    //        panic!();
+    //    }
+    //}
+
+    // Alternative ways to split the inputs
+    //let [ mut dx1, mut dx2]: [[f64; N*N]; 2] = unsafe { *std::mem::transmute::<*mut StateType, &mut [[f64; N*N]; 2]>(dx) };
+    //let [dx1, dx2]: &mut [[f64; N*N];2] = unsafe { dx.cast::<[[f64; N*N]; 2]>().as_mut().unwrap() };
 
     // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
+    let ([dx1, dx2], []): (&mut [[f64; N*N]], &mut [f64]) = dx.as_chunks_mut() else { unreachable!() };
+    let ([dadj1, dadj2], []): (&mut [[f64; N*N]], &mut [f64])= adjoint.as_chunks_mut() else { unreachable!() };
     let ([x1, x2], []): (&[[f64; N*N]], &[f64])= x.as_chunks() else { unreachable!() };
     
-    let mut null1 = [0.; 2 * N * N];
-    let mut null2 = [0.; 2 * N * N];
-    dbrusselator_2d_loop(&mut null1, &mut dadj1,
-                         &mut null2, &mut dadj2,
-                         x1, &mut dx1, 
-                         x2, &mut dx2,
-                         &p, &mut dp, t);
-    dx1[0]
-    //brusselator_2d_loop_b(nullptr, dadjoint_inp.data(),
-    //                      nullptr, dadjoint_inp.data() + N * N,
-    //                      x.data(), dx.data(),
-    //                      x.data() + N * N, dx.data() + N * N,
-    //                      p, dp,
-    //                      t);
+    let mut null1 = [0.; 1 * N * N];
+    let mut null2 = [0.; 1 * N * N];
+    dbrusselator_2d_loop(&mut null1, dadj1,
+                         &mut null2, dadj2,
+                         x1, dx1, 
+                         x2, dx2,
+                         p, dp, t);
+    return;
 }
 
 
-fn foobar(p: &[f64;3], x: state_type, mut adjoint: state_type, t: f64) -> f64 {
+fn foobar(p: &[f64;3], x: StateType, mut adjoint: StateType, t: f64) -> f64 {
     let mut dp = [0.; 3];
     let mut dx1 = [0.; N * N];
     let mut dx2 = [0.; N * N];
-    let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
-    let mut null1 = [0.; 2 * N * N];
-    let mut null2 = [0.; 2 * N * N];
+    // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
+    let ([dadj1, dadj2], []): (&mut [[f64; N*N]], &mut [f64])= adjoint.as_chunks_mut() else { unreachable!() };
+    //let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
+    let mut null1 = [0.; 1 * N * N];
+    let mut null2 = [0.; 1 * N * N];
     // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
     let ([x1, x2], []): (&[[f64; N*N]], &[f64])= x.as_chunks() else { unreachable!() };
-    dbrusselator_2d_loop(&mut null1, &mut dadj1,
-                         &mut null2, &mut dadj2,
+    dbrusselator_2d_loop(&mut null1, dadj1,
+                         &mut null2, dadj2,
                          x1, &mut dx1, 
                          x2, &mut dx2,
                          &p, &mut dp, t);
     dx1[0]
-}
-
-//double foobar(const double* p, const state_type x, const state_type adjoint, double t) {
-//    double dp[3] = { 0. };
-//
-//    state_type dx = { 0. };
-//
-//    state_type dadjoint_inp = adjoint;
-//
-//    state_type dxdu;
-//
-//    __enzyme_autodiff<void>(brusselator_2d_loop,
-//                            enzyme_dupnoneed, nullptr, dadjoint_inp.data(),
-//                            enzyme_dupnoneed, nullptr, dadjoint_inp.data() + N * N,
-//                            enzyme_dup, x.data(), dx.data(),
-//                            enzyme_dup, x.data() + N * N, dx.data() + N * N,
-//                            enzyme_dup, p, dp,
-//                            enzyme_const, t);
-//
-//    return dx[0];
-//}
-
-fn main() {
-    let p = [3.4, 1., 10.];
-    let mut x = [0.; 2 * N * N];
-    let mut adjoint = [0.; 2 * N * N];
-    init_brusselator(&mut x, &mut adjoint);
-    let t = 2.1;
-    let mut res = 0.;
-    let time = std::time::Instant::now();
-    for _ in 0..10000 {
-        res = foobar(&p, x, adjoint, t);
-    }
-    println!("Enzyme combined {} res={}", time.elapsed().as_secs_f64(), res);
 }
