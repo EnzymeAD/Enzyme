@@ -18,12 +18,6 @@ const ymax: f64 = 1.;
 fn range(min: f64, max: f64, i: usize, N_var: usize) -> f64 {
     (max - min) / (N_var as f64 - 1.) * i as f64 + min
 }
-#[inline(always)]
-fn get(x: &[f64], i: usize, j: usize) -> f64 {
-    assert!(i > 0);
-    assert!(j < N);
-    x[N * i + j]
-}
 
 fn brusselator_f(x: f64, y: f64, t: f64) -> f64 {
     let eq1 = (x - 0.3) * (x - 0.3) + (y - 0.6) * (y - 0.6) <= 0.1 * 0.1;
@@ -35,6 +29,7 @@ fn brusselator_f(x: f64, y: f64, t: f64) -> f64 {
     }
 }
 
+#[expect(unused)]
 fn init_brusselator(u: &mut [f64], v: &mut [f64]) {
     assert!(u.len() == N * N);
     assert!(v.len() == N * N);
@@ -102,10 +97,10 @@ pub extern "C" fn rust_dbrusselator_2d_loop(adjoint: *mut StateType, x: *const S
     let p: &[f64;3] = unsafe { &*p };
     let dp: &mut [f64;3] = unsafe { &mut *dp };
  
-    //assert!(p[0] == 3.4);
-    //assert!(p[1] == 1.);
-    //assert!(p[2] == 10.);
-    //assert!(t == 2.1);
+    assert!(p[0] == 3.4);
+    assert!(p[1] == 1.);
+    assert!(p[2] == 10.);
+    assert!(t == 2.1);
 
     //let mut x1 = [0.; 2 * N * N];
     //let mut dx1 = [0.; 2 *N * N];
@@ -143,24 +138,4 @@ pub extern "C" fn rust_dbrusselator_2d_loop(adjoint: *mut StateType, x: *const S
                          x2, dx2,
                          p, dp, t);
     return;
-}
-
-
-fn foobar(p: &[f64;3], x: StateType, mut adjoint: StateType, t: f64) -> f64 {
-    let mut dp = [0.; 3];
-    let mut dx1 = [0.; N * N];
-    let mut dx2 = [0.; N * N];
-    // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
-    let ([dadj1, dadj2], []): (&mut [[f64; N*N]], &mut [f64])= adjoint.as_chunks_mut() else { unreachable!() };
-    //let (mut dadj1, mut dadj2) = adjoint.split_at_mut(N * N);
-    let mut null1 = [0.; 1 * N * N];
-    let mut null2 = [0.; 1 * N * N];
-    // https://discord.com/channels/273534239310479360/273541522815713281/1236945105601040446
-    let ([x1, x2], []): (&[[f64; N*N]], &[f64])= x.as_chunks() else { unreachable!() };
-    dbrusselator_2d_loop(&mut null1, dadj1,
-                         &mut null2, dadj2,
-                         x1, &mut dx1, 
-                         x2, &mut dx2,
-                         &p, &mut dp, t);
-    dx1[0]
 }

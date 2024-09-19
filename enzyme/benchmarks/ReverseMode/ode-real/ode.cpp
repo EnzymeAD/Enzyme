@@ -24,20 +24,8 @@ float tdiff(struct timeval *start, struct timeval *end) {
   return (end->tv_sec-start->tv_sec) + 1e-6*(end->tv_usec-start->tv_usec);
 }
 
-#define BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
-#define BOOST_NO_EXCEPTIONS
 #include <iostream>
-#include <boost/array.hpp>
-
-#include <boost/numeric/odeint.hpp>
-
-#include <boost/throw_exception.hpp>
-void boost::throw_exception(std::exception const & e){
-    //do nothing
-}
-
 using namespace std;
-using namespace boost::numeric::odeint;
 
 #define N 32
 #define xmin 0.
@@ -107,27 +95,29 @@ void brusselator_2d_loop(double* __restrict du, double* __restrict dv, const dou
   }
 }
 
-typedef boost::array< double , 2 * N * N > state_type;
-
+typedef double state_type[2*N*N];
 
 void lorenz( const state_type &x, state_type &dxdt, double t )
 {
     // Extract the parameters
   double p[3] = { /*A*/ 3.4, /*B*/ 1, /*alpha*/10. };
-  brusselator_2d_loop(dxdt.c_array(), dxdt.c_array() + N * N, x.data(), x.data() + N * N, p, t);
+  brusselator_2d_loop(dxdt, dxdt + N * N, x, x + N * N, p, t);
 }
 
 extern "C" void rust_lorenz(const double* x, double* dxdt, double t);
-extern "C" void rust_dbrusselator_2d_loop(const double* x, double* dx, double* adjoint, const double* p, double* dp, double t);
+extern "C" void rust_dbrusselator_2d_loop(double* adjoint, const double* x, double* dx, const double* p, double* dp, double t);
 
-double rustfoobar(const double *p, /*const*/ state_type x, const state_type adjoint, double t) {
+double rustfoobar(const double *p, const state_type x, const state_type adjoint, double t) {
   double dp[3] = { 0. };
 
   state_type dx = { 0. };
 
-  state_type dadjoint_inp = adjoint;
+  state_type dadjoint_inp;// = adjoint
+  for (int i = 0; i < N * N; i++) {
+    dadjoint_inp[i] = adjoint[i];
+  }
 
-  rust_dbrusselator_2d_loop(dadjoint_inp.c_array(), x.c_array(), dx.c_array(), p, dp, t);
+  rust_dbrusselator_2d_loop(dadjoint_inp, x, dx, p, dp, t);
   return dx[0];
 }
 
@@ -136,17 +126,20 @@ double foobar(const double* p, const state_type x, const state_type adjoint, dou
 
     state_type dx = { 0. };
 
-    state_type dadjoint_inp = adjoint;
+    state_type dadjoint_inp;// = adjoint
+    for (int i = 0; i < N * N; i++) {
+      dadjoint_inp[i] = adjoint[i];
+    }
 
     state_type dxdu;
 
     __enzyme_autodiff<void>(brusselator_2d_loop,
-                            enzyme_dup, dxdu.c_array(), dadjoint_inp.c_array(),
-                            enzyme_dup, dxdu.c_array() + N * N, dadjoint_inp.c_array() + N * N,
- //                           enzyme_dupnoneed, nullptr, dadjoint_inp.data(),
- //                           enzyme_dupnoneed, nullptr, dadjoint_inp.data() + N * N,
-                            enzyme_dup, x.data(), dx.data(),
-                            enzyme_dup, x.data() + N * N, dx.data() + N * N,
+                            enzyme_dup, dxdu, dadjoint_inp,
+                            enzyme_dup, dxdu + N * N, dadjoint_inp + N * N,
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp,
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp + N * N,
+                            enzyme_dup, x, dx,
+                            enzyme_dup, x + N * N, dx + N * N,
                             enzyme_dup, p, dp,
                             enzyme_const, t);
 
@@ -499,14 +492,17 @@ double tfoobar(const double* p, const state_type x, const state_type adjoint, do
 
     state_type dx = { 0. };
 
-    state_type dadjoint_inp = adjoint;
+    state_type dadjoint_inp;// = adjoint
+    for (int i = 0; i < N * N; i++) {
+      dadjoint_inp[i] = adjoint[i];
+    }
 
     state_type dxdu;
 
-    brusselator_2d_loop_b(nullptr, dadjoint_inp.data(),
-                          nullptr, dadjoint_inp.data() + N * N,
-                          x.data(), dx.data(),
-                          x.data() + N * N, dx.data() + N * N,
+    brusselator_2d_loop_b(nullptr, dadjoint_inp,
+                          nullptr, dadjoint_inp + N * N,
+                          x, dx,
+                          x + N * N, dx + N * N,
                           p, dp,
                           t);
 
@@ -518,10 +514,10 @@ int main(int argc, char** argv) {
   const double p[3] = { /*A*/ 3.4, /*B*/ 1, /*alpha*/10. };
 
   state_type x;
-  init_brusselator(x.data(), x.data() + N * N);
+  init_brusselator(x, x + N * N);
 
   state_type adjoint;
-  init_brusselator(adjoint.data(), adjoint.data() + N * N);
+  init_brusselator(adjoint, adjoint + N * N);
 
   double t = 2.1;
 
@@ -592,13 +588,11 @@ int main(int argc, char** argv) {
     state_type x2;
 
     for(int i=0; i<10000; i++)
-    rust_lorenz(x.c_array(), x2.c_array(), t);
+    rust_lorenz(x, x2, t);
 
     gettimeofday(&end, NULL);
     printf("Rust fwd %0.6f res=%f\n\n", tdiff(&start, &end), x2[0]);
   }
-
-
 
   //printf("res=%f\n", foobar(1000));
 }
