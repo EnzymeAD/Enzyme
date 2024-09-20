@@ -977,11 +977,12 @@ double getMPFRValue(std::shared_ptr<FPNode> output,
 
     if (prevResStr != nullptr && resSign == prevResSign &&
         resExp == prevResExp && strcmp(resStr, prevResStr) == 0) {
-      llvm::errs() << "prevResStr: " << prevResStr << "\n";
-      llvm::errs() << "resStr: " << resStr << "\n";
+      // llvm::errs() << "prevResStr: " << prevResStr << "\n";
+      // llvm::errs() << "resStr: " << resStr << "\n";
       mpfr_free_str(resStr);
       mpfr_free_str(prevResStr);
-      llvm::errs() << "Golden value computed at precision " << curPrec << "\n";
+      // llvm::errs() << "Golden value computed at precision " << curPrec <<
+      // "\n";
       break;
     }
 
@@ -1048,14 +1049,14 @@ void getSampledPoints(
     hypercube.insert({val, {lower, upper}});
   }
 
-  llvm::errs() << "Hypercube:\n";
-  for (const auto &entry : hypercube) {
-    Value *val = entry.first;
-    double lower = entry.second[0];
-    double upper = entry.second[1];
-    llvm::errs() << valueToNodeMap.at(val)->symbol << ": [" << lower << ", "
-                 << upper << "]\n";
-  }
+  // llvm::errs() << "Hypercube:\n";
+  // for (const auto &entry : hypercube) {
+  //   Value *val = entry.first;
+  //   double lower = entry.second[0];
+  //   double upper = entry.second[1];
+  //   llvm::errs() << valueToNodeMap.at(val)->symbol << ": [" << lower << ", "
+  //                << upper << "]\n";
+  // }
 
   // Sample `FPOptNumSamples` points from the hypercube. Store it in
   // `sampledPoints`.
@@ -1071,11 +1072,11 @@ void getSampledPoints(
       point.insert({val, sample});
     }
     sampledPoints[i] = point;
-    llvm::errs() << "Sample " << i << ":\n";
-    for (const auto &entry : point) {
-      llvm::errs() << valueToNodeMap.at(entry.first)->symbol << ": "
-                   << entry.second << "\n";
-    }
+    // llvm::errs() << "Sample " << i << ":\n";
+    // for (const auto &entry : point) {
+    //   llvm::errs() << valueToNodeMap.at(entry.first)->symbol << ": "
+    //                << entry.second << "\n";
+    // }
   }
 }
 
@@ -1357,6 +1358,27 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
   }
 }
 
+void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
+                      SmallPtrSet<Instruction *, 16> &exprInsts,
+                      SmallPtrSet<Value *, 16> &visited) {
+  if (!V || inputs.contains(V) || visited.contains(V)) {
+    return;
+  }
+
+  visited.insert(V);
+
+  if (auto *I = dyn_cast<Instruction>(V)) {
+    exprInsts.insert(I);
+
+    auto operands =
+        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+
+    for (auto &op : operands) {
+      collectExprInsts(op, inputs, exprInsts, visited);
+    }
+  }
+}
+
 class ApplicableOutput {
 public:
   FPCC &component;
@@ -1364,18 +1386,21 @@ public:
   std::string expr;
   double grad;
   unsigned executions;
+  const TargetTransformInfo &TTI;
   InstructionCost initialTTICost;      // Requires manual initialization
   InstructionCost initialHerbieCost;   // Requires manual initialization
   InstructionCost initialAccuracyCost; // Requires manual initialization
   double initialHerbieAccuracy;        // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
+  SmallPtrSet<Instruction *, 8> erasableInsts;
 
   explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
                             double grad, unsigned executions,
                             const TargetTransformInfo &TTI)
       : component(component), oldOutput(oldOutput), expr(expr), grad(grad),
-        executions(executions) {
+        executions(executions), TTI(TTI) {
     initialTTICost = getTTICost({oldOutput}, component.inputs, TTI);
+    findErasableInstructions();
   }
 
   void
@@ -1410,19 +1435,68 @@ public:
     symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
     valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
         newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
+
+    for (auto *I : erasableInsts) {
+      if (!I->use_empty())
+        I->replaceAllUsesWith(UndefValue::get(I->getType()));
+      I->eraseFromParent();
+    }
+
     component.outputs_rewritten++;
   }
 
   // Lower is better
   InstructionCost getComputationCost(size_t candidateIndex) {
-    // TODO: consider erasure of the old output
-    return candidates[candidateIndex].TTICost * executions;
+    // TODO: Better cost model
+    InstructionCost erasableCost = 0;
+    for (auto *I : erasableInsts) {
+      erasableCost +=
+          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+    }
+
+    return (candidates[candidateIndex].TTICost - erasableCost) * executions;
   }
 
   // Lower is better
   double getAccuracyCost(size_t candidateIndex) {
     // TODO: Update this accuracy
     return candidates[candidateIndex].accuracyCost;
+  }
+
+  void findErasableInstructions() {
+    SmallPtrSet<Instruction *, 16> exprInsts;
+    SmallPtrSet<Value *, 16> visited;
+    collectExprInsts(oldOutput, component.inputs, exprInsts, visited);
+
+    for (auto *I : exprInsts) {
+      bool usedOutside = false;
+
+      for (auto user : I->users()) {
+        if (auto *userI = dyn_cast<Instruction>(user);
+            userI && exprInsts.contains(userI)) {
+          // Use is within the expression
+          continue;
+        } else {
+          // Can't erase an llvm::Value or an instruction used outside
+          // the expression
+
+          // llvm::errs() << "Can't erase: " << *I << " -- used by: " << *user
+          //              << "\n";
+          usedOutside = true;
+          break;
+        }
+      }
+
+      if (!usedOutside) {
+        erasableInsts.insert(I);
+      }
+    }
+
+    llvm::errs() << "Erasable instructions:\n";
+    for (auto *I : erasableInsts) {
+      llvm::errs() << *I << "\n";
+    }
+    llvm::errs() << "End of erasable instructions\n";
   }
 };
 
@@ -1704,15 +1778,19 @@ double setUnifiedAccuracyCost(
       // TODO: Consider geometric average???
       assert(valueToNodeMap.count(AO.oldOutput));
 
-      llvm::errs() << "Computing real output for candidate: " << expr << "\n";
-      llvm::errs() << "Current input values:\n";
-      for (const auto &entry : pair.value()) {
-        llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
-                     << entry.second << "\n";
-      }
-      llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
+      // llvm::errs() << "Computing real output for candidate: " << expr <<
+      // "\n";
+
+      // llvm::errs() << "Current input values:\n";
+      // for (const auto &entry : pair.value()) {
+      //   llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
+      //                << entry.second << "\n";
+      // }
+
+      // llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
       double realVal = getMPFRValue(parsedNode, pair.value(), false);
-      llvm::errs() << "Real value: " << realVal << "\n";
+
+      // llvm::errs() << "Real value: " << realVal << "\n";
       ac += std::fabs((goldVals[pair.index()] - realVal) * AO.grad);
     }
     candidate.accuracyCost = ac;
@@ -1900,23 +1978,25 @@ bool improveViaHerbie(
 
   setUnifiedAccuracyCost(AO, M, valueToNodeMap, symbolToValueMap);
 
-  if (EnzymePrintHerbie) {
-    llvm::errs() << "Initial: "
-                 << "UnifiedAccuracyCost = " << AO.initialAccuracyCost
-                 << ", TTICost = " << AO.initialTTICost
-                 << ", HerbieCost = " << initialCost
-                 << ", HerbieAccuracy = " << initialAccuracy << "\n";
-    // The best candidate from Herbie is also printed below
-    for (size_t i = 0; i < AO.candidates.size(); ++i) {
-      auto &candidate = AO.candidates[i];
-      llvm::errs() << "Alternative " << i + 1
-                   << ": UnifiedAccuracyCost = " << candidate.accuracyCost
-                   << ", TTICost = " << candidate.TTICost
-                   << ", HerbieCost = " << candidate.herbieCost
-                   << ", HerbieAccuracy = " << candidate.herbieAccuracy
-                   << ", Expression = " << candidate.expr << "\n";
-    }
-  }
+  // if (EnzymePrintHerbie) {
+  //   llvm::errs() << "Initial: "
+  //                << "AccuracyCost = " << AO.initialAccuracyCost
+  //                << ", ComputationCost = " << 0
+  //                << ", TTICost = " << AO.initialTTICost
+  //                << ", HerbieCost = " << initialCost
+  //                << ", HerbieAccuracy = " << initialAccuracy << "\n";
+  //   // The best candidate from Herbie is also printed below
+  //   for (size_t i = 0; i < AO.candidates.size(); ++i) {
+  //     auto &candidate = AO.candidates[i];
+  //     llvm::errs() << "Alternative " << i + 1
+  //                  << ": AccuracyCost = " << candidate.accuracyCost
+  //                  << ", ComputationCost = " << AO.getComputationCost(i)
+  //                  << ", TTICost = " << candidate.TTICost
+  //                  << ", HerbieCost = " << candidate.herbieCost
+  //                  << ", HerbieAccuracy = " << candidate.herbieAccuracy
+  //                  << ", Expression = " << candidate.expr << "\n";
+  //   }
+  // }
 
   return true;
 }
@@ -2109,7 +2189,7 @@ std::string getPrecondition(
 // Given the cost budget `FPOptComputationCostBudget`, we want to minimize the
 // accuracy cost of the rewritten expressions.
 bool accuracyGreedySolver(
-    SmallVector<ApplicableOutput> &AOs,
+    SmallVector<ApplicableOutput, 4> &AOs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -2155,7 +2235,7 @@ bool accuracyGreedySolver(
 }
 
 bool accuracyDPSolver(
-    SmallVector<ApplicableOutput> &AOs,
+    SmallVector<ApplicableOutput, 4> &AOs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -2678,8 +2758,8 @@ B2:
     return false;
   }
 
-  SmallVector<ApplicableOutput> AOs;
-  SmallVector<ApplicableFPCC> ACCs;
+  SmallVector<ApplicableOutput, 4> AOs;
+  SmallVector<ApplicableFPCC, 4> ACCs;
 
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
@@ -2781,8 +2861,9 @@ B2:
       // 5*. Custom error estimates of potential rewrites (TODO)
 
       llvm::errs() << "\n################################\n";
-      llvm::errs() << "Initial UnifiedAccuracyCost: " << AO.initialAccuracyCost
+      llvm::errs() << "Initial AccuracyCost: " << AO.initialAccuracyCost
                    << "\n";
+      llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
       llvm::errs() << "Initial TTICost: " << AO.initialTTICost << "\n";
       llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
       llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
@@ -2791,12 +2872,15 @@ B2:
       llvm::errs() << "Grad: " << AO.grad << "\n\n";
       llvm::errs() << "Candidates:\n";
       llvm::errs()
-          << "UnifiedAccuracyCost\tTTICost\tHerbieCost\tAccuracy\tExpression\n";
+          << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tHerbieCost\t\tAccu"
+             "racy\t\tExpression\n";
       llvm::errs() << "--------------------------------\n";
-      for (const auto &candidate : AO.candidates) {
-        llvm::errs() << candidate.accuracyCost << "\t" << candidate.TTICost
-                     << "\t" << candidate.herbieCost << "\t"
-                     << candidate.herbieAccuracy << "\t" << candidate.expr
+      for (size_t i = 0; i < AO.candidates.size(); ++i) {
+        auto &candidate = AO.candidates[i];
+        llvm::errs() << candidate.accuracyCost << "\t\t"
+                     << AO.getComputationCost(i) << "\t\t" << candidate.TTICost
+                     << "\t\t" << candidate.herbieCost << "\t\t"
+                     << candidate.herbieAccuracy << "\t\t" << candidate.expr
                      << "\n";
       }
       llvm::errs() << "################################\n\n";
