@@ -1440,6 +1440,7 @@ public:
       if (!I->use_empty())
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       I->eraseFromParent();
+      component.operations.remove(I); // Avoid a second removal
     }
 
     component.outputs_rewritten++;
