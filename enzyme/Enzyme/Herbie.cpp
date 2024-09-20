@@ -1422,8 +1422,7 @@ public:
   // Lower is better
   double getAccuracyCost(size_t candidateIndex) {
     // TODO: Update this accuracy
-    return (initialHerbieAccuracy - candidates[candidateIndex].herbieAccuracy) *
-           std::fabs(grad);
+    return candidates[candidateIndex].accuracyCost;
   }
 };
 
@@ -1776,6 +1775,7 @@ bool improveViaHerbie(
   input.close();
 
   std::string Program = HERBIE_BINARY;
+  llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
   SmallVector<llvm::StringRef> Args = {
       Program,     "report", "--seed", std::to_string(FPOptRandomSeed),
       "--timeout", "60"};
@@ -2124,22 +2124,20 @@ bool accuracyGreedySolver(
 
     for (auto &candidate : enumerate(AO.candidates)) {
       size_t i = candidate.index();
-      auto candidateComputationCost = AO.getComputationCost(i);
-      auto candidateAccuracyCost = AO.getAccuracyCost(i);
+      auto candCompCost = AO.getComputationCost(i);
+      auto candAccCost = AO.getAccuracyCost(i);
       llvm::errs() << "Candidate " << i << " for " << AO.expr
-                   << " has accuracy cost: " << candidateAccuracyCost
-                   << " and computation cost: " << candidateComputationCost
-                   << "\n";
+                   << " has accuracy cost: " << candAccCost
+                   << " and computation cost: " << candCompCost << "\n";
 
       // See if the candidate fits within the computation cost budget
-      if (totalComputationCost + candidateComputationCost <=
-          FPOptComputationCostBudget) {
+      if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
         // Select the candidate with the lowest accuracy cost
-        if (candidateAccuracyCost < bestAccuracyCost) {
+        if (candAccCost < bestAccuracyCost) {
           llvm::errs() << "Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
-          bestAccuracyCost = candidateAccuracyCost;
-          bestCandidateComputationCost = candidateComputationCost;
+          bestAccuracyCost = candAccCost;
+          bestCandidateComputationCost = candCompCost;
         }
       }
     }
@@ -2170,87 +2168,123 @@ bool accuracyDPSolver(
                SmallVector<std::pair<ApplicableOutput *, size_t>>>;
 
   CostMap costToAccuracyMap;
-  costToAccuracyMap[0] = std::numeric_limits<double>::infinity();
+  costToAccuracyMap[0] = 0;
   SolutionMap costToSolutionMap;
   costToSolutionMap[0] = {};
 
   for (auto &AO : AOs) {
-    CostMap newCostToAccuracyMap = costToAccuracyMap;
-    SolutionMap newCostToSolutionMap = costToSolutionMap;
+    CostMap newCostToAccuracyMap;
+    SolutionMap newCostToSolutionMap;
 
-    llvm::errs() << "Processing " << AO.expr << "\n";
+    llvm::errs() << "Processing AO: " << AO.expr << "\n";
+
     for (const auto &pair : costToAccuracyMap) {
+      InstructionCost currCompCost = pair.first;
+      double currAccCost = pair.second;
+
+      // It is possible to apply zero candidate for an AO
+      if (newCostToAccuracyMap.find(currCompCost) ==
+              newCostToAccuracyMap.end() ||
+          newCostToAccuracyMap[currCompCost] > currAccCost) {
+        newCostToAccuracyMap[currCompCost] = currAccCost;
+        newCostToSolutionMap[currCompCost] = costToSolutionMap[currCompCost];
+      }
+
       for (auto &candidate : enumerate(AO.candidates)) {
-        InstructionCost currentComputationCost = pair.first;
-        double currentAccuracyCost = pair.second;
-
         size_t i = candidate.index();
-        auto candidateComputationCost = AO.getComputationCost(i);
-        auto candidateAccuracyCost = AO.getAccuracyCost(i);
+        auto candCompCost = AO.getComputationCost(i);
+        auto candAccCost = AO.getAccuracyCost(i);
 
-        InstructionCost newComputationCost =
-            currentComputationCost + candidateComputationCost;
-        double newAccuracyCost = currentAccuracyCost + candidateAccuracyCost;
+        InstructionCost newCompCost = currCompCost + candCompCost;
+        double newAccCost = currAccCost + candAccCost;
 
-        if (newComputationCost <= FPOptComputationCostBudget) {
-          if (costToAccuracyMap.find(newComputationCost) ==
-                  costToAccuracyMap.end() ||
-              costToAccuracyMap[newComputationCost] > newAccuracyCost) {
-            // Maintain the way to achieve the lowest accuracy cost for each
-            // achievable computation cost
-            newCostToAccuracyMap[newComputationCost] = newAccuracyCost;
-            newCostToSolutionMap[newComputationCost] =
-                costToSolutionMap[currentComputationCost];
-            newCostToSolutionMap[newComputationCost].emplace_back(&AO, i);
-            llvm::errs() << "Updating accuracy map (candidate " << i
-                         << "): computation cost " << newComputationCost
-                         << " -> accuracy cost " << newAccuracyCost << "\n";
-          }
+        llvm::errs() << "Candidate " << i
+                     << " has accuracy cost: " << candAccCost
+                     << " and computation cost: " << candCompCost << "\n";
+
+        if (newCostToAccuracyMap.find(newCompCost) ==
+                newCostToAccuracyMap.end() ||
+            newCostToAccuracyMap[newCompCost] > newAccCost) {
+          newCostToAccuracyMap[newCompCost] = newAccCost;
+          newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
+          newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
+          llvm::errs() << "Updating accuracy map (candidate " << i
+                       << "): computation cost " << newCompCost
+                       << " -> accuracy cost " << newAccCost << "\n";
         }
       }
     }
 
-    // Accuracy costs should be non-increasing
-    for (auto it = std::next(newCostToAccuracyMap.begin());
-         it != newCostToAccuracyMap.end(); ++it) {
-      auto prev = std::prev(it);
-      if (it->second > prev->second) {
-        // Lower accuracy cost is achieved by a lower computation cost; inherit
-        // the solution of the lower computation cost
-        it->second = prev->second;
-        newCostToSolutionMap[it->first] = newCostToSolutionMap[prev->first];
-        llvm::errs() << "Correcting accuracy cost for computation cost "
-                     << it->first << " to " << it->second
-                     << " which comes from " << prev->first << "\n";
+    CostMap prunedCostToAccuracyMap;
+    SolutionMap prunedCostToSolutionMap;
+
+    for (const auto &l : newCostToAccuracyMap) {
+      InstructionCost currCompCost = l.first;
+      double currAccCost = l.second;
+
+      bool dominated = false;
+      for (const auto &r : newCostToAccuracyMap) {
+        InstructionCost otherCompCost = r.first;
+        double otherAccCost = r.second;
+
+        if (currCompCost > otherCompCost && currAccCost >= otherAccCost) {
+          llvm::errs() << "Candidate with computation cost: " << currCompCost
+                       << " and accuracy cost: " << currAccCost
+                       << " is dominated by candidate with computation cost: "
+                       << otherCompCost
+                       << " and accuracy cost: " << otherAccCost << "\n";
+          dominated = true;
+          break;
+        }
+      }
+
+      if (!dominated) {
+        prunedCostToAccuracyMap[currCompCost] = currAccCost;
+        prunedCostToSolutionMap[currCompCost] =
+            newCostToSolutionMap[currCompCost];
       }
     }
 
-    costToAccuracyMap.swap(newCostToAccuracyMap);
-    costToSolutionMap.swap(newCostToSolutionMap);
+    costToAccuracyMap.swap(prunedCostToAccuracyMap);
+    costToSolutionMap.swap(prunedCostToSolutionMap);
   }
 
   llvm::errs() << "DP Table: \n";
-  for (const auto &entry : costToAccuracyMap) {
-    llvm::errs() << "Computation cost: " << entry.first
-                 << ", Accuracy cost: " << entry.second << "\n";
+  for (const auto &pair : costToAccuracyMap) {
+    llvm::errs() << "Computation cost: " << pair.first
+                 << ", Accuracy cost: " << pair.second << "\n";
   }
 
-  double minAccuracyCost = std::numeric_limits<double>::infinity();
-  InstructionCost bestCost = 0;
+  double minAccCost = std::numeric_limits<double>::infinity();
+  InstructionCost bestCompCost = 0;
   for (const auto &pair : costToAccuracyMap) {
-    if (pair.second < minAccuracyCost) {
-      minAccuracyCost = pair.second;
-      bestCost = pair.first;
+    InstructionCost compCost = pair.first;
+    double accCost = pair.second;
+
+    if (compCost <= FPOptComputationCostBudget && accCost < minAccCost) {
+      minAccCost = accCost;
+      bestCompCost = compCost;
     }
   }
 
-  llvm::errs() << "Minimum accuracy cost within budget: " << minAccuracyCost
-               << "\n";
-  llvm::errs() << "Computation cost budget used: " << bestCost << "\n";
+  if (minAccCost == std::numeric_limits<double>::infinity()) {
+    llvm::errs() << "No solution found within the computation cost budget!\n";
+    return changed;
+  }
 
-  assert(costToSolutionMap.find(bestCost) != costToSolutionMap.end() &&
+  llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost << "\n";
+  llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
+
+  if (bestCompCost == 0 && minAccCost == 0) {
+    llvm::errs()
+        << "WARNING: DP Solver recommended no expression-level optimization.\n";
+    return changed;
+  }
+
+  assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "FPOpt DP solver: expected a solution!");
-  for (const auto &solution : costToSolutionMap[bestCost]) {
+
+  for (const auto &solution : costToSolutionMap[bestCompCost]) {
     auto *AO = solution.first;
     size_t i = solution.second;
     AO->apply(i, valueToNodeMap, symbolToValueMap);
@@ -2645,7 +2679,7 @@ B2:
   }
 
   SmallVector<ApplicableOutput> AOs;
-  SmallVector<ApplicableFPCC> AFs;
+  SmallVector<ApplicableFPCC> ACCs;
 
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
@@ -2731,7 +2765,7 @@ B2:
           PrecisionChangeType::FP16);
 
       ACC.candidateChanges.push_back({std::move(change)});
-      AFs.push_back(std::move(ACC));
+      ACCs.push_back(std::move(ACC));
     }
   }
 
@@ -2775,8 +2809,8 @@ B2:
       changed = true;
     }
 
-    for (auto &AF : AFs) {
-      AF.apply(0);
+    for (auto &ACC : ACCs) {
+      ACC.apply(0);
       changed = true;
     }
   } else {
