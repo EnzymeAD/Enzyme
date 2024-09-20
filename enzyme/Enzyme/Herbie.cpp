@@ -1029,7 +1029,8 @@ void getSampledPoints(
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
-  std::mt19937 gen(FPOptRandomSeed);
+  std::default_random_engine gen;
+  gen.seed(FPOptRandomSeed);
   std::uniform_real_distribution<> dis;
 
   SmallSet<std::string, 8> argStrSet;
