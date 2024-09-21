@@ -1387,9 +1387,9 @@ public:
   double grad;
   unsigned executions;
   const TargetTransformInfo &TTI;
+  InstructionCost initialAccuracyCost; // Requires manual initialization
   InstructionCost initialTTICost;      // Requires manual initialization
   InstructionCost initialHerbieCost;   // Requires manual initialization
-  InstructionCost initialAccuracyCost; // Requires manual initialization
   double initialHerbieAccuracy;        // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
   SmallPtrSet<Instruction *, 8> erasableInsts;
@@ -1450,6 +1450,7 @@ public:
   InstructionCost getComputationCost(size_t candidateIndex) {
     // TODO: Better cost model
     InstructionCost erasableCost = 0;
+
     for (auto *I : erasableInsts) {
       erasableCost +=
           TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
@@ -1622,27 +1623,37 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
 }
 
+struct PTCandidate {
+  // Only one PT candidate per FPCC can be applied
+  SmallVector<PrecisionChange, 1> changes;
+  double accuracyCost;
+  InstructionCost TTICost;
+
+  // TODO:
+  explicit PTCandidate(SmallVector<PrecisionChange> &changes)
+      : changes(changes) {
+    // TTICost = getTTICost(changes);
+  }
+};
+
 class ApplicableFPCC {
 public:
   FPCC &component;
-  double grad;
-  unsigned executions;
-  InstructionCost initialTTICost;    // Requires manual initialization
-  InstructionCost initialHerbieCost; // Requires manual initialization
-  double initialHerbieAccuracy;      // Requires manual initialization
+  const TargetTransformInfo &TTI;
+  InstructionCost initialAccuracyCost; // Requires manual initialization
+  InstructionCost initialTTICost;
 
-  SmallVector<SmallVector<PrecisionChange>>
-      candidateChanges; // Candidate MP allocations
+  SmallVector<PTCandidate> candidates;
 
-  explicit ApplicableFPCC(FPCC &fpcc) : component(fpcc) {}
-
-  // Record one possible MP allocation
-  void recordChange(SmallVector<PrecisionChange> &change) {
-    candidateChanges.push_back(change);
+  explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
+      : component(fpcc), TTI(TTI) {
+    initialTTICost =
+        getTTICost({component.outputs.begin(), component.outputs.end()},
+                   component.inputs, TTI);
   }
 
   void apply(size_t candidateIndex) {
-    if (candidateIndex >= candidateChanges.size()) {
+    if (candidateIndex >= candidates.size()) {
       llvm_unreachable("Invalid candidate index");
     }
 
@@ -1651,7 +1662,7 @@ public:
     // between llvm::Value inputs and first level of instructions to be changed.
     // Restore precisions of the last level of instructions to be changed.
 
-    for (auto &change : candidateChanges[candidateIndex]) {
+    for (auto &change : candidates[candidateIndex].changes) {
       SmallPtrSet<Instruction *, 8> seen;
       SmallVector<Instruction *, 8> todo;
       MapVector<Value *, Value *> oldToNew;
@@ -1746,7 +1757,7 @@ public:
 };
 
 double setUnifiedAccuracyCost(
-    ApplicableOutput &AO, Module *M,
+    ApplicableOutput &AO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
@@ -1977,7 +1988,7 @@ bool improveViaHerbie(
     AO.candidates.push_back(candidate);
   }
 
-  setUnifiedAccuracyCost(AO, M, valueToNodeMap, symbolToValueMap);
+  setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
 
   // if (EnzymePrintHerbie) {
   //   llvm::errs() << "Initial: "
@@ -2685,31 +2696,25 @@ B2:
 
         if (!FPOptLogPath.empty()) {
           for (auto &CC : newCCs) {
-            // Extract grad and value info for all outputs. This implicitly
-            // extracts the value info for herbiable intermediate `inputs` since
-            // they are also `outputs` of a previous FPCC.
-            for (auto &output : CC.outputs) {
+            // Extract grad and value info for all outputs.
+            for (auto &op : CC.operations) {
               double grad = 0;
               auto blockIt = std::find_if(
-                  output->getFunction()->begin(), output->getFunction()->end(),
-                  [&](const auto &block) {
-                    return &block == output->getParent();
-                  });
-              assert(blockIt != output->getFunction()->end() &&
-                     "Block not found");
+                  op->getFunction()->begin(), op->getFunction()->end(),
+                  [&](const auto &block) { return &block == op->getParent(); });
+              assert(blockIt != op->getFunction()->end() && "Block not found");
               size_t blockIdx =
-                  std::distance(output->getFunction()->begin(), blockIt);
-              auto instIt = std::find_if(
-                  output->getParent()->begin(), output->getParent()->end(),
-                  [&](const auto &curr) { return &curr == output; });
-              assert(instIt != output->getParent()->end() &&
+                  std::distance(op->getFunction()->begin(), blockIt);
+              auto instIt =
+                  std::find_if(op->getParent()->begin(), op->getParent()->end(),
+                               [&](const auto &curr) { return &curr == op; });
+              assert(instIt != op->getParent()->end() &&
                      "Instruction not found");
-              size_t instIdx =
-                  std::distance(output->getParent()->begin(), instIt);
+              size_t instIdx = std::distance(op->getParent()->begin(), instIt);
               bool found = extractGradFromLog(FPOptLogPath, functionName,
                                               blockIdx, instIdx, grad);
 
-              auto node = valueToNodeMap[output];
+              auto node = valueToNodeMap[op];
 
               if (found) {
                 node->grad = grad;
@@ -2721,20 +2726,20 @@ B2:
                 node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
 
                 if (EnzymePrintFPOpt) {
-                  llvm::errs() << "Range of " << *output << " is ["
-                               << node->getLowerBound() << ", "
-                               << node->getUpperBound() << "]\n";
+                  llvm::errs()
+                      << "Range of " << *op << " is [" << node->getLowerBound()
+                      << ", " << node->getUpperBound() << "]\n";
                 }
 
                 if (EnzymePrintFPOpt)
                   llvm::errs()
-                      << "Grad of " << *output << " is: " << node->grad << "\n"
-                      << "Execution count of " << *output
+                      << "Grad of " << *op << " is: " << node->grad << "\n"
+                      << "Execution count of " << *op
                       << " is: " << node->executions << "\n";
               } else { // Unknown bounds
                 if (EnzymePrintFPOpt)
                   llvm::errs()
-                      << "Grad of " << *output << " are not found in the log\n";
+                      << "Grad of " << *op << " are not found in the log\n";
               }
             }
           }
@@ -2837,66 +2842,142 @@ B2:
     }
 
     if (FPOptEnablePT) {
-      // TODO: Precision tuning
-      ApplicableFPCC ACC(component);
+      // Sort `component.operations` by the gradient and construct
+      // `PrecisionChange`s.
+      ApplicableFPCC ACC(component, TTI);
+      setUnifiedAccuracyCost(ACC, F.getParent(), valueToNodeMap,
+                             symbolToValueMap);
 
-      PrecisionChange change(
-          component.operations,
-          getPrecisionChangeType(component.outputs[0]->getType()),
-          PrecisionChangeType::FP16);
+      SmallVector<Instruction *, 8> operations(component.operations.begin(),
+                                               component.operations.end());
 
-      ACC.candidateChanges.push_back({std::move(change)});
+      // TODO: computation cost conflicts with Herbie rewrites
+
+      // Sort the operations by the gradient
+      llvm::sort(operations, [&valueToNodeMap](Value *a, Value *b) {
+        llvm::errs() << "Gradient of " << *a << " is "
+                     << valueToNodeMap[a]->grad << "\n";
+        llvm::errs() << "Gradient of " << *b << " is "
+                     << valueToNodeMap[b]->grad << "\n";
+        assert(!std::isnan(valueToNodeMap[a]->grad) &&
+               "Gradient is NaN for an operation");
+        assert(!std::isnan(valueToNodeMap[b]->grad) &&
+               "Gradient is NaN for an operation");
+        return std::fabs(valueToNodeMap[a]->grad) <
+               std::fabs(valueToNodeMap[b]->grad);
+      });
+
+      // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
+      for (int percent = 10; percent <= 100; percent += 10) {
+        size_t numToChange = operations.size() * percent / 100;
+
+        SetVector<Instruction *> opsToChange(operations.begin(),
+                                             operations.begin() + numToChange);
+
+        if (!opsToChange.empty()) {
+          llvm::errs() << "Created PrecisionChange for " << percent
+                       << "% of operations (" << numToChange << ")\n";
+          llvm::errs() << "Subset gradient range: ["
+                       << std::fabs(valueToNodeMap[opsToChange.front()]->grad)
+                       << ", "
+                       << std::fabs(valueToNodeMap[opsToChange.back()]->grad)
+                       << "]\n";
+        }
+
+        SmallVector<PrecisionChangeType> precTypes{PrecisionChangeType::FP16,
+                                                   PrecisionChangeType::FP32,
+                                                   PrecisionChangeType::FP64};
+
+        for (auto prec : precTypes) {
+          PrecisionChange change(
+              opsToChange,
+              getPrecisionChangeType(component.outputs[0]->getType()), prec);
+
+          SmallVector<PrecisionChange, 1> changes{std::move(change)};
+          PTCandidate candidate(changes);
+
+          ACC.candidates.push_back(std::move(candidate));
+        }
+      }
+
       ACCs.push_back(std::move(ACC));
     }
   }
 
   // Perform rewrites
   if (EnzymePrintFPOpt) {
-    for (auto &AO : AOs) {
-      // TODO: Solver
-      // Available Parameters:
-      // 1. gradients at the output llvm::Value
-      // 2. costs of the potential rewrites from Herbie (lower is preferred)
-      // 3. percentage accuracies of potential rewrites (higher is better)
-      // 4*. TTI costs of potential rewrites (TODO: need to consider branches)
-      // 5*. Custom error estimates of potential rewrites (TODO)
+    if (FPOptEnableHerbie) {
+      for (auto &AO : AOs) {
+        // TODO: Solver
+        // Available Parameters:
+        // 1. gradients at the output llvm::Value
+        // 2. costs of the potential rewrites from Herbie (lower is preferred)
+        // 3. percentage accuracies of potential rewrites (higher is better)
+        // 4*. TTI costs of potential rewrites (TODO: need to consider branches)
+        // 5*. Custom error estimates of potential rewrites (TODO)
 
-      llvm::errs() << "\n################################\n";
-      llvm::errs() << "Initial AccuracyCost: " << AO.initialAccuracyCost
-                   << "\n";
-      llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
-      llvm::errs() << "Initial TTICost: " << AO.initialTTICost << "\n";
-      llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
-      llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
-                   << "\n";
-      llvm::errs() << "Initial Expression: " << AO.expr << "\n";
-      llvm::errs() << "Grad: " << AO.grad << "\n\n";
-      llvm::errs() << "Candidates:\n";
-      llvm::errs()
-          << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tHerbieCost\t\tAccu"
-             "racy\t\tExpression\n";
-      llvm::errs() << "--------------------------------\n";
-      for (size_t i = 0; i < AO.candidates.size(); ++i) {
-        auto &candidate = AO.candidates[i];
-        llvm::errs() << candidate.accuracyCost << "\t\t"
-                     << AO.getComputationCost(i) << "\t\t" << candidate.TTICost
-                     << "\t\t" << candidate.herbieCost << "\t\t"
-                     << candidate.herbieAccuracy << "\t\t" << candidate.expr
+        llvm::errs() << "\n################################\n";
+        llvm::errs() << "Initial AccuracyCost: " << AO.initialAccuracyCost
                      << "\n";
+        llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
+        llvm::errs() << "Initial TTICost: " << AO.initialTTICost << "\n";
+        llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
+        llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
+                     << "\n";
+        llvm::errs() << "Initial Expression: " << AO.expr << "\n";
+        llvm::errs() << "Grad: " << AO.grad << "\n\n";
+        llvm::errs() << "Candidates:\n";
+        llvm::errs() << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tHerbieCo"
+                        "st\t\tAccu"
+                        "racy\t\tExpression\n";
+        llvm::errs() << "--------------------------------\n";
+        for (size_t i = 0; i < AO.candidates.size(); ++i) {
+          auto &candidate = AO.candidates[i];
+          llvm::errs() << candidate.accuracyCost << "\t\t"
+                       << AO.getComputationCost(i) << "\t\t"
+                       << candidate.TTICost << "\t\t" << candidate.herbieCost
+                       << "\t\t" << candidate.herbieAccuracy << "\t\t"
+                       << candidate.expr << "\n";
+        }
+        llvm::errs() << "################################\n\n";
       }
-      llvm::errs() << "################################\n\n";
+    }
+    if (FPOptEnablePT) {
+      for (auto &ACC : ACCs) {
+        llvm::errs() << "\n################################\n";
+        llvm::errs() << "Initial AccuracyCost: " << ACC.initialAccuracyCost
+                     << "\n";
+        llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
+        llvm::errs() << "Initial TTICost: " << ACC.initialTTICost << "\n";
+        llvm::errs() << "Candidates:\n";
+        llvm::errs() << "AccuracyCost\t\tComputationCost\t\tTTICost\n"
+                     << "--------------------------------\n";
+        for (size_t i = 0; i < ACC.candidates.size(); ++i) {
+          auto &candidate = ACC.candidates[i];
+          llvm::errs() << candidate.accuracyCost
+                       << "\t\t"
+                       //  << ACC.getComputationCost(i) << "\t\t"
+                       << candidate.TTICost << "\n";
+        }
+        llvm::errs() << "################################\n\n";
+      }
     }
   }
 
   if (!FPOptEnableSolver) {
-    for (auto &AO : AOs) {
-      AO.apply(0, valueToNodeMap, symbolToValueMap);
-      changed = true;
+    if (FPOptEnableHerbie) {
+      for (auto &AO : AOs) {
+        AO.apply(0, valueToNodeMap, symbolToValueMap);
+        changed = true;
+      }
     }
 
-    for (auto &ACC : ACCs) {
-      ACC.apply(0);
-      changed = true;
+    // TODO: just for testing
+    if (FPOptEnablePT) {
+      for (auto &ACC : ACCs) {
+        ACC.apply(0);
+        changed = true;
+      }
     }
   } else {
     // TODO: Solver
