@@ -1576,14 +1576,15 @@ PrecisionChangeType getPrecisionChangeType(Type *type) {
 }
 
 struct PrecisionChange {
-  SetVector<Instruction *> instructions;
+  SetVector<FPLLValue *>
+      nodes; // Only nodes with existing `llvm::Value`s can be changed
   PrecisionChangeType oldType;
   PrecisionChangeType newType;
 
-  explicit PrecisionChange(SetVector<Instruction *> &instructions,
+  explicit PrecisionChange(SetVector<FPLLValue *> &nodes,
                            PrecisionChangeType oldType,
                            PrecisionChangeType newType)
-      : instructions(instructions), oldType(oldType), newType(newType) {}
+      : nodes(nodes), oldType(oldType), newType(newType) {}
 };
 
 void changePrecision(Instruction *I, PrecisionChange &change,
@@ -1678,15 +1679,22 @@ public:
       SmallVector<Instruction *, 8> todo;
       MapVector<Value *, Value *> oldToNew;
 
-      MapVector<Instruction *, int>
-          operandCount; // For topo ordering wrt operand dependencies
-      for (auto *I : change.instructions) {
+      SetVector<Instruction *> instsToChange;
+      for (auto node : change.nodes) {
+        assert(isa<Instruction>(node->value));
+        instsToChange.insert(cast<Instruction>(node->value));
+      }
+
+      // For implicit topo ordering wrt operand dependencies
+      MapVector<Instruction *, int> operandCount;
+      for (auto *I : instsToChange) {
+        // We only change precisions of instructions
         int count = 0;
         auto operands =
             isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
         for (auto &op : operands) {
-          if (auto *opI = dyn_cast<Instruction>(op);
-              change.instructions.contains(opI)) {
+          if (isa<Instruction>(op) &&
+              instsToChange.contains(cast<Instruction>(op))) {
             count++;
           }
         }
@@ -1703,17 +1711,17 @@ public:
         if (!seen.insert(cur).second)
           continue;
 
-        if (auto *I = dyn_cast<Instruction>(cur);
-            component.operations.contains(I)) {
-          changePrecision(I, change, oldToNew);
+        if (isa<Instruction>(cur) &&
+            component.operations.contains(cast<Instruction>(cur))) {
+          changePrecision(cast<Instruction>(cur), change, oldToNew);
         }
 
         for (auto user : cur->users()) {
-          if (auto *userI = dyn_cast<Instruction>(user);
-              operandCount.count(userI)) {
-            if (0 == --operandCount[userI]) {
-              llvm::errs() << "PT Adding: " << *userI << "\n";
-              todo.push_back(userI);
+          if (isa<Instruction>(user) &&
+              operandCount.count(cast<Instruction>(user))) {
+            if (0 == --operandCount[cast<Instruction>(user)]) {
+              llvm::errs() << "PT Adding: " << *cast<Instruction>(user) << "\n";
+              todo.push_back(cast<Instruction>(user));
             }
           }
         }
@@ -1726,19 +1734,19 @@ public:
           continue;
         }
 
-        if (!change.instructions.contains(cast<Instruction>(oldV))) {
+        if (!instsToChange.contains(cast<Instruction>(oldV))) {
           continue;
         }
 
         for (auto user : oldV->users()) {
-          if (auto *userI = dyn_cast<Instruction>(user);
-              !change.instructions.contains(userI)) {
-            IRBuilder<> builder(userI);
+          if (isa<Instruction>(user) &&
+              !instsToChange.contains(cast<Instruction>(user))) {
+            IRBuilder<> builder(cast<Instruction>(user));
 
             newV = builder.CreateFPCast(
                 newV, getLLVMFPType(change.oldType, builder.getContext()));
 
-            userI->replaceUsesOfWith(oldV, newV);
+            user->replaceUsesOfWith(oldV, newV);
           }
         }
 
@@ -2859,40 +2867,39 @@ B2:
       setUnifiedAccuracyCost(ACC, F.getParent(), valueToNodeMap,
                              symbolToValueMap);
 
-      SmallVector<Instruction *, 8> operations(component.operations.begin(),
-                                               component.operations.end());
+      SmallVector<FPLLValue *, 8> operations;
+      for (auto *I : component.operations) {
+        assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
+               "Corrupted FPNode for original instructions");
+        operations.push_back(cast<FPLLValue>(valueToNodeMap[I].get()));
+      }
 
       // TODO: computation cost conflicts with Herbie rewrites
 
       // Sort the operations by the gradient
-      llvm::sort(operations, [&valueToNodeMap](Value *a, Value *b) {
-        llvm::errs() << "Gradient of " << *a << " is "
-                     << valueToNodeMap[a]->grad << "\n";
-        llvm::errs() << "Gradient of " << *b << " is "
-                     << valueToNodeMap[b]->grad << "\n";
-        assert(!std::isnan(valueToNodeMap[a]->grad) &&
-               "Gradient is NaN for an operation");
-        assert(!std::isnan(valueToNodeMap[b]->grad) &&
-               "Gradient is NaN for an operation");
-        return std::fabs(valueToNodeMap[a]->grad) <
-               std::fabs(valueToNodeMap[b]->grad);
+      llvm::sort(operations, [](const auto &a, const auto &b) {
+        llvm::errs() << "Gradient of " << *(a->value) << " is " << a->grad
+                     << "\n";
+        llvm::errs() << "Gradient of " << *(b->value) << " is " << b->grad
+                     << "\n";
+        assert(!std::isnan(a->grad) && "Gradient is NaN for an operation");
+        assert(!std::isnan(b->grad) && "Gradient is NaN for an operation");
+        return std::fabs(a->grad) < std::fabs(b->grad);
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
       for (int percent = 10; percent <= 100; percent += 10) {
         size_t numToChange = operations.size() * percent / 100;
 
-        SetVector<Instruction *> opsToChange(operations.begin(),
+        SetVector<FPLLValue *> opsToChange(operations.begin(),
                                              operations.begin() + numToChange);
 
         if (!opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of operations (" << numToChange << ")\n";
           llvm::errs() << "Subset gradient range: ["
-                       << std::fabs(valueToNodeMap[opsToChange.front()]->grad)
-                       << ", "
-                       << std::fabs(valueToNodeMap[opsToChange.back()]->grad)
-                       << "]\n";
+                       << std::fabs(opsToChange.front()->grad) << ", "
+                       << std::fabs(opsToChange.back()->grad) << "]\n";
         }
 
         SmallVector<PrecisionChangeType> precTypes{PrecisionChangeType::FP16,
