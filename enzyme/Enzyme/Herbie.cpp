@@ -1026,7 +1026,7 @@ void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
 }
 
 void getSampledPoints(
-    const std::string &expr,
+    ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
@@ -1034,19 +1034,14 @@ void getSampledPoints(
   gen.seed(FPOptRandomSeed);
   std::uniform_real_distribution<> dis;
 
-  SmallSet<std::string, 8> argStrSet;
-  getUniqueArgs(expr, argStrSet);
-
-  // Create a hypercube of input operands
   SmallMapVector<Value *, SmallVector<double, 2>, 4> hypercube;
-  for (const auto &argStr : argStrSet) {
-    const auto node = valueToNodeMap.at(symbolToValueMap.at(argStr));
-    Value *val = symbolToValueMap.at(argStr);
+  for (const auto input : inputs) {
+    const auto node = valueToNodeMap.at(input);
 
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
 
-    hypercube.insert({val, {lower, upper}});
+    hypercube.insert({input, {lower, upper}});
   }
 
   // llvm::errs() << "Hypercube:\n";
@@ -1078,6 +1073,22 @@ void getSampledPoints(
     //                << entry.second << "\n";
     // }
   }
+}
+
+void getSampledPoints(
+    const std::string &expr,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
+  SmallVector<Value *, 4> inputs;
+  for (const auto &argStr : argStrSet) {
+    inputs.push_back(symbolToValueMap.at(argStr));
+  }
+
+  getSampledPoints(inputs, valueToNodeMap, symbolToValueMap, sampledPoints);
 }
 
 std::shared_ptr<FPNode> parseHerbieExpr(
