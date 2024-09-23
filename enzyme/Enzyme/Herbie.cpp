@@ -174,7 +174,8 @@ public:
       return 24;
     if (dtype == "f64")
       return 53;
-    std::string msg = "getMPFRPrec: Unsupported dtype " + dtype;
+    std::string msg =
+        "getMPFRPrec: operator " + op + " has unknown dtype " + dtype;
     llvm_unreachable(msg.c_str());
   }
 
@@ -577,363 +578,404 @@ public:
   }
 };
 
-// Compute the expression with MPFR at `prec` precision
-// recursively. When operand is a FPConst, use its lower
-// bound. When operand is a FPLLValue, get its inputs from
-// `inputs`.
-void MPFRValueHelper(std::shared_ptr<FPNode> node,
-                     const SmallMapVector<Value *, double, 4> &inputValues,
-                     const unsigned prec, mpfr_t &res,
-                     bool groundTruth = true) {
-  if (auto *constNode = dyn_cast<FPConst>(node.get())) {
-    double constVal = constNode->getLowerBound(); // TODO: Can be improved
-    mpfr_set_d(res, constVal, MPFR_RNDN);
-    return;
-  }
+enum class PrecisionChangeType { FP16, FP32, FP64 };
 
-  if (auto *valueNode = dyn_cast<FPLLValue>(node.get());
-      valueNode && inputValues.count(valueNode->value)) {
-    double inputValue = inputValues.lookup(valueNode->value);
-    mpfr_set_d(res, inputValue, MPFR_RNDN);
-    return;
-  }
-
-  if (node->op == "neg") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_neg(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "+") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_add(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "-") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_sub(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "*") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_mul(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "/") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_div(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "sin") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_sin(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "cos") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_cos(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "tan") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_tan(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "exp") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_exp(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "expm1") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_expm1(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "log") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_log(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "log1p") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_log1p(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "sqrt") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_sqrt(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "cbrt") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_cbrt(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "pow") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_pow(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "fma") {
-    mpfr_t operandResults[3];
-    for (int i = 0; i < 3; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_fma(res, operandResults[0], operandResults[1], operandResults[2],
-             MPFR_RNDN);
-    for (int i = 0; i < 3; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "fabs") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    MPFRValueHelper(node->operands[0], inputValues, prec, operandResult,
-                    groundTruth);
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_abs(res, operandResult, MPFR_RNDN);
-    mpfr_clear(operandResult);
-  } else if (node->op == "hypot") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    mpfr_set_prec(res, groundTruth ? prec : node->getMPFRPrec());
-    mpfr_hypot(res, operandResults[0], operandResults[1], MPFR_RNDN);
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "if") {
-    // `if` does not have a dtype
-    mpfr_t cond, then_val, else_val;
-    mpfr_init(cond);
-    mpfr_init(then_val);
-    mpfr_init(else_val);
-
-    // Evaluate the condition
-    MPFRValueHelper(node->operands[0], inputValues, prec, cond, groundTruth);
-
-    if (0 == mpfr_cmp_ui(cond, 1)) {
-      MPFRValueHelper(node->operands[1], inputValues, prec, then_val,
-                      groundTruth);
-      mpfr_set(res, then_val, MPFR_RNDN);
-    } else {
-      MPFRValueHelper(node->operands[2], inputValues, prec, else_val,
-                      groundTruth);
-      mpfr_set(res, else_val, MPFR_RNDN);
-    }
-
-    mpfr_clear(cond);
-    mpfr_clear(then_val);
-    mpfr_clear(else_val);
-  } else if (node->op == "==") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 == mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "!=") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 != mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "<") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 > mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == ">") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 < mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "<=") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 >= mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == ">=") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 <= mpfr_cmp(operandResults[0], operandResults[1])) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "and") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 == mpfr_cmp_ui(operandResults[0], 1) &&
-        0 == mpfr_cmp_ui(operandResults[1], 1)) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "or") {
-    mpfr_t operandResults[2];
-    for (int i = 0; i < 2; i++) {
-      mpfr_init(operandResults[i]);
-      MPFRValueHelper(node->operands[i], inputValues, prec, operandResults[i],
-                      groundTruth);
-    }
-    if (0 == mpfr_cmp_ui(operandResults[0], 1) ||
-        0 == mpfr_cmp_ui(operandResults[1], 1)) {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    }
-    for (int i = 0; i < 2; i++) {
-      mpfr_clear(operandResults[i]);
-    }
-  } else if (node->op == "not") {
-    mpfr_t operandResult;
-    mpfr_init(operandResult);
-    if (0 == mpfr_cmp_ui(operandResult, 1)) {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    }
-    mpfr_clear(operandResult);
-  } else if (node->op == "TRUE") {
-    mpfr_set_ui(res, 1, MPFR_RNDN);
-  } else if (node->op == "FALSE") {
-    mpfr_set_ui(res, 0, MPFR_RNDN);
-  } else {
-    std::string msg = "MPFRValueHelper: Unexpected operator " + node->op;
-    llvm_unreachable(msg.c_str());
+unsigned getMPFRPrec(PrecisionChangeType type) {
+  switch (type) {
+  case PrecisionChangeType::FP16:
+    return 11;
+  case PrecisionChangeType::FP32:
+    return 24;
+  case PrecisionChangeType::FP64:
+    return 53;
+  default:
+    llvm_unreachable("Unsupported FP precision");
   }
 }
+
+Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
+  switch (type) {
+  case PrecisionChangeType::FP16:
+    return Type::getHalfTy(context);
+  case PrecisionChangeType::FP32:
+    return Type::getFloatTy(context);
+  case PrecisionChangeType::FP64:
+    return Type::getDoubleTy(context);
+  default:
+    llvm_unreachable("Unsupported FP precision");
+  }
+}
+
+PrecisionChangeType getPrecisionChangeType(Type *type) {
+  if (type->isHalfTy()) {
+    return PrecisionChangeType::FP16;
+  } else if (type->isFloatTy()) {
+    return PrecisionChangeType::FP32;
+  } else if (type->isDoubleTy()) {
+    return PrecisionChangeType::FP64;
+  } else {
+    llvm_unreachable("Unsupported FP precision");
+  }
+}
+
+struct PrecisionChange {
+  SetVector<FPLLValue *>
+      nodes; // Only nodes with existing `llvm::Value`s can be changed
+  PrecisionChangeType oldType;
+  PrecisionChangeType newType;
+
+  explicit PrecisionChange(SetVector<FPLLValue *> &nodes,
+                           PrecisionChangeType oldType,
+                           PrecisionChangeType newType)
+      : nodes(nodes), oldType(oldType), newType(newType) {}
+};
+
+struct PTCandidate {
+  // Only one PT candidate per FPCC can be applied
+  SmallVector<PrecisionChange, 1> changes;
+  double accuracyCost;
+  InstructionCost TTICost;
+
+  // TODO:
+  explicit PTCandidate(SmallVector<PrecisionChange> &changes)
+      : changes(changes) {
+    // TTICost = getTTICost(changes);
+  }
+};
+
+class MPFREvaluator {
+  struct CachedValue {
+    mpfr_t value;
+    unsigned prec;
+
+    CachedValue(unsigned prec) : prec(prec) {
+      mpfr_init2(value, prec);
+      mpfr_set_zero(value, 1);
+    }
+
+    CachedValue(const CachedValue &) = delete;
+    CachedValue &operator=(const CachedValue &) = delete;
+
+    CachedValue(CachedValue &&other) noexcept : prec(other.prec) {
+      mpfr_init2(value, other.prec);
+      mpfr_swap(value, other.value);
+    }
+
+    CachedValue &operator=(CachedValue &&other) noexcept {
+      if (this != &other) {
+        mpfr_set_prec(value, other.prec);
+        prec = other.prec;
+        mpfr_swap(value, other.value);
+      }
+      return *this;
+    }
+
+    virtual ~CachedValue() { mpfr_clear(value); }
+  };
+
+  std::unordered_map<const FPNode *, CachedValue> cache;
+  unsigned prec; // Used only for ground truth evaluation
+  std::unordered_map<const FPNode *, unsigned> nodeToNewPrec;
+
+public:
+  MPFREvaluator(unsigned prec, PTCandidate *pt = nullptr) : prec(prec) {
+    if (pt) {
+      for (const auto &change : pt->changes) {
+        for (auto node : change.nodes) {
+          nodeToNewPrec[node] = getMPFRPrec(change.newType);
+        }
+      }
+    }
+  }
+
+  virtual ~MPFREvaluator() = default;
+
+  unsigned getNodePrecision(const FPNode *node, bool groundTruth) const {
+    // If trying to evaluate the ground truth, use the current MPFR precision
+    if (groundTruth)
+      return prec;
+
+    // If the node has a new precision for PT, use it
+    auto it = nodeToNewPrec.find(node);
+    if (it != nodeToNewPrec.end()) {
+      return it->second;
+    }
+
+    // Otherwise, use the original precision
+    return node->getMPFRPrec();
+  }
+
+  // Compute the expression with MPFR at `prec` precision
+  // recursively. When operand is a FPConst, use its lower
+  // bound. When operand is a FPLLValue, get its inputs from
+  // `inputs`.
+  void evaluateNode(const FPNode *node,
+                    const SmallMapVector<Value *, double, 4> &inputValues,
+                    bool groundTruth) {
+    if (isa<FPConst>(node)) {
+      if (cache.find(node) != cache.end())
+        return;
+
+      double constVal = node->getLowerBound(); // TODO: Can be improved
+      CachedValue cv(53);
+      mpfr_set_d(cv.value, constVal, MPFR_RNDN);
+
+      cache.emplace(node, std::move(cv));
+      return;
+    }
+
+    if (isa<FPLLValue>(node) &&
+        inputValues.count(cast<FPLLValue>(node)->value)) {
+      if (cache.find(node) != cache.end())
+        return;
+
+      double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
+      CachedValue cv(53);
+      mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
+
+      cache.emplace(node, std::move(cv));
+      return;
+    }
+
+    // Type of results of if nodes depend on the evaluated branches
+    if (node->op == "if") {
+      if (cache.find(node) != cache.end())
+        return;
+
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &cond = getResult(node->operands[0].get());
+
+      if (0 == mpfr_cmp_ui(cond, 1)) {
+        evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+        mpfr_t &then_val = getResult(node->operands[1].get());
+        cache.emplace(node,
+                      CachedValue(cache.at(node->operands[1].get()).prec));
+        mpfr_set(cache.at(node).value, then_val, MPFR_RNDN);
+      } else {
+        evaluateNode(node->operands[2].get(), inputValues, groundTruth);
+        mpfr_t &else_val = getResult(node->operands[2].get());
+        cache.emplace(node,
+                      CachedValue(cache.at(node->operands[2].get()).prec));
+        mpfr_set(cache.at(node).value, else_val, MPFR_RNDN);
+      }
+      return;
+    }
+
+    auto it = cache.find(node);
+
+    unsigned nodePrec = getNodePrecision(node, groundTruth);
+
+    if (it != cache.end()) {
+      assert(cache.at(node).prec == nodePrec && "Unexpected precision change");
+      return;
+    } else {
+      // Prepare for recomputation
+      cache.emplace(node, CachedValue(nodePrec));
+    }
+
+    mpfr_t &res = cache.at(node).value;
+
+    if (node->op == "neg") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_neg(res, op, MPFR_RNDN);
+    } else if (node->op == "+") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_add(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "-") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_sub(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "*") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_mul(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "/") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_div(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "sin") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_sin(res, op, MPFR_RNDN);
+    } else if (node->op == "cos") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_cos(res, op, MPFR_RNDN);
+    } else if (node->op == "tan") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_tan(res, op, MPFR_RNDN);
+    } else if (node->op == "exp") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_exp(res, op, MPFR_RNDN);
+    } else if (node->op == "expm1") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_expm1(res, op, MPFR_RNDN);
+    } else if (node->op == "log") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_log(res, op, MPFR_RNDN);
+    } else if (node->op == "log1p") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_log1p(res, op, MPFR_RNDN);
+    } else if (node->op == "sqrt") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_sqrt(res, op, MPFR_RNDN);
+    } else if (node->op == "cbrt") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_cbrt(res, op, MPFR_RNDN);
+    } else if (node->op == "pow") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_pow(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "fma") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[2].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_t &op2 = getResult(node->operands[2].get());
+      mpfr_fma(res, op0, op1, op2, MPFR_RNDN);
+    } else if (node->op == "fabs") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_abs(res, op, MPFR_RNDN);
+    } else if (node->op == "hypot") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_hypot(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "==") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 == mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "!=") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 != mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "<") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 > mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == ">") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 < mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "<=") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 >= mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == ">=") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 <= mpfr_cmp(op0, op1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "and") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "or") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+
+      if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1)) {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      }
+    } else if (node->op == "not") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_set_prec(res, nodePrec);
+      if (0 == mpfr_cmp_ui(op, 1)) {
+        mpfr_set_ui(res, 0, MPFR_RNDN);
+      } else {
+        mpfr_set_ui(res, 1, MPFR_RNDN);
+      }
+    } else if (node->op == "TRUE") {
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    } else if (node->op == "FALSE") {
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    } else {
+      std::string msg = "MPFREvaluator: Unexpected operator " + node->op;
+      llvm_unreachable(msg.c_str());
+    }
+  }
+
+  mpfr_t &getResult(FPNode *node) {
+    assert(cache.count(node) > 0 &&
+           "MPFREvaluator: Unexpected unevaluated node");
+    return cache.at(node).value;
+  }
+};
 
 // If looking for ground truth, compute a "correct" answer with MPFR.
 //   For each sampled input configuration:
@@ -944,72 +986,91 @@ void MPFRValueHelper(std::shared_ptr<FPNode> node,
 //        `inputs`.
 //     2. Dynamically extend precisions
 //        until the first `groundTruthPrec` bits of significand don't change.
-double getMPFRValue(std::shared_ptr<FPNode> output,
-                    const SmallMapVector<Value *, double, 4> &inputValues,
-                    bool groundTruth = false,
-                    const unsigned groundTruthPrec = 53) {
-  assert(output);
-
-  unsigned curPrec = 64;
-  mpfr_t res;
-  mpfr_init2(res, curPrec);
-  mpfr_set_zero(res, 1);
+// Otherwise, compute the expression with MPFR at precisions specified within
+// `FPNode`s or new precisions specified by `pt`.
+void getMPFRValues(ArrayRef<FPNode *> outputs,
+                   const SmallMapVector<Value *, double, 4> &inputValues,
+                   SmallVectorImpl<double> &results, bool groundTruth = false,
+                   const unsigned groundTruthPrec = 53,
+                   PTCandidate *pt = nullptr) {
+  assert(outputs.size() > 0);
+  results.resize(outputs.size());
 
   if (!groundTruth) {
-    MPFRValueHelper(output, inputValues, curPrec, res, false);
-    double val = mpfr_get_d(res, MPFR_RNDN);
-    mpfr_clear(res);
-    return val;
+    MPFREvaluator evaluator(0, pt);
+    for (const auto *output : outputs) {
+      evaluator.evaluateNode(output, inputValues, false);
+    }
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+    }
+    return;
   }
 
-  mpfr_exp_t prevResExp = 0;
-  char *prevResStr = nullptr;
-  int prevResSign = 0;
+  unsigned curPrec = 64;
+  std::vector<mpfr_exp_t> prevResExp(outputs.size(), 0);
+  std::vector<char *> prevResStr(outputs.size(), nullptr);
+  std::vector<int> prevResSign(outputs.size(), 0);
+  std::vector<bool> converged(outputs.size(), false);
+  size_t numConverged = 0;
 
   while (true) {
-    MPFRValueHelper(output, inputValues, curPrec, res, true);
+    MPFREvaluator evaluator(curPrec, nullptr);
+    for (const auto &output : outputs) {
+      evaluator.evaluateNode(output, inputValues, true);
+    }
 
-    int resSign = mpfr_sgn(res);
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      if (converged[i])
+        continue;
 
-    mpfr_exp_t resExp;
-    char *resStr =
-        mpfr_get_str(nullptr, &resExp, 2, groundTruthPrec, res, MPFR_RNDN);
+      mpfr_t &res = evaluator.getResult(outputs[i]);
+      int resSign = mpfr_sgn(res);
+      mpfr_exp_t resExp;
+      char *resStr =
+          mpfr_get_str(nullptr, &resExp, 2, groundTruthPrec, res, MPFR_RNDN);
 
-    if (prevResStr != nullptr && resSign == prevResSign &&
-        resExp == prevResExp && strcmp(resStr, prevResStr) == 0) {
-      // llvm::errs() << "prevResStr: " << prevResStr << "\n";
-      // llvm::errs() << "resStr: " << resStr << "\n";
-      mpfr_free_str(resStr);
-      mpfr_free_str(prevResStr);
-      // llvm::errs() << "Golden value computed at precision " << curPrec <<
-      // "\n";
+      if (prevResStr[i] != nullptr && resSign == prevResSign[i] &&
+          resExp == prevResExp[i] && strcmp(resStr, prevResStr[i]) == 0) {
+        converged[i] = true;
+        numConverged++;
+        mpfr_free_str(resStr);
+        mpfr_free_str(prevResStr[i]);
+        prevResStr[i] = nullptr;
+        continue;
+      }
+
+      if (prevResStr[i]) {
+        mpfr_free_str(prevResStr[i]);
+      }
+      prevResStr[i] = resStr;
+      prevResExp[i] = resExp;
+      prevResSign[i] = resSign;
+    }
+
+    if (numConverged == outputs.size()) {
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+      }
       break;
     }
-
-    if (prevResStr != nullptr) {
-      mpfr_free_str(prevResStr);
-    }
-
-    prevResStr = resStr;
-    prevResExp = resExp;
-    prevResSign = resSign;
 
     curPrec *= 2;
 
     if (curPrec > FPOptMaxMPFRPrec) {
-      mpfr_free_str(prevResStr);
-      llvm::errs()
-          << "getMPFRValue: MPFR precision limit reached, returning NaN\n";
-      return std::numeric_limits<double>::quiet_NaN();
+      llvm::errs() << "getMPFRValues: MPFR precision limit reached for some "
+                      "outputs, returning NaN\n";
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        if (!converged[i]) {
+          mpfr_free_str(prevResStr[i]);
+          results[i] = std::numeric_limits<double>::quiet_NaN();
+        } else {
+          results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+        }
+      }
+      return;
     }
-
-    mpfr_set_prec(res, curPrec); // `mpfr_set_prec` makes values undefined
   }
-
-  double goldenVal = mpfr_get_d(res, MPFR_RNDN);
-  mpfr_clear(res);
-
-  return goldenVal;
 }
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
@@ -1548,45 +1609,6 @@ bool herbiable(const Value &Val) {
   }
 }
 
-enum class PrecisionChangeType { FP16, FP32, FP64 };
-
-Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
-  switch (type) {
-  case PrecisionChangeType::FP16:
-    return Type::getHalfTy(context);
-  case PrecisionChangeType::FP32:
-    return Type::getFloatTy(context);
-  case PrecisionChangeType::FP64:
-    return Type::getDoubleTy(context);
-  default:
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
-
-PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (type->isHalfTy()) {
-    return PrecisionChangeType::FP16;
-  } else if (type->isFloatTy()) {
-    return PrecisionChangeType::FP32;
-  } else if (type->isDoubleTy()) {
-    return PrecisionChangeType::FP64;
-  } else {
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
-
-struct PrecisionChange {
-  SetVector<FPLLValue *>
-      nodes; // Only nodes with existing `llvm::Value`s can be changed
-  PrecisionChangeType oldType;
-  PrecisionChangeType newType;
-
-  explicit PrecisionChange(SetVector<FPLLValue *> &nodes,
-                           PrecisionChangeType oldType,
-                           PrecisionChangeType newType)
-      : nodes(nodes), oldType(oldType), newType(newType) {}
-};
-
 void changePrecision(Instruction *I, PrecisionChange &change,
                      MapVector<Value *, Value *> &oldToNew) {
   if (!herbiable(*I)) {
@@ -1634,19 +1656,6 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   oldToNew[I] = newI;
   llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
 }
-
-struct PTCandidate {
-  // Only one PT candidate per FPCC can be applied
-  SmallVector<PrecisionChange, 1> changes;
-  double accuracyCost;
-  InstructionCost TTICost;
-
-  // TODO:
-  explicit PTCandidate(SmallVector<PrecisionChange> &changes)
-      : changes(changes) {
-    // TTICost = getTTICost(changes);
-  }
-};
 
 class ApplicableFPCC {
 public:
@@ -1775,7 +1784,7 @@ public:
   // }
 };
 
-double setUnifiedAccuracyCost(
+void setUnifiedAccuracyCost(
     ApplicableOutput &AO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
@@ -1789,12 +1798,18 @@ double setUnifiedAccuracyCost(
   SmallVector<double, 4> goldVals;
   goldVals.resize(FPOptNumSamples);
   double initialAC = 0.;
+
   for (const auto &pair : enumerate(sampledPoints)) {
-    goldVals[pair.index()] =
-        getMPFRValue(valueToNodeMap[AO.oldOutput], pair.value(), true, 53);
-    double realVal =
-        getMPFRValue(valueToNodeMap[AO.oldOutput], pair.value(), false);
-    initialAC += std::fabs((goldVals[pair.index()] - realVal) * AO.grad);
+    ArrayRef<FPNode *> outputs = {valueToNodeMap[AO.oldOutput].get()};
+    SmallVector<double, 1> results;
+    getMPFRValues(outputs, pair.value(), results, true, 53);
+    double goldVal = results[0];
+    goldVals[pair.index()] = goldVal;
+
+    getMPFRValues(outputs, pair.value(), results, false);
+    double realVal = results[0];
+
+    initialAC += std::fabs((goldVal - realVal) * AO.grad);
   }
 
   AO.initialAccuracyCost = initialAC;
@@ -1803,35 +1818,37 @@ double setUnifiedAccuracyCost(
     const auto &expr = candidate.expr;
     auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
     double ac = 0.;
+
     for (const auto &pair : enumerate(sampledPoints)) {
       // Compute the "gold" value & real value for each sampled point
       // Compute an average of (difference * gradient)
       // TODO: Consider geometric average???
       assert(valueToNodeMap.count(AO.oldOutput));
 
-      // llvm::errs() << "Computing real output for candidate: " << expr <<
-      // "\n";
+      llvm::errs() << "Computing real output for candidate: " << expr << "\n";
 
-      // llvm::errs() << "Current input values:\n";
-      // for (const auto &entry : pair.value()) {
-      //   llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
-      //                << entry.second << "\n";
-      // }
+      llvm::errs() << "Current input values:\n";
+      for (const auto &entry : pair.value()) {
+        llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
+                     << entry.second << "\n";
+      }
 
-      // llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
-      double realVal = getMPFRValue(parsedNode, pair.value(), false);
+      llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
 
-      // llvm::errs() << "Real value: " << realVal << "\n";
+      ArrayRef<FPNode *> outputs = {parsedNode.get()};
+      SmallVector<double, 1> results;
+      getMPFRValues(outputs, pair.value(), results, false);
+      double realVal = results[0];
+
+      llvm::errs() << "Real value: " << realVal << "\n";
       ac += std::fabs((goldVals[pair.index()] - realVal) * AO.grad);
     }
     candidate.accuracyCost = ac;
   }
-
-  return 0;
 }
 
-double setUnifiedAccuracyCost(
-    ApplicableFPCC &component, Module *M,
+void setUnifiedAccuracyCost(
+    ApplicableFPCC &ACC, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
@@ -1844,8 +1861,21 @@ double setUnifiedAccuracyCost(
   IRBuilder<> builder(ReturnInst);
   builder.setFastMathFlags(getFast()); // TODO: ponder fast math flags
 
-  // Extract operand bounds from FPNodes
-  // Sample points from operand bounds
+  // SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
+  // getSampledPoints(ACC.component.inputs.getArrayRef(), valueToNodeMap,
+  //                  symbolToValueMap, sampledPoints);
+
+  // double initialAC = 0.;
+  // SmallVector<std::pair<Value *, double>, 4> goldVals; // output -> gold val
+  // for (const auto &pair : enumerate(sampledPoints)) {
+  // goldVals[pair.index()] =
+  //     std::make_pair(ACC.component.outputs.getArrayRef()[0],
+  //                    getMPFRValues(ACC.component.outputs.getArrayRef(),
+  //                                 pair.value(), true, 53));
+  // double realVal =
+  //     getMPFRValues(ACC.component.outputs.getArrayRef(), pair.value(),
+  //     false);
+  // }
 
   // For each bound:
   // 1. Compute the correct FP64 answers with MPFR (extend the precision
@@ -1853,7 +1883,6 @@ double setUnifiedAccuracyCost(
   // 2. Calculate the accuracy of the expression with MPFR
 
   tempFunction->eraseFromParent();
-  return 0;
 }
 
 bool improveViaHerbie(
@@ -2892,7 +2921,7 @@ B2:
         size_t numToChange = operations.size() * percent / 100;
 
         SetVector<FPLLValue *> opsToChange(operations.begin(),
-                                             operations.begin() + numToChange);
+                                           operations.begin() + numToChange);
 
         if (!opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
