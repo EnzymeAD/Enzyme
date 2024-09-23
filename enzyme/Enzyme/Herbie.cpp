@@ -16,6 +16,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 
 #include "llvm/Support/Casting.h"
@@ -750,11 +751,31 @@ struct PTCandidate {
   // TODO:
   explicit PTCandidate(SmallVector<PrecisionChange> &changes,
                        const Twine &desc = "")
-      : changes(changes), desc(desc.str()) {
-    // TTICost = getTTICost(changes);
-  }
+      : changes(changes), desc(desc.str()) {}
 
-  void apply(const FPCC &component) {
+  // If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
+  // values and change outputs in VMap to new casted outputs.
+  void apply(const FPCC &component, ValueToValueMapTy *VMap = nullptr) {
+    SetVector<Instruction *> operations;
+    ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
+    if (VMap) {
+      for (auto *I : component.operations) {
+        assert(VMap->count(I));
+        operations.insert(cast<Instruction>(VMap->lookup(I)));
+
+        clonedToOriginal[VMap->lookup(I)] = I;
+        // llvm::errs() << "Mapping back: " << *VMap->lookup(I) << " (in "
+        //              << cast<Instruction>(VMap->lookup(I))
+        //                     ->getParent()
+        //                     ->getParent()
+        //                     ->getName()
+        //              << ") --> " << *I << " (in "
+        //              << I->getParent()->getParent()->getName() << ")\n";
+      }
+    } else {
+      operations = component.operations;
+    }
+
     for (auto &change : changes) {
       SmallPtrSet<Instruction *, 8> seen;
       SmallVector<Instruction *, 8> todo;
@@ -763,7 +784,12 @@ struct PTCandidate {
       SetVector<Instruction *> instsToChange;
       for (auto node : change.nodes) {
         assert(isa<Instruction>(node->value));
-        instsToChange.insert(cast<Instruction>(node->value));
+        auto *I = cast<Instruction>(node->value);
+        if (VMap) {
+          assert(VMap->count(I));
+          I = cast<Instruction>(VMap->lookup(I));
+        }
+        instsToChange.insert(I);
       }
 
       // For implicit topo ordering wrt operand dependencies
@@ -788,12 +814,12 @@ struct PTCandidate {
 
       while (!todo.empty()) {
         auto *cur = todo.pop_back_val();
-        llvm::errs() << "PT Processing: " << *cur << "\n";
+        // llvm::errs() << "PT Processing: " << *cur << "\n";
         if (!seen.insert(cur).second)
           continue;
 
         if (isa<Instruction>(cur) &&
-            component.operations.contains(cast<Instruction>(cur))) {
+            operations.contains(cast<Instruction>(cur))) {
           changePrecision(cast<Instruction>(cur), change, oldToNew);
         }
 
@@ -801,7 +827,8 @@ struct PTCandidate {
           if (isa<Instruction>(user) &&
               operandCount.count(cast<Instruction>(user))) {
             if (0 == --operandCount[cast<Instruction>(user)]) {
-              llvm::errs() << "PT Adding: " << *cast<Instruction>(user) << "\n";
+              // llvm::errs() << "PT Adding: " << *cast<Instruction>(user) <<
+              // "\n";
               todo.push_back(cast<Instruction>(user));
             }
           }
@@ -827,6 +854,13 @@ struct PTCandidate {
             newV = builder.CreateFPCast(
                 newV, getLLVMFPType(change.oldType, builder.getContext()));
 
+            if (VMap) {
+              // llvm::errs() << "Redirecting: " << *oldV << " --> "
+              //              << *clonedToOriginal[oldV] << " --> " << *newV
+              //              << "\n";
+              assert(VMap->count(clonedToOriginal[oldV]));
+              (*VMap)[clonedToOriginal[oldV]] = newV;
+            }
             user->replaceUsesOfWith(oldV, newV);
           }
         }
@@ -1445,6 +1479,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 InstructionCost getTTICost(const SmallVector<Value *> &outputs,
                            const SetVector<Value *> &inputs,
                            const TargetTransformInfo &TTI) {
+  assert(!outputs.empty());
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
   InstructionCost cost = 0;
@@ -1515,6 +1550,64 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
   InstructionCost cost = getTTICost({newOutput}, args, TTI);
 
   tempFunction->eraseFromParent();
+  return cost;
+}
+
+InstructionCost getTTICost(const FPCC &component,
+                           const TargetTransformInfo &TTI, PTCandidate &pt) {
+  assert(!component.outputs.empty());
+
+  InstructionCost cost = 0;
+
+  Function *F = cast<Instruction>(component.outputs[0])->getFunction();
+
+  ValueToValueMapTy VMap;
+  Function *FClone = CloneFunction(F, VMap);
+  FClone->setName(F->getName() + "_clone");
+  FClone->print(llvm::errs());
+
+  pt.apply(component, &VMap);
+  // output values in VMap are changed to the new casted values
+
+  SmallPtrSet<Value *, 8> clonedInputs;
+  for (auto &input : component.inputs) {
+    clonedInputs.insert(VMap[input]);
+  }
+
+  SmallPtrSet<Value *, 8> clonedOutputs;
+  for (auto &output : component.outputs) {
+    clonedOutputs.insert(VMap[output]);
+  }
+
+  SmallPtrSet<Value *, 8> seen;
+  SmallVector<Value *, 8> todo;
+
+  todo.insert(todo.end(), clonedOutputs.begin(), clonedOutputs.end());
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+
+    if (clonedInputs.contains(cur))
+      continue;
+
+    if (auto *I = dyn_cast<Instruction>(cur)) {
+      auto instCost =
+          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+      llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
+
+      cost += instCost;
+
+      auto operands =
+          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+      for (auto &operand : operands) {
+        todo.push_back(operand);
+      }
+    }
+  }
+
+  FClone->eraseFromParent();
+
   return cost;
 }
 
@@ -1874,7 +1967,11 @@ void setUnifiedAccuracyCost(
                    symbolToValueMap, sampledPoints);
 
   double initialAC = 0.;
-  SmallMapVector<FPNode *, double, 4> goldVals; // output -> gold val
+  SmallMapVector<FPNode *, SmallVector<double, 4>, 4>
+      goldVals; // output -> gold valS
+  for (auto *output : ACC.component.outputs) {
+    goldVals[valueToNodeMap[output].get()].resize(FPOptNumSamples);
+  }
 
   SmallVector<FPNode *, 4> outputs;
   for (auto *output : ACC.component.outputs) {
@@ -1885,12 +1982,13 @@ void setUnifiedAccuracyCost(
     SmallVector<double, 1> results;
     getMPFRValues(outputs, pair.value(), results, true, 53);
     for (const auto &[output, result] : zip(outputs, results)) {
-      goldVals[output] = result;
+      goldVals[output][pair.index()] = result;
     }
 
     getMPFRValues(outputs, pair.value(), results, false);
     for (const auto &[output, result] : zip(outputs, results)) {
-      initialAC += std::fabs((goldVals[output] - result) * output->grad);
+      initialAC +=
+          std::fabs((goldVals[output][pair.index()] - result) * output->grad);
     }
   }
 
@@ -1902,12 +2000,15 @@ void setUnifiedAccuracyCost(
     double ac = 0.;
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 1> results;
-
       getMPFRValues(outputs, pair.value(), results, false, 0, &candidate);
+
       for (const auto &[output, result] : zip(outputs, results)) {
-        llvm::errs() << "DEBUG gold value: " << goldVals[output] << "\n";
-        llvm::errs() << "DEBUG real value: " << goldVals[output] << "\n";
-        ac += std::fabs((goldVals[output] - result) * output->grad);
+        // llvm::errs() << "DEBUG gold value: " <<
+        // goldVals[output][pair.index()]
+        //              << "\n";
+        // llvm::errs() << "DEBUG real value: " << result << "\n";
+        ac +=
+            std::fabs((goldVals[output][pair.index()] - result) * output->grad);
       }
     }
     candidate.accuracyCost = ac;
@@ -2973,6 +3074,7 @@ B2:
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate(changes, desc);
+          candidate.TTICost = getTTICost(component, TTI, candidate);
 
           ACC.candidates.push_back(std::move(candidate));
         }
@@ -3037,8 +3139,9 @@ B2:
           auto &candidate = ACC.candidates[i];
           llvm::errs() << candidate.accuracyCost
                        << "\t\t"
-                       //  << ACC.getComputationCost(i) << "\t\t"
-                       << candidate.TTICost << "\t\t" << candidate.desc << "\n";
+                       //  << ACC.getComputationCost(i)
+                       << "???" << "\t\t" << candidate.TTICost << "\t\t"
+                       << candidate.desc << "\n";
         }
         llvm::errs() << "################################\n\n";
       }
