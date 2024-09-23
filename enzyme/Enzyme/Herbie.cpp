@@ -1848,41 +1848,53 @@ void setUnifiedAccuracyCost(
 }
 
 void setUnifiedAccuracyCost(
-    ApplicableFPCC &ACC, Module *M,
+    ApplicableFPCC &ACC,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
-  Function *tempFunction =
-      Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
-  BasicBlock *entry =
-      BasicBlock::Create(M->getContext(), "entry", tempFunction);
-  Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
+  SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
+  getSampledPoints(ACC.component.inputs.getArrayRef(), valueToNodeMap,
+                   symbolToValueMap, sampledPoints);
 
-  IRBuilder<> builder(ReturnInst);
-  builder.setFastMathFlags(getFast()); // TODO: ponder fast math flags
+  double initialAC = 0.;
+  SmallMapVector<FPNode *, double, 4> goldVals; // output -> gold val
 
-  // SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
-  // getSampledPoints(ACC.component.inputs.getArrayRef(), valueToNodeMap,
-  //                  symbolToValueMap, sampledPoints);
+  SmallVector<FPNode *, 4> outputs;
+  for (auto *output : ACC.component.outputs) {
+    outputs.push_back(valueToNodeMap[output].get());
+  }
 
-  // double initialAC = 0.;
-  // SmallVector<std::pair<Value *, double>, 4> goldVals; // output -> gold val
-  // for (const auto &pair : enumerate(sampledPoints)) {
-  // goldVals[pair.index()] =
-  //     std::make_pair(ACC.component.outputs.getArrayRef()[0],
-  //                    getMPFRValues(ACC.component.outputs.getArrayRef(),
-  //                                 pair.value(), true, 53));
-  // double realVal =
-  //     getMPFRValues(ACC.component.outputs.getArrayRef(), pair.value(),
-  //     false);
-  // }
+  for (const auto &pair : enumerate(sampledPoints)) {
+    SmallVector<double, 1> results;
+    getMPFRValues(outputs, pair.value(), results, true, 53);
+    for (const auto &[output, result] : zip(outputs, results)) {
+      goldVals[output] = result;
+    }
 
-  // For each bound:
-  // 1. Compute the correct FP64 answers with MPFR (extend the precision
-  // until first 64 bits don't change)
-  // 2. Calculate the accuracy of the expression with MPFR
+    getMPFRValues(outputs, pair.value(), results, false);
+    for (const auto &[output, result] : zip(outputs, results)) {
+      initialAC += std::fabs((goldVals[output] - result) * output->grad);
+    }
+  }
 
-  tempFunction->eraseFromParent();
+  ACC.initialAccuracyCost = initialAC;
+  llvm::errs() << "Initial ACC accuracy cost: " << ACC.initialAccuracyCost
+               << "\n";
+
+  for (auto &candidate : ACC.candidates) {
+    double ac = 0.;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      SmallVector<double, 1> results;
+
+      getMPFRValues(outputs, pair.value(), results, false, 0, &candidate);
+      for (const auto &[output, result] : zip(outputs, results)) {
+        llvm::errs() << "DEBUG gold value: " << goldVals[output] << "\n";
+        llvm::errs() << "DEBUG real value: " << goldVals[output] << "\n";
+        ac += std::fabs((goldVals[output] - result) * output->grad);
+      }
+    }
+    candidate.accuracyCost = ac;
+    llvm::errs() << "Accuracy cost for PT candidate: " << ac << "\n";
+  }
 }
 
 bool improveViaHerbie(
@@ -2893,8 +2905,6 @@ B2:
       // Sort `component.operations` by the gradient and construct
       // `PrecisionChange`s.
       ApplicableFPCC ACC(component, TTI);
-      setUnifiedAccuracyCost(ACC, F.getParent(), valueToNodeMap,
-                             symbolToValueMap);
 
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
@@ -2946,6 +2956,8 @@ B2:
           ACC.candidates.push_back(std::move(candidate));
         }
       }
+
+      setUnifiedAccuracyCost(ACC, valueToNodeMap, symbolToValueMap);
 
       ACCs.push_back(std::move(ACC));
     }
