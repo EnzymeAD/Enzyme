@@ -578,6 +578,41 @@ public:
   }
 };
 
+bool herbiable(const Value &Val) {
+  const Instruction *I = dyn_cast<Instruction>(&Val);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return funcName.startswith("llvm.sin") ||
+             funcName.startswith("llvm.cos") ||
+             funcName.startswith("llvm.tan") ||
+             funcName.startswith("llvm.exp") ||
+             funcName.startswith("llvm.log") ||
+             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
+             funcName.startswith("llvm.pow") ||
+             funcName.startswith("llvm.fma") ||
+             funcName.startswith("llvm.fmuladd");
+      // llvm.fabs is deliberately excluded
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
 enum class PrecisionChangeType { FP16, FP32, FP64 };
 
 unsigned getMPFRPrec(PrecisionChangeType type) {
@@ -618,6 +653,33 @@ PrecisionChangeType getPrecisionChangeType(Type *type) {
   }
 }
 
+StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
+  switch (type) {
+  case PrecisionChangeType::FP16:
+    return "FP16";
+  case PrecisionChangeType::FP32:
+    return "FP32";
+  case PrecisionChangeType::FP64:
+    return "FP64";
+  default:
+    return "Unknown PT type";
+  }
+}
+
+// Floating-Point Connected Component
+struct FPCC {
+  SetVector<Value *> inputs;
+  SetVector<Instruction *> outputs;
+  SetVector<Instruction *> operations;
+  size_t outputs_rewritten = 0;
+
+  FPCC() = default;
+  explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
+                SetVector<Instruction *> operations)
+      : inputs(std::move(inputs)), outputs(std::move(outputs)),
+        operations(std::move(operations)) {}
+};
+
 struct PrecisionChange {
   SetVector<FPLLValue *>
       nodes; // Only nodes with existing `llvm::Value`s can be changed
@@ -630,16 +692,154 @@ struct PrecisionChange {
       : nodes(nodes), oldType(oldType), newType(newType) {}
 };
 
+void changePrecision(Instruction *I, PrecisionChange &change,
+                     MapVector<Value *, Value *> &oldToNew) {
+  if (!herbiable(*I)) {
+    llvm_unreachable("Trying to tune an instruction is not herbiable");
+  }
+
+  IRBuilder<> Builder(I);
+  Builder.setFastMathFlags(getFast());
+  Type *newType = getLLVMFPType(change.newType, I->getContext());
+  Value *newI = nullptr;
+
+  if (isa<UnaryOperator>(I) || isa<BinaryOperator>(I)) {
+    llvm::errs() << "PT Changing: " << *I << " to " << *newType << "\n";
+    SmallVector<Value *, 2> newOps;
+    for (auto &operand : I->operands()) {
+      Value *newOp = nullptr;
+      if (oldToNew.count(operand)) {
+        newOp = oldToNew[operand];
+      } else {
+        newOp = Builder.CreateFPCast(operand, newType, "fpopt.fpcast");
+        oldToNew[operand] = newOp;
+      }
+      newOps.push_back(newOp);
+    }
+    newI = Builder.CreateNAryOp(I->getOpcode(), newOps);
+  } else if (auto *CI = dyn_cast<CallInst>(I)) {
+    SmallVector<Value *, 4> newArgs;
+    for (auto &arg : CI->args()) {
+      Value *newArg = nullptr;
+      if (oldToNew.count(arg)) {
+        newArg = oldToNew[arg];
+      } else {
+        newArg = Builder.CreateFPCast(arg, newType, "fpopt.fpcast");
+        oldToNew[arg] = newArg;
+      }
+      newArgs.push_back(newArg);
+    }
+    Function *newFunc = Intrinsic::getDeclaration(
+        CI->getModule(), CI->getCalledFunction()->getIntrinsicID(), {newType});
+    newI = Builder.CreateCall(newFunc, newArgs);
+  } else {
+    llvm_unreachable("Unknown herbiable instruction");
+  }
+
+  oldToNew[I] = newI;
+  llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
+}
+
 struct PTCandidate {
   // Only one PT candidate per FPCC can be applied
   SmallVector<PrecisionChange, 1> changes;
   double accuracyCost;
   InstructionCost TTICost;
+  std::string desc;
 
   // TODO:
-  explicit PTCandidate(SmallVector<PrecisionChange> &changes)
-      : changes(changes) {
+  explicit PTCandidate(SmallVector<PrecisionChange> &changes,
+                       const Twine &desc = "")
+      : changes(changes), desc(desc.str()) {
     // TTICost = getTTICost(changes);
+  }
+
+  void apply(const FPCC &component) {
+    for (auto &change : changes) {
+      SmallPtrSet<Instruction *, 8> seen;
+      SmallVector<Instruction *, 8> todo;
+      MapVector<Value *, Value *> oldToNew;
+
+      SetVector<Instruction *> instsToChange;
+      for (auto node : change.nodes) {
+        assert(isa<Instruction>(node->value));
+        instsToChange.insert(cast<Instruction>(node->value));
+      }
+
+      // For implicit topo ordering wrt operand dependencies
+      MapVector<Instruction *, int> operandCount;
+      for (auto *I : instsToChange) {
+        // We only change precisions of instructions
+        int count = 0;
+        auto operands =
+            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+        for (auto &op : operands) {
+          if (isa<Instruction>(op) &&
+              instsToChange.contains(cast<Instruction>(op))) {
+            count++;
+          }
+        }
+        operandCount[I] = count;
+
+        if (0 == count) {
+          todo.push_back(I);
+        }
+      }
+
+      while (!todo.empty()) {
+        auto *cur = todo.pop_back_val();
+        llvm::errs() << "PT Processing: " << *cur << "\n";
+        if (!seen.insert(cur).second)
+          continue;
+
+        if (isa<Instruction>(cur) &&
+            component.operations.contains(cast<Instruction>(cur))) {
+          changePrecision(cast<Instruction>(cur), change, oldToNew);
+        }
+
+        for (auto user : cur->users()) {
+          if (isa<Instruction>(user) &&
+              operandCount.count(cast<Instruction>(user))) {
+            if (0 == --operandCount[cast<Instruction>(user)]) {
+              llvm::errs() << "PT Adding: " << *cast<Instruction>(user) << "\n";
+              todo.push_back(cast<Instruction>(user));
+            }
+          }
+        }
+      }
+
+      // Restore the precisions of the last level of instructions to be changed.
+      // Clean up old instructions.
+      for (auto &[oldV, newV] : oldToNew) {
+        if (!isa<Instruction>(oldV)) {
+          continue;
+        }
+
+        if (!instsToChange.contains(cast<Instruction>(oldV))) {
+          continue;
+        }
+
+        for (auto user : oldV->users()) {
+          if (isa<Instruction>(user) &&
+              !instsToChange.contains(cast<Instruction>(user))) {
+            IRBuilder<> builder(cast<Instruction>(user));
+
+            newV = builder.CreateFPCast(
+                newV, getLLVMFPType(change.oldType, builder.getContext()));
+
+            user->replaceUsesOfWith(oldV, newV);
+          }
+        }
+
+        // Assumes no external uses of the old value since all corresponding new
+        // values are already restored to original precision and used to replace
+        // uses of their old value. This is also advantageous to the solvers.
+        if (!oldV->use_empty()) {
+          oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
+        }
+        cast<Instruction>(oldV)->eraseFromParent();
+      }
+    }
   }
 };
 
@@ -1330,20 +1530,6 @@ struct RewriteCandidate {
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 };
 
-// Floating-Point Connected Component
-struct FPCC {
-  SetVector<Value *> inputs;
-  SetVector<Instruction *> outputs;
-  SetVector<Instruction *> operations;
-  size_t outputs_rewritten = 0;
-
-  FPCC() = default;
-  explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
-                SetVector<Instruction *> operations)
-      : inputs(std::move(inputs)), outputs(std::move(outputs)),
-        operations(std::move(operations)) {}
-};
-
 void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
   std::unordered_map<Instruction *, int> shortestDistances;
 
@@ -1574,89 +1760,6 @@ public:
   }
 };
 
-bool herbiable(const Value &Val) {
-  const Instruction *I = dyn_cast<Instruction>(&Val);
-  if (!I)
-    return false;
-
-  switch (I->getOpcode()) {
-  case Instruction::FNeg:
-  case Instruction::FAdd:
-  case Instruction::FSub:
-  case Instruction::FMul:
-  case Instruction::FDiv:
-    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
-  case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(I);
-    if (CI && CI->getCalledFunction() &&
-        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
-      StringRef funcName = CI->getCalledFunction()->getName();
-      return funcName.startswith("llvm.sin") ||
-             funcName.startswith("llvm.cos") ||
-             funcName.startswith("llvm.tan") ||
-             funcName.startswith("llvm.exp") ||
-             funcName.startswith("llvm.log") ||
-             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
-             funcName.startswith("llvm.pow") ||
-             funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd");
-      // llvm.fabs is deliberately excluded
-    }
-    return false;
-  }
-  default:
-    return false;
-  }
-}
-
-void changePrecision(Instruction *I, PrecisionChange &change,
-                     MapVector<Value *, Value *> &oldToNew) {
-  if (!herbiable(*I)) {
-    llvm_unreachable("Trying to tune an instruction is not herbiable");
-  }
-
-  IRBuilder<> Builder(I);
-  Builder.setFastMathFlags(getFast());
-  Type *newType = getLLVMFPType(change.newType, I->getContext());
-  Value *newI = nullptr;
-
-  if (isa<UnaryOperator>(I) || isa<BinaryOperator>(I)) {
-    llvm::errs() << "PT Changing: " << *I << " to " << *newType << "\n";
-    SmallVector<Value *, 2> newOps;
-    for (auto &operand : I->operands()) {
-      Value *newOp = nullptr;
-      if (oldToNew.count(operand)) {
-        newOp = oldToNew[operand];
-      } else {
-        newOp = Builder.CreateFPCast(operand, newType, "fpopt.fpcast");
-        oldToNew[operand] = newOp;
-      }
-      newOps.push_back(newOp);
-    }
-    newI = Builder.CreateNAryOp(I->getOpcode(), newOps);
-  } else if (auto *CI = dyn_cast<CallInst>(I)) {
-    SmallVector<Value *, 4> newArgs;
-    for (auto &arg : CI->args()) {
-      Value *newArg = nullptr;
-      if (oldToNew.count(arg)) {
-        newArg = oldToNew[arg];
-      } else {
-        newArg = Builder.CreateFPCast(arg, newType, "fpopt.fpcast");
-        oldToNew[arg] = newArg;
-      }
-      newArgs.push_back(newArg);
-    }
-    Function *newFunc = Intrinsic::getDeclaration(
-        CI->getModule(), CI->getCalledFunction()->getIntrinsicID(), {newType});
-    newI = Builder.CreateCall(newFunc, newArgs);
-  } else {
-    llvm_unreachable("Unknown herbiable instruction");
-  }
-
-  oldToNew[I] = newI;
-  llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
-}
-
 class ApplicableFPCC {
 public:
   FPCC &component;
@@ -1682,92 +1785,7 @@ public:
     // topological order with respect to operand dependencies. Insert FP casts
     // between llvm::Value inputs and first level of instructions to be changed.
     // Restore precisions of the last level of instructions to be changed.
-
-    for (auto &change : candidates[candidateIndex].changes) {
-      SmallPtrSet<Instruction *, 8> seen;
-      SmallVector<Instruction *, 8> todo;
-      MapVector<Value *, Value *> oldToNew;
-
-      SetVector<Instruction *> instsToChange;
-      for (auto node : change.nodes) {
-        assert(isa<Instruction>(node->value));
-        instsToChange.insert(cast<Instruction>(node->value));
-      }
-
-      // For implicit topo ordering wrt operand dependencies
-      MapVector<Instruction *, int> operandCount;
-      for (auto *I : instsToChange) {
-        // We only change precisions of instructions
-        int count = 0;
-        auto operands =
-            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-        for (auto &op : operands) {
-          if (isa<Instruction>(op) &&
-              instsToChange.contains(cast<Instruction>(op))) {
-            count++;
-          }
-        }
-        operandCount[I] = count;
-
-        if (0 == count) {
-          todo.push_back(I);
-        }
-      }
-
-      while (!todo.empty()) {
-        auto *cur = todo.pop_back_val();
-        llvm::errs() << "PT Processing: " << *cur << "\n";
-        if (!seen.insert(cur).second)
-          continue;
-
-        if (isa<Instruction>(cur) &&
-            component.operations.contains(cast<Instruction>(cur))) {
-          changePrecision(cast<Instruction>(cur), change, oldToNew);
-        }
-
-        for (auto user : cur->users()) {
-          if (isa<Instruction>(user) &&
-              operandCount.count(cast<Instruction>(user))) {
-            if (0 == --operandCount[cast<Instruction>(user)]) {
-              llvm::errs() << "PT Adding: " << *cast<Instruction>(user) << "\n";
-              todo.push_back(cast<Instruction>(user));
-            }
-          }
-        }
-      }
-
-      // Restore the precisions of the last level of instructions to be changed.
-      // Clean up old instructions.
-      for (auto &[oldV, newV] : oldToNew) {
-        if (!isa<Instruction>(oldV)) {
-          continue;
-        }
-
-        if (!instsToChange.contains(cast<Instruction>(oldV))) {
-          continue;
-        }
-
-        for (auto user : oldV->users()) {
-          if (isa<Instruction>(user) &&
-              !instsToChange.contains(cast<Instruction>(user))) {
-            IRBuilder<> builder(cast<Instruction>(user));
-
-            newV = builder.CreateFPCast(
-                newV, getLLVMFPType(change.oldType, builder.getContext()));
-
-            user->replaceUsesOfWith(oldV, newV);
-          }
-        }
-
-        // Assumes no external uses of the old value since all corresponding new
-        // values are already restored to original precision and used to replace
-        // uses of their old value. This is also advantageous to the solvers.
-        if (!oldV->use_empty()) {
-          oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
-        }
-        cast<Instruction>(oldV)->eraseFromParent();
-      }
-    }
+    candidates[candidateIndex].apply(component);
   }
 
   // TODO: Update
@@ -2946,12 +2964,15 @@ B2:
                                                    PrecisionChangeType::FP64};
 
         for (auto prec : precTypes) {
+          StringRef precStr = getPrecisionChangeTypeString(prec);
+          Twine desc = Twine("0% -- ") + Twine(percent) + "% -> " + precStr;
+
           PrecisionChange change(
               opsToChange,
               getPrecisionChangeType(component.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
-          PTCandidate candidate(changes);
+          PTCandidate candidate(changes, desc);
 
           ACC.candidates.push_back(std::move(candidate));
         }
@@ -3009,14 +3030,15 @@ B2:
         llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
         llvm::errs() << "Initial TTICost: " << ACC.initialTTICost << "\n";
         llvm::errs() << "Candidates:\n";
-        llvm::errs() << "AccuracyCost\t\tComputationCost\t\tTTICost\n"
-                     << "--------------------------------\n";
+        llvm::errs()
+            << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tDescription\n"
+            << "--------------------------------\n";
         for (size_t i = 0; i < ACC.candidates.size(); ++i) {
           auto &candidate = ACC.candidates[i];
           llvm::errs() << candidate.accuracyCost
                        << "\t\t"
                        //  << ACC.getComputationCost(i) << "\t\t"
-                       << candidate.TTICost << "\n";
+                       << candidate.TTICost << "\t\t" << candidate.desc << "\n";
         }
         llvm::errs() << "################################\n\n";
       }
