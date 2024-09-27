@@ -471,6 +471,64 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                   )
                   >;
 
+
+
+def syr2: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
+                          ["A"],
+                          [cblas_layout, uplo, len, fp, vinc<["n"]>, vinc<["n"]>, mld<["uplo", "n", "n"]>],
+      [
+          /*alpha*/ (AssertingInactiveArg),
+          /*x*/ (AssertingInactiveArg),
+          /*y*/ (AssertingInactiveArg),
+          /*A*/ (AssertingInactiveArg)
+      ]
+      >;
+
+
+def symv: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
+                          ["y"],
+                          [cblas_layout, uplo, len, fp, mld<["uplo", "n", "n"]>, vinc<["n"]>, fp, vinc<["n"]>],
+                   [
+                        /*alpha*/ (AssertingInactiveArg),
+                        /*A*/ (Seq<["tmp", "vector", "n"], [], 1>
+                            // Save the diagonal as we shouldn't add syr2 into it
+                            (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
+
+                            (BlasCall<"syr2">
+                              $layout,
+                              $uplo,
+                              $n,
+                              $alpha,
+                              $x,
+                              (Shadow $y),
+                              (Shadow $A)
+                            ),
+                            (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
+                        ),
+                        /*x*/ (BlasCall<"gemv"> $layout, $uplo, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $y), Constant<"1.0">, (Shadow $x)),
+                        /*beta*/ (AssertingInactiveArg),
+                        /*y*/ (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y))
+                   ],
+                  // FWD: dy = dalpha A x + alpha dA x + alpha A dx + dbeta y + beta dy
+
+                  (Seq<[], ["beta1"], 1>
+                    // dbeta y
+                    (BlasCall<"axpy"> $n, (Shadow $beta), $y, (Shadow $y)),
+
+                    // alpha A dx  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $n, $n),  (Shadow $x), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // alpha dA x  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $n, $alpha,                   (Shadow $A),                           $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // dalpha A x  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $n, (Shadow $alpha),                   $A, (ld $A, Char<"N">, $lda, $n, $n),  $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // (beta dy)
+                    (FirstUse<"beta1"> (BlasCall<"scal"> (Rows $transa, $m, $n), $beta, (Shadow $y)))
+                  )
+                  >;
+
 def syr2k : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, uplo, trans, len, len, fp, mld<["trans", "n", "k"]>, mld<["trans", "n", "k"]>, fp, mld<["n", "n"]>],
