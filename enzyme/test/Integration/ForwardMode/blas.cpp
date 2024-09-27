@@ -426,11 +426,10 @@ static void symvTests() {
     for (auto uplo : {'U', 'u', 'L', 'l'}) {
       {
 
-        bool trans = !is_normal(transA);
         std::string Test = "SYMV active A, C ";
         BlasInfo inputs[6] = {/*A*/ BlasInfo(A, layout, N, N, lda),
                               /*B*/ BlasInfo(B, N, incB),
-                              /*C*/ BlasInfo(C, M, incC),
+                              /*C*/ BlasInfo(C, N, incC),
                               BlasInfo(),
                               BlasInfo(),
                               BlasInfo()};
@@ -503,7 +502,7 @@ static void symvTests() {
 
         // cblas_dscal(trans ? N : M, beta, dC, incC);
 
-        my_dsymv(layout, N, N, alpha, A, lda, B, incB, beta, C,
+        my_dsymv(layout, uplo, N, alpha, A, lda, B, incB, beta, C,
                  incC);
 
         // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,

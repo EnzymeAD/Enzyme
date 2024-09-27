@@ -519,13 +519,13 @@ def symv: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $A, $lda, $x, $incx, $
                     (BlasCall<"axpy"> $n, (Shadow $beta), $y, (Shadow $y)),
 
                     // alpha A dx  (optional + beta dy)
-                    (BlasCall<"symv"> $layout, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $n, $n),  (Shadow $x), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+                    (BlasCall<"symv"> $layout, $uplo, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $n, $n),  (Shadow $x), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
 
                     // alpha dA x  (optional + beta dy)
-                    (BlasCall<"symv"> $layout, $n, $alpha,                   (Shadow $A),                           $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+                    (BlasCall<"symv"> $layout, $uplo, $n, $alpha,                   (Shadow $A),                           $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
 
                     // dalpha A x  (optional + beta dy)
-                    (BlasCall<"symv"> $layout, $n, (Shadow $alpha),                   $A, (ld $A, Char<"N">, $lda, $n, $n),  $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+                    (BlasCall<"symv"> $layout, $uplo, $n, (Shadow $alpha),                   $A, (ld $A, Char<"N">, $lda, $n, $n),  $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
 
                     // (beta dy)
                     (FirstUse<"beta1"> (BlasCall<"scal"> $n, $beta, (Shadow $y)))
