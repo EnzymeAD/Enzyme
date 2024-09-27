@@ -508,7 +508,7 @@ def symv: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $A, $lda, $x, $incx, $
                             ),
                             (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
                         ),
-                        /*x*/ (BlasCall<"gemv"> $layout, $uplo, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $y), Constant<"1.0">, (Shadow $x)),
+                        /*x*/ (BlasCall<"symv"> $layout, $uplo, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $y), Constant<"1.0">, (Shadow $x)),
                         /*beta*/ (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
                         /*y*/ (BlasCall<"scal"> $n, $beta, (Shadow $y))
                    ],
