@@ -1425,7 +1425,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   os << "        if (byRef) {\n";
   int n = 0;
   if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf" ||
-      func == "lacpy" || func == "spmv" || func == "spr2")
+      func == "lacpy" || func == "spmv" || func == "spr2" || func == "symv")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
