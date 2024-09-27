@@ -331,6 +331,8 @@ int UNUSED_INT = -1;
 double UNUSED_DOUBLE;
 
 enum class CallType {
+  SYMV,
+  SYRK,
   GEMV,
   GEMM,
   SCAL,
@@ -440,6 +442,12 @@ void printty(bool v) {
 
 void printty(CallType v) {
   switch (v) {
+  case CallType::SYMV:
+    printf("SYMV");
+    return;
+  case CallType::SYR2:
+    printf("SYR2");
+    return;
   case CallType::GEMV:
     printf("GEMV");
     return;
@@ -767,6 +775,62 @@ void printcall(BlasCall rcall) {
       printty(rcall.pout_arg1);
       printf(")");
     }
+    return;
+  case CallType::SYR2:
+    printf("SYR2(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", alpha=");
+    printty(rcall.farg1);
+    printf(", X=");
+    printty(rcall.pin_arg1);
+    printf(", incx=");
+    printty(rcall.iarg4);
+    printf(", Y=");
+    printty(rcall.pin_arg2);
+    printf(", incy=");
+    printty(rcall.iarg5);
+    printf(", A=");
+    printty(rcall.pout_arg1);
+    printf(", lda=");
+    printty(rcall.iarg6);
+    printf(")");
+    return;
+  case CallType::SYMV:
+    printf("SYMV(abi=");
+    printty(rcall.abi);
+    printf(", handle=");
+    printty(rcall.handle);
+    printf(", layout=");
+    printty(rcall.layout);
+    printf(", uplo=");
+    printty(rcall.uplo);
+    printf(", N=");
+    printty(rcall.iarg1);
+    printf(", alpha=");
+    printty(rcall.farg1);
+    printf(", A=");
+    printty(rcall.pin_arg1);
+    printf(", lda=");
+    printty(rcall.iarg4);
+    printf(", X=");
+    printty(rcall.pin_arg2);
+    printf(", incx=");
+    printty(rcall.iarg5);
+    printf(", beta=");
+    printty(rcall.farg2);
+    printf(", Y=");
+    printty(rcall.pout_arg1);
+    printf(", incy=");
+    printty(rcall.iarg6);
+    printf(")");
     return;
   case CallType::GEMV:
     printf("GEMV(abi=");
@@ -1314,6 +1378,68 @@ __attribute__((noinline)) void cblas_daxpy(int N, double alpha, double *X,
                    UNUSED_INT,
                    UNUSED_TRANS,
                    UNUSED_TRANS,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
+
+//   A := alpha*x*y**T + alpha*y*x**T + A,
+DSYR2(UPLO,N,ALPHA,X,INCX,Y,INCY,A,LDA)
+__attribute__((noinline)) void cblas_dsyr2(char layout, char uplo,
+                                           int N, double alpha, double *X, int incx,
+                                           double beta, double *Y, int incy,
+                                           double *A,
+                                           int lda) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GEMV,
+                   A,
+                   X,
+                   Y,
+                   alpha,
+                   beta,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   incx,
+                   incy,
+                   lda,
+                   UNUSED_TRANS,
+                   uplo,
+                   UNUSED_TRANS};
+  calls.push_back(call);
+}
+
+
+//  y := alpha*A*x + beta*y,
+__attribute__((noinline)) void cblas_dsymv(char layout, char uplo,
+                                           int N, double alpha, double *A,
+                                           int lda, double *X, int incx,
+                                           double beta, double *Y, int incy) {
+  BlasCall call = {ABIType::CBLAS,
+                   UNUSED_HANDLE,
+                   inDerivative,
+                   CallType::GEMV,
+                   Y,
+                   A,
+                   X,
+                   alpha,
+                   beta,
+                   layout,
+                   UNUSED_TRANS,
+                   UNUSED_TRANS,
+                   N,
+                   UNUSED_INT,
+                   UNUSED_INT,
+                   lda,
+                   incx,
+                   incy,
+                   UNUSED_TRANS,
+                   uplo,
                    UNUSED_TRANS};
   calls.push_back(call);
 }
@@ -2499,6 +2625,56 @@ void checkMemory(BlasCall rcall, BlasInfo inputs[6], std::string test,
       auto curesult = pointer_to_index(rcall.pout_arg1, inputs);
       checkVector(curesult, "result", /*len=*/1, /*inc=*/1, test, rcall, trace);
     }
+    return;
+  }
+  case CallType::SYR2: {
+    //  A := alpha*x*y**T + alpha*y*x**T + A,
+    auto A = pointer_to_index(rcall.pout_arg1, inputs);
+    auto X = pointer_to_index(rcall.pin_arg1, inputs);
+    auto Y = pointer_to_index(rcall.pin_arg2, inputs);
+
+    auto layout = rcall.layout;
+    auto uplo = rcall.uplo;
+    auto N = rcall.iarg1;
+    auto alpha = rcall.farg1;
+    auto incX = rcall.iarg4;
+    auto incY = rcall.iarg5;
+    auto beta = rcall.farg2;
+    auto lda = rcall.iarg6;
+
+    // A is an m-by-n matrix
+    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
+                trace);
+
+    checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+
+    checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+
+    return;
+  }
+  case CallType::SYMV: {
+    //  y := alpha*A*x + beta*y,
+    auto Y = pointer_to_index(rcall.pout_arg1, inputs);
+    auto A = pointer_to_index(rcall.pin_arg1, inputs);
+    auto X = pointer_to_index(rcall.pin_arg2, inputs);
+
+    auto layout = rcall.layout;
+    auto uplo = rcall.uplo;
+    auto N = rcall.iarg1;
+    auto alpha = rcall.farg1;
+    auto lda = rcall.iarg4;
+    auto incX = rcall.iarg5;
+    auto beta = rcall.farg2;
+    auto incY = rcall.iarg6;
+
+    // A is an m-by-n matrix
+    checkMatrix(A, "A", layout, /*rows=*/M, /*cols=*/N, /*ld=*/lda, test, rcall,
+                trace);
+
+    checkVector(X, "X", /*len=*/N, /*inc=*/incX, test, rcall, trace);
+
+    checkVector(Y, "Y", /*len=*/N, /*inc=*/incY, test, rcall, trace);
+
     return;
   }
   case CallType::GEMV: {

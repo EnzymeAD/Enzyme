@@ -29,6 +29,12 @@ void my_dgemv(char layout, char trans, int M, int N, double alpha,
   cblas_dgemv(layout, trans, M, N, alpha, A, lda, X, incx, beta, Y, incy);
 }
 
+void my_dsymv(char layout, char uplo, int N, double alpha,
+              double *__restrict__ A, int lda, double *__restrict__ X, int incx,
+              double beta, double *__restrict__ Y, int incy) {
+  cblas_dsymv(layout, uplo, N, alpha, A, lda, X, incx, beta, Y, incy);
+}
+
 double my_ddot(int N, double *__restrict__ X, int incx, double *__restrict__ Y,
                int incy) {
   double res = cblas_ddot(N, X, incx, Y, incy);
@@ -395,6 +401,140 @@ static void gemvTests() {
         // cblas_dscal(trans ? N : M, beta, dC, incC);
 
         my_dgemv(layout, (char)transA, M, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
+
+        // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,
+        // incB, 1.0, C, incC);
+
+        checkTest(Test);
+
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+      }
+    }
+  }
+}
+
+
+static void symvTests() {
+  // N means normal matrix, T means transposed
+  for (char layout : {CblasRowMajor, CblasColMajor}) {
+    for (auto uplo : {'U', 'u', 'L', 'l'}) {
+      {
+
+        bool trans = !is_normal(transA);
+        std::string Test = "SYMV active A, C ";
+        BlasInfo inputs[6] = {/*A*/ BlasInfo(A, layout, N, N, lda),
+                              /*B*/ BlasInfo(B, N, incB),
+                              /*C*/ BlasInfo(C, M, incC),
+                              BlasInfo(),
+                              BlasInfo(),
+                              BlasInfo()};
+        init();
+        my_dsymv(layout, uplo, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
+
+        assert(calls.size() == 1);
+        assert(calls[0].inDerivative == false);
+        assert(calls[0].type == CallType::SYMV);
+        assert(calls[0].pout_arg1 == C);
+        assert(calls[0].pin_arg1 == A);
+        assert(calls[0].pin_arg2 == B);
+        assert(calls[0].farg1 == alpha);
+        assert(calls[0].farg2 == beta);
+        assert(calls[0].layout == layout);
+        assert(calls[0].uplo == uplo);
+        assert(calls[0].targ1 == UNUSED_TRANS);
+        assert(calls[0].targ2 == UNUSED_TRANS);
+        assert(calls[0].iarg1 == N);
+        assert(calls[0].iarg3 == UNUSED_INT);
+        assert(calls[0].iarg4 == lda);
+        assert(calls[0].iarg5 == incB);
+        assert(calls[0].iarg6 == incC);
+
+        // Check memory of primal on own.
+        checkMemoryTrace(inputs, "Primal " + Test, calls);
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_dsymv, enzyme_const, layout, enzyme_const, uplo,
+            enzyme_const, N, enzyme_const, alpha, enzyme_dup,
+            A, dA, enzyme_const, lda, enzyme_const, B, enzyme_const, incB,
+            enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+        foundCalls = calls;
+        init();
+
+        cblas_dsymv(layout, uplo, N, alpha, dA, lda, B, incB, beta,
+                    dC, incC);
+
+        my_dsymv(layout, uplo, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
+
+        checkTest(Test);
+
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+        Test = "SYMV active A, B, C ";
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_dsymv, enzyme_const, layout, enzyme_const, uplo,
+            enzyme_const, N, enzyme_const, alpha, enzyme_dup,
+            A, dA, enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB,
+            enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+        foundCalls = calls;
+        init();
+
+        cblas_dsymv(layout, uplo, N, alpha, A, lda, dB, incB, beta,
+                    dC, incC);
+
+        cblas_dsymv(layout, uplo, N, alpha, dA, lda, B, incB, 1.0, dC, incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
+
+        my_dsymv(layout, N, N, alpha, A, lda, B, incB, beta, C,
+                 incC);
+
+        // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,
+        // incB, 1.0, C, incC);
+
+        checkTest(Test);
+
+        // Check memory of primal of expected derivative
+        checkMemoryTrace(inputs, "Expected " + Test, calls);
+
+        // Check memory of primal of our derivative (if equal above, it
+        // should be the same).
+        checkMemoryTrace(inputs, "Found " + Test, foundCalls);
+
+        Test = "SYMV active B, C ";
+
+        init();
+        __enzyme_fwddiff<void>(
+            (void *)my_dsymv, enzyme_const, layout, enzyme_const, uplo,
+            enzyme_const, N, enzyme_const, alpha, enzyme_const,
+            A, enzyme_const, lda, enzyme_dup, B, dB, enzyme_const, incB,
+            enzyme_const, beta, enzyme_dup, C, dC, enzyme_const, incC);
+        foundCalls = calls;
+        init();
+
+        cblas_dsymv(layout, uplo, N, alpha, A, lda, dB, incB, beta,
+                    dC, incC);
+
+        // cblas_dscal(trans ? N : M, beta, dC, incC);
+
+        my_dsymv(layout, uplo, N, alpha, A, lda, B, incB, beta, C,
                  incC);
 
         // NOT ACTIVE: cblas_dgemv(layout, trans, M, N, dalpha, A, lda, B,
@@ -826,4 +966,6 @@ int main() {
   syrkTests();
 
   potrfTests();
+
+  symvTests();
 }
