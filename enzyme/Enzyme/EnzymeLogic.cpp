@@ -270,10 +270,17 @@ struct CacheAnalysis {
       return false;
     }
 
-    if (EnzymeJuliaAddrLoad)
+    if (EnzymeJuliaAddrLoad) {
       if (auto PT = dyn_cast<PointerType>(li.getType()))
         if (PT->getAddressSpace() == 13)
           return false;
+      for (auto U : li.users())
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction())
+            if (F->getName() == "julia.gc_loaded")
+              return false;
+        }
+    }
 
     // Only use invariant load data if either, we are not using Julia
     // or we are in combined mode. The reason for this is that Julia
