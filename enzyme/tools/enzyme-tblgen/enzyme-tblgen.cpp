@@ -1787,10 +1787,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       bool prev = false;
       for (auto *nameI :
            *cast<ListInit>(pattern->getValueAsListInit("names"))) {
-        if (prev)
-          os << " ||\n      ";
-        os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
-        prev = true;
+        auto nameIStr = cast<StringInit>(nameI)->getAsString();
+        auto nameIStrFinite = "\"__" +
+                              std::string(std::next(nameIStr.begin()),
+                                          std::prev(nameIStr.end())) +
+                              "_finite\"";
+        for (auto nameIStrAll : {nameIStr, nameIStrFinite}) {
+          if (prev)
+            os << " ||\n      ";
+          os << "funcName == " << nameIStrAll << "";
+          prev = true;
+        }
       }
       origName = "call";
 #if LLVM_VERSION_MAJOR >= 14
