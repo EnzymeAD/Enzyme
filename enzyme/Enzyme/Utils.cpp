@@ -45,6 +45,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm-c/Core.h"
 
 #include "LibraryFuncs.h"
@@ -203,7 +209,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      ConstantInt::get(next->getType(), 0),
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
-  if (!custom) {
+  auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+
+  if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
 

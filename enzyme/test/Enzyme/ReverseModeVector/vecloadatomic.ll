@@ -71,39 +71,37 @@ entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"i3'de" = alloca [2 x i64]
 ; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de"
-; CHECK-NEXT:   %0 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 0
-; CHECK-NEXT:   %1 = load i64, i64 addrspace(13)* %0
-; CHECK-NEXT:   %2 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 1
-; CHECK-NEXT:   %3 = load i64, i64 addrspace(13)* %2
-; CHECK-NEXT:   %4 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 0
-; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %4
-; CHECK-NEXT:   %5 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 1
-; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %5
-; CHECK-NEXT:   %6 = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 0
-; CHECK-NEXT:   %7 = load i64, i64* %6
-; CHECK-NEXT:   %8 = bitcast i64 %7 to double
-; CHECK-NEXT:   %9 = bitcast i64 %1 to double
-; CHECK-NEXT:   %10 = fadd fast double %8, %9
-; CHECK-NEXT:   %11 = bitcast double %10 to i64
-; CHECK-NEXT:   store i64 %11, i64* %6
-; CHECK-NEXT:   %12 = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 1
-; CHECK-NEXT:   %13 = load i64, i64* %12
-; CHECK-NEXT:   %14 = bitcast i64 %13 to double
-; CHECK-NEXT:   %15 = bitcast i64 %3 to double
-; CHECK-NEXT:   %16 = fadd fast double %14, %15
-; CHECK-NEXT:   %17 = bitcast double %16 to i64
-; CHECK-NEXT:   store i64 %17, i64* %12
-; CHECK-NEXT:   %18 = load [2 x i64], [2 x i64]* %"i3'de"
+; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x i64 addrspace(13)*] %"i7'", 0
+; CHECK-NEXT:   %[[i1:.+]] = load i64, i64 addrspace(13)* %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = extractvalue [2 x i64 addrspace(13)*] %"i7'", 1
+; CHECK-NEXT:   %[[i3:.+]] = load i64, i64 addrspace(13)* %[[i2]]
+; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %[[i0]]
+; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %[[i2]]
+; CHECK-NEXT:   %[[i6:.+]] = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 0
+; CHECK-NEXT:   %[[i7:.+]] = load i64, i64* %[[i6]]
+; CHECK-NEXT:   %[[i8:.+]] = bitcast i64 %[[i7]] to double
+; CHECK-NEXT:   %[[i9:.+]] = bitcast i64 %[[i1]] to double
+; CHECK-NEXT:   %[[i10:.+]] = fadd fast double %[[i8]], %[[i9]]
+; CHECK-NEXT:   %[[i11:.+]] = bitcast double %[[i10]] to i64
+; CHECK-NEXT:   store i64 %[[i11]], i64* %[[i6]]
+; CHECK-NEXT:   %[[i12:.+]] = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 1
+; CHECK-NEXT:   %[[i13:.+]] = load i64, i64* %[[i12]]
+; CHECK-NEXT:   %[[i14:.+]] = bitcast i64 %[[i13]] to double
+; CHECK-NEXT:   %[[i15:.+]] = bitcast i64 %[[i3]] to double
+; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i14]], %[[i15]]
+; CHECK-NEXT:   %[[i17:.+]] = bitcast double %[[i16]] to i64
+; CHECK-NEXT:   store i64 %[[i17]], i64* %[[i12]]
+; CHECK-NEXT:   %[[i18:.+]] = load [2 x i64], [2 x i64]* %"i3'de"
 ; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de"
-; CHECK-NEXT:   %19 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 0
-; CHECK-NEXT:   %20 = bitcast i64 addrspace(12)* %19 to double addrspace(12)*
-; CHECK-NEXT:   %21 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 1
-; CHECK-NEXT:   %22 = bitcast i64 addrspace(12)* %21 to double addrspace(12)*
-; CHECK-NEXT:   %23 = extractvalue [2 x i64] %18, 0
-; CHECK-NEXT:   %24 = bitcast i64 %23 to double
-; CHECK-NEXT:   %25 = extractvalue [2 x i64] %18, 1
-; CHECK-NEXT:   %26 = bitcast i64 %25 to double
-; CHECK-NEXT:   %27 = atomicrmw fadd double addrspace(12)* %20, double %24 monotonic
-; CHECK-NEXT:   %28 = atomicrmw fadd double addrspace(12)* %22, double %26 monotonic
+; CHECK-NEXT:   %[[i19:.+]] = extractvalue [2 x i64 addrspace(12)*] %"i2'", 0
+; CHECK-NEXT:   %[[i20:.+]] = bitcast i64 addrspace(12)* %[[i19]] to double addrspace(12)*
+; CHECK-NEXT:   %[[i21:.+]] = extractvalue [2 x i64 addrspace(12)*] %"i2'", 1
+; CHECK-NEXT:   %[[i22:.+]] = bitcast i64 addrspace(12)* %[[i21]] to double addrspace(12)*
+; CHECK-NEXT:   %[[i23:.+]] = extractvalue [2 x i64] %[[i18]], 0
+; CHECK-NEXT:   %[[i24:.+]] = bitcast i64 %[[i23]] to double
+; CHECK-NEXT:   %[[i25:.+]] = extractvalue [2 x i64] %[[i18]], 1
+; CHECK-NEXT:   %[[i26:.+]] = bitcast i64 %[[i25]] to double
+; CHECK-NEXT:   %[[i27:.+]] = atomicrmw fadd double addrspace(12)* %[[i20]], double %[[i24]] monotonic
+; CHECK-NEXT:   %[[i28:.+]] = atomicrmw fadd double addrspace(12)* %[[i22]], double %[[i26]] monotonic
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
