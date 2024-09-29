@@ -69,6 +69,9 @@ static cl::opt<bool>
 static cl::opt<std::string>
     FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
                  cl::desc("Which log to use in the FPOpt pass"));
+static cl::opt<std::string>
+    FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
+                       cl::desc("Use a custom cost model in the FPOpt pass"));
 static cl::opt<std::string> FPOptTargetFuncRegex(
     "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
     cl::desc("Regex pattern to match target functions in the FPOpt pass"));
@@ -1490,8 +1493,106 @@ getOperandValueProperties(const Value *V) {
 
 InstructionCost getPreciseInstructionCost(const Instruction *I,
                                           const TargetTransformInfo &TTI) {
-  unsigned Opcode = I->getOpcode();
+  if (!FPOptCostModelPath.empty()) {
+    static std::map<std::pair<std::string, std::string>, InstructionCost>
+        CostModel;
+    static bool Loaded = false;
 
+    if (!Loaded) {
+      std::ifstream CostFile(FPOptCostModelPath);
+      if (!CostFile.is_open()) {
+        std::string msg =
+            "Cost model file could not be opened: " + FPOptCostModelPath;
+        llvm_unreachable(msg.c_str());
+      }
+
+      std::string Line;
+      while (std::getline(CostFile, Line)) {
+        std::istringstream SS(Line);
+        std::string OpcodeStr, PrecisionStr;
+        std::string CostStr;
+
+        if (!std::getline(SS, OpcodeStr, ',')) {
+          std::string msg = "Unexpected line in custom cost model: " + Line;
+          llvm_unreachable(msg.c_str());
+        }
+        if (!std::getline(SS, PrecisionStr, ',')) {
+          std::string msg = "Unexpected line in custom cost model: " + Line;
+          llvm_unreachable(msg.c_str());
+        }
+        if (!std::getline(SS, CostStr)) {
+          std::string msg = "Unexpected line in custom cost model: " + Line;
+          llvm_unreachable(msg.c_str());
+        }
+
+        CostModel[{OpcodeStr, PrecisionStr}] = std::stoi(CostStr);
+      }
+
+      Loaded = true;
+    }
+
+    std::string OpcodeName;
+    switch (I->getOpcode()) {
+    case Instruction::FNeg:
+      OpcodeName = "fneg";
+      break;
+    case Instruction::FAdd:
+      OpcodeName = "fadd";
+      break;
+    case Instruction::FSub:
+      OpcodeName = "fsub";
+      break;
+    case Instruction::FMul:
+      OpcodeName = "fmul";
+      break;
+    case Instruction::FDiv:
+      OpcodeName = "fdiv";
+      break;
+    case Instruction::FCmp:
+      OpcodeName = "fcmp";
+      break;
+    case Instruction::FPExt:
+      OpcodeName = "fpext";
+      break;
+    case Instruction::FPTrunc:
+      OpcodeName = "fptrunc";
+      break;
+    case Instruction::PHI:
+      return 0;
+    case Instruction::Call:
+      // TODO: complete
+      break;
+    default:
+      std::string msg = "Custom cost model: unexpected opcode " +
+                        std::string(I->getOpcodeName());
+      llvm_unreachable(msg.c_str());
+    }
+
+    std::string PrecisionName;
+    Type *Ty = I->getType();
+    if (Ty->isDoubleTy()) {
+      PrecisionName = "double";
+    } else if (Ty->isFloatTy()) {
+      PrecisionName = "float";
+    } else if (Ty->isHalfTy()) {
+      PrecisionName = "half";
+    } else {
+      std::string msg = "Custom cost model: unsupported precision type!";
+      llvm_unreachable(msg.c_str());
+    }
+
+    auto Key = std::make_pair(OpcodeName, PrecisionName);
+    auto It = CostModel.find(Key);
+    if (It != CostModel.end()) {
+      return It->second;
+    }
+
+    std::string msg = "Custom cost model: entry not found for " + OpcodeName +
+                      " @ " + PrecisionName;
+    llvm_unreachable(msg.c_str());
+  }
+
+  unsigned Opcode = I->getOpcode();
   switch (Opcode) {
   case Instruction::FNeg: {
     SmallVector<const Value *, 1> Args(I->operands());
@@ -1814,10 +1915,10 @@ public:
   double grad;
   unsigned executions;
   const TargetTransformInfo &TTI;
-  InstructionCost initialAccuracyCost; // Requires manual initialization
-  InstructionCost initialTTICost;      // Requires manual initialization
-  InstructionCost initialHerbieCost;   // Requires manual initialization
-  double initialHerbieAccuracy;        // Requires manual initialization
+  double initialAccuracyCost;     // Requires manual initialization
+  InstructionCost initialTTICost; // Requires manual initialization
+  double initialHerbieCost;       // Requires manual initialization
+  double initialHerbieAccuracy;   // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
   SmallPtrSet<Instruction *, 8> erasableInsts;
 
@@ -1874,7 +1975,7 @@ public:
   }
 
   // Lower is better
-  InstructionCost getComputationCost(size_t candidateIndex) {
+  InstructionCost getCompCostDelta(size_t candidateIndex) {
     // TODO: Better cost model
     InstructionCost erasableCost = 0;
 
@@ -1886,9 +1987,8 @@ public:
   }
 
   // Lower is better
-  double getAccuracyCost(size_t candidateIndex) {
-    // TODO: Update this accuracy
-    return candidates[candidateIndex].accuracyCost;
+  double getAccCostDelta(size_t candidateIndex) {
+    return candidates[candidateIndex].accuracyCost - initialAccuracyCost;
   }
 
   void findErasableInstructions() {
@@ -1932,8 +2032,9 @@ class ApplicableFPCC {
 public:
   FPCC &component;
   const TargetTransformInfo &TTI;
-  InstructionCost initialAccuracyCost; // Requires manual initialization
+  double initialAccuracyCost; // Requires manual initialization
   InstructionCost initialTTICost;
+  unsigned executions; // Requires manual initialization
 
   SmallVector<PTCandidate> candidates;
 
@@ -1958,16 +2059,15 @@ public:
 
   // TODO: Update
   // Lower is better
-  // InstructionCost getComputationCost(size_t candidateIndex) {
-  //   // TODO: consider erasure of the old output
-  //   return candidates[candidateIndex].TTICost * executions;
-  // }
+  InstructionCost getCompCostDelta(size_t candidateIndex) {
+    // TODO: adjust this based on erasured instructions
+    return candidates[candidateIndex].TTICost * executions;
+  }
 
   // // Lower is better
-  // double getAccuracyCost(size_t candidateIndex) {
-  //   return (initialHerbieAccuracy - candidates[candidateIndex].accuracy) *
-  //          std::fabs(grad);
-  // }
+  double getAccCostDelta(size_t candidateIndex) {
+    return candidates[candidateIndex].accuracyCost - initialAccuracyCost;
+  }
 };
 
 void setUnifiedAccuracyCost(
@@ -2256,7 +2356,7 @@ bool improveViaHerbie(
   //     auto &candidate = AO.candidates[i];
   //     llvm::errs() << "Alternative " << i + 1
   //                  << ": AccuracyCost = " << candidate.accuracyCost
-  //                  << ", ComputationCost = " << AO.getComputationCost(i)
+  //                  << ", ComputationCost = " << AO.getCompCostDelta(i)
   //                  << ", TTICost = " << candidate.TTICost
   //                  << ", HerbieCost = " << candidate.herbieCost
   //                  << ", HerbieAccuracy = " << candidate.herbieAccuracy
@@ -2470,8 +2570,8 @@ bool accuracyGreedySolver(
 
     for (auto &candidate : enumerate(AO.candidates)) {
       size_t i = candidate.index();
-      auto candCompCost = AO.getComputationCost(i);
-      auto candAccCost = AO.getAccuracyCost(i);
+      auto candCompCost = AO.getCompCostDelta(i);
+      auto candAccCost = AO.getAccCostDelta(i);
       llvm::errs() << "Candidate " << i << " for " << AO.expr
                    << " has accuracy cost: " << candAccCost
                    << " and computation cost: " << candCompCost << "\n";
@@ -2501,7 +2601,7 @@ bool accuracyGreedySolver(
 }
 
 bool accuracyDPSolver(
-    SmallVector<ApplicableOutput, 4> &AOs,
+    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -2538,8 +2638,8 @@ bool accuracyDPSolver(
 
       for (auto &candidate : enumerate(AO.candidates)) {
         size_t i = candidate.index();
-        auto candCompCost = AO.getComputationCost(i);
-        auto candAccCost = AO.getAccuracyCost(i);
+        auto candCompCost = AO.getCompCostDelta(i);
+        auto candAccCost = AO.getAccCostDelta(i);
 
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
@@ -3099,6 +3199,8 @@ B2:
       // Sort `component.operations` by the gradient and construct
       // `PrecisionChange`s.
       ApplicableFPCC ACC(component, TTI);
+      auto *o0 = component.outputs[0];
+      ACC.executions = valueToNodeMap[o0]->executions;
 
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
@@ -3184,17 +3286,17 @@ B2:
         llvm::errs() << "Initial Expression: " << AO.expr << "\n";
         llvm::errs() << "Grad: " << AO.grad << "\n\n";
         llvm::errs() << "Candidates:\n";
-        llvm::errs() << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tHerbieCo"
-                        "st\t\tAccu"
-                        "racy\t\tExpression\n";
+        llvm::errs()
+            << "Δ AccCost\t\tΔ "
+               "CompCost\t\tTTICost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
         llvm::errs() << "--------------------------------\n";
         for (size_t i = 0; i < AO.candidates.size(); ++i) {
           auto &candidate = AO.candidates[i];
-          llvm::errs() << candidate.accuracyCost << "\t\t"
-                       << AO.getComputationCost(i) << "\t\t"
-                       << candidate.TTICost << "\t\t" << candidate.herbieCost
-                       << "\t\t" << candidate.herbieAccuracy << "\t\t"
-                       << candidate.expr << "\n";
+          llvm::errs() << AO.getAccCostDelta(i) << "\t\t"
+                       << AO.getCompCostDelta(i) << "\t\t" << candidate.TTICost
+                       << "\t\t" << candidate.herbieCost << "\t\t"
+                       << candidate.herbieAccuracy << "\t\t" << candidate.expr
+                       << "\n";
         }
         llvm::errs() << "################################\n\n";
       }
@@ -3207,16 +3309,13 @@ B2:
         llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
         llvm::errs() << "Initial TTICost: " << ACC.initialTTICost << "\n";
         llvm::errs() << "Candidates:\n";
-        llvm::errs()
-            << "AccuracyCost\t\tComputationCost\t\tTTICost\t\tDescription\n"
-            << "--------------------------------\n";
+        llvm::errs() << "Δ AccCost\t\tΔ CompCost\t\tTTICost\t\tDescription\n"
+                     << "---------------------------\n";
         for (size_t i = 0; i < ACC.candidates.size(); ++i) {
           auto &candidate = ACC.candidates[i];
-          llvm::errs() << candidate.accuracyCost
-                       << "\t\t"
-                       //  << ACC.getComputationCost(i)
-                       << "???" << "\t\t" << candidate.TTICost << "\t\t"
-                       << candidate.desc << "\n";
+          llvm::errs() << ACC.getAccCostDelta(i) << "\t\t"
+                       << ACC.getCompCostDelta(i) << "\t\t" << candidate.TTICost
+                       << "\t\t" << candidate.desc << "\n";
         }
         llvm::errs() << "################################\n\n";
       }
@@ -3247,7 +3346,7 @@ B2:
     if (FPOptSolverType == "greedy") {
       changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
     } else if (FPOptSolverType == "dp") {
-      changed = accuracyDPSolver(AOs, valueToNodeMap, symbolToValueMap);
+      changed = accuracyDPSolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);
     } else {
       llvm::errs() << "FPOpt: Unknown solver type: " << FPOptSolverType << "\n";
       return false;
