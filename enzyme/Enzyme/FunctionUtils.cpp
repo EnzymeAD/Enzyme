@@ -656,11 +656,18 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
       }
       if (success)
         continue;
+
+      auto v2 = simplifyLoad(LI);
+      if (v2) {
+        todo.push_back({v2, next.second});
+        continue;
+      }
     }
 
     EmitFailure("DynamicReallocSize", Loc->getDebugLoc(), Loc,
                 "could not statically determine size of realloc ", *Loc,
                 " - because of - ", *next.first);
+    return AI;
 
     std::string allocName;
     switch (llvm::Triple(NewF->getParent()->getTargetTriple()).getOS()) {
@@ -832,6 +839,12 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
 void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
     auto PA = PromotePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+#if !defined(FLANG)
+    PA = GVNPass().run(*NewF, FAM);
+#else
+    PA = GVN().run(*NewF, FAM);
+#endif
     FAM.invalidate(*NewF, PA);
   }
 
