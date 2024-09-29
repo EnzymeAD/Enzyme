@@ -5743,10 +5743,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ivops[2] = {nullptr, nullptr};
     for (int i = 0; i < 2; i++) {
       auto op = arg->getOperand(i);
+      bool subnull = nullShadow;
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
-
+        auto vd = TR.query(op);
+        if (!TR.anyFloat(op))
+          subnull = false;
         if (isConstantValue(op)) {
-          auto vd = TR.query(op);
           if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
@@ -5764,7 +5766,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
       }
       if (!ivops[i]) {
-        ivops[i] = invertPointerM(op, bb, nullShadow);
+        ivops[i] = invertPointerM(op, bb, subnull);
       }
     }
 
