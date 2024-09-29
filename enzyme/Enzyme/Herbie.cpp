@@ -1474,6 +1474,87 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   return node;
 }
 
+TargetTransformInfo::OperandValueKind getOperandValueKind(const Value *V) {
+  if (isa<Constant>(V)) {
+    assert(!isa<UndefValue>(V));
+    return TargetTransformInfo::OK_UniformConstantValue;
+  }
+  return TargetTransformInfo::OK_AnyValue;
+}
+
+TargetTransformInfo::OperandValueProperties
+getOperandValueProperties(const Value *V) {
+  // TODO: Power of 2?
+  return TargetTransformInfo::OP_None;
+}
+
+InstructionCost getPreciseInstructionCost(const Instruction *I,
+                                          const TargetTransformInfo &TTI) {
+  unsigned Opcode = I->getOpcode();
+
+  switch (Opcode) {
+  case Instruction::FNeg: {
+    SmallVector<const Value *, 1> Args(I->operands());
+    return TTI.getArithmeticInstrCost(
+        Opcode, I->getType(), TargetTransformInfo::TCK_Latency,
+        getOperandValueKind(I->getOperand(0)), TargetTransformInfo::OK_AnyValue,
+        getOperandValueProperties(I->getOperand(0)),
+        TargetTransformInfo::OP_None, Args, I);
+  }
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv: {
+    SmallVector<const Value *, 2> Args(I->operands());
+    return TTI.getArithmeticInstrCost(
+        Opcode, I->getType(), TargetTransformInfo::TCK_Latency,
+        getOperandValueKind(I->getOperand(0)),
+        getOperandValueKind(I->getOperand(1)),
+        getOperandValueProperties(I->getOperand(0)),
+        getOperandValueProperties(I->getOperand(1)), Args, I);
+  }
+  case Instruction::FCmp: {
+    const auto *FCI = cast<FCmpInst>(I);
+    return TTI.getCmpSelInstrCost(Opcode, FCI->getType(), /* CondTy */ nullptr,
+                                  FCI->getPredicate(),
+                                  TargetTransformInfo::TCK_Latency, I);
+  }
+  case Instruction::PHI: {
+    return TTI.getInstructionCost(I, TargetTransformInfo::TCK_Latency);
+  }
+  default: {
+    if (const auto *Call = dyn_cast<CallInst>(I)) {
+      if (Function *CalledFunc = Call->getCalledFunction()) {
+        if (CalledFunc->isIntrinsic()) {
+          auto IID = CalledFunc->getIntrinsicID();
+          SmallVector<Type *, 4> OperandTypes;
+          SmallVector<const Value *, 4> Args;
+          for (auto &Arg : Call->args()) {
+            OperandTypes.push_back(Arg->getType());
+            Args.push_back(Arg.get());
+          }
+
+          IntrinsicCostAttributes ICA(IID, Call->getType(), Args, OperandTypes,
+                                      Call->getFastMathFlags(),
+                                      cast<IntrinsicInst>(I));
+          return TTI.getIntrinsicInstrCost(ICA,
+                                           TargetTransformInfo::TCK_Latency);
+        } else {
+          SmallVector<Type *, 4> ArgTypes;
+          for (auto &Arg : Call->args())
+            ArgTypes.push_back(Arg->getType());
+
+          return TTI.getCallInstrCost(CalledFunc, Call->getType(), ArgTypes,
+                                      TargetTransformInfo::TCK_Latency);
+        }
+      }
+    }
+    llvm::errs() << "WARNING: Using default cost for " << *I << "\n";
+    return TTI.getInstructionCost(I, TargetTransformInfo::TCK_Latency);
+  }
+  }
+}
+
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
 // (exclusive).
 InstructionCost getTTICost(const SmallVector<Value *> &outputs,
@@ -1495,11 +1576,7 @@ InstructionCost getTTICost(const SmallVector<Value *> &outputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      auto instCost = TTI.getInstructionCost(
-          I, TargetTransformInfo::TCK_SizeAndLatency); // TODO: What metric?
-      // auto instCost =
-      //     TTI.getInstructionCost(I,
-      //     TargetTransformInfo::TCK_RecipThroughput);
+      auto instCost = getPreciseInstructionCost(I, TTI);
 
       // if (EnzymePrintFPOpt)
       //   llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
@@ -1592,8 +1669,7 @@ InstructionCost getTTICost(const FPCC &component,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      auto instCost =
-          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+      auto instCost = getPreciseInstructionCost(I, TTI);
       llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
 
       cost += instCost;
@@ -1803,8 +1879,7 @@ public:
     InstructionCost erasableCost = 0;
 
     for (auto *I : erasableInsts) {
-      erasableCost +=
-          TTI.getInstructionCost(I, TargetTransformInfo::TCK_SizeAndLatency);
+      erasableCost += getPreciseInstructionCost(I, TTI);
     }
 
     return (candidates[candidateIndex].TTICost - erasableCost) * executions;
