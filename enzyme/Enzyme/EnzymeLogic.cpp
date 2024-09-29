@@ -2355,9 +2355,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
 
-  gutils->forceAugmentedReturns();
-
+  // requires is_value_needed_in_reverse, that needs unnecessaryValues
+  // sets knownRecomputeHeuristic
   gutils->computeMinCache();
+
+  // Requires knownRecomputeCache to be set as call to getContext
+  // itself calls createCacheForScope
+  gutils->forceAugmentedReturns();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
@@ -4079,8 +4083,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                     : CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
 
-  gutils->forceAugmentedReturns();
-
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
   if (augmenteddata)
     mapping = augmenteddata->tapeIndices;
@@ -4092,6 +4094,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // requires is_value_needed_in_reverse, that needs unnecessaryValues
   // sets knownRecomputeHeuristic
   gutils->computeMinCache();
+
+  // Requires knownRecomputeCache to be set as call to getContext
+  // itself calls createCacheForScope
+  gutils->forceAugmentedReturns();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
@@ -4731,9 +4737,13 @@ Function *EnzymeLogic::CreateForwardDiff(
         CA.compute_uncacheable_load_map());
     gutils->can_modref_map = can_modref_map.get();
 
-    gutils->forceAugmentedReturns();
-
+    // requires is_value_needed_in_reverse, that needs unnecessaryValues
+    // sets knownRecomputeHeuristic
     gutils->computeMinCache();
+
+    // Requires knownRecomputeCache to be set as call to getContext
+    // itself calls createCacheForScope
+    gutils->forceAugmentedReturns();
 
     auto getIndex = [&](Instruction *I, CacheType u,
                         IRBuilder<> &B) -> unsigned {
