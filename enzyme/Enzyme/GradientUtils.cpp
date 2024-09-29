@@ -5744,10 +5744,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (int i = 0; i < 2; i++) {
       auto op = arg->getOperand(i);
       bool subnull = nullShadow;
+      auto vd = TR.query(op);
+      if (!TR.anyFloat(op))
+        subnull = false;
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
-        auto vd = TR.query(op);
-        if (!TR.anyFloat(op))
-          subnull = false;
         if (isConstantValue(op)) {
           if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
