@@ -748,7 +748,7 @@ struct PTCandidate {
   // Only one PT candidate per FPCC can be applied
   SmallVector<PrecisionChange, 1> changes;
   double accuracyCost;
-  InstructionCost TTICost;
+  InstructionCost CompCost;
   std::string desc;
 
   // TODO:
@@ -1491,7 +1491,7 @@ getOperandValueProperties(const Value *V) {
   return TargetTransformInfo::OP_None;
 }
 
-InstructionCost getPreciseInstructionCost(const Instruction *I,
+InstructionCost getInstructionCompCost(const Instruction *I,
                                           const TargetTransformInfo &TTI) {
   if (!FPOptCostModelPath.empty()) {
     static std::map<std::pair<std::string, std::string>, InstructionCost>
@@ -1658,9 +1658,9 @@ InstructionCost getPreciseInstructionCost(const Instruction *I,
 
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
 // (exclusive).
-InstructionCost getTTICost(const SmallVector<Value *> &outputs,
-                           const SetVector<Value *> &inputs,
-                           const TargetTransformInfo &TTI) {
+InstructionCost getCompCost(const SmallVector<Value *> &outputs,
+                            const SetVector<Value *> &inputs,
+                            const TargetTransformInfo &TTI) {
   assert(!outputs.empty());
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
@@ -1677,7 +1677,7 @@ InstructionCost getTTICost(const SmallVector<Value *> &outputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      auto instCost = getPreciseInstructionCost(I, TTI);
+      auto instCost = getInstructionCompCost(I, TTI);
 
       // if (EnzymePrintFPOpt)
       //   llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
@@ -1696,10 +1696,10 @@ InstructionCost getTTICost(const SmallVector<Value *> &outputs,
   return cost;
 }
 
-InstructionCost
-getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
-           std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-           std::unordered_map<std::string, Value *> &symbolToValueMap) {
+InstructionCost getCompCost(
+    const std::string &expr, Module *M, const TargetTransformInfo &TTI,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -1725,14 +1725,14 @@ getTTICost(const std::string &expr, Module *M, const TargetTransformInfo &TTI,
 
   // tempFunction->print(llvm::errs());
 
-  InstructionCost cost = getTTICost({newOutput}, args, TTI);
+  InstructionCost cost = getCompCost({newOutput}, args, TTI);
 
   tempFunction->eraseFromParent();
   return cost;
 }
 
-InstructionCost getTTICost(const FPCC &component,
-                           const TargetTransformInfo &TTI, PTCandidate &pt) {
+InstructionCost getCompCost(const FPCC &component,
+                            const TargetTransformInfo &TTI, PTCandidate &pt) {
   assert(!component.outputs.empty());
 
   InstructionCost cost = 0;
@@ -1770,7 +1770,7 @@ InstructionCost getTTICost(const FPCC &component,
       continue;
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
-      auto instCost = getPreciseInstructionCost(I, TTI);
+      auto instCost = getInstructionCompCost(I, TTI);
       llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
 
       cost += instCost;
@@ -1790,7 +1790,7 @@ InstructionCost getTTICost(const FPCC &component,
 
 struct RewriteCandidate {
   // Only one rewrite candidate per output `llvm::Value` can be applied
-  InstructionCost TTICost;
+  InstructionCost CompCost;
   double herbieCost; // Unused for now
   double herbieAccuracy;
   double accuracyCost;
@@ -1915,10 +1915,10 @@ public:
   double grad;
   unsigned executions;
   const TargetTransformInfo &TTI;
-  double initialAccuracyCost;     // Requires manual initialization
-  InstructionCost initialTTICost; // Requires manual initialization
-  double initialHerbieCost;       // Requires manual initialization
-  double initialHerbieAccuracy;   // Requires manual initialization
+  double initialAccCost;           // Requires manual initialization
+  InstructionCost initialCompCost; // Requires manual initialization
+  double initialHerbieCost;        // Requires manual initialization
+  double initialHerbieAccuracy;    // Requires manual initialization
   SmallVector<RewriteCandidate> candidates;
   SmallPtrSet<Instruction *, 8> erasableInsts;
 
@@ -1927,7 +1927,7 @@ public:
                             const TargetTransformInfo &TTI)
       : component(component), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions), TTI(TTI) {
-    initialTTICost = getTTICost({oldOutput}, component.inputs, TTI);
+    initialCompCost = getCompCost({oldOutput}, component.inputs, TTI);
     findErasableInstructions();
   }
 
@@ -1980,15 +1980,15 @@ public:
     InstructionCost erasableCost = 0;
 
     for (auto *I : erasableInsts) {
-      erasableCost += getPreciseInstructionCost(I, TTI);
+      erasableCost += getInstructionCompCost(I, TTI);
     }
 
-    return (candidates[candidateIndex].TTICost - erasableCost) * executions;
+    return (candidates[candidateIndex].CompCost - erasableCost) * executions;
   }
 
   // Lower is better
   double getAccCostDelta(size_t candidateIndex) {
-    return candidates[candidateIndex].accuracyCost - initialAccuracyCost;
+    return candidates[candidateIndex].accuracyCost - initialAccCost;
   }
 
   void findErasableInstructions() {
@@ -2032,17 +2032,17 @@ class ApplicableFPCC {
 public:
   FPCC &component;
   const TargetTransformInfo &TTI;
-  double initialAccuracyCost; // Requires manual initialization
-  InstructionCost initialTTICost;
+  double initialAccCost; // Requires manual initialization
+  InstructionCost initialCompCost;
   unsigned executions; // Requires manual initialization
 
   SmallVector<PTCandidate> candidates;
 
   explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
       : component(fpcc), TTI(TTI) {
-    initialTTICost =
-        getTTICost({component.outputs.begin(), component.outputs.end()},
-                   component.inputs, TTI);
+    initialCompCost =
+        getCompCost({component.outputs.begin(), component.outputs.end()},
+                    component.inputs, TTI);
   }
 
   void apply(size_t candidateIndex) {
@@ -2061,12 +2061,12 @@ public:
   // Lower is better
   InstructionCost getCompCostDelta(size_t candidateIndex) {
     // TODO: adjust this based on erasured instructions
-    return candidates[candidateIndex].TTICost * executions;
+    return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
   }
 
   // // Lower is better
   double getAccCostDelta(size_t candidateIndex) {
-    return candidates[candidateIndex].accuracyCost - initialAccuracyCost;
+    return candidates[candidateIndex].accuracyCost - initialAccCost;
   }
 };
 
@@ -2098,7 +2098,7 @@ void setUnifiedAccuracyCost(
     initialAC += std::fabs((goldVal - realVal) * AO.grad);
   }
 
-  AO.initialAccuracyCost = initialAC;
+  AO.initialAccCost = initialAC;
 
   for (auto &candidate : AO.candidates) {
     const auto &expr = candidate.expr;
@@ -2167,9 +2167,7 @@ void setUnifiedAccuracyCost(
     }
   }
 
-  ACC.initialAccuracyCost = initialAC;
-  llvm::errs() << "Initial ACC accuracy cost: " << ACC.initialAccuracyCost
-               << "\n";
+  ACC.initialAccCost = initialAC;
 
   for (auto &candidate : ACC.candidates) {
     double ac = 0.;
@@ -2324,8 +2322,8 @@ bool improveViaHerbie(
   double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
 
   RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
-  bestCandidate.TTICost =
-      getTTICost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+  bestCandidate.CompCost =
+      getCompCost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
   AO.candidates.push_back(bestCandidate);
 
   json::Array &alternatives = *costAccuracy[2].getAsArray();
@@ -2337,33 +2335,12 @@ bool improveViaHerbie(
     double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
     StringRef expr = entry[2].getAsString().getValue();
     RewriteCandidate candidate(cost, accuracy, expr.str());
-    candidate.TTICost =
-        getTTICost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+    candidate.CompCost =
+        getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
     AO.candidates.push_back(candidate);
   }
 
   setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
-
-  // if (EnzymePrintHerbie) {
-  //   llvm::errs() << "Initial: "
-  //                << "AccuracyCost = " << AO.initialAccuracyCost
-  //                << ", ComputationCost = " << 0
-  //                << ", TTICost = " << AO.initialTTICost
-  //                << ", HerbieCost = " << initialCost
-  //                << ", HerbieAccuracy = " << initialAccuracy << "\n";
-  //   // The best candidate from Herbie is also printed below
-  //   for (size_t i = 0; i < AO.candidates.size(); ++i) {
-  //     auto &candidate = AO.candidates[i];
-  //     llvm::errs() << "Alternative " << i + 1
-  //                  << ": AccuracyCost = " << candidate.accuracyCost
-  //                  << ", ComputationCost = " << AO.getCompCostDelta(i)
-  //                  << ", TTICost = " << candidate.TTICost
-  //                  << ", HerbieCost = " << candidate.herbieCost
-  //                  << ", HerbieAccuracy = " << candidate.herbieAccuracy
-  //                  << ", Expression = " << candidate.expr << "\n";
-  //   }
-  // }
-
   return true;
 }
 
@@ -3251,7 +3228,7 @@ B2:
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate(changes, desc);
-          candidate.TTICost = getTTICost(component, TTI, candidate);
+          candidate.CompCost = getCompCost(component, TTI, candidate);
 
           ACC.candidates.push_back(std::move(candidate));
         }
@@ -3276,25 +3253,23 @@ B2:
         // 5*. Custom error estimates of potential rewrites (TODO)
 
         llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << AO.initialAccuracyCost
+        llvm::errs() << "Initial AccuracyCost: " << AO.initialAccCost << "\n";
+        llvm::errs() << "Initial ComputationCost: " << AO.initialCompCost
                      << "\n";
-        llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
-        llvm::errs() << "Initial TTICost: " << AO.initialTTICost << "\n";
         llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
         llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
                      << "\n";
         llvm::errs() << "Initial Expression: " << AO.expr << "\n";
         llvm::errs() << "Grad: " << AO.grad << "\n\n";
         llvm::errs() << "Candidates:\n";
-        llvm::errs()
-            << "Δ AccCost\t\tΔ "
-               "CompCost\t\tTTICost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
+        llvm::errs() << "Δ AccCost\t\tΔ "
+                        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
         llvm::errs() << "--------------------------------\n";
         for (size_t i = 0; i < AO.candidates.size(); ++i) {
           auto &candidate = AO.candidates[i];
           llvm::errs() << AO.getAccCostDelta(i) << "\t\t"
-                       << AO.getCompCostDelta(i) << "\t\t" << candidate.TTICost
-                       << "\t\t" << candidate.herbieCost << "\t\t"
+                       << AO.getCompCostDelta(i) << "\t\t"
+                       << candidate.herbieCost << "\t\t"
                        << candidate.herbieAccuracy << "\t\t" << candidate.expr
                        << "\n";
         }
@@ -3304,18 +3279,17 @@ B2:
     if (FPOptEnablePT) {
       for (auto &ACC : ACCs) {
         llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << ACC.initialAccuracyCost
+        llvm::errs() << "Initial AccuracyCost: " << ACC.initialAccCost << "\n";
+        llvm::errs() << "Initial ComputationCost: " << ACC.initialCompCost
                      << "\n";
-        llvm::errs() << "Initial ComputationCost: " << 0 << "\n";
-        llvm::errs() << "Initial TTICost: " << ACC.initialTTICost << "\n";
         llvm::errs() << "Candidates:\n";
-        llvm::errs() << "Δ AccCost\t\tΔ CompCost\t\tTTICost\t\tDescription\n"
+        llvm::errs() << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
                      << "---------------------------\n";
         for (size_t i = 0; i < ACC.candidates.size(); ++i) {
           auto &candidate = ACC.candidates[i];
           llvm::errs() << ACC.getAccCostDelta(i) << "\t\t"
-                       << ACC.getCompCostDelta(i) << "\t\t" << candidate.TTICost
-                       << "\t\t" << candidate.desc << "\n";
+                       << ACC.getCompCostDelta(i) << "\t\t" << candidate.desc
+                       << "\n";
         }
         llvm::errs() << "################################\n\n";
       }
