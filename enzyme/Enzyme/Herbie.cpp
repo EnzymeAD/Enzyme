@@ -1588,6 +1588,9 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           case Intrinsic::fmuladd:
             OpcodeName = "fmuladd";
             break;
+          case Intrinsic::pow:
+            OpcodeName = "pow";
+            break;
           default: {
             std::string msg = "Custom cost model: unsupported intrinsic " +
                               CalledFunc->getName().str();
@@ -1618,6 +1621,8 @@ InstructionCost getInstructionCompCost(const Instruction *I,
             OpcodeName = "pow";
           } else if (FuncName == "fabs") {
             OpcodeName = "fabs";
+          } else if (FuncName == "fma") {
+            OpcodeName = "fma";
           } else if (FuncName == "hypot") {
             OpcodeName = "hypot";
           } else {
@@ -1960,8 +1965,8 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
 }
 
 void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
-                      SmallPtrSet<Instruction *, 16> &exprInsts,
-                      SmallPtrSet<Value *, 16> &visited) {
+                      SmallPtrSetImpl<Instruction *> &exprInsts,
+                      SmallPtrSetImpl<Value *> &visited) {
   if (!V || inputs.contains(V) || visited.contains(V)) {
     return;
   }
@@ -2070,31 +2075,64 @@ public:
   }
 
   void findErasableInstructions() {
-    SmallPtrSet<Instruction *, 16> exprInsts;
-    SmallPtrSet<Value *, 16> visited;
+    SmallPtrSet<Value *, 8> visited;
+    SmallPtrSet<Instruction *, 8> exprInsts;
     collectExprInsts(oldOutput, component.inputs, exprInsts, visited);
+    visited.clear();
 
+    MapVector<Instruction *, int> userCount; // Implicit topo ordering
+    SmallVector<Value *, 8> todo;
     for (auto *I : exprInsts) {
-      bool usedOutside = false;
-
+      int count = 0;
       for (auto user : I->users()) {
-        if (auto *userI = dyn_cast<Instruction>(user);
-            userI && exprInsts.contains(userI)) {
-          // Use is within the expression
-          continue;
-        } else {
-          // Can't erase an llvm::Value or an instruction used outside
-          // the expression
+        if (isa<Instruction>(user) &&
+            exprInsts.contains(cast<Instruction>(user))) {
+          count++;
+        }
+      }
+      userCount[I] = count;
+    }
 
-          // llvm::errs() << "Can't erase: " << *I << " -- used by: " << *user
-          //              << "\n";
+    todo.push_back(oldOutput);
+    while (!todo.empty()) {
+      auto *cur = todo.pop_back_val();
+      if (!visited.insert(cur).second)
+        continue;
+
+      llvm::errs() << "Visiting " << *cur << "\n";
+
+      if (auto *I = dyn_cast<Instruction>(cur)) {
+        bool usedOutside = false;
+        for (auto user : I->users()) {
+          if (auto *userI = dyn_cast<Instruction>(user)) {
+            if (erasableInsts.contains(userI)) {
+              continue;
+            }
+          }
+          // If the parent instruction is NOT erasable or the user is not
+          // an instruction, then the current instruction is not erasable
+          llvm::errs() << "Can't erase " << *I << " because of " << *user
+                       << "\n";
           usedOutside = true;
           break;
         }
-      }
 
-      if (!usedOutside) {
-        erasableInsts.insert(I);
+        if (!usedOutside) {
+          erasableInsts.insert(I);
+        }
+
+        auto operands =
+            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+        for (auto &operand : operands) {
+          if (visited.contains(operand))
+            continue;
+
+          if (auto *oI = dyn_cast<Instruction>(operand)) {
+            if (userCount.count(oI) && --userCount[oI] == 0) {
+              todo.push_back(operand);
+            }
+          }
+        }
       }
     }
 
@@ -2830,10 +2868,33 @@ bool accuracyDPSolver(
     costToSolutionMap.swap(prunedCostToSolutionMap);
   }
 
-  llvm::errs() << "DP Table: \n";
-  for (const auto &pair : costToAccuracyMap) {
-    llvm::errs() << "Computation cost: " << pair.first
-                 << ", Accuracy cost: " << pair.second << "\n";
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "DP Table: \n";
+    for (const auto &pair : costToAccuracyMap) {
+      llvm::errs() << "Computation cost: " << pair.first
+                   << ", Accuracy cost: " << pair.second << "\n";
+      llvm::errs() << "\tSolution steps: \n";
+      for (const auto &step : costToSolutionMap[pair.first]) {
+        std::visit(
+            [&](auto *item) {
+              using T = std::decay_t<decltype(*item)>;
+              if constexpr (std::is_same_v<T, ApplicableOutput>) {
+                llvm::errs()
+                    << "\t\t" << item->expr << " --(" << step.candidateIndex
+                    << ")-> " << item->candidates[step.candidateIndex].expr
+                    << "\n";
+              } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+                llvm::errs()
+                    << "\t\tACC: " << item->candidates[step.candidateIndex].desc
+                    << " (" << step.candidateIndex << ")\n";
+              } else {
+                llvm_unreachable(
+                    "accuracyDPSolver: Unexpected type of solution step");
+              }
+            },
+            step.item);
+      }
+    }
   }
 
   double minAccCost = std::numeric_limits<double>::infinity();
