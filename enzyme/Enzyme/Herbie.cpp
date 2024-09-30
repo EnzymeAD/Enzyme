@@ -2048,7 +2048,12 @@ public:
 
   // Lower is better
   InstructionCost getCompCostDelta(size_t candidateIndex) {
-    // TODO: Better cost model
+    // When PT is involved, don't subtract the cost of erasable instructions
+    // since they're still considered as part of PT
+    if (FPOptEnablePT) {
+      return candidates[candidateIndex].CompCost * executions;
+    }
+
     InstructionCost erasableCost = 0;
 
     for (auto *I : erasableInsts) {
@@ -2129,14 +2134,13 @@ public:
     candidates[candidateIndex].apply(component);
   }
 
-  // TODO: Update
   // Lower is better
   InstructionCost getCompCostDelta(size_t candidateIndex) {
     // TODO: adjust this based on erasured instructions
     return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
   }
 
-  // // Lower is better
+  // Lower is better
   double getAccCostDelta(size_t candidateIndex) {
     return candidates[candidateIndex].accuracyCost - initialAccCost;
   }
