@@ -8,7 +8,7 @@ clean:
 	rm -f *.ll *.o results.txt results.json
 
 $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a: src/lib.rs Cargo.toml
-	ENZYME_LOOSE_TYPES=1 cargo +enzyme rustc --release --lib --crate-type=staticlib --features=libm
+	RUSTFLAGS="-Z autodiff=LooseTypes" cargo +enzyme rustc --release --lib --crate-type=staticlib --features=libm
 
 ba.o: ba.cpp $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a
 	clang++ $(LOAD) $(BENCH) ba.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o ba.o -lpthread $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a -L /usr/lib/gcc/x86_64-linux-gnu/11
