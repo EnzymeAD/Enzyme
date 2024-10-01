@@ -825,7 +825,7 @@ void traverseCallGraph(FunctionOpInterface root,
 
     curr.walk([&](CallOpInterface call) {
       auto neighbor = dyn_cast_if_present<FunctionOpInterface>(
-          call.resolveCallable(symbolTable));
+          call.resolveCallableInTable(symbolTable));
       if (neighbor && !visited.contains(neighbor)) {
         frontier.push_back(neighbor);
         visited.insert(neighbor);
