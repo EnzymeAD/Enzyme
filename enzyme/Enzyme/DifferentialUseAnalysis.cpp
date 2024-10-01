@@ -184,7 +184,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (EnzymeRuntimeActivityCheck) {
+      if (gutils->runtimeActivity) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();
@@ -594,11 +594,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
       if (shadow) {
-#if LLVM_VERSION_MAJOR >= 14
         auto sz = CI->arg_size();
-#else
-        auto sz = CI->getNumArgOperands();
-#endif
         bool isStored = false;
         // First pointer is the destination
         for (size_t i = 1; i < sz; i++)
@@ -628,12 +624,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-    for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-    {
+    for (size_t i = 0; i < CI->arg_size(); i++) {
       if (val == CI->getArgOperand(i)) {
         if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
@@ -926,6 +917,9 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
+      if (hasNoCache((*mp.begin()).V)) {
+        continue;
+      }
       // If an allocation call, we cannot cache any "capturing" users
       if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
         auto next = (*mp.begin()).V;
@@ -943,12 +937,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
-#if LLVM_VERSION_MAJOR >= 14
-          for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-          {
+          for (size_t i = 0; i < CI->arg_size(); i++) {
             if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
               captures = true;
               break;
@@ -970,6 +959,20 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         MinReq.insert(nnode);
         if (Orig.find(Node(nnode, true)) != Orig.end())
           todo.push_back(nnode);
+      }
+    }
+  }
+
+  // Fix up non-cacheable calls to use their operand(s) instead
+  for (auto V : Intermediates) {
+    if (!hasNoCache(V))
+      continue;
+    if (!MinReq.count(V))
+      continue;
+    MinReq.remove(V);
+    for (auto &pair : Orig) {
+      if (pair.second.count(Node(V, false))) {
+        MinReq.insert(pair.first.V);
       }
     }
   }
@@ -1009,6 +1012,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     // values that we are keeping for stores.
     MinReq.insert(V);
   }
+
   return;
 }
 
@@ -1070,12 +1074,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
       // Next test if any allocation could be stored into one of the
       // arguments.
       if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

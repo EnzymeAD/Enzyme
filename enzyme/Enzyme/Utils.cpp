@@ -45,6 +45,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm-c/Core.h"
 
 #include "LibraryFuncs.h"
@@ -203,7 +209,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      ConstantInt::get(next->getType(), 0),
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
-  if (!custom) {
+  auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+
+  if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
 
@@ -2953,9 +2962,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",  "scal",  "axpy",  "gemv",  "gemm",  "spmv",  "syrk",
-      "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy",
-      "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs", "getri"};
+      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk", "nrm2",
+      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv", "syr2k",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv",
+  };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -3683,6 +3693,69 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     gutils->TR.dump(ss);
     EmitFailure("CannotDeduceType", inst.getDebugLoc(), &inst, ss.str());
   }
+}
+
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *md, DerivativeMode Mode, bool const_src) {
+  std::vector<std::pair<ConcreteType, size_t>> parsed;
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    ConcreteType base(
+        llvm::cast<llvm::MDString>(md->getOperand(i))->getString(),
+        md->getContext());
+    auto size = llvm::cast<llvm::ConstantInt>(
+                    llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                        ->getValue())
+                    ->getSExtValue();
+    parsed.emplace_back(base, size);
+  }
+
+  std::vector<std::tuple<llvm::Type *, size_t, size_t>> toIterate;
+  size_t idx = 0;
+  while (idx < parsed.size()) {
+
+    auto dt = parsed[idx].first;
+    size_t start = parsed[idx].second;
+    size_t end = 0x0fffffff;
+    for (idx = idx + 1; idx < parsed.size(); ++idx) {
+      bool Legal = true;
+      auto tmp = dt;
+      auto next = parsed[idx].first;
+      tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+      // Prevent fusion of {Anything, Float} since anything is an int rule
+      // but float requires zeroing.
+      if ((dt == BaseType::Anything &&
+           (next != BaseType::Anything && next.isKnown())) ||
+          (next == BaseType::Anything &&
+           (dt != BaseType::Anything && dt.isKnown())))
+        Legal = false;
+      if (!Legal) {
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
+          // if both are floats (of any type), forward mode is the same.
+          //   + [potentially zero if const, otherwise copy]
+          // if both are int/pointer (of any type), also the same
+          //   + copy
+          // if known non-constant, also the same
+          //   + copy
+          if ((parsed[idx].first.isFloat() == nullptr) ==
+              (parsed[idx - 1].first.isFloat() == nullptr)) {
+            Legal = true;
+          }
+          if (const_src) {
+            Legal = true;
+          }
+        }
+        if (!Legal) {
+          end = parsed[idx].second;
+          break;
+        }
+      } else
+        dt = tmp;
+    }
+    assert(dt.isKnown());
+    toIterate.emplace_back(dt.isFloat(), start, end - start);
+  }
+  return toIterate;
 }
 
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }

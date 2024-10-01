@@ -24,13 +24,8 @@
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
 
-#if LLVM_VERSION_MAJOR >= 16
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
-#else
-#include "SCEV/ScalarEvolution.h"
-#include "SCEV/ScalarEvolutionExpander.h"
-#endif
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -90,18 +85,14 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
       dt = ConcreteType(a.getType()->getScalarType());
     } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
       if (a.getContext().supportsTypedPointers()) {
-#endif
         auto et = a.getType()->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
           dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
         } else if (et->isPointerTy()) {
           dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
         }
-#if LLVM_VERSION_MAJOR >= 13
       }
-#endif
 #endif
     } else if (a.getType()->isIntOrIntVectorTy()) {
       dt = ConcreteType(BaseType::Integer);
@@ -119,18 +110,14 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
     dt = ConcreteType(F.getReturnType()->getScalarType());
   } else if (F.getReturnType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
     if (F.getContext().supportsTypedPointers()) {
-#endif
       auto et = F.getReturnType()->getPointerElementType();
       if (et->isFPOrFPVectorTy()) {
         dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
       } else if (et->isPointerTy()) {
         dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
       }
-#if LLVM_VERSION_MAJOR >= 13
     }
-#endif
 #endif
   } else if (F.getReturnType()->isIntOrIntVectorTy()) {
     dt = ConcreteType(BaseType::Integer);

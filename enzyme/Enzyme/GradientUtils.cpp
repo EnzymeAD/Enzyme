@@ -99,11 +99,6 @@ llvm::cl::opt<bool> EnzymeInactiveDynamic(
     cl::desc("Force wholy inactive dynamic loops to have 0 iter reverse pass"));
 
 llvm::cl::opt<bool>
-    EnzymeRuntimeActivityCheck("enzyme-runtime-activity", cl::init(false),
-                               cl::Hidden,
-                               cl::desc("Perform runtime activity checks"));
-
-llvm::cl::opt<bool>
     EnzymeSharedForward("enzyme-shared-forward", cl::init(false), cl::Hidden,
                         cl::desc("Forward Shared Memory from definitions"));
 
@@ -166,7 +161,7 @@ GradientUtils::GradientUtils(
     const SmallPtrSetImpl<Value *> &activevals_, DIFFE_TYPE ReturnActivity,
     bool shadowReturnUsed_, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
-    DerivativeMode mode, unsigned width, bool omp)
+    DerivativeMode mode, bool runtimeActivity, unsigned width, bool omp)
     : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(),
       OrigDT(oldFunc_->empty()
@@ -195,8 +190,9 @@ GradientUtils::GradientUtils(
       tid(nullptr), numThreads(nullptr),
       OrigAA(oldFunc_->empty() ? ((AAResults *)nullptr)
                                : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
-      TA(TA_), TR(TR_), omp(omp), width(width),
-      shadowReturnUsed(shadowReturnUsed_), ArgDiffeTypes(ArgDiffeTypes_) {
+      TA(TA_), TR(TR_), omp(omp), runtimeActivity(runtimeActivity),
+      width(width), shadowReturnUsed(shadowReturnUsed_),
+      ArgDiffeTypes(ArgDiffeTypes_) {
   if (oldFunc_->empty())
     return;
   if (oldFunc_->getSubprogram()) {
@@ -815,50 +811,53 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           // returned when the original value would be recomputed (e.g. this
           // function would not return null). See note below about the condition
           // as applied to this case.
-          if (orig && knownRecomputeHeuristic.find(orig) !=
-                          knownRecomputeHeuristic.end()) {
-            if (!knownRecomputeHeuristic[orig]) {
-              if (mode == DerivativeMode::ReverseModeCombined) {
-                // Don't unnecessarily cache a value if the caching
-                // heuristic says we should preserve this precise (and not
-                // an lcssa wrapped) value
-                if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
-                  Value *nval = inst;
-                  if (scope)
-                    nval = fixLCSSA(inst, scope);
-                  if (nval == inst)
-                    goto endCheck;
-                }
-              } else {
-                // Note that this logic (original load must dominate or
-                // alternatively be in the reverse block) is only valid iff when
-                // applicable (here if in split mode), an overwritten load
-                // cannot be hoisted outside of a loop to be used as a loop
-                // limit. This optimization is currently done in the combined
-                // mode (e.g. if a load isn't modified between a prior insertion
-                // point and the actual load, it is legal to recompute).
-                if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
-                    DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
-                  assert(inst->getParent()->getParent() == newFunc);
-                  auto placeholder = BuilderM.CreatePHI(
-                      val->getType(), 0,
-                      val->getName() + "_krcAFUWLreplacement");
-                  unwrappedLoads[placeholder] = inst;
-                  SmallVector<Metadata *, 1> avail;
-                  for (auto pair : available)
-                    if (pair.second)
-                      avail.push_back(
-                          MDNode::get(placeholder->getContext(),
-                                      {ValueAsMetadata::get(
-                                           const_cast<Value *>(pair.first)),
-                                       ValueAsMetadata::get(pair.second)}));
-                  placeholder->setMetadata(
-                      "enzyme_available",
-                      MDNode::get(placeholder->getContext(), avail));
-                  if (!permitCache)
-                    return placeholder;
-                  return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
-                                     [idx.second] = placeholder;
+          if (orig) {
+            auto found = knownRecomputeHeuristic.find(orig);
+            if (found != knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                if (mode == DerivativeMode::ReverseModeCombined) {
+                  // Don't unnecessarily cache a value if the caching
+                  // heuristic says we should preserve this precise (and not
+                  // an lcssa wrapped) value
+                  if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
+                    Value *nval = inst;
+                    if (scope)
+                      nval = fixLCSSA(inst, scope);
+                    if (nval == inst)
+                      goto endCheck;
+                  }
+                } else {
+                  // Note that this logic (original load must dominate or
+                  // alternatively be in the reverse block) is only valid iff
+                  // when applicable (here if in split mode), an overwritten
+                  // load cannot be hoisted outside of a loop to be used as a
+                  // loop limit. This optimization is currently done in the
+                  // combined mode (e.g. if a load isn't modified between a
+                  // prior insertion point and the actual load, it is legal to
+                  // recompute).
+                  if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
+                      DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+                    assert(inst->getParent()->getParent() == newFunc);
+                    auto placeholder = BuilderM.CreatePHI(
+                        val->getType(), 0,
+                        val->getName() + "_krcAFUWLreplacement");
+                    unwrappedLoads[placeholder] = inst;
+                    SmallVector<Metadata *, 1> avail;
+                    for (auto pair : available)
+                      if (pair.second)
+                        avail.push_back(
+                            MDNode::get(placeholder->getContext(),
+                                        {ValueAsMetadata::get(
+                                             const_cast<Value *>(pair.first)),
+                                         ValueAsMetadata::get(pair.second)}));
+                    placeholder->setMetadata(
+                        "enzyme_available",
+                        MDNode::get(placeholder->getContext(), avail));
+                    if (!permitCache)
+                      return placeholder;
+                    return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
+                                       [idx.second] = placeholder;
+                  }
                 }
               }
             }
@@ -2558,6 +2557,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   assert(malloc);
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
   assert(isOriginalBlock(*BuilderQ.GetInsertBlock()));
+  assert(!hasNoCache(malloc));
   if (mode == DerivativeMode::ReverseModeCombined) {
     assert(!tape);
     return malloc;
@@ -4252,7 +4252,7 @@ MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
 }
 
 GradientUtils *GradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, unsigned width, Function *todiff,
+    EnzymeLogic &Logic, bool runtimeActivity, unsigned width, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
     bool shadowReturnUsed, std::map<AugmentedStruct, int> &returnMapping,
@@ -4306,9 +4306,8 @@ GradientUtils *GradientUtils::CreateFromClone(
   prefix += todiff->getName().str();
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      DerivativeMode::ReverseModePrimal, /* width */ width, oldFunc,
-      invertedPointers, constant_args, constant_values, nonconstant_values,
-      returnvals,
+      DerivativeMode::ReverseModePrimal, width, oldFunc, invertedPointers,
+      constant_args, constant_values, nonconstant_values, returnvals,
       /*returnValue*/ returnValue, retType, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
@@ -4345,7 +4344,8 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, shadowReturnUsed, constant_args,
-      originalToNew, DerivativeMode::ReverseModePrimal, width, omp);
+      originalToNew, DerivativeMode::ReverseModePrimal, runtimeActivity, width,
+      omp);
   return res;
 }
 
@@ -4436,8 +4436,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
 
 Constant *GradientUtils::GetOrCreateShadowConstant(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, Constant *oval, DerivativeMode mode, unsigned width,
-    bool AtomicAdd) {
+    TypeAnalysis &TA, Constant *oval, DerivativeMode mode, bool runtimeActivity,
+    unsigned width, bool AtomicAdd) {
   if (isa<ConstantPointerNull>(oval)) {
     return oval;
   } else if (isa<UndefValue>(oval)) {
@@ -4447,38 +4447,42 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(context, Logic, TLI, TA,
-                                               CD->getElementAsConstant(i),
-                                               mode, width, AtomicAdd));
+      Vals.push_back(GetOrCreateShadowConstant(
+          context, Logic, TLI, TA, CD->getElementAsConstant(i), mode,
+          runtimeActivity, width, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          context, Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(
+          GetOrCreateShadowConstant(context, Logic, TLI, TA, CD->getOperand(i),
+                                    mode, runtimeActivity, width, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          context, Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(
+          GetOrCreateShadowConstant(context, Logic, TLI, TA, CD->getOperand(i),
+                                    mode, runtimeActivity, width, AtomicAdd));
     }
     return ConstantStruct::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          context, Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(
+          GetOrCreateShadowConstant(context, Logic, TLI, TA, CD->getOperand(i),
+                                    mode, runtimeActivity, width, AtomicAdd));
     }
     return ConstantVector::get(Vals);
   } else if (auto F = dyn_cast<Function>(oval)) {
-    return GetOrCreateShadowFunction(context, Logic, TLI, TA, F, mode, width,
-                                     AtomicAdd);
+    return GetOrCreateShadowFunction(context, Logic, TLI, TA, F, mode,
+                                     runtimeActivity, width, AtomicAdd);
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
-    auto C = GetOrCreateShadowConstant(
-        context, Logic, TLI, TA, arg->getOperand(0), mode, width, AtomicAdd);
+    auto C =
+        GetOrCreateShadowConstant(context, Logic, TLI, TA, arg->getOperand(0),
+                                  mode, runtimeActivity, width, AtomicAdd);
     if (arg->isCast() || arg->getOpcode() == Instruction::GetElementPtr ||
         arg->getOpcode() == Instruction::Add) {
       SmallVector<Constant *, 8> NewOps;
@@ -4488,7 +4492,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     }
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
     return GetOrCreateShadowConstant(context, Logic, TLI, TA, arg->getAliasee(),
-                                     mode, width, AtomicAdd);
+                                     mode, runtimeActivity, width, AtomicAdd);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (arg->getName() == "_ZTVN10__cxxabiv120__si_class_type_infoE" ||
         arg->getName() == "_ZTVN10__cxxabiv117__class_type_infoE" ||
@@ -4542,7 +4546,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       if (arg->hasInitializer())
         shadow->setInitializer(GetOrCreateShadowConstant(
             context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
-            width, AtomicAdd));
+            runtimeActivity, width, AtomicAdd));
       return shadow;
     }
   }
@@ -4552,8 +4556,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
 
 Constant *GradientUtils::GetOrCreateShadowFunction(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, Function *fn, DerivativeMode mode, unsigned width,
-    bool AtomicAdd) {
+    TypeAnalysis &TA, Function *fn, DerivativeMode mode, bool runtimeActivity,
+    unsigned width, bool AtomicAdd) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -4664,7 +4668,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        width, nullptr, type_args, overwritten_args, /*augmented*/ nullptr);
+        runtimeActivity, width, nullptr, type_args, overwritten_args,
+        /*augmented*/ nullptr);
 
     assert(newf);
 
@@ -4693,10 +4698,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
         /*shadowReturnUsed*/ false, type_args, overwritten_args,
-        /*forceAnonymousTape*/ true, width, AtomicAdd);
+        /*forceAnonymousTape*/ true, runtimeActivity, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        width, nullptr, type_args, overwritten_args, /*augmented*/ &augdata);
+        runtimeActivity, width, nullptr, type_args, overwritten_args,
+        /*augmented*/ &augdata);
 
     assert(newf);
 
@@ -4734,7 +4740,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     auto &augdata = Logic.CreateAugmentedPrimal(
         context, fn, retType, /*constant_args*/ types, TA, returnUsed,
         shadowReturnUsed, type_args, overwritten_args,
-        /*forceAnonymousTape*/ true, width, AtomicAdd);
+        /*forceAnonymousTape*/ true, runtimeActivity, width, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         context,
         (ReverseCacheKey){.todiff = fn,
@@ -4749,7 +4755,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .AtomicAdd = AtomicAdd,
                           .additionalType = getInt8PtrTy(fn->getContext()),
                           .forceAnonymousTape = true,
-                          .typeInfo = type_args},
+                          .typeInfo = type_args,
+                          .runtimeActivity = runtimeActivity},
         TA,
         /*map*/ &augdata);
     assert(newf);
@@ -5578,9 +5585,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return cs;
     }
   } else if (auto fn = dyn_cast<Function>(oval)) {
-    Constant *shadow =
-        GetOrCreateShadowFunction(RequestContext(nullptr, &BuilderM), Logic,
-                                  TLI, TA, fn, mode, width, AtomicAdd);
+    Constant *shadow = GetOrCreateShadowFunction(
+        RequestContext(nullptr, &BuilderM), Logic, TLI, TA, fn, mode,
+        runtimeActivity, width, AtomicAdd);
     if (width > 1) {
       SmallVector<Constant *, 3> arr;
       for (unsigned i = 0; i < width; ++i) {
@@ -5736,10 +5743,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ivops[2] = {nullptr, nullptr};
     for (int i = 0; i < 2; i++) {
       auto op = arg->getOperand(i);
-      if (!EnzymeRuntimeActivityCheck && !isa<InsertValueInst>(op)) {
-
+      bool subnull = nullShadow;
+      auto vd = TR.query(op);
+      if (!TR.anyFloat(op))
+        subnull = false;
+      if (!runtimeActivity && !isa<InsertValueInst>(op)) {
         if (isConstantValue(op)) {
-          auto vd = TR.query(op);
           if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
@@ -5757,7 +5766,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
       }
       if (!ivops[i]) {
-        ivops[i] = invertPointerM(op, bb, nullShadow);
+        ivops[i] = invertPointerM(op, bb, subnull);
       }
     }
 
@@ -5830,9 +5839,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *itval = nullptr;
     {
       auto tval = arg->getTrueValue();
-      if (!EnzymeRuntimeActivityCheck &&
-          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(tval) &&
-          !isa<ConstantPointerNull>(tval) && isConstantValue(tval)) {
+      if (!runtimeActivity && TR.query(arg)[{-1}].isPossiblePointer() &&
+          !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
+          isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -5850,9 +5859,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ifval = nullptr;
     {
       auto fval = arg->getFalseValue();
-      if (!EnzymeRuntimeActivityCheck &&
-          TR.query(arg)[{-1}].isPossiblePointer() && !isa<UndefValue>(fval) &&
-          !isa<ConstantPointerNull>(fval) && isConstantValue(fval)) {
+      if (!runtimeActivity && TR.query(arg)[{-1}].isPossiblePointer() &&
+          !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
+          isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
@@ -6199,8 +6208,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(j);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck &&
-              TR.query(phi)[{-1}].isPossiblePointer() &&
+          if (!runtimeActivity && TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
             std::string str;
@@ -6262,8 +6270,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           Value *preval = phi->getIncomingValue(i);
 
           Value *val = nullptr;
-          if (!EnzymeRuntimeActivityCheck &&
-              TR.query(phi)[{-1}].isPossiblePointer() &&
+          if (!runtimeActivity && TR.query(phi)[{-1}].isPossiblePointer() &&
               !isa<UndefValue>(preval) && !isa<ConstantPointerNull>(preval) &&
               isConstantValue(preval)) {
             std::string str;
