@@ -1457,7 +1457,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
 }
 
-void emit_tmp_free(Record *Def, raw_ostream &os, StringRef builder) {
+void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto args = Def->getValueAsListOfStrings("args");
   // allocating tmp variables is optional, return if not required
   if (args.size() == 0)
@@ -1467,7 +1467,7 @@ void emit_tmp_free(Record *Def, raw_ostream &os, StringRef builder) {
   os << "    CreateDealloc(" << builder << ", true_" << allocName << ");\n";
 }
 
-void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
+void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto args = Def->getValueAsListOfStrings("args");
   // allocating tmp variables is optional, return if not required
   if (args.size() == 0)

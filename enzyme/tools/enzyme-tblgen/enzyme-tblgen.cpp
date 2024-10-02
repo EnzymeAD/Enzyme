@@ -2746,7 +2746,12 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
 void emitMLIRDerivatives(RecordKeeper &records, raw_ostream &os);
 
-static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
+#if LLVM_VERSION_MAJOR >= 20
+static bool EnzymeTableGenMain(raw_ostream &os, const RecordKeeper &records)
+#else
+static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records)
+#endif
+{
   switch (action) {
   case MLIRDerivatives:
   case CallDerivatives:
