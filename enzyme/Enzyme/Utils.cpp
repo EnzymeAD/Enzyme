@@ -2590,7 +2590,11 @@ AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
     }
     if (auto CI = dyn_cast<GetElementPtrInst>(ptr)) {
       auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
       MapVector<Value *, APInt> VariableOffsets;
+#endif
       auto width = sizeof(size_t) * 8;
       APInt Offset(width, 0);
       bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2637,7 +2641,11 @@ findAllUsersOf(Value *AI) {
       }
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+        SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
         MapVector<Value *, APInt> VariableOffsets;
+#endif
         auto width = sizeof(size_t) * 8;
         APInt Offset(width, 0);
         bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -3471,9 +3479,16 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
+                   SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+                   APInt &ConstantOffset)
+#else
 bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
-                   APInt &ConstantOffset) {
+                   APInt &ConstantOffset)
+#endif
+{
 #if LLVM_VERSION_MAJOR >= 13
   return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
