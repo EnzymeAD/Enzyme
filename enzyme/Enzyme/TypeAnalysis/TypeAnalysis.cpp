@@ -118,9 +118,15 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"atan", Intrinsic::not_intrinsic},
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"cosh", Intrinsic::cosh},
+    {"sinh", Intrinsic::sinh},
+    {"tanh", Intrinsic::tanh},
+#else
     {"cosh", Intrinsic::not_intrinsic},
     {"sinh", Intrinsic::not_intrinsic},
     {"tanh", Intrinsic::not_intrinsic},
+#endif
     {"acosh", Intrinsic::not_intrinsic},
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
@@ -3849,6 +3855,11 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+#endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
