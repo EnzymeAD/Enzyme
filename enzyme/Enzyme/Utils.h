@@ -1693,6 +1693,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::exp:
   case Intrinsic::cos:
   case Intrinsic::sin:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::tanh:
+  case Intrinsic::cosh:
+  case Intrinsic::sinh:
+#endif
   case Intrinsic::copysign:
   case Intrinsic::fabs:
     return true;
