@@ -9294,7 +9294,7 @@ void GradientUtils::computeGuaranteedFrees() {
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
 llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::Value *tofree,
-                                    const llvm::StringRef allocationfn,
+                                    llvm::StringRef allocationfn,
                                     const llvm::DebugLoc &debuglocation,
                                     const llvm::TargetLibraryInfo &TLI,
                                     llvm::CallInst *orig,
@@ -9385,6 +9385,11 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
   if (shadowErasers.find(allocationfn) != shadowErasers.end()) {
     return shadowErasers[allocationfn](builder, tofree);
+  }
+
+  if (allocationfn == "__size_returning_new_experiment") {
+    allocationfn = "malloc";
+    tofree = builder.CreateExtractValue(tofree, 0);
   }
 
   if (tofree->getType()->isIntegerTy())

@@ -5115,6 +5115,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "__size_returning_new_experiment") {
+      auto ptr = TypeTree(BaseType::Pointer);
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      ptr = ptr.Only(0, &call);
+      ptr |= TypeTree(BaseType::Integer).Only(DL.getPointerSize(), &call);
+      updateAnalysis(&call, ptr.Only(0, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
         funcName == "ijl_gc_alloc_typed") {
       auto ptr = TypeTree(BaseType::Pointer);
