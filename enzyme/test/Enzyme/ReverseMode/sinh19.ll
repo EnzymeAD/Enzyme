@@ -12,12 +12,12 @@ entry:
 
 define double @test_derivative(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_autodiff(double (double)* nonnull @tester, double %x)
+  %0 = tail call double (ptr, ...) @__enzyme_autodiff(ptr nonnull @tester, double %x)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_autodiff(double (double)*, ...)
+declare double @__enzyme_autodiff(ptr, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
