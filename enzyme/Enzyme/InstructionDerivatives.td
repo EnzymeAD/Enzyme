@@ -336,7 +336,7 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["tanh", "", "18"],
+                  ["tanh"],
                   [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -355,7 +355,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["cosh", "", "18"],
+                  ["cosh"],
                   [(FMul (DiffeRet), (Call<(SameTypesFunc<"sinh">), [ReadNone,NoUnwind]> $x))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -374,7 +374,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["sinh", "", "18"],
+                  ["sinh"],
                   [(FMul (DiffeRet), (Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
