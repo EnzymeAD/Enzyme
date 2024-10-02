@@ -4180,6 +4180,11 @@ bool GradientUtils::shouldRecompute(const Value *val,
     case Intrinsic::sin:
     case Intrinsic::cos:
     case Intrinsic::exp:
+#if LLVM_VERSION_MAJOR >= 19
+    case Intrinsic::tanh:
+    case Intrinsic::cosh:
+    case Intrinsic::sinh:
+#endif
     case Intrinsic::log:
     case Intrinsic::nvvm_ldu_global_i:
     case Intrinsic::nvvm_ldu_global_p:

@@ -2812,6 +2812,11 @@ bool guaranteedDataDependent(Value *z) {
     case Intrinsic::sqrt:
     case Intrinsic::sin:
     case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 19
+    case Intrinsic::sinh:
+    case Intrinsic::cosh:
+    case Intrinsic::tanh:
+#endif
       return guaranteedDataDependent(II->getArgOperand(0));
     default:
       break;
