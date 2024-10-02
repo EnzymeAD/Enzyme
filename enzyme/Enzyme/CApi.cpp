@@ -1276,7 +1276,11 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
                          : cast<GEPOperator>(cast<ConstantExpr>(uw));
   auto &DL = B.GetInsertBlock()->getParent()->getParent()->getDataLayout();
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   APInt Offset(width, 0);
   bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
   (void)success;

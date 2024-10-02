@@ -1916,7 +1916,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   APInt constOffset(BitWidth, 0);
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;

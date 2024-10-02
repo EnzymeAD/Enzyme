@@ -2012,10 +2012,17 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(
+    llvm::GEPOperator *gep, const llvm::DataLayout &DL, unsigned BitWidth,
+    llvm::SmallMapVector<llvm::Value *, llvm::APInt, 4> &VariableOffsets,
+    llvm::APInt &ConstantOffset);
+#else
 bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
+#endif
 
 llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::Intrinsic::ID ID, llvm::Type *RetTy,
