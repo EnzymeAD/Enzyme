@@ -237,8 +237,8 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
       return ExitLimit(BECount, MaxBECount, MaxBECount, false,
                        {&EL0.Predicates, &EL1.Predicates});
 #else
-      return ExitLimit(BECount, MaxBECount, false,
-                       {&EL0.Predicates, &EL1.Predicates});
+        return ExitLimit(BECount, MaxBECount, false,
+                         {&EL0.Predicates, &EL1.Predicates});
 #endif
     }
     if (BO->getOpcode() == Instruction::Or) {
