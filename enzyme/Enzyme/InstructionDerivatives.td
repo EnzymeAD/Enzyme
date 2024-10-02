@@ -336,12 +336,6 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["tanh"],
-                  [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))],
-                  (ForwardFromSummedReverse),
-                  [ReadNone, NoUnwind]
-                  >;
-def : CallPattern<(Op $x),
                   ["tanhf"],
                   [(FDiv (DiffeRet), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))],
                   (ForwardFromSummedReverse),
@@ -870,6 +864,12 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   ],
                   (CFDiv (CFNeg (Shadow $z)), (CFMul $z, $z)),
                   [ReadNone, NoUnwind]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["tanh"]],
+                  [(FDiv (DiffeRet), (FMul(Intrinsic<"cosh"> $x):$c, $c))],
+                  (ForwardFromSummedReverse)
                   >;
 
 def : IntrPattern<(Op $x),
