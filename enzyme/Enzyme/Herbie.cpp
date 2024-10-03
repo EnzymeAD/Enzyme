@@ -2170,7 +2170,7 @@ public:
     collectExprInsts(oldOutput, component.inputs, exprInsts, visited);
     visited.clear();
 
-    MapVector<Instruction *, int> userCount; // Implicit topo ordering
+    MapVector<Instruction *, int> unvisitedUserCount; // Implicit topo ordering
     SmallVector<Value *, 8> todo;
     for (auto *I : exprInsts) {
       int count = 0;
@@ -2180,10 +2180,25 @@ public:
           count++;
         }
       }
-      userCount[I] = count;
+      unvisitedUserCount[I] = count;
     }
 
-    todo.push_back(oldOutput);
+    // `oldOutput` is trivially erasable
+    erasableInsts.clear();
+    erasableInsts.insert(cast<Instruction>(oldOutput));
+
+    // Consider all operands of `oldOutput` as the starting point
+    auto operands = isa<CallInst>(oldOutput)
+                        ? cast<CallInst>(oldOutput)->args()
+                        : cast<Instruction>(oldOutput)->operands();
+    for (auto &operand : operands) {
+      if (auto *oI = dyn_cast<Instruction>(operand)) {
+        if (unvisitedUserCount.count(oI) && --unvisitedUserCount[oI] == 0) {
+          todo.push_back(operand);
+        }
+      }
+    }
+
     while (!todo.empty()) {
       auto *cur = todo.pop_back_val();
       if (!visited.insert(cur).second)
@@ -2199,8 +2214,8 @@ public:
               continue;
             }
           }
-          // If the parent instruction is NOT erasable or the user is not
-          // an instruction, then the current instruction is not erasable
+          // If the user is not an intruction or the user instruction is not an
+          // erasable instruction, then the current instruction is not erasable
           llvm::errs() << "Can't erase " << *I << " because of " << *user
                        << "\n";
           usedOutside = true;
@@ -2218,7 +2233,7 @@ public:
             continue;
 
           if (auto *oI = dyn_cast<Instruction>(operand)) {
-            if (userCount.count(oI) && --userCount[oI] == 0) {
+            if (unvisitedUserCount.count(oI) && --unvisitedUserCount[oI] == 0) {
               todo.push_back(operand);
             }
           }
@@ -3017,7 +3032,7 @@ bool accuracyDPSolver(
               } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
                 llvm::errs()
                     << "\t\tACC: " << item->candidates[step.candidateIndex].desc
-                    << " (" << step.candidateIndex << ")\n";
+                    << " (#" << step.candidateIndex << ")\n";
               } else {
                 llvm_unreachable(
                     "accuracyDPSolver: Unexpected type of solution step");
