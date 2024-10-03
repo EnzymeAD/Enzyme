@@ -783,7 +783,7 @@ struct PTCandidate {
 
   // If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
   // values and change outputs in VMap to new casted outputs.
-  void apply(const FPCC &component, ValueToValueMapTy *VMap = nullptr) {
+  void apply(FPCC &component, ValueToValueMapTy *VMap = nullptr) {
     SetVector<Instruction *> operations;
     ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
     if (VMap) {
@@ -900,6 +900,10 @@ struct PTCandidate {
           oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
         }
         cast<Instruction>(oldV)->eraseFromParent();
+
+        // The change is being materialized to the original component
+        if (!VMap)
+          component.operations.remove(cast<Instruction>(oldV));
       }
     }
   }
@@ -1865,8 +1869,8 @@ InstructionCost getCompCost(
   return cost;
 }
 
-InstructionCost getCompCost(const FPCC &component,
-                            const TargetTransformInfo &TTI, PTCandidate &pt) {
+InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
+                            PTCandidate &pt) {
   assert(!component.outputs.empty());
 
   InstructionCost cost = 0;
