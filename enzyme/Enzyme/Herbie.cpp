@@ -362,7 +362,7 @@ public:
                                           "herbie.pow");
     } else if (op == "fma") {
       val = builder.CreateIntrinsic(
-          Intrinsic::fmuladd, {operandValues[0]->getType()},
+          Intrinsic::fma, {operandValues[0]->getType()},
           {operandValues[0], operandValues[1], operandValues[2]}, nullptr,
           "herbie.fma");
     } else if (op == "fabs") {
@@ -618,16 +618,22 @@ bool herbiable(const Value &Val) {
   }
 }
 
-enum class PrecisionChangeType { FP16, FP32, FP64 };
+enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
 
 unsigned getMPFRPrec(PrecisionChangeType type) {
   switch (type) {
+  case PrecisionChangeType::BF16:
+    return 8;
   case PrecisionChangeType::FP16:
     return 11;
   case PrecisionChangeType::FP32:
     return 24;
   case PrecisionChangeType::FP64:
     return 53;
+  case PrecisionChangeType::FP80:
+    return 64;
+  case PrecisionChangeType::FP128:
+    return 113;
   default:
     llvm_unreachable("Unsupported FP precision");
   }
@@ -635,12 +641,18 @@ unsigned getMPFRPrec(PrecisionChangeType type) {
 
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
   switch (type) {
+  case PrecisionChangeType::BF16:
+    return Type::getBFloatTy(context);
   case PrecisionChangeType::FP16:
     return Type::getHalfTy(context);
   case PrecisionChangeType::FP32:
     return Type::getFloatTy(context);
   case PrecisionChangeType::FP64:
     return Type::getDoubleTy(context);
+  case PrecisionChangeType::FP80:
+    return Type::getX86_FP80Ty(context);
+  case PrecisionChangeType::FP128:
+    return Type::getFP128Ty(context);
   default:
     llvm_unreachable("Unsupported FP precision");
   }
@@ -648,11 +660,17 @@ Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
 
 PrecisionChangeType getPrecisionChangeType(Type *type) {
   if (type->isHalfTy()) {
+    return PrecisionChangeType::BF16;
+  } else if (type->isHalfTy()) {
     return PrecisionChangeType::FP16;
   } else if (type->isFloatTy()) {
     return PrecisionChangeType::FP32;
   } else if (type->isDoubleTy()) {
     return PrecisionChangeType::FP64;
+  } else if (type->isX86_FP80Ty()) {
+    return PrecisionChangeType::FP80;
+  } else if (type->isFP128Ty()) {
+    return PrecisionChangeType::FP128;
   } else {
     llvm_unreachable("Unsupported FP precision");
   }
@@ -660,12 +678,18 @@ PrecisionChangeType getPrecisionChangeType(Type *type) {
 
 StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
   switch (type) {
+  case PrecisionChangeType::BF16:
+    return "BF16";
   case PrecisionChangeType::FP16:
     return "FP16";
   case PrecisionChangeType::FP32:
     return "FP32";
   case PrecisionChangeType::FP64:
     return "FP64";
+  case PrecisionChangeType::FP80:
+    return "FP80";
+  case PrecisionChangeType::FP128:
+    return "FP128";
   default:
     return "Unknown PT type";
   }
@@ -1616,8 +1640,8 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           case Intrinsic::fabs:
             OpcodeName = "fabs";
             break;
-          case Intrinsic::fmuladd:
-            OpcodeName = "fmuladd";
+          case Intrinsic::fma:
+            OpcodeName = "fma";
             break;
           case Intrinsic::pow:
             OpcodeName = "pow";
@@ -3523,8 +3547,9 @@ B2:
         }
 
         SmallVector<PrecisionChangeType> precTypes{
-            /*PrecisionChangeType::FP16,*/
-            PrecisionChangeType::FP32, PrecisionChangeType::FP64};
+            /* PrecisionChangeType::BF16, PrecisionChangeType::FP16, */
+            PrecisionChangeType::FP32, PrecisionChangeType::FP64,
+            PrecisionChangeType::FP80, PrecisionChangeType::FP128};
 
         for (auto prec : precTypes) {
           StringRef precStr = getPrecisionChangeTypeString(prec);
