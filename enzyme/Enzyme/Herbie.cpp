@@ -1703,19 +1703,47 @@ InstructionCost getInstructionCompCost(const Instruction *I,
 
     std::string PrecisionName;
     Type *Ty = I->getType();
-    if (I->getOpcode() == Instruction::FPExt ||
-        I->getOpcode() == Instruction::FPTrunc) {
-      Ty = I->getOperand(0)->getType();
-    }
-    if (Ty->isDoubleTy()) {
-      PrecisionName = "double";
-    } else if (Ty->isFloatTy()) {
-      PrecisionName = "float";
+    if (Ty->isBFloatTy()) {
+      PrecisionName = "bf16";
     } else if (Ty->isHalfTy()) {
       PrecisionName = "half";
+    } else if (Ty->isFloatTy()) {
+      PrecisionName = "float";
+    } else if (Ty->isDoubleTy()) {
+      PrecisionName = "double";
+    } else if (Ty->isX86_FP80Ty()) {
+      PrecisionName = "fp80";
+    } else if (Ty->isFP128Ty()) {
+      PrecisionName = "fp128";
     } else {
       std::string msg = "Custom cost model: unsupported precision type!";
       llvm_unreachable(msg.c_str());
+    }
+
+    if (I->getOpcode() == Instruction::FPExt ||
+        I->getOpcode() == Instruction::FPTrunc) {
+      Type *SrcTy = I->getOperand(0)->getType();
+      std::string SrcPrecisionName;
+
+      if (SrcTy->isBFloatTy()) {
+        SrcPrecisionName = "bf16";
+      } else if (SrcTy->isHalfTy()) {
+        SrcPrecisionName = "half";
+      } else if (SrcTy->isFloatTy()) {
+        SrcPrecisionName = "float";
+      } else if (SrcTy->isDoubleTy()) {
+        SrcPrecisionName = "double";
+      } else if (SrcTy->isX86_FP80Ty()) {
+        SrcPrecisionName = "fp80";
+      } else if (SrcTy->isFP128Ty()) {
+        SrcPrecisionName = "fp128";
+      } else {
+        std::string msg = "Custom cost model: unsupported precision type!";
+        llvm_unreachable(msg.c_str());
+      }
+
+      OpcodeName += "_" + SrcPrecisionName + "_to_" + PrecisionName;
+      PrecisionName = SrcPrecisionName;
     }
 
     auto Key = std::make_pair(OpcodeName, PrecisionName);
