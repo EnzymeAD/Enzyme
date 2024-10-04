@@ -583,6 +583,45 @@ public:
   }
 };
 
+void topoSort(const SetVector<Instruction *> &insts,
+              SmallVectorImpl<Instruction *> &instsSorted) {
+  SmallPtrSet<Instruction *, 8> visited;
+  SmallPtrSet<Instruction *, 8> onStack;
+
+  std::function<void(Instruction *)> dfsVisit = [&](Instruction *I) {
+    if (visited.count(I))
+      return;
+    visited.insert(I);
+    onStack.insert(I);
+
+    auto operands =
+        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+    for (auto &op : operands) {
+      if (isa<Instruction>(op)) {
+        Instruction *oI = cast<Instruction>(op);
+        if (insts.contains(oI)) {
+          if (onStack.count(oI)) {
+            llvm_unreachable(
+                "topoSort: Cycle detected in instruction dependencies!");
+          }
+          dfsVisit(oI);
+        }
+      }
+    }
+
+    onStack.erase(I);
+    instsSorted.push_back(I);
+  };
+
+  for (auto *I : insts) {
+    if (!visited.count(I)) {
+      dfsVisit(I);
+    }
+  }
+
+  llvm::reverse(instsSorted);
+}
+
 bool herbiable(const Value &Val) {
   const Instruction *I = dyn_cast<Instruction>(&Val);
   if (!I)
@@ -813,7 +852,8 @@ struct PTCandidate {
       for (auto node : change.nodes) {
         assert(isa<Instruction>(node->value));
         auto *I = cast<Instruction>(node->value);
-        if (!component.operations.contains(I)) {
+        // TODO: Change to assertion
+        if (!operations.contains(I)) {
           // Already erased by `AO.apply()`.
           continue;
         }
@@ -824,47 +864,11 @@ struct PTCandidate {
         instsToChange.insert(I);
       }
 
-      // For implicit topo ordering wrt operand dependencies
-      MapVector<Instruction *, int> operandCount;
-      for (auto *I : instsToChange) {
-        // We only change precisions of instructions
-        int count = 0;
-        auto operands =
-            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-        for (auto &op : operands) {
-          if (isa<Instruction>(op) &&
-              instsToChange.contains(cast<Instruction>(op))) {
-            count++;
-          }
-        }
-        operandCount[I] = count;
+      SmallVector<Instruction *, 8> instsToChangeSorted;
+      topoSort(instsToChange, instsToChangeSorted);
 
-        if (0 == count) {
-          todo.push_back(I);
-        }
-      }
-
-      while (!todo.empty()) {
-        auto *cur = todo.pop_back_val();
-        // llvm::errs() << "PT Processing: " << *cur << "\n";
-        if (!seen.insert(cur).second)
-          continue;
-
-        if (isa<Instruction>(cur) &&
-            operations.contains(cast<Instruction>(cur))) {
-          changePrecision(cast<Instruction>(cur), change, oldToNew);
-        }
-
-        for (auto user : cur->users()) {
-          if (isa<Instruction>(user) &&
-              operandCount.count(cast<Instruction>(user))) {
-            if (0 == --operandCount[cast<Instruction>(user)]) {
-              // llvm::errs() << "PT Adding: " << *cast<Instruction>(user) <<
-              // "\n";
-              todo.push_back(cast<Instruction>(user));
-            }
-          }
-        }
+      for (auto *I : instsToChangeSorted) {
+        changePrecision(I, change, oldToNew);
       }
 
       // Restore the precisions of the last level of instructions to be changed.
@@ -879,9 +883,10 @@ struct PTCandidate {
         }
 
         for (auto user : oldV->users()) {
+          auto *I = cast<Instruction>(oldV);
           if (isa<Instruction>(user) &&
               !instsToChange.contains(cast<Instruction>(user))) {
-            IRBuilder<> builder(cast<Instruction>(user));
+            IRBuilder<> builder(I->getParent(), ++BasicBlock::iterator(I));
 
             newV = builder.CreateFPCast(
                 newV, getLLVMFPType(change.oldType, builder.getContext()));
@@ -2174,74 +2179,35 @@ public:
     collectExprInsts(oldOutput, component.inputs, exprInsts, visited);
     visited.clear();
 
-    MapVector<Instruction *, int> unvisitedUserCount; // Implicit topo ordering
-    SmallVector<Value *, 8> todo;
-    for (auto *I : exprInsts) {
-      int count = 0;
-      for (auto user : I->users()) {
-        if (isa<Instruction>(user) &&
-            exprInsts.contains(cast<Instruction>(user))) {
-          count++;
-        }
-      }
-      unvisitedUserCount[I] = count;
-    }
+    SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
+
+    SmallVector<Instruction *, 8> instsToProcessSorted;
+    topoSort(instsToProcess, instsToProcessSorted);
 
     // `oldOutput` is trivially erasable
     erasableInsts.clear();
     erasableInsts.insert(cast<Instruction>(oldOutput));
 
-    // Consider all operands of `oldOutput` as the starting point
-    auto operands = isa<CallInst>(oldOutput)
-                        ? cast<CallInst>(oldOutput)->args()
-                        : cast<Instruction>(oldOutput)->operands();
-    for (auto &operand : operands) {
-      if (auto *oI = dyn_cast<Instruction>(operand)) {
-        if (unvisitedUserCount.count(oI) && --unvisitedUserCount[oI] == 0) {
-          todo.push_back(operand);
-        }
-      }
-    }
-
-    while (!todo.empty()) {
-      auto *cur = todo.pop_back_val();
-      if (!visited.insert(cur).second)
+    for (auto *I : reverse(instsToProcessSorted)) {
+      if (erasableInsts.contains(I))
         continue;
 
-      llvm::errs() << "Visiting " << *cur << "\n";
-
-      if (auto *I = dyn_cast<Instruction>(cur)) {
-        bool usedOutside = false;
-        for (auto user : I->users()) {
-          if (auto *userI = dyn_cast<Instruction>(user)) {
-            if (erasableInsts.contains(userI)) {
-              continue;
-            }
-          }
-          // If the user is not an intruction or the user instruction is not an
-          // erasable instruction, then the current instruction is not erasable
-          llvm::errs() << "Can't erase " << *I << " because of " << *user
-                       << "\n";
-          usedOutside = true;
-          break;
-        }
-
-        if (!usedOutside) {
-          erasableInsts.insert(I);
-        }
-
-        auto operands =
-            isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-        for (auto &operand : operands) {
-          if (visited.contains(operand))
+      bool usedOutside = false;
+      for (auto user : I->users()) {
+        if (auto *userI = dyn_cast<Instruction>(user)) {
+          if (erasableInsts.contains(userI)) {
             continue;
-
-          if (auto *oI = dyn_cast<Instruction>(operand)) {
-            if (unvisitedUserCount.count(oI) && --unvisitedUserCount[oI] == 0) {
-              todo.push_back(operand);
-            }
           }
         }
+        // If the user is not an intruction or the user instruction is not an
+        // erasable instruction, then the current instruction is not erasable
+        llvm::errs() << "Can't erase " << *I << " because of " << *user << "\n";
+        usedOutside = true;
+        break;
+      }
+
+      if (!usedOutside) {
+        erasableInsts.insert(I);
       }
     }
 
