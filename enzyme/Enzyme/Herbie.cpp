@@ -813,6 +813,10 @@ struct PTCandidate {
       for (auto node : change.nodes) {
         assert(isa<Instruction>(node->value));
         auto *I = cast<Instruction>(node->value);
+        if (!component.operations.contains(I)) {
+          // Already erased by `AO.apply()`.
+          continue;
+        }
         if (VMap) {
           assert(VMap->count(I));
           I = cast<Instruction>(VMap->lookup(I));
@@ -3042,6 +3046,13 @@ bool accuracyDPSolver(
       }
     }
     llvm::errs() << "*** End of DP Table ***\n\n";
+    llvm::errs() << "*** Critical Computation Costs ***\n";
+    // Just print all computation costs in the DP table
+    for (const auto &pair : costToAccuracyMap) {
+      llvm::errs() << pair.first << ",";
+    }
+    llvm::errs() << "\n";
+    llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
   }
 
   double minAccCost = std::numeric_limits<double>::infinity();
@@ -3065,8 +3076,8 @@ bool accuracyDPSolver(
   llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
 
   if (bestCompCost == 0 && minAccCost == 0) {
-    llvm::errs()
-        << "WARNING: DP Solver recommended no expression-level optimization.\n";
+    llvm::errs() << "WARNING: DP Solver recommended no optimization given the "
+                    "current computation cost budget.\n";
     return changed;
   }
 
@@ -3593,10 +3604,12 @@ B2:
                        << std::fabs(opsToChange.back()->grad) << "]\n";
         }
 
-        SmallVector<PrecisionChangeType> precTypes{
-            /* PrecisionChangeType::BF16, PrecisionChangeType::FP16, */
-            PrecisionChangeType::FP32, PrecisionChangeType::FP64,
-            PrecisionChangeType::FP80, PrecisionChangeType::FP128};
+        SmallVector<PrecisionChangeType> precTypes{// PrecisionChangeType::BF16,
+                                                   // PrecisionChangeType::FP16,
+                                                   PrecisionChangeType::FP32,
+                                                   PrecisionChangeType::FP64,
+                                                   // PrecisionChangeType::FP80,
+                                                   PrecisionChangeType::FP128};
 
         for (auto prec : precTypes) {
           StringRef precStr = getPrecisionChangeTypeString(prec);
