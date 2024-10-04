@@ -120,6 +120,9 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
 
 llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C);
 
+
+__attribute__((weak)) void enzyme_fp_check(double);
+
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(
     llvm::IRBuilder<> &, llvm::CallInst *, llvm::ArrayRef<llvm::Value *>,
