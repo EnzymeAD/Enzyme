@@ -82,7 +82,8 @@ public:
       auto attr = DenseElementsAttr::get(tenType, apvalue);
       return builder.create<arith::ConstantOp>(loc, tenType, attr);
     }
-    llvm::errs() << " cannot create null value of tensor type: " << tenType << "\n";
+    llvm::errs() << " cannot create null value of tensor type: " << tenType
+                 << "\n";
     assert(0);
     return nullptr;
   }
