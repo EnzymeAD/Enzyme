@@ -3699,12 +3699,13 @@ B2:
                        << std::fabs(opsToChange.back()->grad) << "]\n";
         }
 
-        SmallVector<PrecisionChangeType> precTypes{// PrecisionChangeType::BF16,
-                                                   // PrecisionChangeType::FP16,
-                                                   PrecisionChangeType::FP32,
-                                                   PrecisionChangeType::FP64,
-                                                   // PrecisionChangeType::FP80,
-                                                   PrecisionChangeType::FP128};
+        SmallVector<PrecisionChangeType> precTypes{
+            // PrecisionChangeType::BF16,
+            // PrecisionChangeType::FP16,
+            PrecisionChangeType::FP32, PrecisionChangeType::FP64,
+            // PrecisionChangeType::FP80,
+            //  PrecisionChangeType::FP128
+        };
 
         for (auto prec : precTypes) {
           StringRef precStr = getPrecisionChangeTypeString(prec);
