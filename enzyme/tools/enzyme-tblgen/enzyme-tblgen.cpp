@@ -169,7 +169,7 @@ raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
 }
 
 void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
-                     const Twine &prefix) {
+                     const Twine &prefix, ActionType intrinsic) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     for (size_t i = 0; i < resultRoot->arg_size(); i++) {
       auto arg = resultRoot->getArg(i);
@@ -179,14 +179,18 @@ void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
       }
       if (name) {
         auto namev = name->getAsUnquotedString();
-        os << curIndent << "llvm::Value *" << prefix << "_" + namev
-           << " = nullptr;\n";
+        if (intrinsic == MLIRDerivatives)
+          os << curIndent << "mlir::Value " << prefix << "_" + namev
+             << " = nullptr;\n";
+        else
+          os << curIndent << "llvm::Value *" << prefix << "_" + namev
+             << " = nullptr;\n";
       }
-      initializeNames(curIndent, os, arg, prefix);
+      initializeNames(curIndent, os, arg, prefix, intrinsic);
     }
   } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
     for (auto elem : *lst)
-      initializeNames(curIndent, os, elem, prefix);
+      initializeNames(curIndent, os, elem, prefix, intrinsic);
   }
 }
 
@@ -963,7 +967,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       insert(npattern, {});
 
-      initializeNames(curIndent + INDENT, os, insts, "local");
+      initializeNames(curIndent + INDENT, os, insts, "local", intrinsic);
 
       ArrayRef<unsigned> nretidx{};
 
@@ -1697,7 +1701,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
          << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
          << ".getOperand(" << argIdx << ")->getType()) ) {\n";
 
-    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
+    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                    intrinsic);
     if (intrinsic == MLIRDerivatives)
       os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
     else
@@ -2002,8 +2007,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
         std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
             [&](ArrayRef<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
@@ -2153,8 +2158,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << curIndent << INDENT
            << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
         std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
             [&](ArrayRef<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
