@@ -744,8 +744,7 @@ struct FPCC {
   FPCC() = default;
   explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
                 SetVector<Instruction *> operations)
-      : inputs(std::move(inputs)), outputs(std::move(outputs)),
-        operations(std::move(operations)) {}
+      : inputs(inputs), outputs(outputs), operations(operations) {}
 };
 
 struct PrecisionChange {
@@ -814,6 +813,7 @@ struct PTCandidate {
   double accuracyCost;
   InstructionCost CompCost;
   std::string desc;
+  std::unordered_map<FPNode *, double> perOutputAccCost;
 
   // TODO:
   explicit PTCandidate(SmallVector<PrecisionChange> &changes,
@@ -1957,8 +1957,8 @@ InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
     }
   }
 
-  llvm::errs() << "DEBUG: " << pt.desc << "\n";
-  FClone->print(llvm::errs());
+  // llvm::errs() << "DEBUG: " << pt.desc << "\n";
+  // FClone->print(llvm::errs());
 
   FClone->eraseFromParent();
 
@@ -2084,9 +2084,23 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
   }
 }
 
+class ApplicableOutput;
+class ApplicableFPCC;
+
+struct SolutionStep {
+  std::variant<ApplicableOutput *, ApplicableFPCC *> item;
+  size_t candidateIndex;
+
+  SolutionStep(ApplicableOutput *ao_, size_t idx)
+      : item(ao_), candidateIndex(idx) {}
+
+  SolutionStep(ApplicableFPCC *acc_, size_t idx)
+      : item(acc_), candidateIndex(idx) {}
+};
+
 class ApplicableOutput {
 public:
-  FPCC &component;
+  FPCC *component;
   Value *oldOutput;
   std::string expr;
   double grad;
@@ -2102,7 +2116,7 @@ public:
   explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
                             double grad, unsigned executions,
                             const TargetTransformInfo &TTI)
-      : component(component), oldOutput(oldOutput), expr(expr), grad(grad),
+      : component(&component), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions), TTI(TTI) {
     initialCompCost = getCompCost({oldOutput}, component.inputs, TTI);
     findErasableInstructions();
@@ -2145,20 +2159,14 @@ public:
       if (!I->use_empty())
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       I->eraseFromParent();
-      component.operations.remove(I); // Avoid a second removal
+      component->operations.remove(I); // Avoid a second removal
     }
 
-    component.outputs_rewritten++;
+    component->outputs_rewritten++;
   }
 
   // Lower is better
   InstructionCost getCompCostDelta(size_t candidateIndex) {
-    // When PT is involved, don't subtract the cost of erasable instructions
-    // since they're still considered as part of PT
-    if (FPOptEnablePT) {
-      return candidates[candidateIndex].CompCost * executions;
-    }
-
     InstructionCost erasableCost = 0;
 
     for (auto *I : erasableInsts) {
@@ -2176,7 +2184,7 @@ public:
   void findErasableInstructions() {
     SmallPtrSet<Value *, 8> visited;
     SmallPtrSet<Instruction *, 8> exprInsts;
-    collectExprInsts(oldOutput, component.inputs, exprInsts, visited);
+    collectExprInsts(oldOutput, component->inputs, exprInsts, visited);
     visited.clear();
 
     SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
@@ -2219,21 +2227,27 @@ public:
   }
 };
 
+void setUnifiedAccuracyCost(
+    ApplicableFPCC &ACC,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap);
+
 class ApplicableFPCC {
 public:
-  FPCC &component;
+  FPCC *component;
   const TargetTransformInfo &TTI;
   double initialAccCost; // Requires manual initialization
   InstructionCost initialCompCost;
   unsigned executions; // Requires manual initialization
+  std::unordered_map<FPNode *, double> perOutputInitialAccCost;
 
-  SmallVector<PTCandidate> candidates;
+  SmallVector<PTCandidate, 8> candidates;
 
   explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
-      : component(fpcc), TTI(TTI) {
+      : component(&fpcc), TTI(TTI) {
     initialCompCost =
-        getCompCost({component.outputs.begin(), component.outputs.end()},
-                    component.inputs, TTI);
+        getCompCost({component->outputs.begin(), component->outputs.end()},
+                    component->inputs, TTI);
   }
 
   void apply(size_t candidateIndex) {
@@ -2247,29 +2261,98 @@ public:
     // Restore precisions of the last level of instructions to be changed.
     llvm::errs() << "Applying PT candidate #" << candidateIndex << ": "
                  << candidates[candidateIndex].desc << "\n";
-    candidates[candidateIndex].apply(component);
+    candidates[candidateIndex].apply(*component);
   }
 
   // Lower is better
   InstructionCost getCompCostDelta(size_t candidateIndex) {
     // TODO: adjust this based on erasured instructions
-    // llvm::errs() << "Evaluating PT candidate: "
-    //              << candidates[candidateIndex].desc << "\n";
-    // llvm::errs() << "candidate.CompCost: "
-    //              << candidates[candidateIndex].CompCost << "\n";
-    // llvm::errs() << "initialCompCost: " << initialCompCost << "\n";
-    // llvm::errs() << "executions: " << executions << "\n";
     return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
   }
 
   // Lower is better
   double getAccCostDelta(size_t candidateIndex) {
-    // llvm::errs() << "Evaluating PT candidate: "
-    //              << candidates[candidateIndex].desc << "\n";
-    // llvm::errs() << "candidate.accuracyCost: "
-    //              << candidates[candidateIndex].accuracyCost << "\n";
-    // llvm::errs() << "initialAccCost: " << initialAccCost << "\n";
     return candidates[candidateIndex].accuracyCost - initialAccCost;
+  }
+
+  // TODO: Implement this
+  InstructionCost
+  getAdjustedCompCostDelta(size_t candidateIndex,
+                           const SmallVectorImpl<SolutionStep> &steps) {
+    ApplicableFPCC adjustedACC = *this;
+    FPCC newComponet = *this->component;
+    adjustedACC.component = &newComponet;
+    assert(&adjustedACC.component != &component);
+
+    for (auto &step : steps) {
+      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+        const auto &AO = **ptr;
+        if (AO.component == component) {
+          // Eliminate erasadable instructions from the adjusted ACC
+          adjustedACC.component->operations.remove_if(
+              [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
+          adjustedACC.component->outputs.remove(
+              cast<Instruction>(AO.oldOutput));
+          assert(AO.erasableInsts.size() == 0 ||
+                 adjustedACC.component->operations.size() <
+                         component->operations.size() &&
+                     "Failed to adjust the ACC");
+        }
+      }
+    }
+
+    // If all outputs are rewritten, then the adjusted ACC is empty
+    if (adjustedACC.component->outputs.empty()) {
+      return 0;
+    }
+
+    adjustedACC.initialCompCost =
+        getCompCost({adjustedACC.component->outputs.begin(),
+                     adjustedACC.component->outputs.end()},
+                    adjustedACC.component->inputs, TTI);
+    for (auto &candidate : adjustedACC.candidates) {
+      candidate.CompCost = getCompCost(*adjustedACC.component, TTI, candidate);
+    }
+    return adjustedACC.getCompCostDelta(candidateIndex);
+  }
+
+  double getAdjustedAccCostDelta(
+      size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+      std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    double totalCandidateAccCost = 0.0;
+    double totalInitialAccCost = 0.0;
+
+    // Collect erased output nodes
+    SmallPtrSet<FPNode *, 8> stepNodes;
+    for (const auto &step : steps) {
+      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+        const auto &AO = **ptr;
+        if (AO.component == component) {
+          auto it = valueToNodeMap.find(AO.oldOutput);
+          if (it != valueToNodeMap.end() && it->second) {
+            stepNodes.insert(it->second.get());
+          }
+        }
+      }
+    }
+
+    // Iterate over all output nodes and sum costs for nodes not erased
+    for (auto &[node, cost] : perOutputInitialAccCost) {
+      if (stepNodes.count(node))
+        continue;
+
+      totalInitialAccCost += cost;
+    }
+
+    for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
+      if (stepNodes.count(node))
+        continue;
+
+      totalCandidateAccCost += cost;
+    }
+
+    return totalCandidateAccCost - totalInitialAccCost;
   }
 };
 
@@ -2286,7 +2369,7 @@ void setUnifiedAccuracyCost(
 
   SmallVector<double, 4> goldVals;
   goldVals.resize(FPOptNumSamples);
-  double initialAC = 0.;
+  double initAC = 0.;
 
   unsigned numValidSamples = 0;
   for (const auto &pair : enumerate(sampledPoints)) {
@@ -2300,12 +2383,12 @@ void setUnifiedAccuracyCost(
     double realVal = results[0];
 
     if (!std::isnan(goldVal) && !std::isnan(realVal)) {
-      initialAC += std::fabs((goldVal - realVal) * AO.grad);
+      initAC += std::fabs((goldVal - realVal) * AO.grad);
       numValidSamples++;
     }
   }
 
-  AO.initialAccCost = initialAC / numValidSamples;
+  AO.initialAccCost = initAC / numValidSamples;
   assert(numValidSamples && "No valid samples for AO -- try increasing the "
                             "number of samples");
   assert(!std::isnan(AO.initialAccCost));
@@ -2357,65 +2440,118 @@ void setUnifiedAccuracyCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
-  getSampledPoints(ACC.component.inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(ACC.component->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
-  double initialAC = 0.;
+  double initAC = 0.;
   SmallMapVector<FPNode *, SmallVector<double, 4>, 4>
       goldVals; // output -> gold vals
-  for (auto *output : ACC.component.outputs) {
-    goldVals[valueToNodeMap[output].get()].resize(FPOptNumSamples);
+  for (auto *output : ACC.component->outputs) {
+    auto *node = valueToNodeMap[output].get();
+    goldVals[node].resize(FPOptNumSamples);
+    ACC.perOutputInitialAccCost[node] = 0.;
   }
 
   SmallVector<FPNode *, 4> outputs;
-  for (auto *output : ACC.component.outputs) {
+  for (auto *output : ACC.component->outputs) {
     outputs.push_back(valueToNodeMap[output].get());
   }
 
   unsigned numValidSamples = 0;
   for (const auto &pair : enumerate(sampledPoints)) {
     SmallVector<double, 8> results;
+
+    // Get ground truth values for all outputs
     getMPFRValues(outputs, pair.value(), results, true, 53);
     for (const auto &[output, result] : zip(outputs, results)) {
       goldVals[output][pair.index()] = result;
     }
 
+    // Emulate FPCC with parsed precision
     getMPFRValues(outputs, pair.value(), results, false);
+
+    bool validSample = true;
     for (const auto &[output, result] : zip(outputs, results)) {
       double goldVal = goldVals[output][pair.index()];
-      if (!std::isnan(goldVal) && !std::isnan(result)) {
-        initialAC += std::fabs((goldVal - result) * output->grad);
-        numValidSamples++;
+      if (std::isnan(goldVal) || std::isnan(result)) {
+        validSample = false;
+        break;
       }
     }
+
+    if (!validSample) {
+      // Discard the sample if any of the output (whether a ground truth or
+      // an emulated result) is NaN
+      continue;
+    }
+
+    for (const auto &[output, result] : zip(outputs, results)) {
+      double goldVal = goldVals[output][pair.index()];
+      double diff = std::fabs((goldVal - result) * output->grad);
+      initAC += diff;
+      ACC.perOutputInitialAccCost[output] += diff;
+    }
+    numValidSamples++;
   }
 
   assert(numValidSamples && "No valid samples for ACC -- try increasing the "
                             "number of samples");
-  ACC.initialAccCost = initialAC / numValidSamples;
+
+  // Normalize accuracy costs
+  for (auto &[_, accCost] : ACC.perOutputInitialAccCost) {
+    accCost /= numValidSamples;
+  }
+  ACC.initialAccCost = initAC / numValidSamples;
   assert(!std::isnan(ACC.initialAccCost));
 
+  // Compute accuracy costs for each PT candidate
   for (auto &candidate : ACC.candidates) {
     numValidSamples = 0;
     double ac = 0.;
+
+    for (auto *output : ACC.component->outputs) {
+      auto *node = valueToNodeMap[output].get();
+      candidate.perOutputAccCost[node] = 0.;
+    }
+
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 8> results;
       getMPFRValues(outputs, pair.value(), results, false, 0, &candidate);
 
+      bool validSample = true;
+      for (const auto &[output, result] : zip(outputs, results)) {
+        double goldVal = goldVals[output][pair.index()];
+        if (std::isnan(goldVal) || std::isnan(result)) {
+          validSample = false;
+          break;
+        }
+      }
+
+      if (!validSample) {
+        // Discard the sample if any of the output (whether a ground truth or
+        // an emulated result) is NaN
+        continue;
+      }
+
       for (const auto &[output, result] : zip(outputs, results)) {
         double goldVal = goldVals[output][pair.index()];
         if (!std::isnan(goldVal) && !std::isnan(result)) {
-          ac += std::fabs((goldVal - result) * output->grad);
-          numValidSamples++;
+          double diff = std::fabs((goldVal - result) * output->grad);
+          ac += diff;
+          candidate.perOutputAccCost[output] += diff;
         }
       }
+      numValidSamples++;
     }
     assert(numValidSamples && "No valid samples for ACC -- try increasing the "
                               "number of samples");
+
+    // Normalize accuracy costs
+    for (auto &[_, accCost] : candidate.perOutputAccCost) {
+      accCost /= numValidSamples;
+    }
     candidate.accuracyCost = ac / numValidSamples;
     assert(!std::isnan(candidate.accuracyCost));
-    // llvm::errs() << "Accuracy cost for PT candidate (" << candidate.desc
-    //              << "): " << candidate.accuracyCost << "\n";
   }
 }
 
@@ -2807,17 +2943,6 @@ bool accuracyGreedySolver(
   return changed;
 }
 
-struct SolutionStep {
-  std::variant<ApplicableOutput *, ApplicableFPCC *> item;
-  size_t candidateIndex;
-
-  SolutionStep(ApplicableOutput *ao_, size_t idx)
-      : item(ao_), candidateIndex(idx) {}
-
-  SolutionStep(ApplicableFPCC *acc_, size_t idx)
-      : item(acc_), candidateIndex(idx) {}
-};
-
 bool accuracyDPSolver(
     SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -2875,6 +3000,7 @@ bool accuracyDPSolver(
       }
     }
 
+    // TODO: Do not prune AO parts of the DP table since AOs influence ACCs
     CostMap prunedCostToAccuracyMap;
     SolutionMap prunedCostToSolutionMap;
 
@@ -2927,8 +3053,11 @@ bool accuracyDPSolver(
 
       for (auto &candidate : enumerate(ACC.candidates)) {
         size_t i = candidate.index();
-        auto candCompCost = ACC.getCompCostDelta(i);
-        auto candAccCost = ACC.getAccCostDelta(i);
+        auto candCompCost =
+            ACC.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
+        auto candAccCost =
+            ACC.getAdjustedAccCostDelta(i, costToSolutionMap[currCompCost],
+                                        valueToNodeMap, symbolToValueMap);
 
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
