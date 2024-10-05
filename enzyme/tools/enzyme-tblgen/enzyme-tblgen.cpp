@@ -186,11 +186,11 @@ void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
           os << curIndent << "llvm::Value *" << prefix << "_" + namev
              << " = nullptr;\n";
       }
-      initializeNames(curIndent, os, arg, prefix);
+      initializeNames(curIndent, os, arg, prefix, intrinsic);
     }
   } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
     for (auto elem : *lst)
-      initializeNames(curIndent, os, elem, prefix);
+      initializeNames(curIndent, os, elem, prefix, intrinsic);
   }
 }
 
@@ -1701,7 +1701,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
          << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
          << ".getOperand(" << argIdx << ")->getType()) ) {\n";
 
-    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
+    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                    intrinsic);
     if (intrinsic == MLIRDerivatives)
       os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
     else
@@ -2006,8 +2007,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
         std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
             [&](ArrayRef<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
@@ -2157,8 +2158,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << curIndent << INDENT
            << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
         std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
             [&](ArrayRef<unsigned> idx, Init *ival) {
               if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
