@@ -169,7 +169,7 @@ raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
 }
 
 void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
-                     const Twine &prefix) {
+                     const Twine &prefix, ActionType intrinsic) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     for (size_t i = 0; i < resultRoot->arg_size(); i++) {
       auto arg = resultRoot->getArg(i);
@@ -179,8 +179,12 @@ void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
       }
       if (name) {
         auto namev = name->getAsUnquotedString();
-        os << curIndent << "llvm::Value *" << prefix << "_" + namev
-           << " = nullptr;\n";
+        if (intrinsic == MLIRDerivatives)
+          os << curIndent << "mlir::Value " << prefix << "_" + namev
+             << " = nullptr;\n";
+        else
+          os << curIndent << "llvm::Value *" << prefix << "_" + namev
+             << " = nullptr;\n";
       }
       initializeNames(curIndent, os, arg, prefix);
     }
@@ -963,7 +967,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       insert(npattern, {});
 
-      initializeNames(curIndent + INDENT, os, insts, "local");
+      initializeNames(curIndent + INDENT, os, insts, "local", intrinsic);
 
       ArrayRef<unsigned> nretidx{};
 
