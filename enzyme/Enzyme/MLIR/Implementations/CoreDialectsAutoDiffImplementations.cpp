@@ -409,6 +409,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // Replace all uses of original results
   gutils->replaceOrigOpWith(op, reps);
   gutils->erase(newOp);
+  gutils->originalToNewFnOps[op] = replacement;
 
   return success();
 }
