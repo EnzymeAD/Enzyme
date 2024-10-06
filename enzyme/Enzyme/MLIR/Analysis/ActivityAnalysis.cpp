@@ -1290,6 +1290,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         return true;
       }
     }
+    auto name = definingOp->getName().getStringRef();
+    if (name == "sort") {
+        llvm::errs() << *definingOp << "\n";
+    }
   }
 
   if (auto arg = Val.dyn_cast<BlockArgument>()) {
