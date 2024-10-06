@@ -127,6 +127,9 @@ static cl::opt<unsigned>
 static cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
                      cl::desc("Max precision for MPFR gold value computation"));
+static cl::opt<bool> FPOptEarlyPrune(
+    "fpopt-early-prune", cl::init(true), cl::Hidden,
+    cl::desc("Prune dominated candidates in expression transformation phases"));
 }
 
 class FPNode {
@@ -3001,6 +3004,13 @@ bool accuracyDPSolver(
     }
 
     // TODO: Do not prune AO parts of the DP table since AOs influence ACCs
+    if (!FPOptEarlyPrune) {
+      costToAccuracyMap.swap(newCostToAccuracyMap);
+      costToSolutionMap.swap(newCostToSolutionMap);
+
+      continue;
+    }
+
     CostMap prunedCostToAccuracyMap;
     SolutionMap prunedCostToSolutionMap;
 
