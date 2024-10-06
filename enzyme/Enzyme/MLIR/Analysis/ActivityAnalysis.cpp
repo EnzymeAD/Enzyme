@@ -1117,7 +1117,7 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
     for (Region &childRegion : parent->getRegions())
       isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
 
-  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
+  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(parent)) {
     for (auto val : iface.getPotentialIncomingValuesArg(arg))
       potentialSources.insert(val);
     return potentialSources.takeVector();
