@@ -281,7 +281,6 @@ static bool isReadOnly(Operation *op) {
   return false;
 }
 
-
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
