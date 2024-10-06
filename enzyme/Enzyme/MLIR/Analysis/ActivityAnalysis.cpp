@@ -1293,6 +1293,8 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     auto name = definingOp->getName().getStringRef();
     if (name == "sort") {
         llvm::errs() << *definingOp << "\n";
+    } else {
+        llvm::errs() << "name: " << name << " - " << *definingOp << "\n";
     }
   }
 
