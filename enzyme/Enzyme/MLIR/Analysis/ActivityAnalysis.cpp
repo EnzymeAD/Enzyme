@@ -989,6 +989,10 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
 
       potentialSources.push_back(successorOperands[resultNo]);
     }
+  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
+    for (auto val : iface.getPotentialIncomingValues(res))
+       potentialSources.push_back(val);
+    return potentialSources;
   } else {
     // assume all inputs potentially flow into all op results
     for (auto operand : owner->getOperands()) {
@@ -1113,6 +1117,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
     for (Region &childRegion : parent->getRegions())
       isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
 
+  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
+    for (auto val : iface.getPotentialIncomingValues(res))
+       potentialSources.insert(val);
+    return potentialSources.takeVector();
   } else {
     // Conservatively assume any op operand and any terminator operand of
     // any region can flow into any block argument.
