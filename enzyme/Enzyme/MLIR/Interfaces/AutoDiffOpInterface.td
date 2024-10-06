@@ -142,14 +142,14 @@ def ADDataFlowOpInterface
     /*desc=*/[{
     }],
     /*retTy=*/"SmallVector<Value>",
-    /*methodName=*/"getPotentialIncomingValues",
+    /*methodName=*/"getPotentialIncomingValuesRes",
     /*args=*/(ins "::mlir::OpResult":$v)
     >,
     InterfaceMethod<
     /*desc=*/[{
     }],
     /*retTy=*/"SmallVector<Value>",
-    /*methodName=*/"getPotentialIncomingValues",
+    /*methodName=*/"getPotentialIncomingValuesArg",
     /*args=*/(ins "::mlir::BlockArgument":$v)
     >
   ];
