@@ -251,6 +251,37 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
 
 constexpr bool EnzymePrintActivity = false;
 
+static bool isReadOnly(Operation *op) {
+  bool hasRecursiveEffects = op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+  if (hasRecursiveEffects) {
+    for (Region &region : op->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          if (!isReadOnly(&nestedOp))
+            return false;
+      }
+    }
+    return true;
+  }
+
+  // If the op has memory effects, try to characterize them to see if the op
+  // is trivially dead here.
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    // Check to see if this op either has no effects, or only allocates/reads
+    // memory.
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+          return isa<MemoryEffects::Read>(it.getEffect());
+        })) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
@@ -653,7 +684,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   // doesn't write to any memory
   bool noActiveWrite = false;
 
-  if (isa<MemoryEffectOpInterface>(I) && !hasEffect<MemoryEffects::Write>(I))
+  if (isReadOnly(I))
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallOpInterface>(I)) {
     // if (AA.onlyReadsMemory(CI)) {
@@ -1289,10 +1320,6 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       if (ifaceOp.isInactive()) {
         return true;
       }
-    }
-    auto name = definingOp->getName().getStringRef();
-    if (name == "stablehlo.sort") {
-        llvm::errs() << *definingOp << "\n";
     }
   }
 
