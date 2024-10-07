@@ -941,9 +941,9 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
   if (isFunctionReturn(op))
     return {};
 
-  SmallVector<Value> results;
-
-  if (isa<RegionBranchOpInterface>(op->getParentOp()))
+  if (auto termIface = dyn_cast<ADDataFlowOpInterface>(op->getParentOp())) {
+    return termIface.getPotentialTermaintorUsers(op, parent);
+  } else if (isa<RegionBranchOpInterface>(op->getParentOp()))
     if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
       SmallVector<RegionSuccessor> successors;
       termIface.getSuccessorRegions(
@@ -1002,7 +1002,11 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
 
   auto resultNo = res.getResultNumber();
 
-  if (auto iface = dyn_cast<RegionBranchOpInterface>(owner)) {
+  if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
+    for (auto val : iface.getPotentialIncomingValuesRes(res))
+      potentialSources.push_back(val);
+    return potentialSources;
+  } else if (auto iface = dyn_cast<RegionBranchOpInterface>(owner)) {
     SmallVector<RegionSuccessor> successors;
     iface.getSuccessorRegions(RegionBranchPoint::parent(), successors);
     for (auto &succ : successors) {
@@ -1019,10 +1023,6 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
 
       potentialSources.push_back(successorOperands[resultNo]);
     }
-  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
-    for (auto val : iface.getPotentialIncomingValuesRes(res))
-      potentialSources.push_back(val);
-    return potentialSources;
   } else {
     // assume all inputs potentially flow into all op results
     for (auto operand : owner->getOperands()) {

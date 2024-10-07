@@ -152,6 +152,13 @@ def ADDataFlowOpInterface
     /*methodName=*/"getPotentialIncomingValuesArg",
     /*args=*/(ins "::mlir::BlockArgument":$v)
     >
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"SmallVector<Value>",
+    /*methodName=*/"getPotentialTerminatorUsers",
+    /*args=*/(ins "::mlir::Operation":$op, "::mlir::Value":$v)
+    >
   ];
 }
 
