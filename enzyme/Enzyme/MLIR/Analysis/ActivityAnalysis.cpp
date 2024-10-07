@@ -942,7 +942,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
     return {};
 
   if (auto termIface = dyn_cast<ADDataFlowOpInterface>(op->getParentOp())) {
-    return termIface.getPotentialTermaintorUsers(op, parent);
+    return termIface.getPotentialTerminatorUsers(op, value);
   } else if (isa<RegionBranchOpInterface>(op->getParentOp()))
     if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
       SmallVector<RegionSuccessor> successors;
