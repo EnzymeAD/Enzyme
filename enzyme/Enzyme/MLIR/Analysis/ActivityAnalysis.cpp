@@ -967,6 +967,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
       return std::move(results);
     }
   }
+  SmallVector<Value> results;
   if (auto iface = dyn_cast<BranchOpInterface>(op)) {
     for (auto &operand : op->getOpOperands())
       if (operand.get() == parent)
@@ -977,7 +978,6 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
         }
   }
 
-  SmallVector<Value> results;
   // assume all terminator operands potentially flow into all op results
   for (auto res : op->getParentOp()->getResults())
     results.push_back(res);
