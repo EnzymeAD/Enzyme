@@ -145,6 +145,7 @@ public:
   std::string symbol;
   SmallVector<std::shared_ptr<FPNode>, 2> operands;
   double grad;
+  double geometricAvg;
   unsigned executions;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
@@ -2592,7 +2593,7 @@ bool improveViaHerbie(
       "--timeout", "60"};
 
   Args.push_back("--disable");
-  Args.push_back("generate:proofs"); // We can't show HTML reports
+  Args.push_back("generate:proofs");
 
   if (HerbieDisableNumerics) {
     Args.push_back("--disable");
@@ -2754,6 +2755,7 @@ struct ValueInfo {
   double minRes;
   double maxRes;
   unsigned executions;
+  double geometricAvg;
   SmallVector<double, 2> lower;
   SmallVector<double, 2> upper;
 };
@@ -2774,21 +2776,26 @@ void extractValueFromLog(const std::string &logPath,
 
   while (getline(file, line)) {
     if (std::regex_search(line, valuePattern)) {
-      std::string minResLine, maxResLine, executionsLine;
+      std::string minResLine, maxResLine, executionsLine, geometricAvgLine;
       if (getline(file, minResLine) && getline(file, maxResLine) &&
-          getline(file, executionsLine)) {
+          getline(file, executionsLine) && getline(file, geometricAvgLine)) {
         std::regex minResPattern(R"(MinRes = ([\d\.eE+-]+))");
         std::regex maxResPattern(R"(MaxRes = ([\d\.eE+-]+))");
         std::regex executionsPattern(R"(Executions = (\d+))");
+        std::regex geometricAvgPattern(R"(Geometric Average = ([\d\.eE+-]+))");
 
-        std::smatch minResMatch, maxResMatch, executionsMatch;
+        std::smatch minResMatch, maxResMatch, executionsMatch,
+            geometricAvgMatch;
         if (std::regex_search(minResLine, minResMatch, minResPattern) &&
             std::regex_search(maxResLine, maxResMatch, maxResPattern) &&
             std::regex_search(executionsLine, executionsMatch,
-                              executionsPattern)) {
+                              executionsPattern) &&
+            std::regex_search(geometricAvgLine, geometricAvgMatch,
+                              geometricAvgPattern)) {
           data.minRes = stringToDouble(minResMatch[1]);
           data.maxRes = stringToDouble(maxResMatch[1]);
           data.executions = std::stol(executionsMatch[1]);
+          data.geometricAvg = stringToDouble(geometricAvgMatch[1]);
         } else {
           std::string error =
               "Failed to parse stats for: Function: " + functionName +
@@ -3233,9 +3240,8 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   if (!FPOptLogPath.empty()) {
     if (!isLogged(FPOptLogPath, functionName)) {
       if (EnzymePrintFPOpt)
-        llvm::errs()
-            << "Skipping matched function: " << functionName
-            << " since a log is provided but this function is not logged\n";
+        llvm::errs() << "Skipping matched function: " << functionName
+                     << " since this function is not found in the log\n";
       return false;
     }
   }
@@ -3549,6 +3555,7 @@ B2:
                 extractValueFromLog(FPOptLogPath, functionName, blockIdx,
                                     instIdx, valueInfo);
                 node->executions = valueInfo.executions;
+                node->geometricAvg = valueInfo.geometricAvg;
                 node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
 
                 if (EnzymePrintFPOpt) {
@@ -3689,9 +3696,14 @@ B2:
         //              << "\n";
         // llvm::errs() << "Gradient of " << *(b->value) << " is " << b->grad
         //              << "\n";
-        assert(!std::isnan(a->grad) && "Gradient is NaN for an operation");
-        assert(!std::isnan(b->grad) && "Gradient is NaN for an operation");
-        return std::fabs(a->grad) < std::fabs(b->grad);
+        // llvm::errs() << "Geometric average of " << *(a->value) << " is "
+        //              << a->geometricAvg << "\n";
+        // llvm::errs() << "Geometric average of " << *(b->value) << " is "
+        //              << b->geometricAvg << "\n";
+        // assert(!std::isnan(a->grad) && "Gradient is NaN for an operation");
+        // assert(!std::isnan(b->grad) && "Gradient is NaN for an operation");
+        return std::fabs(a->grad * a->geometricAvg) <
+               std::fabs(b->grad * b->geometricAvg);
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
