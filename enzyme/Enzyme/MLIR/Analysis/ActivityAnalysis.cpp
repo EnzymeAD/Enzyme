@@ -1089,7 +1089,11 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
   Operation *parent = arg.getOwner()->getParentOp();
   Region *parentRegion = arg.getOwner()->getParent();
   // Use region interface to find the values flowing into the entry block.
-  if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
+  if (auto iface = dyn_cast<ADDataFlowOpInterface>(parent)) {
+    for (auto val : iface.getPotentialIncomingValuesArg(arg))
+      potentialSources.insert(val);
+    return potentialSources.takeVector();
+  } else if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
     auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                     Region *region,
                                     RegionBranchPoint predecessor,
@@ -1149,10 +1153,6 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
     for (Region &childRegion : parent->getRegions())
       isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
 
-  } else if (auto iface = dyn_cast<ADDataFlowOpInterface>(parent)) {
-    for (auto val : iface.getPotentialIncomingValuesArg(arg))
-      potentialSources.insert(val);
-    return potentialSources.takeVector();
   } else {
     // Conservatively assume any op operand and any terminator operand of
     // any region can flow into any block argument.
