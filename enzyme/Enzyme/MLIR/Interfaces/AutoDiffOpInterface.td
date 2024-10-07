@@ -151,7 +151,7 @@ def ADDataFlowOpInterface
     /*retTy=*/"SmallVector<Value>",
     /*methodName=*/"getPotentialIncomingValuesArg",
     /*args=*/(ins "::mlir::BlockArgument":$v)
-    >
+    >,
     InterfaceMethod<
     /*desc=*/[{
     }],
