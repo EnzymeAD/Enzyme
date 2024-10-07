@@ -3389,23 +3389,26 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         }
         continue;
       }
-      // if (!I->mayWriteToMemory() || isa<LoadInst>(I)) {
-      //   if (TR.query(I)[{-1}].isIntegral()) {
-      //     continue;
-      //   }
-      //   UseActivity NU = UA;
-      //   if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
-      //       UA == UseActivity::OnlyNonPointerStores) {
-      //     if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
-      //         !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
-      //       NU = UseActivity::None;
-      //   }
 
-      //   for (auto u : I->users()) {
-      //     todo.push_back(std::make_tuple(u, (Value *)I, NU));
-      //   }
-      //   continue;
-      // }
+      if (isReadOnly(I)) {
+        // if (TR.query(I)[{-1}].isIntegral()) {
+        //  continue;
+        //}
+        UseActivity NU = UA;
+        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
+            UA == UseActivity::OnlyNonPointerStores) {
+          // if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
+          //    !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
+          NU = UseActivity::None;
+        }
+
+        for (Value result : I->getResults()) {
+          for (Operation *u : result.getUsers()) {
+            todo.push_back(std::make_tuple(u, result, NU));
+          }
+        }
+        continue;
+      }
 
       if (FoundInst)
         *FoundInst = I;
