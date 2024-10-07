@@ -943,7 +943,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
 
   if (auto termIface = dyn_cast<ADDataFlowOpInterface>(op->getParentOp())) {
     return termIface.getPotentialTerminatorUsers(op, parent);
-  } else if (isa<RegionBranchOpInterface>(op->getParentOp()))
+  } else if (isa<RegionBranchOpInterface>(op->getParentOp())) {
     if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
       SmallVector<RegionSuccessor> successors;
       termIface.getSuccessorRegions(
@@ -966,6 +966,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
       }
       return std::move(results);
     }
+  }
   if (auto iface = dyn_cast<BranchOpInterface>(op)) {
     for (auto &operand : op->getOpOperands())
       if (operand.get() == parent)
@@ -976,6 +977,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
         }
   }
 
+  SmallVector<Value> results;
   // assume all terminator operands potentially flow into all op results
   for (auto res : op->getParentOp()->getResults())
     results.push_back(res);
