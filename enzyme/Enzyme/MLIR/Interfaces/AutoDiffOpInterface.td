@@ -157,7 +157,7 @@ def ADDataFlowOpInterface
     }],
     /*retTy=*/"SmallVector<Value>",
     /*methodName=*/"getPotentialTerminatorUsers",
-    /*args=*/(ins "::mlir::Operation":$op, "::mlir::Value":$v)
+    /*args=*/(ins "::mlir::Operation*":$terminator, "::mlir::Value":$val)
     >
   ];
 }
