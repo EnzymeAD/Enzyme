@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
+#include <llvm/IR/GlobalValue.h>
 #include <memory>
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -2217,7 +2218,7 @@ public:
 #endif
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
-      TruncatedFunc->deleteBody();
+      TruncatedFunc->eraseFromParent();
     }
     return true;
   }
