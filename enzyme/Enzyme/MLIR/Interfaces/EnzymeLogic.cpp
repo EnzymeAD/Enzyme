@@ -168,7 +168,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       valid &= res.succeeded();
     }
 
-    createTerminator(gutils, &oBB, returnPrimals, returnShadows);
+    createTerminator(gutils, &oBB, returnPrimalsP, returnShadowsP);
   }
 
   // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
