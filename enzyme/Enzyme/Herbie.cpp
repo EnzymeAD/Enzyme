@@ -1056,75 +1056,97 @@ public:
 
     mpfr_t &res = cache.at(node).value;
 
+    // Cast operands to dest precision first -- this agrees with our
+    // precision tuner behavior, i.e., fpcasting operands first
     if (node->op == "neg") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_neg(res, op, MPFR_RNDN);
     } else if (node->op == "+") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_add(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "-") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_sub(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "*") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_mul(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "/") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_div(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "sin") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_sin(res, op, MPFR_RNDN);
     } else if (node->op == "cos") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_cos(res, op, MPFR_RNDN);
     } else if (node->op == "tan") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_tan(res, op, MPFR_RNDN);
     } else if (node->op == "exp") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_exp(res, op, MPFR_RNDN);
     } else if (node->op == "expm1") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_expm1(res, op, MPFR_RNDN);
     } else if (node->op == "log") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_log(res, op, MPFR_RNDN);
     } else if (node->op == "log1p") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_log1p(res, op, MPFR_RNDN);
     } else if (node->op == "sqrt") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_sqrt(res, op, MPFR_RNDN);
     } else if (node->op == "cbrt") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_cbrt(res, op, MPFR_RNDN);
     } else if (node->op == "pow") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_pow(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "fma") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
@@ -1133,16 +1155,22 @@ public:
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
       mpfr_t &op2 = getResult(node->operands[2].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op2, nodePrec, MPFR_RNDN);
       mpfr_fma(res, op0, op1, op2, MPFR_RNDN);
     } else if (node->op == "fabs") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_abs(res, op, MPFR_RNDN);
     } else if (node->op == "hypot") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_hypot(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "==") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
