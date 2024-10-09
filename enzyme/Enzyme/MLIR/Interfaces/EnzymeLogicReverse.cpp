@@ -189,8 +189,11 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
+  SmallVector<bool> returnPrimalsP(returnPrimals);
+  SmallVector<bool> returnShadowsP(returnShadows);
+
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       retType, constants, addedType);
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();

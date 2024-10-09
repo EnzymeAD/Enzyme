@@ -36,8 +36,8 @@ public:
   MTypeAnalysis &TA;
   MTypeResults TR;
   bool omp;
-  llvm::ArrayRef<bool> returnPrimals;
-  llvm::ArrayRef<bool> returnShadows;
+  const llvm::ArrayRef<bool> returnPrimals;
+  const llvm::ArrayRef<bool> returnShadows;
 
   unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
@@ -50,8 +50,8 @@ public:
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                  MTypeResults TR_, IRMapping &invertedPointers_,
-                 llvm::ArrayRef<bool> returnPrimals,
-                 llvm::ArrayRef<bool> returnShadows,
+                 const llvm::ArrayRef<bool> returnPrimals,
+                 const llvm::ArrayRef<bool> returnShadows,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  ArrayRef<DIFFE_TYPE> ReturnActivities,
@@ -106,8 +106,8 @@ public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
-                      const std::vector<bool> &returnPrimals,
-                      const std::vector<bool> &returnShadows,
+                      const llvm::ArrayRef<bool> returnPrimals,
+                      const llvm::ArrayRef<bool> returnShadows,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &activevals_,
                       ArrayRef<DIFFE_TYPE> RetActivity,
@@ -124,9 +124,10 @@ public:
   static MDiffeGradientUtils *CreateFromClone(
       MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
       FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const std::vector<bool> &returnPrimals,
-      const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
-      ArrayRef<DIFFE_TYPE> ArgActivity, mlir::Type additionalArg, bool omp) {
+      const llvm::ArrayRef<bool> returnPrimals,
+      const llvm::ArrayRef<bool> returnShadows,
+      ArrayRef<DIFFE_TYPE> RetActivity, ArrayRef<DIFFE_TYPE> ArgActivity,
+      mlir::Type additionalArg, bool omp) {
     std::string prefix;
 
     switch (mode) {
