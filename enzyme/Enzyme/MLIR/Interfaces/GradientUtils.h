@@ -36,9 +36,10 @@ public:
   MTypeAnalysis &TA;
   MTypeResults TR;
   bool omp;
-  llvm::ArrayRef<bool> returnPrimals, llvm::ArrayRef<bool> returnShadows,
+  llvm::ArrayRef<bool> returnPrimals;
+  llvm::ArrayRef<bool> returnShadows;
 
-      unsigned width;
+  unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
   ArrayRef<DIFFE_TYPE> RetDiffeTypes;
 
