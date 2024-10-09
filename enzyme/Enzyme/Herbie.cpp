@@ -1009,6 +1009,8 @@ public:
         return;
 
       double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
+      // llvm::errs() << "Input value for " << *cast<FPLLValue>(node)->value
+      //              << ": " << inputValue << "\n";
       CachedValue cv(53);
       mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
 
@@ -1335,8 +1337,6 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
     }
     for (size_t i = 0; i < outputs.size(); ++i) {
       results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
-      // llvm::errs() << "DEBUG: " << outputs[i]->op << " = " << results[i]
-      //              << "\n";
     }
     return;
   }
@@ -2363,6 +2363,8 @@ public:
         if (AO.component == component) {
           auto it = valueToNodeMap.find(AO.oldOutput);
           if (it != valueToNodeMap.end() && it->second) {
+            // llvm::errs() << "Found step: " << AO.expr << " --> "
+            //              << AO.candidates[step.candidateIndex].expr << "\n";
             stepNodes.insert(it->second.get());
           }
         }
@@ -2371,9 +2373,14 @@ public:
 
     // Iterate over all output nodes and sum costs for nodes not erased
     for (auto &[node, cost] : perOutputInitialAccCost) {
-      if (stepNodes.count(node))
+      if (stepNodes.count(node)) {
+        // llvm::errs() << "Node: " << node->symbol
+        //              << " DEBUG erased, initial cost: " << cost << "\n";
         continue;
+      }
 
+      // llvm::errs() << "Node: " << node->symbol
+      //              << " DEBUG initial cost: " << cost << "\n";
       totalInitialAccCost += cost;
     }
 
@@ -2393,11 +2400,9 @@ void setUnifiedAccuracyCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
-  SmallSet<std::string, 8> argStrSet;
-  getUniqueArgs(AO.expr, argStrSet);
-
   SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
-  getSampledPoints(AO.expr, valueToNodeMap, symbolToValueMap, sampledPoints);
+  getSampledPoints(AO.component->inputs.getArrayRef(), valueToNodeMap,
+                   symbolToValueMap, sampledPoints);
 
   SmallVector<double, 4> goldVals;
   goldVals.resize(FPOptNumSamples);
@@ -2409,18 +2414,22 @@ void setUnifiedAccuracyCost(
     SmallVector<double, 1> results;
     getMPFRValues(outputs, pair.value(), results, true, 53);
     double goldVal = results[0];
+    // llvm::errs() << "DEBUG AO gold value: " << goldVal << "\n";
     goldVals[pair.index()] = goldVal;
 
     getMPFRValues(outputs, pair.value(), results, false);
     double realVal = results[0];
+    // llvm::errs() << "DEBUG AO real value: " << realVal << "\n";
 
     if (!std::isnan(goldVal) && !std::isnan(realVal)) {
-      initAC += std::fabs((goldVal - realVal) * AO.grad);
+      initAC += std::fabs(goldVal - realVal);
       numValidSamples++;
     }
   }
 
-  AO.initialAccCost = initAC / numValidSamples;
+  AO.initialAccCost = initAC / numValidSamples * std::fabs(AO.grad);
+  // llvm::errs() << "DEBUG calculated AO initial accuracy cost: "
+  //              << AO.initialAccCost << "\n";
   assert(numValidSamples && "No valid samples for AO -- try increasing the "
                             "number of samples");
   assert(!std::isnan(AO.initialAccCost));
@@ -2456,13 +2465,13 @@ void setUnifiedAccuracyCost(
       // llvm::errs() << "Real value: " << realVal << "\n";
       double goldVal = goldVals[pair.index()];
       if (!std::isnan(goldVal) && !std::isnan(realVal)) {
-        ac += std::fabs((goldVal - realVal) * AO.grad);
+        ac += std::fabs(goldVal - realVal);
         numValidSamples++;
       }
     }
     assert(numValidSamples && "No valid samples for AO -- try increasing the "
                               "number of samples");
-    candidate.accuracyCost = ac / numValidSamples;
+    candidate.accuracyCost = ac / numValidSamples * std::fabs(AO.grad);
     assert(!std::isnan(candidate.accuracyCost));
   }
 }
@@ -2471,11 +2480,11 @@ void setUnifiedAccuracyCost(
     ApplicableFPCC &ACC,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
+
   SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
   getSampledPoints(ACC.component->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
-  double initAC = 0.;
   SmallMapVector<FPNode *, SmallVector<double, 4>, 4>
       goldVals; // output -> gold vals
   for (auto *output : ACC.component->outputs) {
@@ -2489,7 +2498,11 @@ void setUnifiedAccuracyCost(
     outputs.push_back(valueToNodeMap[output].get());
   }
 
-  unsigned numValidSamples = 0;
+  std::unordered_map<FPNode *, unsigned> numValidSamplesPerOutput;
+  for (auto *output : outputs) {
+    numValidSamplesPerOutput[output] = 0;
+  }
+
   for (const auto &pair : enumerate(sampledPoints)) {
     SmallVector<double, 8> results;
 
@@ -2497,92 +2510,75 @@ void setUnifiedAccuracyCost(
     getMPFRValues(outputs, pair.value(), results, true, 53);
     for (const auto &[output, result] : zip(outputs, results)) {
       goldVals[output][pair.index()] = result;
+      // llvm::errs() << "DEBUG ACC gold value: " << result << "\n";
     }
 
     // Emulate FPCC with parsed precision
     getMPFRValues(outputs, pair.value(), results, false);
 
-    bool validSample = true;
     for (const auto &[output, result] : zip(outputs, results)) {
+      // llvm::errs() << "DEBUG ACC real value: " << result << "\n";
       double goldVal = goldVals[output][pair.index()];
-      if (std::isnan(goldVal) || std::isnan(result)) {
-        validSample = false;
-        break;
+      if (!std::isnan(goldVal) && !std::isnan(result)) {
+        double diff = std::fabs(goldVal - result);
+        ACC.perOutputInitialAccCost[output] += diff;
+        numValidSamplesPerOutput[output]++;
       }
     }
-
-    if (!validSample) {
-      // Discard the sample if any of the output (whether a ground truth or
-      // an emulated result) is NaN
-      continue;
-    }
-
-    for (const auto &[output, result] : zip(outputs, results)) {
-      double goldVal = goldVals[output][pair.index()];
-      double diff = std::fabs((goldVal - result) * output->grad);
-      initAC += diff;
-      ACC.perOutputInitialAccCost[output] += diff;
-    }
-    numValidSamples++;
   }
 
-  assert(numValidSamples && "No valid samples for ACC -- try increasing the "
-                            "number of samples");
-
-  // Normalize accuracy costs
-  for (auto &[_, accCost] : ACC.perOutputInitialAccCost) {
-    accCost /= numValidSamples;
+  // Normalize accuracy costs and compute aggregated initialAccCost
+  ACC.initialAccCost = 0.0;
+  for (auto *output : outputs) {
+    unsigned numValidSamples = numValidSamplesPerOutput[output];
+    assert(numValidSamples && "No valid samples for at least one output node "
+                              "-- try increasing the number of samples");
+    ACC.perOutputInitialAccCost[output] /= numValidSamples;
+    // Local error --> global error
+    ACC.perOutputInitialAccCost[output] *= std::fabs(output->grad);
+    // llvm::errs() << "DEBUG calculated ACC per output initial accuracy cost: "
+    //              << ACC.perOutputInitialAccCost[output] << "\n";
+    ACC.initialAccCost += ACC.perOutputInitialAccCost[output];
   }
-  ACC.initialAccCost = initAC / numValidSamples;
   assert(!std::isnan(ACC.initialAccCost));
 
   // Compute accuracy costs for each PT candidate
   for (auto &candidate : ACC.candidates) {
-    numValidSamples = 0;
-    double ac = 0.;
-
-    for (auto *output : ACC.component->outputs) {
-      auto *node = valueToNodeMap[output].get();
-      candidate.perOutputAccCost[node] = 0.;
+    std::unordered_map<FPNode *, unsigned> numValidSamplesPerOutput;
+    for (auto *output : outputs) {
+      candidate.perOutputAccCost[output] = 0.;
+      numValidSamplesPerOutput[output] = 0;
     }
 
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 8> results;
       getMPFRValues(outputs, pair.value(), results, false, 0, &candidate);
 
-      bool validSample = true;
-      for (const auto &[output, result] : zip(outputs, results)) {
-        double goldVal = goldVals[output][pair.index()];
-        if (std::isnan(goldVal) || std::isnan(result)) {
-          validSample = false;
-          break;
-        }
-      }
-
-      if (!validSample) {
-        // Discard the sample if any of the output (whether a ground truth or
-        // an emulated result) is NaN
-        continue;
-      }
-
       for (const auto &[output, result] : zip(outputs, results)) {
         double goldVal = goldVals[output][pair.index()];
         if (!std::isnan(goldVal) && !std::isnan(result)) {
-          double diff = std::fabs((goldVal - result) * output->grad);
-          ac += diff;
+          double diff = std::fabs(goldVal - result);
+          // Sum up local errors
           candidate.perOutputAccCost[output] += diff;
+          numValidSamplesPerOutput[output]++;
         }
       }
-      numValidSamples++;
     }
-    assert(numValidSamples && "No valid samples for ACC -- try increasing the "
-                              "number of samples");
 
-    // Normalize accuracy costs
-    for (auto &[_, accCost] : candidate.perOutputAccCost) {
-      accCost /= numValidSamples;
+    // Normalize accuracy costs and compute aggregated accuracyCost
+    candidate.accuracyCost = 0.0;
+    for (auto *output : outputs) {
+      unsigned numValidSamples = numValidSamplesPerOutput[output];
+      assert(numValidSamples && "No valid samples for output -- try increasing "
+                                "the number of samples");
+      candidate.perOutputAccCost[output] /= numValidSamples;
+      // Local error --> global error
+      candidate.perOutputAccCost[output] *= std::fabs(output->grad);
+      // llvm::errs()
+      //     << "DEBUG calculated ACC per output candidate accuracy cost: "
+      //     << candidate.perOutputAccCost[output] << "\n";
+      candidate.accuracyCost += candidate.perOutputAccCost[output];
     }
-    candidate.accuracyCost = ac / numValidSamples;
     assert(!std::isnan(candidate.accuracyCost));
   }
 }
@@ -3460,7 +3456,10 @@ B2:
           if (!herbiable(*operand)) {
             if (EnzymePrintFPOpt)
               llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
-            input_seen.insert(operand);
+
+            // Don't mark constants as input `llvm::Value`s
+            if (!isa<ConstantFP>(operand))
+              input_seen.insert(operand);
 
             // look up error log to get bounds of non-herbiable inputs
             if (!FPOptLogPath.empty()) {
