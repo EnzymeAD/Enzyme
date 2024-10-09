@@ -36,8 +36,9 @@ public:
   MTypeAnalysis &TA;
   MTypeResults TR;
   bool omp;
+  llvm::ArrayRef<bool> returnPrimals, llvm::ArrayRef<bool> returnShadows,
 
-  unsigned width;
+      unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
   ArrayRef<DIFFE_TYPE> RetDiffeTypes;
 
@@ -48,6 +49,8 @@ public:
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                  MTypeResults TR_, IRMapping &invertedPointers_,
+                 llvm::ArrayRef<bool> returnPrimals,
+                 llvm::ArrayRef<bool> returnShadows,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  ArrayRef<DIFFE_TYPE> ReturnActivities,
@@ -102,6 +105,8 @@ public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
+                      const std::vector<bool> &returnPrimals,
+                      const std::vector<bool> &returnShadows,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &activevals_,
                       ArrayRef<DIFFE_TYPE> RetActivity,
@@ -109,8 +114,9 @@ public:
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
-                       constantvalues_, activevals_, RetActivity, ArgActivity,
-                       origToNew_, origToNewOps_, mode, width, omp),
+                       returnPrimals, returnShadows, constantvalues_,
+                       activevals_, RetActivity, ArgActivity, origToNew_,
+                       origToNewOps_, mode, width, omp),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
@@ -153,9 +159,9 @@ public:
         additionalArg);
     MTypeResults TR; // TODO
     return new MDiffeGradientUtils(
-        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
-        nonconstant_values, RetActivity, ArgActivity, originalToNew,
-        originalToNewOps, mode, width, omp);
+        Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
+        returnShadows, constant_values, nonconstant_values, RetActivity,
+        ArgActivity, originalToNew, originalToNewOps, mode, width, omp);
   }
 };
 

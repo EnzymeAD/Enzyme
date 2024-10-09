@@ -30,7 +30,8 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtils::MGradientUtils(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
-    IRMapping &invertedPointers_,
+    IRMapping &invertedPointers_, llvm::ArrayRef<bool> returnPrimals,
+    llvm::ArrayRef<bool> returnShadows,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
@@ -40,6 +41,7 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
+      returnPrimals(returnPrimals), returnShadows(returnShadows),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
