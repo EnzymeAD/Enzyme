@@ -30,7 +30,8 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-    IRMapping invertedPointers_,
+    IRMapping invertedPointers_, const llvm::ArrayRef<bool> returnPrimals,
+    const llvm::ArrayRef<bool> returnShadows,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
@@ -38,9 +39,10 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
-                          invertedPointers_, constantvalues_, activevals_,
-                          ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
-                          originalToNewFnOps_, mode_, width, /*omp*/ false) {}
+                          invertedPointers_, returnPrimals, returnShadows,
+                          constantvalues_, activevals_, ReturnActivity,
+                          ArgDiffeTypes_, originalToNewFn_, originalToNewFnOps_,
+                          mode_, width, /*omp*/ false) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -164,8 +166,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   SmallPtrSet<mlir::Value, 1> nonconstant_values;
   IRMapping invertedPointers;
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
-      mode_, width, todiff, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnPrimals, returnShadows, retType,
+      mode_, width, todiff, invertedPointers, returnPrimals, returnShadows,
+      constant_args, constant_values, nonconstant_values, returnvals, retType,
       prefix + todiff.getName(), originalToNew, originalToNewOps,
       additionalArg);
 

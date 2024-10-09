@@ -25,6 +25,8 @@ public:
   MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                         FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                         IRMapping invertedPointers_,
+                        const llvm::ArrayRef<bool> returnPrimals,
+                        const llvm::ArrayRef<bool> returnShadows,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
                         ArrayRef<DIFFE_TYPE> ReturnActivity,
