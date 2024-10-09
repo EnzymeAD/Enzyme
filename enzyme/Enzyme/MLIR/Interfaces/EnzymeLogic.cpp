@@ -100,8 +100,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   for (auto act : RetActivity) {
     returnShadows.push_back(act != DIFFE_TYPE::CONSTANT);
   }
-  SmallVector<bool> returnPrimalsP(returnPrimals);
-  SmallVector<bool> returnShadowsP(returnShadows);
+  SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
+  SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
