@@ -166,8 +166,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   SmallPtrSet<mlir::Value, 1> nonconstant_values;
   IRMapping invertedPointers;
   FunctionOpInterface newFunc = CloneFunctionWithReturns(
-      mode_, width, todiff, invertedPointers, returnPrimals, returnShadows,
-      constant_args, constant_values, nonconstant_values, returnvals, retType,
+      mode_, width, todiff, invertedPointers, constant_args, constant_values,
+      nonconstant_values, returnvals, returnPrimals, returnShadows, retType,
       prefix + todiff.getName(), originalToNew, originalToNewOps,
       additionalArg);
 
