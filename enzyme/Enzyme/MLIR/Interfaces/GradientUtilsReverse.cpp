@@ -134,9 +134,9 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    const std::vector<bool> &returnPrimals,
-    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> retType,
-    ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg) {
+    const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
+    ArrayRef<DIFFE_TYPE> retType, ArrayRef<DIFFE_TYPE> constant_args,
+    mlir::Type additionalArg) {
   std::string prefix;
 
   switch (mode_) {

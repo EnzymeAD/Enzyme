@@ -62,8 +62,7 @@ public:
   static MGradientUtilsReverse *CreateFromClone(
       MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
       FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const std::vector<bool> &returnPrimals,
-      const std::vector<bool> &returnShadows,
+      const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
       llvm::ArrayRef<DIFFE_TYPE> retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg);
 };
