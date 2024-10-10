@@ -41,10 +41,10 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
-      returnPrimals(returnPrimals), returnShadows(returnShadows),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      TA(TA_), TR(TR_), omp(omp), returnPrimals(returnPrimals),
+      returnShadows(returnShadows), width(width), ArgDiffeTypes(ArgDiffeTypes_),
       RetDiffeTypes(ReturnActivity) {}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
