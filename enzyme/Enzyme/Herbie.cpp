@@ -770,7 +770,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   }
 
   IRBuilder<> Builder(I);
-  Builder.setFastMathFlags(getFast());
+  Builder.setFastMathFlags(I->getFastMathFlags());
   Type *newType = getLLVMFPType(change.newType, I->getContext());
   Value *newI = nullptr;
 
@@ -1906,7 +1906,8 @@ InstructionCost getCompCost(const SmallVector<Value *> &outputs,
 InstructionCost getCompCost(
     const std::string &expr, Module *M, const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    const FastMathFlags &FMF) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -1927,7 +1928,7 @@ InstructionCost getCompCost(
 
   IRBuilder<> builder(ReturnInst);
 
-  builder.setFastMathFlags(getFast());
+  builder.setFastMathFlags(FMF);
   Value *newOutput = parsedNode->getLLValue(builder);
 
   // tempFunction->print(llvm::errs());
@@ -2171,8 +2172,7 @@ public:
 
     Instruction *insertBefore = dyn_cast<Instruction>(oldOutput);
     IRBuilder<> builder(insertBefore);
-    // TODO ponder fast math
-    builder.setFastMathFlags(getFast());
+    builder.setFastMathFlags(insertBefore->getFastMathFlags());
 
     Value *newOutput = parsedNode->getLLValue(builder);
     assert(newOutput && "Failed to get value from parsed node");
@@ -2717,7 +2717,8 @@ bool improveViaHerbie(
 
   RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
   bestCandidate.CompCost =
-      getCompCost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+      getCompCost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                  cast<Instruction>(AO.oldOutput)->getFastMathFlags());
   AO.candidates.push_back(bestCandidate);
 
   json::Array &alternatives = *costAccuracy[2].getAsArray();
@@ -2730,7 +2731,8 @@ bool improveViaHerbie(
     StringRef expr = entry[2].getAsString().getValue();
     RewriteCandidate candidate(cost, accuracy, expr.str());
     candidate.CompCost =
-        getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap);
+        getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                    cast<Instruction>(AO.oldOutput)->getFastMathFlags());
     AO.candidates.push_back(candidate);
   }
 
