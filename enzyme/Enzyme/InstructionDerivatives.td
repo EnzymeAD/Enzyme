@@ -873,6 +873,24 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   >;
 
 def : IntrPattern<(Op $x),
+                  [["tanh", "19", ""]],
+                  [(FDiv (DiffeRet), (FMul(Intrinsic<"cosh"> $x):$c, $c))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sinh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"cosh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["cosh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"sinh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
                   [["sin"]],
                   [(FMul (DiffeRet), (Intrinsic<"cos"> $x))]  ,
                   (ForwardFromSummedReverse)                

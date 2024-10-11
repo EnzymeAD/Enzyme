@@ -53,6 +53,8 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "swift_allocObject")
     return true;
+  if (name == "__size_returning_new_experiment")
+    return true;
   if (name == "__rust_alloc" || name == "__rust_alloc_zeroed")
     return true;
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
@@ -219,6 +221,9 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   }
   Value *dst_arg = toZero;
 
+  if (funcName == "__size_returning_new_experiment")
+    dst_arg = bb.CreateExtractValue(dst_arg, 0);
+
   if (dst_arg->getType()->isIntegerTy())
     dst_arg = bb.CreateIntToPtr(dst_arg, getInt8PtrTy(toZero->getContext()));
   else
@@ -260,7 +265,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
 llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::Value *tofree,
-                                    const llvm::StringRef allocationfn,
+                                    llvm::StringRef allocationfn,
                                     const llvm::DebugLoc &debuglocation,
                                     const llvm::TargetLibraryInfo &TLI,
                                     llvm::CallInst *orig,

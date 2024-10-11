@@ -3108,7 +3108,11 @@ public:
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
-    for (auto &&[secretty, seg_start, seg_size] : toIterate) {
+    for (auto &&[secretty_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto secretty = secretty_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
+
       Value *length = new_size;
       if (seg_start != std::get<1>(toIterate.back())) {
         length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
@@ -3484,7 +3488,11 @@ public:
       }
     }
 
-    for (auto &&[floatTy, seg_start, seg_size] : toIterate) {
+    for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto floatTy = floatTy_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
+
       Value *length = new_size;
       if (seg_start != std::get<1>(toIterate.back())) {
         length = ConstantInt::get(new_size->getType(), seg_start + seg_size);

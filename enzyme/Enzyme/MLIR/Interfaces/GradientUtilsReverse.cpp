@@ -30,7 +30,8 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-    IRMapping invertedPointers_,
+    IRMapping invertedPointers_, const llvm::ArrayRef<bool> returnPrimals,
+    const llvm::ArrayRef<bool> returnShadows,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
@@ -38,9 +39,10 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
-                          invertedPointers_, constantvalues_, activevals_,
-                          ReturnActivity, ArgDiffeTypes_, originalToNewFn_,
-                          originalToNewFnOps_, mode_, width, /*omp*/ false) {}
+                          invertedPointers_, returnPrimals, returnShadows,
+                          constantvalues_, activevals_, ReturnActivity,
+                          ArgDiffeTypes_, originalToNewFn_, originalToNewFnOps_,
+                          mode_, width, /*omp*/ false) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();
@@ -134,9 +136,9 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    const std::vector<bool> &returnPrimals,
-    const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> retType,
-    ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg) {
+    const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
+    ArrayRef<DIFFE_TYPE> retType, ArrayRef<DIFFE_TYPE> constant_args,
+    mlir::Type additionalArg) {
   std::string prefix;
 
   switch (mode_) {
@@ -169,8 +171,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
       prefix + todiff.getName(), originalToNew, originalToNewOps,
       additionalArg);
 
-  return new MGradientUtilsReverse(Logic, newFunc, todiff, TA, invertedPointers,
-                                   constant_values, nonconstant_values, retType,
-                                   constant_args, originalToNew,
-                                   originalToNewOps, mode_, width);
+  return new MGradientUtilsReverse(
+      Logic, newFunc, todiff, TA, invertedPointers, returnPrimals,
+      returnShadows, constant_values, nonconstant_values, retType,
+      constant_args, originalToNew, originalToNewOps, mode_, width);
 }

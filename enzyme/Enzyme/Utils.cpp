@@ -45,6 +45,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm-c/Core.h"
 
 #include "LibraryFuncs.h"
@@ -203,7 +209,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      ConstantInt::get(next->getType(), 0),
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
-  if (!custom) {
+  auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+
+  if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
 
@@ -2581,7 +2590,11 @@ AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
     }
     if (auto CI = dyn_cast<GetElementPtrInst>(ptr)) {
       auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
       MapVector<Value *, APInt> VariableOffsets;
+#endif
       auto width = sizeof(size_t) * 8;
       APInt Offset(width, 0);
       bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2628,7 +2641,11 @@ findAllUsersOf(Value *AI) {
       }
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+        SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
         MapVector<Value *, APInt> VariableOffsets;
+#endif
         auto width = sizeof(size_t) * 8;
         APInt Offset(width, 0);
         bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2953,9 +2970,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",  "scal",  "axpy",  "gemv",  "gemm",  "spmv",  "syrk",
-      "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy",
-      "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs", "getri"};
+      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk", "nrm2",
+      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv", "syr2k",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv",
+  };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -3461,9 +3479,16 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
+                   SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+                   APInt &ConstantOffset)
+#else
 bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
-                   APInt &ConstantOffset) {
+                   APInt &ConstantOffset)
+#endif
+{
 #if LLVM_VERSION_MAJOR >= 13
   return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
