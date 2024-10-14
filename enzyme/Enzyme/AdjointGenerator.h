@@ -2902,167 +2902,204 @@ public:
     }
     assert(size != 0);
 
-    auto &DL = gutils->newFunc->getParent()->getDataLayout();
-    auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
+    // Offsets of the form Optional<floating type>, segment start, segment size
+    std::vector<std::tuple<Type *, size_t, size_t>> toIterate;
 
-    if (!vd.isKnownPastPointer()) {
-      // If unknown type results, and zeroing known undef allocation, consider
-      // integers
-      if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
-        if (CI->isZero()) {
-          auto root = getBaseObject(MS.getOperand(0));
-          bool writtenTo = false;
-          bool undefMemory =
-              isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
-          if (auto arg = dyn_cast<Argument>(root))
-            if (arg->hasStructRetAttr())
-              undefMemory = true;
-          if (undefMemory) {
-            Instruction *cur = MS.getPrevNode();
-            while (cur) {
-              if (cur == root)
-                break;
-              if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
-                if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-                  // If the start of the lifetime for more memory than being
-                  // memset, its valid.
-                  if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
-                    if (getBaseObject(II->getOperand(1)) == root) {
-                      if (auto CI2 = dyn_cast<ConstantInt>(II->getOperand(0))) {
-                        if (MCI->getValue().ule(CI2->getValue()))
-                          break;
+    // Special handling mechanism to bypass TA limitations by supporting
+    // arbitrary sized types.
+    if (auto MD = hasMetadata(&MS, "enzyme_truetype")) {
+      toIterate = parseTrueType(MD, Mode, false);
+    } else {
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
+
+      if (!vd.isKnownPastPointer()) {
+        // If unknown type results, and zeroing known undef allocation, consider
+        // integers
+        if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
+          if (CI->isZero()) {
+            auto root = getBaseObject(MS.getOperand(0));
+            bool writtenTo = false;
+            bool undefMemory =
+                isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
+            if (auto arg = dyn_cast<Argument>(root))
+              if (arg->hasStructRetAttr())
+                undefMemory = true;
+            if (undefMemory) {
+              Instruction *cur = MS.getPrevNode();
+              while (cur) {
+                if (cur == root)
+                  break;
+                if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
+                  if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                    // If the start of the lifetime for more memory than being
+                    // memset, its valid.
+                    if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+                      if (getBaseObject(II->getOperand(1)) == root) {
+                        if (auto CI2 =
+                                dyn_cast<ConstantInt>(II->getOperand(0))) {
+                          if (MCI->getValue().ule(CI2->getValue()))
+                            break;
+                        }
                       }
+                      cur = cur->getPrevNode();
+                      continue;
                     }
-                    cur = cur->getPrevNode();
+                  }
+                }
+                if (cur->mayWriteToMemory()) {
+                  writtenTo = true;
+                  break;
+                }
+                cur = cur->getPrevNode();
+              }
+
+              if (!writtenTo) {
+                vd = TypeTree(BaseType::Pointer);
+                vd.insert({-1}, BaseType::Integer);
+              }
+            }
+          }
+      }
+
+      if (!vd.isKnownPastPointer()) {
+        // If unknown type results, consider the intersection of all incoming.
+        if (isa<PHINode>(MS.getOperand(0)) ||
+            isa<SelectInst>(MS.getOperand(0))) {
+          SmallVector<Value *, 2> todo = {MS.getOperand(0)};
+          bool set = false;
+          SmallSet<Value *, 2> seen;
+          TypeTree vd2;
+          while (todo.size()) {
+            Value *cur = todo.back();
+            todo.pop_back();
+            if (seen.count(cur))
+              continue;
+            seen.insert(cur);
+            if (auto PN = dyn_cast<PHINode>(cur)) {
+              for (size_t i = 0, end = PN->getNumIncomingValues(); i < end;
+                   i++) {
+                todo.push_back(PN->getIncomingValue(i));
+              }
+              continue;
+            }
+            if (auto S = dyn_cast<SelectInst>(cur)) {
+              todo.push_back(S->getTrueValue());
+              todo.push_back(S->getFalseValue());
+              continue;
+            }
+            if (auto CE = dyn_cast<ConstantExpr>(cur)) {
+              if (CE->isCast()) {
+                todo.push_back(CE->getOperand(0));
+                continue;
+              }
+            }
+            if (auto CI = dyn_cast<CastInst>(cur)) {
+              todo.push_back(CI->getOperand(0));
+              continue;
+            }
+            if (isa<ConstantPointerNull>(cur))
+              continue;
+            if (auto CI = dyn_cast<ConstantInt>(cur))
+              if (CI->isZero())
+                continue;
+            auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
+            if (!set)
+              vd2 = curTT;
+            else
+              vd2 &= curTT;
+            set = true;
+          }
+          vd = vd2;
+        }
+      }
+      if (!vd.isKnownPastPointer()) {
+        if (looseTypeAnalysis) {
+#if LLVM_VERSION_MAJOR < 17
+          if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
+            if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
+              auto ET = PT->getPointerElementType();
+              while (1) {
+                if (auto ST = dyn_cast<StructType>(ET)) {
+                  if (ST->getNumElements()) {
+                    ET = ST->getElementType(0);
                     continue;
                   }
                 }
-              }
-              if (cur->mayWriteToMemory()) {
-                writtenTo = true;
-                break;
-              }
-              cur = cur->getPrevNode();
-            }
-
-            if (!writtenTo) {
-              vd = TypeTree(BaseType::Pointer);
-              vd.insert({-1}, BaseType::Integer);
-            }
-          }
-        }
-    }
-
-    if (!vd.isKnownPastPointer()) {
-      // If unknown type results, consider the intersection of all incoming.
-      if (isa<PHINode>(MS.getOperand(0)) || isa<SelectInst>(MS.getOperand(0))) {
-        SmallVector<Value *, 2> todo = {MS.getOperand(0)};
-        bool set = false;
-        SmallSet<Value *, 2> seen;
-        TypeTree vd2;
-        while (todo.size()) {
-          Value *cur = todo.back();
-          todo.pop_back();
-          if (seen.count(cur))
-            continue;
-          seen.insert(cur);
-          if (auto PN = dyn_cast<PHINode>(cur)) {
-            for (size_t i = 0, end = PN->getNumIncomingValues(); i < end; i++) {
-              todo.push_back(PN->getIncomingValue(i));
-            }
-            continue;
-          }
-          if (auto S = dyn_cast<SelectInst>(cur)) {
-            todo.push_back(S->getTrueValue());
-            todo.push_back(S->getFalseValue());
-            continue;
-          }
-          if (auto CE = dyn_cast<ConstantExpr>(cur)) {
-            if (CE->isCast()) {
-              todo.push_back(CE->getOperand(0));
-              continue;
-            }
-          }
-          if (auto CI = dyn_cast<CastInst>(cur)) {
-            todo.push_back(CI->getOperand(0));
-            continue;
-          }
-          if (isa<ConstantPointerNull>(cur))
-            continue;
-          if (auto CI = dyn_cast<ConstantInt>(cur))
-            if (CI->isZero())
-              continue;
-          auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
-          if (!set)
-            vd2 = curTT;
-          else
-            vd2 &= curTT;
-          set = true;
-        }
-        vd = vd2;
-      }
-    }
-    if (!vd.isKnownPastPointer()) {
-      if (looseTypeAnalysis) {
-#if LLVM_VERSION_MAJOR < 17
-        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
-          if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
-            auto ET = PT->getPointerElementType();
-            while (1) {
-              if (auto ST = dyn_cast<StructType>(ET)) {
-                if (ST->getNumElements()) {
-                  ET = ST->getElementType(0);
+                if (auto AT = dyn_cast<ArrayType>(ET)) {
+                  ET = AT->getElementType();
                   continue;
                 }
+                break;
               }
-              if (auto AT = dyn_cast<ArrayType>(ET)) {
-                ET = AT->getElementType();
-                continue;
+              if (ET->isFPOrFPVectorTy()) {
+                vd = TypeTree(ConcreteType(ET->getScalarType())).Only(0, &MS);
+                goto known;
               }
+              if (ET->isPointerTy()) {
+                vd = TypeTree(BaseType::Pointer).Only(0, &MS);
+                goto known;
+              }
+              if (ET->isIntOrIntVectorTy()) {
+                vd = TypeTree(BaseType::Integer).Only(0, &MS);
+                goto known;
+              }
+            }
+          }
+#endif
+          if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
+            if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
+              if (AT->getElementType()->isIntegerTy()) {
+                vd = TypeTree(BaseType::Integer).Only(0, &MS);
+                goto known;
+              }
+            }
+          }
+          EmitWarning("CannotDeduceType", MS,
+                      "failed to deduce type of memset ", MS);
+          vd = TypeTree(BaseType::Pointer).Only(0, &MS);
+          goto known;
+        }
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of memset " << MS;
+        EmitNoTypeError(str, MS, gutils, BuilderZ);
+        return;
+      }
+    known:;
+      {
+        unsigned start = 0;
+        while (1) {
+          unsigned nextStart = size;
+
+          auto dt = vd[{-1}];
+          for (size_t i = start; i < size; ++i) {
+            bool Legal = true;
+            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
               break;
             }
-            if (ET->isFPOrFPVectorTy()) {
-              vd = TypeTree(ConcreteType(ET->getScalarType())).Only(0, &MS);
-              goto known;
-            }
-            if (ET->isPointerTy()) {
-              vd = TypeTree(BaseType::Pointer).Only(0, &MS);
-              goto known;
-            }
-            if (ET->isIntOrIntVectorTy()) {
-              vd = TypeTree(BaseType::Integer).Only(0, &MS);
-              goto known;
-            }
           }
-        }
-#endif
-        if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
-          if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
-            if (AT->getElementType()->isIntegerTy()) {
-              vd = TypeTree(BaseType::Integer).Only(0, &MS);
-              goto known;
-            }
+          if (!dt.isKnown()) {
+            TR.dump();
+            llvm::errs() << " vd:" << vd.str() << " start:" << start
+                         << " size: " << size << " dt:" << dt.str() << "\n";
           }
+          assert(dt.isKnown());
+          toIterate.emplace_back(dt.isFloat(), start, nextStart - start);
+
+          if (nextStart == size)
+            break;
+          start = nextStart;
         }
-        EmitWarning("CannotDeduceType", MS, "failed to deduce type of memset ",
-                    MS);
-        vd = TypeTree(BaseType::Pointer).Only(0, &MS);
-        goto known;
       }
-      std::string str;
-      raw_string_ostream ss(str);
-      ss << "Cannot deduce type of memset " << MS;
-      EmitNoTypeError(str, MS, gutils, BuilderZ);
-      return;
     }
-  known:;
 
 #if 0
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
 #endif
-
-    unsigned start = 0;
 
     Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
     Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
@@ -3071,32 +3108,18 @@ public:
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
-    while (1) {
-      unsigned nextStart = size;
-
-      auto dt = vd[{-1}];
-      for (size_t i = start; i < size; ++i) {
-        bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-        if (!Legal) {
-          nextStart = i;
-          break;
-        }
-      }
-      if (!dt.isKnown()) {
-        TR.dump();
-        llvm::errs() << " vd:" << vd.str() << " start:" << start
-                     << " size: " << size << " dt:" << dt.str() << "\n";
-      }
-      assert(dt.isKnown());
+    for (auto &&[secretty_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto secretty = secretty_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
 
       Value *length = new_size;
-      if (nextStart != size) {
-        length = ConstantInt::get(new_size->getType(), nextStart);
+      if (seg_start != std::get<1>(toIterate.back())) {
+        length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
       }
-      if (start != 0)
+      if (seg_start != 0)
         length = BuilderZ.CreateSub(
-            length, ConstantInt::get(new_size->getType(), start));
+            length, ConstantInt::get(new_size->getType(), seg_start));
 
 #if 0
       unsigned subdstalign = dstalign;
@@ -3118,7 +3141,6 @@ public:
       Value *shadow_dst = gutils->invertPointerM(MS.getOperand(0), BuilderZ);
 
       // TODO ponder forward split mode
-      Type *secretty = dt.isFloat();
       if (!secretty &&
           ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
            (Mode == DerivativeMode::ReverseModeCombined && forwardsShadow) ||
@@ -3130,9 +3152,9 @@ public:
                                         ValueType::Primal, ValueType::Primal},
                                        BuilderZ, /*lookup*/ false);
         auto rule = [&](Value *op0) {
-          if (start != 0) {
-            Value *idxs[] = {
-                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+          if (seg_start != 0) {
+            Value *idxs[] = {ConstantInt::get(
+                Type::getInt32Ty(op0->getContext()), seg_start)};
             op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
                                              op0, idxs);
           }
@@ -3167,9 +3189,9 @@ public:
           op3l = gutils->lookupM(op3l, BuilderZ);
         length = gutils->lookupM(length, Builder2);
         auto rule = [&](Value *op0) {
-          if (start != 0) {
-            Value *idxs[] = {
-                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+          if (seg_start != 0) {
+            Value *idxs[] = {ConstantInt::get(
+                Type::getInt32Ty(op0->getContext()), seg_start)};
             op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
                                              op0, idxs);
           }
@@ -3206,10 +3228,6 @@ public:
 
         applyChainRule(Builder2, rule, gutils->lookupM(shadow_dst, Builder2));
       }
-
-      if (nextStart == size)
-        break;
-      start = nextStart;
     }
   }
 
@@ -3275,119 +3293,187 @@ public:
       return;
     }
 
-    auto &DL = gutils->newFunc->getParent()->getDataLayout();
-    auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
-    vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
-    for (size_t i = 0; i < MTI.getNumOperands(); i++)
-      if (MTI.getOperand(i) == orig_dst)
-        if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
-          auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
-          auto TT = TypeTree::parse(attr.getValueAsString(), MTI.getContext());
-          vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
-          break;
-        }
-
-    bool errorIfNoType = true;
-    if ((Mode == DerivativeMode::ForwardMode ||
-         Mode == DerivativeMode::ForwardModeError) &&
-        (!gutils->isConstantValue(orig_src) && !gutils->runtimeActivity)) {
-      errorIfNoType = false;
-    }
-
+    // Offsets of the form Optional<floating type>, segment start, segment size
+    std::vector<std::tuple<Type *, size_t, size_t>> toIterate;
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
 
-    if (!vd.isKnownPastPointer()) {
-      if (looseTypeAnalysis) {
-        for (auto val : {orig_dst, orig_src}) {
+    // Special handling mechanism to bypass TA limitations by supporting
+    // arbitrary sized types.
+    if (auto MD = hasMetadata(&MTI, "enzyme_truetype")) {
+      toIterate = parseTrueType(MD, Mode,
+                                !gutils->isConstantValue(orig_src) &&
+                                    !gutils->runtimeActivity);
+    } else {
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
+      vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
+      for (size_t i = 0; i < MTI.getNumOperands(); i++)
+        if (MTI.getOperand(i) == orig_dst)
+          if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
+            auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
+            auto TT =
+                TypeTree::parse(attr.getValueAsString(), MTI.getContext());
+            vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
+            break;
+          }
+
+      bool errorIfNoType = true;
+      if ((Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError) &&
+          (!gutils->isConstantValue(orig_src) && !gutils->runtimeActivity)) {
+        errorIfNoType = false;
+      }
+
+      if (!vd.isKnownPastPointer()) {
+        if (looseTypeAnalysis) {
+          for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
-          if (auto CI = dyn_cast<CastInst>(val)) {
-            if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
-              auto ET = PT->getPointerElementType();
-              while (1) {
-                if (auto ST = dyn_cast<StructType>(ET)) {
-                  if (ST->getNumElements()) {
-                    ET = ST->getElementType(0);
+            if (auto CI = dyn_cast<CastInst>(val)) {
+              if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
+                auto ET = PT->getPointerElementType();
+                while (1) {
+                  if (auto ST = dyn_cast<StructType>(ET)) {
+                    if (ST->getNumElements()) {
+                      ET = ST->getElementType(0);
+                      continue;
+                    }
+                  }
+                  if (auto AT = dyn_cast<ArrayType>(ET)) {
+                    ET = AT->getElementType();
                     continue;
                   }
+                  break;
                 }
-                if (auto AT = dyn_cast<ArrayType>(ET)) {
-                  ET = AT->getElementType();
-                  continue;
+                if (ET->isFPOrFPVectorTy()) {
+                  vd =
+                      TypeTree(ConcreteType(ET->getScalarType())).Only(0, &MTI);
+                  goto known;
                 }
+                if (ET->isPointerTy()) {
+                  vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
+                  goto known;
+                }
+                if (ET->isIntOrIntVectorTy()) {
+                  vd = TypeTree(BaseType::Integer).Only(0, &MTI);
+                  goto known;
+                }
+              }
+            }
+#endif
+            if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
+              if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
+                if (AT->getElementType()->isIntegerTy()) {
+                  vd = TypeTree(BaseType::Integer).Only(0, &MTI);
+                  goto known;
+                }
+              }
+            }
+          }
+          // If the type is known, but outside of the known range
+          // (but the memcpy size is a variable), attempt to use
+          // the first type out of range as the memcpy type.
+          if (size == 1 && !isa<ConstantInt>(new_size)) {
+            for (auto ptr : {orig_dst, orig_src}) {
+              vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
+              if (vd.isKnownPastPointer()) {
+                ConcreteType mv(BaseType::Unknown);
+                size_t minInt = 0xFFFFFFFF;
+                for (const auto &pair : vd.getMapping()) {
+                  if (pair.first.size() != 1)
+                    continue;
+                  if (minInt < (size_t)pair.first[0])
+                    continue;
+                  minInt = pair.first[0];
+                  mv = pair.second;
+                }
+                assert(mv != BaseType::Unknown);
+                vd.insert({0}, mv);
+                goto known;
+              }
+            }
+          }
+          if (errorIfNoType)
+            EmitWarning("CannotDeduceType", MTI,
+                        "failed to deduce type of copy ", MTI);
+          vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
+          goto known;
+        }
+        if (errorIfNoType) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of copy " << MTI;
+          EmitNoTypeError(str, MTI, gutils, BuilderZ);
+          vd = TypeTree(BaseType::Integer).Only(0, &MTI);
+        } else {
+          vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
+        }
+      }
+
+    known:;
+      {
+
+        unsigned start = 0;
+        while (1) {
+          unsigned nextStart = size;
+
+          auto dt = vd[{-1}];
+          for (size_t i = start; i < size; ++i) {
+            bool Legal = true;
+            auto tmp = dt;
+            auto next = vd[{(int)i}];
+            tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+            // Prevent fusion of {Anything, Float} since anything is an int rule
+            // but float requires zeroing.
+            if ((dt == BaseType::Anything &&
+                 (next != BaseType::Anything && next.isKnown())) ||
+                (next == BaseType::Anything &&
+                 (dt != BaseType::Anything && dt.isKnown())))
+              Legal = false;
+            if (!Legal) {
+              if (Mode == DerivativeMode::ForwardMode ||
+                  Mode == DerivativeMode::ForwardModeError) {
+                // if both are floats (of any type), forward mode is the same.
+                //   + [potentially zero if const, otherwise copy]
+                // if both are int/pointer (of any type), also the same
+                //   + copy
+                // if known non-constant, also the same
+                //   + copy
+                if ((dt.isFloat() == nullptr) ==
+                    (vd[{(int)i}].isFloat() == nullptr)) {
+                  Legal = true;
+                }
+                if (!gutils->isConstantValue(orig_src) &&
+                    !gutils->runtimeActivity) {
+                  Legal = true;
+                }
+              }
+              if (!Legal) {
+                nextStart = i;
                 break;
               }
-              if (ET->isFPOrFPVectorTy()) {
-                vd = TypeTree(ConcreteType(ET->getScalarType())).Only(0, &MTI);
-                goto known;
-              }
-              if (ET->isPointerTy()) {
-                vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
-                goto known;
-              }
-              if (ET->isIntOrIntVectorTy()) {
-                vd = TypeTree(BaseType::Integer).Only(0, &MTI);
-                goto known;
-              }
-            }
+            } else
+              dt = tmp;
           }
-#endif
-          if (auto gep = dyn_cast<GetElementPtrInst>(val)) {
-            if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
-              if (AT->getElementType()->isIntegerTy()) {
-                vd = TypeTree(BaseType::Integer).Only(0, &MTI);
-                goto known;
-              }
-            }
+          if (!dt.isKnown()) {
+            TR.dump();
+            llvm::errs() << " vd:" << vd.str() << " start:" << start
+                         << " size: " << size << " dt:" << dt.str() << "\n";
           }
+          assert(dt.isKnown());
+          toIterate.emplace_back(dt.isFloat(), start, nextStart - start);
+
+          if (nextStart == size)
+            break;
+          start = nextStart;
         }
-        // If the type is known, but outside of the known range
-        // (but the memcpy size is a variable), attempt to use
-        // the first type out of range as the memcpy type.
-        if (size == 1 && !isa<ConstantInt>(new_size)) {
-          for (auto ptr : {orig_dst, orig_src}) {
-            vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
-            if (vd.isKnownPastPointer()) {
-              ConcreteType mv(BaseType::Unknown);
-              size_t minInt = 0xFFFFFFFF;
-              for (const auto &pair : vd.getMapping()) {
-                if (pair.first.size() != 1)
-                  continue;
-                if (minInt < (size_t)pair.first[0])
-                  continue;
-                minInt = pair.first[0];
-                mv = pair.second;
-              }
-              assert(mv != BaseType::Unknown);
-              vd.insert({0}, mv);
-              goto known;
-            }
-          }
-        }
-        if (errorIfNoType)
-          EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
-                      MTI);
-        vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
-        goto known;
-      }
-      if (errorIfNoType) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of copy " << MTI;
-        EmitNoTypeError(str, MTI, gutils, BuilderZ);
-        vd = TypeTree(BaseType::Integer).Only(0, &MTI);
-      } else {
-        vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
       }
     }
-  known:;
 
     // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
     // vd.str() << "\n";
 
     unsigned dstalign = dstAlign.valueOrOne().value();
     unsigned srcalign = srcAlign.valueOrOne().value();
-
-    unsigned start = 0;
 
     bool backwardsShadow = false;
     bool forwardsShadow = true;
@@ -3402,73 +3488,30 @@ public:
       }
     }
 
-    while (1) {
-      unsigned nextStart = size;
-
-      auto dt = vd[{-1}];
-      for (size_t i = start; i < size; ++i) {
-        bool Legal = true;
-        auto tmp = dt;
-        auto next = vd[{(int)i}];
-        tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
-        // Prevent fusion of {Anything, Float} since anything is an int rule
-        // but float requires zeroing.
-        if ((dt == BaseType::Anything &&
-             (next != BaseType::Anything && next.isKnown())) ||
-            (next == BaseType::Anything &&
-             (dt != BaseType::Anything && dt.isKnown())))
-          Legal = false;
-        if (!Legal) {
-          if (Mode == DerivativeMode::ForwardMode ||
-              Mode == DerivativeMode::ForwardModeError) {
-            // if both are floats (of any type), forward mode is the same.
-            //   + [potentially zero if const, otherwise copy]
-            // if both are int/pointer (of any type), also the same
-            //   + copy
-            // if known non-constant, also the same
-            //   + copy
-            if ((dt.isFloat() == nullptr) ==
-                (vd[{(int)i}].isFloat() == nullptr)) {
-              Legal = true;
-            }
-            if (!gutils->isConstantValue(orig_src) &&
-                !gutils->runtimeActivity) {
-              Legal = true;
-            }
-          }
-          if (!Legal) {
-            nextStart = i;
-            break;
-          }
-        } else
-          dt = tmp;
-      }
-      if (!dt.isKnown()) {
-        TR.dump();
-        llvm::errs() << " vd:" << vd.str() << " start:" << start
-                     << " size: " << size << " dt:" << dt.str() << "\n";
-      }
-      assert(dt.isKnown());
+    for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto floatTy = floatTy_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
 
       Value *length = new_size;
-      if (nextStart != size) {
-        length = ConstantInt::get(new_size->getType(), nextStart);
+      if (seg_start != std::get<1>(toIterate.back())) {
+        length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
       }
-      if (start != 0)
+      if (seg_start != 0)
         length = BuilderZ.CreateSub(
-            length, ConstantInt::get(new_size->getType(), start));
+            length, ConstantInt::get(new_size->getType(), seg_start));
 
       unsigned subdstalign = dstalign;
       // todo make better alignment calculation
       if (dstalign != 0) {
-        if (start % dstalign != 0) {
+        if (seg_start % dstalign != 0) {
           dstalign = 1;
         }
       }
       unsigned subsrcalign = srcalign;
       // todo make better alignment calculation
       if (srcalign != 0) {
-        if (start % srcalign != 0) {
+        if (seg_start % srcalign != 0) {
           srcalign = 1;
         }
       }
@@ -3486,8 +3529,8 @@ public:
         if (shadow_src == nullptr)
           shadow_src = gutils->getNewFromOriginal(orig_src);
         SubTransferHelper(
-            gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
-            /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
+            gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
+            /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
             gutils->isConstantValue(orig_src), shadow_src,
             /*length*/ length, /*volatile*/ isVolatile, &MTI,
             /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
@@ -3508,13 +3551,13 @@ public:
         if (ddst->getType()->isIntegerTy())
           ddst =
               BuilderZ.CreateIntToPtr(ddst, getInt8PtrTy(ddst->getContext()));
-        if (start != 0) {
+        if (seg_start != 0) {
           ddst = BuilderZ.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(ddst->getContext()), ddst, start);
+              Type::getInt8Ty(ddst->getContext()), ddst, seg_start);
         }
         CallInst *call;
         // TODO add gutils->runtimeActivity (correctness)
-        if (dt.isFloat() && gutils->isConstantValue(orig_src)) {
+        if (floatTy && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
               length, salign, isVolatile);
@@ -3522,9 +3565,9 @@ public:
           if (dsrc->getType()->isIntegerTy())
             dsrc =
                 BuilderZ.CreateIntToPtr(dsrc, getInt8PtrTy(dsrc->getContext()));
-          if (start != 0) {
+          if (seg_start != 0) {
             dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
-                Type::getInt8Ty(ddst->getContext()), dsrc, start);
+                Type::getInt8Ty(ddst->getContext()), dsrc, seg_start);
           }
           if (ID == Intrinsic::memmove) {
             call = BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, length);
@@ -3552,10 +3595,6 @@ public:
         applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
       else
         applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
-
-      if (nextStart == size)
-        break;
-      start = nextStart;
     }
 
     eraseIfUnused(MTI);

@@ -296,12 +296,12 @@ FunctionOpInterface CloneFunctionWithReturns(
         ptrInputs.map(oval, dval);
       }
     }
+    auto retloc = blk.getTerminator()->getLoc();
     for (auto &&[Ty, activity] :
          llvm::zip(F.getFunctionType().cast<mlir::FunctionType>().getResults(),
                    RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
-        auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
-        blk.addArgument(getShadowType(Ty, width), location);
+        blk.addArgument(getShadowType(Ty, width), retloc);
       }
     }
   }

@@ -29,6 +29,8 @@ using namespace mlir::enzyme;
 using namespace enzyme;
 
 std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
+  if (inp.size() == 0)
+    return {};
   std::vector<DIFFE_TYPE> ArgActivity;
   SmallVector<StringRef, 1> split;
   StringRef(inp.data(), inp.size()).split(split, ',');

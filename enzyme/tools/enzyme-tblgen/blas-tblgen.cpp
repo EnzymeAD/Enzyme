@@ -1425,7 +1425,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   os << "        if (byRef) {\n";
   int n = 0;
   if (func == "gemv" || func == "lascl" || func == "potrs" || func == "potrf" ||
-      func == "lacpy" || func == "spmv" || func == "spr2")
+      func == "lacpy" || func == "spmv" || func == "spr2" || func == "symv")
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
@@ -1457,7 +1457,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   }
 }
 
-void emit_tmp_free(Record *Def, raw_ostream &os, StringRef builder) {
+void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto args = Def->getValueAsListOfStrings("args");
   // allocating tmp variables is optional, return if not required
   if (args.size() == 0)
@@ -1467,7 +1467,7 @@ void emit_tmp_free(Record *Def, raw_ostream &os, StringRef builder) {
   os << "    CreateDealloc(" << builder << ", true_" << allocName << ");\n";
 }
 
-void emit_tmp_creation(Record *Def, raw_ostream &os, StringRef builder) {
+void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   const auto args = Def->getValueAsListOfStrings("args");
   // allocating tmp variables is optional, return if not required
   if (args.size() == 0)

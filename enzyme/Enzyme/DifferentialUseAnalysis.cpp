@@ -917,6 +917,9 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
+      if (hasNoCache((*mp.begin()).V)) {
+        continue;
+      }
       // If an allocation call, we cannot cache any "capturing" users
       if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
         auto next = (*mp.begin()).V;
@@ -960,6 +963,20 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     }
   }
 
+  // Fix up non-cacheable calls to use their operand(s) instead
+  for (auto V : Intermediates) {
+    if (!hasNoCache(V))
+      continue;
+    if (!MinReq.count(V))
+      continue;
+    MinReq.remove(V);
+    for (auto &pair : Orig) {
+      if (pair.second.count(Node(V, false))) {
+        MinReq.insert(pair.first.V);
+      }
+    }
+  }
+
   // Fix up non-repeatable writing calls that chain within rematerialized
   // allocations. We could iterate from the keys of the valuemap, but that would
   // be a non-determinstic ordering.
@@ -995,6 +1012,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     // values that we are keeping for stores.
     MinReq.insert(V);
   }
+
   return;
 }
 

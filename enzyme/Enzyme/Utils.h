@@ -687,6 +687,9 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #endif
 
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
@@ -1156,7 +1159,7 @@ static inline llvm::StringRef getFuncName(llvm::Function *called) {
     return called->getName();
 }
 
-template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
+static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_math"))
@@ -1170,11 +1173,23 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   return "";
 }
 
-template <typename T>
+static inline bool hasNoCache(llvm::Value *op) {
+  using namespace llvm;
+  if (auto CB = dyn_cast<CallBase>(op)) {
+    if (auto called = getFunctionFromCall(CB)) {
+      if (called->hasFnAttribute("enzyme_nocache"))
+        return true;
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
-static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
+static inline std::optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #else
-static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
+static inline llvm::Optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #endif
 {
   auto AttrList =
@@ -1678,6 +1693,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::exp:
   case Intrinsic::cos:
   case Intrinsic::sin:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::tanh:
+  case Intrinsic::cosh:
+  case Intrinsic::sinh:
+#endif
   case Intrinsic::copysign:
   case Intrinsic::fabs:
     return true;
@@ -1997,10 +2017,17 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(
+    llvm::GEPOperator *gep, const llvm::DataLayout &DL, unsigned BitWidth,
+    llvm::SmallMapVector<llvm::Value *, llvm::APInt, 4> &VariableOffsets,
+    llvm::APInt &ConstantOffset);
+#else
 bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
+#endif
 
 llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::Intrinsic::ID ID, llvm::Type *RetTy,

@@ -118,9 +118,15 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"atan", Intrinsic::not_intrinsic},
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"cosh", Intrinsic::cosh},
+    {"sinh", Intrinsic::sinh},
+    {"tanh", Intrinsic::tanh},
+#else
     {"cosh", Intrinsic::not_intrinsic},
     {"sinh", Intrinsic::not_intrinsic},
     {"tanh", Intrinsic::not_intrinsic},
+#endif
     {"acosh", Intrinsic::not_intrinsic},
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
@@ -1916,7 +1922,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   APInt constOffset(BitWidth, 0);
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
@@ -3849,6 +3859,11 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+#endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
@@ -5111,6 +5126,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
       }
       updateAnalysis(&call, ptr.Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "__size_returning_new_experiment") {
+      auto ptr = TypeTree(BaseType::Pointer);
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      ptr = ptr.Only(0, &call);
+      ptr |= TypeTree(BaseType::Integer).Only(DL.getPointerSize(), &call);
+      updateAnalysis(&call, ptr.Only(0, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
