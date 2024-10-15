@@ -278,7 +278,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
           auto memset = cast<CallInst>(Builder2.CreateCall(
               getIntrinsicDeclaration(called->getParent(), Intrinsic::memset,
-                                        tys),
+                                      tys),
               nargs, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
         } else if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
@@ -888,7 +888,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           Builder2, /*lookup*/ true);
       auto memset = cast<CallInst>(Builder2.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys),
+                                  Intrinsic::memset, tys),
           nargs));
       memset->addParamAttr(0, Attribute::NonNull);
     }
@@ -1058,7 +1058,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Type *tys[] = {shadow->getType(), buf->getType(), len_arg->getType()};
 
         auto memcpyF = getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                                 Intrinsic::memcpy, tys);
+                                               Intrinsic::memcpy, tys);
 
         auto mem =
             cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
@@ -1081,7 +1081,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *tys[] = {args[0]->getType(), args[2]->getType()};
       auto memset = cast<CallInst>(Builder2.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys),
+                                  Intrinsic::memset, tys),
           args, BufferDefs));
       memset->addParamAttr(0, Attribute::NonNull);
       Builder2.CreateBr(mergeBlock);
@@ -1263,7 +1263,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                          len_arg->getType()};
 
           auto memcpyF = getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                                   Intrinsic::memcpy, tys);
+                                                 Intrinsic::memcpy, tys);
 
           auto mem =
               cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
@@ -1315,7 +1315,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
+                                    Intrinsic::memset, tys),
             args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
 
@@ -1497,7 +1497,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *tys[] = {args[0]->getType(), args[2]->getType()};
       auto memset = cast<CallInst>(Builder2.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys),
+                                  Intrinsic::memset, tys),
           args, BufferDefs));
       memset->addParamAttr(0, Attribute::NonNull);
 
@@ -1697,7 +1697,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
+                                    Intrinsic::memset, tys),
             args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
 
@@ -1918,7 +1918,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
+                                    Intrinsic::memset, tys),
             args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
       }
@@ -2130,7 +2130,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(gutils->newFunc->getParent(),
-                                      Intrinsic::memset, tys),
+                                    Intrinsic::memset, tys),
             args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
       }
@@ -3822,7 +3822,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
               if (funcName == "posix_memalign" ||
                   funcName == "cudaMallocHost") {
-		BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
+                BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
               } else if (funcName == "cudaMalloc") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
                 auto F = M->getOrInsertFunction(

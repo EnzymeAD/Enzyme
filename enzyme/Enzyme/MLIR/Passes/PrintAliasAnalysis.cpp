@@ -110,7 +110,8 @@ struct PrintAliasAnalysisPass
       } else if (op->hasTrait<OpTrait::ReturnLike>() &&
                  isa<FunctionOpInterface>(op->getParentOp())) {
         os << "points-to-pointer sets for op @" << op->getLoc() << ":\n";
-        if (auto *state = solver.lookupState<enzyme::PointsToSets>(solver.getProgramPointBefore(op)))
+        if (auto *state = solver.lookupState<enzyme::PointsToSets>(
+                solver.getProgramPointBefore(op)))
           os << *state << "\n";
         else
           os << "NOT computed\n";

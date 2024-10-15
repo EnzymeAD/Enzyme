@@ -1138,7 +1138,7 @@ public:
               maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
               auto F = getIntrinsicDeclaration(gutils->oldFunc->getParent(),
-                                                 Intrinsic::masked_load, tys);
+                                               Intrinsic::masked_load, tys);
               Value *alignv =
                   ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                    align ? align->value() : 0);
@@ -3790,9 +3790,8 @@ public:
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
-        cal->setCallingConv(
-            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
-                ->getCallingConv());
+        cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
+                                ->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }

@@ -2964,10 +2964,9 @@ public:
             if (F && F->getName() == "f90_mzero8") {
               IRBuilder<> B(CI);
 
-              Value * args[3];
+              Value *args[3];
               args[0] = CI->getArgOperand(0);
-              args[1] = 
-                  ConstantInt::get(Type::getInt8Ty(M.getContext()), 0);
+              args[1] = ConstantInt::get(Type::getInt8Ty(M.getContext()), 0);
               args[2] = B.CreateMul(
                   CI->getArgOperand(1),
                   ConstantInt::get(CI->getArgOperand(1)->getType(), 8));

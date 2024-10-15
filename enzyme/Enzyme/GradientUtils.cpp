@@ -4938,7 +4938,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       assert(start == 0 && size == storeSize);
       Type *tys[] = {newval->getType(), ptr->getType()};
       auto F = getIntrinsicDeclaration(oldFunc->getParent(),
-                                         Intrinsic::masked_store, tys);
+                                       Intrinsic::masked_store, tys);
       assert(align);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
@@ -7336,7 +7336,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                              len_arg->getType()};
 
               auto memcpyF = getIntrinsicDeclaration(newFunc->getParent(),
-                                                       Intrinsic::memcpy, tys);
+                                                     Intrinsic::memcpy, tys);
               auto mem = cast<CallInst>(v.CreateCall(memcpyF, nargs));
 
               mem->addParamAttr(0, Attribute::NonNull);
@@ -8704,8 +8704,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       Type *tys[] = {args[0]->getType(), args[1]->getType(),
                      args[2]->getType()};
 
-      auto memtransIntr = getIntrinsicDeclaration(
-          gutils->newFunc->getParent(), intrinsic, tys);
+      auto memtransIntr =
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), intrinsic, tys);
       auto cal = BuilderZ.CreateCall(memtransIntr, args);
       cal->setAttributes(MTI->getAttributes());
       cal->setCallingConv(memtransIntr->getCallingConv());

@@ -1978,8 +1978,9 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
 #pragma GCC diagnostic pop
 #endif
 
-static inline llvm::Function *getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
-                                        llvm::ArrayRef<llvm::Type *> Tys = {}) {
+static inline llvm::Function *
+getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
+                        llvm::ArrayRef<llvm::Type *> Tys = {}) {
 #if LLVM_VERSION_MAJOR >= 20
   return llvm::Intrinsic::getOrInsertDeclaration(M, id, Tys);
 #else
