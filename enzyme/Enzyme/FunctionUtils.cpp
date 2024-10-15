@@ -321,7 +321,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 #else
           rep->getType()
 #endif
-              );
+      );
       if (auto nCI = dyn_cast<CastInst>(nCI0))
         nCI->takeName(CI);
       for (auto U : CI->users()) {
