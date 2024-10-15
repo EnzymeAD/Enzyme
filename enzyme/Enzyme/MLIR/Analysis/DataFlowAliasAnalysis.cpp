@@ -293,7 +293,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
       isa<MemoryEffects::Allocate>(effects.front().getEffect()) &&
       effects.front().getValue()) {
     const auto *destClasses = getOrCreateFor<AliasClassLattice>(
-        getProgramPointBefore(op), effects.front().getValue());
+        getProgramPointAfter(op), effects.front().getValue());
     propagateIfChanged(
         after, after->setPointingToEmpty(destClasses->getAliasClassesObject()));
     return success();
@@ -332,7 +332,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
 
     for (Value address : targetValues) {
       for (Value stored : storedValues) {
-        processCapturingStore(getProgramPointBefore(op), after, stored, address,
+        processCapturingStore(getProgramPointAfter(op), after, stored, address,
                               isMustStore(op, address));
       }
     }
@@ -467,7 +467,7 @@ void enzyme::PointsToPointerAnalysis::processCallToSummarizedFunc(
   ChangeResult changed = ChangeResult::NoChange;
   // Unify the points-to summary with the actual lattices of function arguments
   for (auto &&[i, argOperand] : llvm::enumerate(call.getArgOperands())) {
-    auto *arg = getOrCreateFor<AliasClassLattice>(getProgramPointBefore(call),
+    auto *arg = getOrCreateFor<AliasClassLattice>(getProgramPointAfter(call),
                                                   argOperand);
 
     std::optional<AliasClassSet> calleePointsTo = lookup(i, /*depth=*/0);
@@ -522,7 +522,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       // memalign points to a value
       OperandRange arguments = call.getArgOperands();
       auto *memPtr = getOrCreateFor<AliasClassLattice>(
-          getProgramPointBefore(call), arguments[0]);
+          getProgramPointAfter(call), arguments[0]);
 
       // Note that this is a "must write" kind of situation, so we can
       // directly set the classes pointed to, rather than inserting them.
@@ -583,8 +583,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
             continue;
 
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
-              getProgramPointBefore(call),
-              call.getArgOperands()[pointerAsData]);
+              getProgramPointAfter(call), call.getArgOperands()[pointerAsData]);
           (void)functionMayCapture.join(srcClasses->getAliasClassesObject());
         }
       }
@@ -596,7 +595,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       ChangeResult changed = ChangeResult::NoChange;
       for (int pointerOperand : pointerLikeOperands) {
         auto *destClasses = getOrCreateFor<AliasClassLattice>(
-            getProgramPointBefore(call), call.getArgOperands()[pointerOperand]);
+            getProgramPointAfter(call), call.getArgOperands()[pointerOperand]);
 
         // If the argument cannot be stored into, just preserve it as is.
         if (!mayWriteArg(callee, pointerOperand, argModRef)) {
@@ -674,7 +673,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
         // is *not* rolled back. Since points-to-pointer analysis is a may-
         // analysis, this is not problematic.
         const auto *destClasses = getOrCreateFor<AliasClassLattice>(
-            getProgramPointBefore(call), result);
+            getProgramPointAfter(call), result);
         AliasClassSet resultWithoutNonWritableOperands =
             AliasClassSet::getUndefined();
         if (destClasses->isUnknown() || nonWritableOperandClasses.isUnknown()) {
@@ -699,7 +698,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
 
         for (int operandNo : pointerLikeOperands) {
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
-              getProgramPointBefore(call), call.getArgOperands()[operandNo]);
+              getProgramPointAfter(call), call.getArgOperands()[operandNo]);
           if (mayReadArg(callee, operandNo, argModRef)) {
             changed |= after->addSetsFrom(resultWithoutNonWritableOperands,
                                           srcClasses->getAliasClassesObject());
@@ -881,7 +880,7 @@ void enzyme::AliasAnalysis::transfer(
       }
     } else if (isa<MemoryEffects::Read>(effect.getEffect())) {
       auto *pointsToSets = getOrCreateFor<PointsToSets>(
-          getProgramPointBefore(op), getProgramPointBefore(op));
+          getProgramPointAfter(op), getProgramPointAfter(op));
       AliasClassLattice *latticeElement = getLatticeElement(value);
       if (latticeElement->isUnknown()) {
         for (AliasClassLattice *result : results) {
@@ -954,8 +953,8 @@ void enzyme::AliasAnalysis::createImplicitArgDereference(
   auto parent = op->getParentOfType<FunctionOpInterface>();
   assert(parent && "failed to find function parent");
   auto *entryPointsToSets = getOrCreateFor<PointsToSets>(
-      getProgramPointBefore(op),
-      getProgramPointBefore(&parent.getCallableRegion()->front()));
+      getProgramPointAfter(op),
+      getProgramPointAfter(&parent.getCallableRegion()->front()));
   if (!entryPointsToSets->getPointsTo(srcClass).isUndefined()) {
     // Only create the pseudo class if another load hasn't already created the
     // implicitly dereferenced pseudo class.
@@ -972,7 +971,7 @@ void enzyme::AliasAnalysis::createImplicitArgDereference(
                                    readResult, derefClass)));
     // The read source points to the dereferenced class
     auto *pointsToState = getOrCreate<PointsToSets>(
-        getProgramPointBefore(&parent.getCallableRegion()->front()));
+        getProgramPointAfter(&parent.getCallableRegion()->front()));
     propagateIfChanged(pointsToState,
                        pointsToState->insert(source->getAliasClassesObject(),
                                              AliasClassSet(derefClass)));
@@ -1150,7 +1149,7 @@ void enzyme::AliasAnalysis::visitExternalCall(
     // If can read from argument, collect the alias classes that can this
     // argument may be pointing to.
     const auto *pointsToLattice = getOrCreateFor<PointsToSets>(
-        getProgramPointBefore(call), getProgramPointBefore(call));
+        getProgramPointAfter(call), getProgramPointAfter(call));
     (void)srcClasses->getAliasClassesObject().foreachElement(
         [&](DistinctAttr srcClass, AliasClassSet::State state) {
           // Nothing to do in top/bottom case. In the top case, we have already
