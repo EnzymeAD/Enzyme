@@ -2859,11 +2859,11 @@ public:
               return cst;
             };
 #if LLVM_VERSION_MAJOR >= 20
-	    if (llvm::shouldInline(*cur, TTI, GetInlineCost, ORE))
+            if (llvm::shouldInline(*cur, TTI, GetInlineCost, ORE))
 #else
-	    if (llvm::shouldInline(*cur, GetInlineCost, ORE))
+            if (llvm::shouldInline(*cur, GetInlineCost, ORE))
 #endif
-	    {
+            {
               InlineFunctionInfo IFI;
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
