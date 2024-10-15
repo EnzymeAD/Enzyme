@@ -313,7 +313,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         continue;
       }
       IRBuilder<> B(CI);
-      auto nCI = cast<CastInst>(B.CreateCast(
+      auto nCI0 = B.CreateCast(
           CI->getOpcode(), rep,
 #if LLVM_VERSION_MAJOR < 17
           PointerType::get(CI->getType()->getPointerElementType(),
@@ -321,11 +321,12 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 #else
           rep->getType()
 #endif
-              ));
-      nCI->takeName(CI);
+              );
+      if (auto nCI = dyn_cast<CastInst>(nCI0))
+        nCI->takeName(CI);
       for (auto U : CI->users()) {
         Todo.push_back(
-            std::make_tuple((Value *)nCI, (Value *)CI, cast<Instruction>(U)));
+            std::make_tuple((Value *)nCI0, (Value *)CI, cast<Instruction>(U)));
       }
       toErase.push_back(CI);
       continue;
