@@ -2853,12 +2853,17 @@ public:
               return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
             };
 
+            TargetTransformInfo TTI(F->getParent()->getDataLayout());
             auto GetInlineCost = [&](CallBase &CB) {
-              TargetTransformInfo TTI(F->getParent()->getDataLayout());
               auto cst = llvm::getInlineCost(CB, Params, TTI, getAC, GetTLI);
               return cst;
             };
-            if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
+#if LLVM_VERSION_MAJOR >= 20
+	    if (llvm::shouldInline(*cur, TTI, GetInlineCost, ORE))
+#else
+	    if (llvm::shouldInline(*cur, GetInlineCost, ORE))
+#endif
+	    {
               InlineFunctionInfo IFI;
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
