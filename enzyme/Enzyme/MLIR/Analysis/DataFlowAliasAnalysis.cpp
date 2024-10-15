@@ -339,7 +339,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
   return success();
 }
 
-constexpr static llvm::StringLiteral kLLVMMemoryAttrName = "memory";
+constexpr static llvm::StringLiteral kLLVMMemoryAttrName = "memory_effects";
 
 static bool modRefMayMod(std::optional<LLVM::ModRefInfo> modRef) {
   return modRef ? (*modRef == LLVM::ModRefInfo::Mod ||

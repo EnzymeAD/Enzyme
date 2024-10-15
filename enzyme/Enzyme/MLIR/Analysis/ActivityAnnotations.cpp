@@ -876,8 +876,8 @@ void reverseToposortCallgraph(CallableOpInterface callee,
 
         temporary.insert(node);
         node.walk([&](CallOpInterface call) {
-          auto neighbour =
-              cast<CallableOpInterface>(call.resolveCallable(symbolTable));
+          auto neighbour = cast<CallableOpInterface>(
+              call.resolveCallableInTable(symbolTable));
           visit(neighbour);
         });
 
