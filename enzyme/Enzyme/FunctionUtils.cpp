@@ -388,12 +388,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
                         MS->getArgOperand(3)};
 
-      Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
-
-      auto nMS = cast<CallInst>(B.CreateCall(
-          Intrinsic::getDeclaration(MS->getParent()->getParent()->getParent(),
-                                    Intrinsic::memset, tys),
-          nargs));
+      auto nMS = B.CreateMemSet(nargs[0], nargs[1], nargs[2], MaybeAlign(), nargs[3]);
       nMS->copyMetadata(*MS);
       nMS->setAttributes(MS->getAttributes());
       toErase.push_back(MS);
@@ -415,7 +410,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
                      nargs[2]->getType()};
 
       auto nMTI = cast<CallInst>(B.CreateCall(
-          Intrinsic::getDeclaration(MTI->getParent()->getParent()->getParent(),
+          getIntrinsicDeclaration(MTI->getParent()->getParent()->getParent(),
                                     MTI->getIntrinsicID(), tys),
           nargs));
       nMTI->copyMetadata(*MTI);
@@ -914,7 +909,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     Type *tys[] = {next->getType(), p->getType(), old->getType()};
 
     auto memcpyF =
-        Intrinsic::getDeclaration(NewF->getParent(), Intrinsic::memcpy, tys);
+        getIntrinsicDeclaration(NewF->getParent(), Intrinsic::memcpy, tys);
 
     auto mem = cast<CallInst>(B.CreateCall(memcpyF, nargs));
     mem->setCallingConv(memcpyF->getCallingConv());
@@ -1733,7 +1728,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           Type *tys[] = {args[0]->getType(), args[1]->getType(),
                          args[2]->getType()};
           auto intr =
-              Intrinsic::getDeclaration(g.getParent(), Intrinsic::memcpy, tys);
+              getIntrinsicDeclaration(g.getParent(), Intrinsic::memcpy, tys);
           {
 
             auto cal = bb.CreateCall(intr, args);

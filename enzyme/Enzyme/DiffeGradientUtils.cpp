@@ -589,7 +589,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       // store->setAlignment(align);
     } else {
       Type *tys[] = {res->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
       assert(align);
@@ -608,7 +608,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       // store->setAlignment(align);
     } else {
       Type *tys[] = {res->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
       assert(align);
@@ -1076,9 +1076,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     applyChainRule(BuilderM, rule, ptr, dif);
   } else {
     Type *tys[] = {addingType, origptr->getType()};
-    auto LF = Intrinsic::getDeclaration(oldFunc->getParent(),
+    auto LF = getIntrinsicDeclaration(oldFunc->getParent(),
                                         Intrinsic::masked_load, tys);
-    auto SF = Intrinsic::getDeclaration(oldFunc->getParent(),
+    auto SF = getIntrinsicDeclaration(oldFunc->getParent(),
                                         Intrinsic::masked_store, tys);
     unsigned aligni = align ? align->value() : 0;
 
