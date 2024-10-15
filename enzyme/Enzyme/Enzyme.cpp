@@ -2970,7 +2970,7 @@ public:
               args[2] = B.CreateMul(
                   CI->getArgOperand(1),
                   ConstantInt::get(CI->getArgOperand(1)->getType(), 8));
-              B.CreateMemSet(args[0], args[1], args[2]);
+              B.CreateMemSet(args[0], args[1], args[2], MaybeAlign());
 
               CI->eraseFromParent();
             }
