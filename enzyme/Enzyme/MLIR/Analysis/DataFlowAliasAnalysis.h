@@ -181,7 +181,7 @@ public:
                                     const PointsToSets &before,
                                     PointsToSets *after) override;
 
-  void processCapturingStore(ProgramPoint dependent, PointsToSets *after,
+  void processCapturingStore(ProgramPoint *dependent, PointsToSets *after,
                              Value capturedValue, Value destinationAddress,
                              bool isMustStore = false);
 

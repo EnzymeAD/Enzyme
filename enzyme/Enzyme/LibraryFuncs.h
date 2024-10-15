@@ -234,15 +234,8 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
   auto len_arg =
       bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
-  auto volatile_arg = ConstantInt::getFalse(toZero->getContext());
 
-  Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-  Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-
-  auto memset = cast<CallInst>(bb.CreateCall(
-      Intrinsic::getDeclaration(bb.GetInsertBlock()->getParent()->getParent(),
-                                Intrinsic::memset, tys),
-      nargs));
+  auto memset = bb.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
   memset->addParamAttr(0, Attribute::NonNull);
   if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
     auto derefBytes = CI->getLimitedValue();

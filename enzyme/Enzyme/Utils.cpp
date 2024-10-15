@@ -185,7 +185,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   Value *hasOne = B.CreateICmpNE(
       B.CreateAnd(size, ConstantInt::get(size->getType(), 1, false)),
       ConstantInt::get(size->getType(), 0, false));
-  auto popCnt = Intrinsic::getDeclaration(&M, Intrinsic::ctpop, {types[1]});
+  auto popCnt = getIntrinsicDeclaration(&M, Intrinsic::ctpop, {types[1]});
 
   B.CreateCondBr(
       B.CreateAnd(B.CreateICmpULT(B.CreateCall(popCnt, {size}),
@@ -196,7 +196,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   B.SetInsertPoint(grow);
 
   auto lz =
-      B.CreateCall(Intrinsic::getDeclaration(&M, Intrinsic::ctlz, {types[1]}),
+      B.CreateCall(getIntrinsicDeclaration(&M, Intrinsic::ctlz, {types[1]}),
                    {size, ConstantInt::getTrue(M.getContext())});
   Value *next =
       B.CreateShl(tsize, B.CreateSub(ConstantInt::get(types[1], 64, false), lz,
@@ -236,7 +236,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                       ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[1]->getType(),
                    margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memcpy, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memcpy, tys);
     B.CreateCall(memsetF, margs);
     if (SubZero) {
       ZeroInit = false;
@@ -259,7 +259,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *margs[] = {B.CreateInBoundsGEP(B.getInt8Ty(), gVal, prevSize),
                       B.getInt8(0), zeroSize, B.getFalse()};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
@@ -420,7 +420,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Type *tys[] = {args[0]->getType(), args[2]->getType()};
 
     *ZeroMem = Builder.CreateCall(
-        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), args);
+        getIntrinsicDeclaration(&M, Intrinsic::memset, tys), args);
   }
   return res;
 }

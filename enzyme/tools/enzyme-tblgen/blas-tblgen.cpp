@@ -1576,7 +1576,7 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
     os << "    Type *tys[] = {args[0]->getType(), args[2]->getType()};\n";
     os << "\n";
     os << "    " << builder << ".CreateCall(\n";
-    os << "        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), "
+    os << "        getIntrinsicDeclaration(&M, Intrinsic::memset, tys), "
           "args);\n";
     os << "    }\n";
   }

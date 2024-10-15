@@ -1137,8 +1137,8 @@ public:
             } else {
               maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
-              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                                 Intrinsic::masked_load, tys);
+              auto F = getIntrinsicDeclaration(gutils->oldFunc->getParent(),
+                                               Intrinsic::masked_load, tys);
               Value *alignv =
                   ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                    align ? align->value() : 0);
@@ -3789,10 +3789,9 @@ public:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0), args));
-        cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0)
-                ->getCallingConv());
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
+                                ->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3804,8 +3803,8 @@ public:
       case Intrinsic::nvvm_membar_sys: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(
-            Builder2.CreateCall(Intrinsic::getDeclaration(M, ID), args));
-        cal->setCallingConv(Intrinsic::getDeclaration(M, ID)->getCallingConv());
+            Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3818,9 +3817,9 @@ public:
             lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
         Type *tys[] = {args[1]->getType()};
         auto cal = Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys), args);
         cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys)
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys)
                 ->getCallingConv());
         return false;
       }

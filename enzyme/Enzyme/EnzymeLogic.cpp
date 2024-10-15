@@ -4349,18 +4349,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       Value *tx, *ty, *tz;
       if (Arch == Triple::nvptx || Arch == Triple::nvptx64) {
-        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_x));
-        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
-        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
       } else if (Arch == Triple::amdgcn) {
-        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_x));
-        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_y));
-        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_z));
       } else {
         llvm_unreachable("unknown gpu architecture");
@@ -4377,7 +4377,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
       instbuilder.CreateCall(
-          Intrinsic::getDeclaration(gutils->newFunc->getParent(), BarrierInst),
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {});
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);

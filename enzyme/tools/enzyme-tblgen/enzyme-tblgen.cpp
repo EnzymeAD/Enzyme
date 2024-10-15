@@ -143,7 +143,7 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
 }
 void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
                   const Twine &argStr, StringRef origName) {
-  os << "Intrinsic::getDeclaration(mod, Intrinsic::" << intrName
+  os << "getIntrinsicDeclaration(mod, Intrinsic::" << intrName
      << ", std::vector<Type*>({";
   bool first = true;
   for (auto intrType : *typeInit) {
