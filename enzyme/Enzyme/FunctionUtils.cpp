@@ -389,8 +389,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
                         MS->getArgOperand(3)};
 
-      auto nMS =
-          B.CreateMemSet(nargs[0], nargs[1], nargs[2], MaybeAlign(), nargs[3]);
+      auto nMS = cast<CallInst>(B.CreateCall(
+          getIntrinsicDeclaration(MS->getParent()->getParent()->getParent(),
+                                    Intrinsic::memset, tys),
+          nargs));
       nMS->copyMetadata(*MS);
       nMS->setAttributes(MS->getAttributes());
       toErase.push_back(MS);
