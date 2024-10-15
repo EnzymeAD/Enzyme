@@ -856,14 +856,13 @@ struct PTCandidate {
       for (auto node : change.nodes) {
         assert(isa<Instruction>(node->value));
         auto *I = cast<Instruction>(node->value);
-        // TODO: Change to assertion
-        if (!operations.contains(I)) {
-          // Already erased by `AO.apply()`.
-          continue;
-        }
         if (VMap) {
           assert(VMap->count(I));
           I = cast<Instruction>(VMap->lookup(I));
+        }
+        if (!operations.contains(I)) {
+          // Already erased by `AO.apply()`.
+          continue;
         }
         instsToChange.insert(I);
       }
@@ -886,32 +885,45 @@ struct PTCandidate {
           continue;
         }
 
-        for (auto user : oldV->users()) {
-          auto *I = cast<Instruction>(oldV);
-          if (isa<Instruction>(user) &&
-              !instsToChange.contains(cast<Instruction>(user))) {
-            IRBuilder<> builder(I->getParent(), ++BasicBlock::iterator(I));
-
-            newV = builder.CreateFPCast(
-                newV, getLLVMFPType(change.oldType, builder.getContext()));
-
-            if (VMap) {
-              // llvm::errs() << "Redirecting: " << *oldV << " --> "
-              //              << *clonedToOriginal[oldV] << " --> " << *newV
-              //              << "\n";
-              assert(VMap->count(clonedToOriginal[oldV]));
-              (*VMap)[clonedToOriginal[oldV]] = newV;
-            }
-            user->replaceUsesOfWith(oldV, newV);
+        SmallPtrSet<Instruction *, 8> users;
+        for (auto *user : oldV->users()) {
+          assert(
+              isa<Instruction>(user) &&
+              "PT: Unexpected non-instruction user of a changed instruction");
+          if (!instsToChange.contains(cast<Instruction>(user))) {
+            users.insert(cast<Instruction>(user));
           }
+        }
+
+        Value *casted = nullptr;
+        if (!users.empty()) {
+          IRBuilder<> builder(cast<Instruction>(oldV)->getParent(),
+                              ++BasicBlock::iterator(cast<Instruction>(oldV)));
+          casted = builder.CreateFPCast(
+              newV, getLLVMFPType(change.oldType, builder.getContext()));
+
+          if (VMap) {
+            assert(VMap->count(clonedToOriginal[oldV]));
+            (*VMap)[clonedToOriginal[oldV]] = casted;
+          }
+        }
+
+        for (auto *user : users) {
+          user->replaceUsesOfWith(oldV, casted);
         }
 
         // Assumes no external uses of the old value since all corresponding new
         // values are already restored to original precision and used to replace
         // uses of their old value. This is also advantageous to the solvers.
+        for (auto *user : oldV->users()) {
+          assert(instsToChange.contains(cast<Instruction>(user)) &&
+                 "PT: Unexpected external user of a changed instruction");
+        }
+
         if (!oldV->use_empty()) {
           oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
         }
+
         cast<Instruction>(oldV)->eraseFromParent();
 
         // The change is being materialized to the original component
@@ -2040,10 +2052,10 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
     }
   }
 
-  llvm::errs() << "Shortest distances:\n";
-  for (auto &[op, dist] : shortestDistances) {
-    llvm::errs() << *op << ": " << dist << "\n";
-  }
+  // llvm::errs() << "Shortest distances:\n";
+  // for (auto &[op, dist] : shortestDistances) {
+  //   llvm::errs() << *op << ": " << dist << "\n";
+  // }
 
   int maxDepth =
       std::max_element(shortestDistances.begin(), shortestDistances.end(),
@@ -2335,6 +2347,8 @@ public:
 
     // If all outputs are rewritten, then the adjusted ACC is empty
     if (adjustedACC.component->outputs.empty()) {
+      llvm::errs() << "Returning 0 for adjusted ACC cost delta since all "
+                      "outputs are rewritten\n";
       return 0;
     }
 
@@ -2345,6 +2359,18 @@ public:
     for (auto &candidate : adjustedACC.candidates) {
       candidate.CompCost = getCompCost(*adjustedACC.component, TTI, candidate);
     }
+
+    // llvm::errs() << "DEBUG calculating adjusted ACC cost delta: \n";
+    // llvm::errs() << "\tInitial cost: " << adjustedACC.initialCompCost <<
+    // "\n"; llvm::errs() << "\tCandidate cost: "
+    //              << adjustedACC.candidates[candidateIndex].CompCost << "\n";
+    // llvm::errs() << "\tExecutions: " << adjustedACC.executions << "\n";
+    // llvm::errs() << "\tAdjusted cost delta: "
+    //              << (adjustedACC.candidates[candidateIndex].CompCost -
+    //                  adjustedACC.initialCompCost) *
+    //                     adjustedACC.executions
+    //              << "\n";
+
     return adjustedACC.getCompCostDelta(candidateIndex);
   }
 
