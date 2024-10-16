@@ -40,12 +40,13 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
-#include <map>
 #include <numeric>
 #include <random>
 #include <regex>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -651,7 +652,9 @@ bool herbiable(const Value &Val) {
              funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
              funcName.startswith("llvm.pow") ||
              funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd");
+             funcName.startswith("llvm.fmuladd") ||
+             funcName.startswith("hypot") || funcName.startswith("expm1") ||
+             funcName.startswith("log1p");
       // llvm.fabs is deliberately excluded
     }
     return false;
@@ -738,6 +741,29 @@ StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
   }
 }
 
+std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
+  static const std::unordered_set<std::string> libmFunctions = {
+      "sin",  "cos", "exp", "log",   "sqrt",  "tan",
+      "cbrt", "pow", "fma", "hypot", "expm1", "log1p"};
+
+  std::string baseName = funcName.str();
+  if (baseName.back() == 'f' || baseName.back() == 'l') {
+    baseName.pop_back();
+  }
+
+  if (libmFunctions.count(baseName)) {
+    if (newType->isFloatTy()) {
+      return baseName + "f";
+    } else if (newType->isDoubleTy()) {
+      return baseName;
+    } else if (newType->isFP128Ty() || newType->isX86_FP80Ty()) {
+      return baseName + "l";
+    }
+  }
+
+  return "";
+}
+
 // Floating-Point Connected Component
 struct FPCC {
   SetVector<Value *> inputs;
@@ -800,9 +826,42 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       }
       newArgs.push_back(newArg);
     }
-    Function *newFunc = Intrinsic::getDeclaration(
-        CI->getModule(), CI->getCalledFunction()->getIntrinsicID(), {newType});
-    newI = Builder.CreateCall(newFunc, newArgs);
+    auto *calledFunc = CI->getCalledFunction();
+    if (calledFunc && calledFunc->isIntrinsic()) {
+      Intrinsic::ID intrinsicID = calledFunc->getIntrinsicID();
+      if (intrinsicID != Intrinsic::not_intrinsic) {
+        Function *newFunc =
+            Intrinsic::getDeclaration(CI->getModule(), intrinsicID, {newType});
+        newI = Builder.CreateCall(newFunc, newArgs);
+      } else {
+        llvm::errs() << "PT: Unknown intrinsic: " << *CI << "\n";
+        llvm_unreachable("changePrecision: Unknown intrinsic call to change");
+      }
+    } else {
+      StringRef funcName = calledFunc->getName();
+      std::string newFuncName = getLibmFunctionForPrecision(funcName, newType);
+
+      if (!newFuncName.empty()) {
+        Module *M = CI->getModule();
+        SmallVector<Type *, 4> newArgTypes(newArgs.size(), newType);
+
+        FunctionCallee newFuncCallee = M->getOrInsertFunction(
+            newFuncName, FunctionType::get(newType, newArgTypes, false));
+
+        if (Function *newFunc = dyn_cast<Function>(newFuncCallee.getCallee())) {
+          newI = Builder.CreateCall(newFunc, newArgs);
+        } else {
+          llvm::errs() << "PT: Failed to get "
+                       << getPrecisionChangeTypeString(change.newType)
+                       << " libm function for: " << *CI << "\n";
+          llvm_unreachable("changePrecision: Failed to get libm function");
+        }
+      } else {
+        llvm::errs() << "PT: Unknown function call: " << *CI << "\n";
+        llvm_unreachable("changePrecision: Unknown function call to change");
+      }
+    }
+
   } else {
     llvm_unreachable("Unknown herbiable instruction");
   }
@@ -1711,6 +1770,10 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           }
         } else {
           std::string FuncName = CalledFunc->getName().str();
+          if (FuncName.back() == 'f' || FuncName.back() == 'l') {
+            FuncName.pop_back();
+          }
+
           if (FuncName == "sin") {
             OpcodeName = "sin";
           } else if (FuncName == "cos") {
@@ -1965,6 +2028,7 @@ InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
 
   pt.apply(component, &VMap);
   // output values in VMap are changed to the new casted values
+  // FClone->print(llvm::errs());
 
   SmallPtrSet<Value *, 8> clonedInputs;
   for (auto &input : component.inputs) {
@@ -2323,22 +2387,18 @@ public:
   InstructionCost
   getAdjustedCompCostDelta(size_t candidateIndex,
                            const SmallVectorImpl<SolutionStep> &steps) {
-    ApplicableFPCC adjustedACC = *this;
-    FPCC newComponet = *this->component;
-    adjustedACC.component = &newComponet;
-    assert(&adjustedACC.component != &component);
+    FPCC newComponent = *this->component;
 
     for (auto &step : steps) {
       if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
         const auto &AO = **ptr;
         if (AO.component == component) {
           // Eliminate erasadable instructions from the adjusted ACC
-          adjustedACC.component->operations.remove_if(
+          newComponent.operations.remove_if(
               [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
-          adjustedACC.component->outputs.remove(
-              cast<Instruction>(AO.oldOutput));
+          newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
           assert(AO.erasableInsts.size() == 0 ||
-                 adjustedACC.component->operations.size() <
+                 newComponent.operations.size() <
                          component->operations.size() &&
                      "Failed to adjust the ACC");
         }
@@ -2346,32 +2406,27 @@ public:
     }
 
     // If all outputs are rewritten, then the adjusted ACC is empty
-    if (adjustedACC.component->outputs.empty()) {
+    if (newComponent.outputs.empty()) {
       llvm::errs() << "Returning 0 for adjusted ACC cost delta since all "
                       "outputs are rewritten\n";
       return 0;
     }
 
-    adjustedACC.initialCompCost =
-        getCompCost({adjustedACC.component->outputs.begin(),
-                     adjustedACC.component->outputs.end()},
-                    adjustedACC.component->inputs, TTI);
-    for (auto &candidate : adjustedACC.candidates) {
-      candidate.CompCost = getCompCost(*adjustedACC.component, TTI, candidate);
-    }
+    InstructionCost initialCompCost =
+        getCompCost({newComponent.outputs.begin(), newComponent.outputs.end()},
+                    newComponent.inputs, TTI);
+
+    InstructionCost candidateCompCost =
+        getCompCost(newComponent, TTI, candidates[candidateIndex]);
 
     // llvm::errs() << "DEBUG calculating adjusted ACC cost delta: \n";
-    // llvm::errs() << "\tInitial cost: " << adjustedACC.initialCompCost <<
-    // "\n"; llvm::errs() << "\tCandidate cost: "
-    //              << adjustedACC.candidates[candidateIndex].CompCost << "\n";
-    // llvm::errs() << "\tExecutions: " << adjustedACC.executions << "\n";
+    // llvm::errs() << "\tInitial cost: " << initialCompCost << "\n";
+    // llvm::errs() << "\tCandidate cost: " << candidateCompCost << "\n";
+    // llvm::errs() << "\tExecutions: " << executions << "\n";
     // llvm::errs() << "\tAdjusted cost delta: "
-    //              << (adjustedACC.candidates[candidateIndex].CompCost -
-    //                  adjustedACC.initialCompCost) *
-    //                     adjustedACC.executions
-    //              << "\n";
+    //  << (candidateCompCost - initialCompCost) * executions << "\n";
 
-    return adjustedACC.getCompCostDelta(candidateIndex);
+    return (candidateCompCost - initialCompCost) * executions;
   }
 
   double getAdjustedAccCostDelta(
