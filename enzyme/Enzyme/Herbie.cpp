@@ -2351,6 +2351,33 @@ public:
 
   SmallVector<PTCandidate, 8> candidates;
 
+  // Caches for adjusted cost calculations
+  using ApplicableOutputSet = std::set<ApplicableOutput *>;
+  struct CacheKey {
+    size_t candidateIndex;
+    ApplicableOutputSet applicableOutputs;
+
+    bool operator==(const CacheKey &other) const {
+      return candidateIndex == other.candidateIndex &&
+             applicableOutputs == other.applicableOutputs;
+    }
+  };
+
+  struct CacheKeyHash {
+    std::size_t operator()(const CacheKey &key) const {
+      std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
+      for (const auto *ao : key.applicableOutputs) {
+        seed ^= std::hash<const ApplicableOutput *>{}(ao) + 0x9e3779b9 +
+                (seed << 6) + (seed >> 2);
+      }
+      return seed;
+    }
+  };
+
+  std::unordered_map<CacheKey, InstructionCost, CacheKeyHash>
+      compCostDeltaCache;
+  std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
+
   explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
       : component(&fpcc), TTI(TTI) {
     initialCompCost =
@@ -2383,10 +2410,25 @@ public:
     return candidates[candidateIndex].accuracyCost - initialAccCost;
   }
 
-  // TODO: Implement this
   InstructionCost
   getAdjustedCompCostDelta(size_t candidateIndex,
                            const SmallVectorImpl<SolutionStep> &steps) {
+    ApplicableOutputSet applicableOutputs;
+    for (const auto &step : steps) {
+      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+        if ((*ptr)->component == component) {
+          applicableOutputs.insert(*ptr);
+        }
+      }
+    }
+
+    CacheKey key{candidateIndex, applicableOutputs};
+
+    auto cacheIt = compCostDeltaCache.find(key);
+    if (cacheIt != compCostDeltaCache.end()) {
+      return cacheIt->second;
+    }
+
     FPCC newComponent = *this->component;
 
     for (auto &step : steps) {
@@ -2397,18 +2439,13 @@ public:
           newComponent.operations.remove_if(
               [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
           newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
-          assert(AO.erasableInsts.size() == 0 ||
-                 newComponent.operations.size() <
-                         component->operations.size() &&
-                     "Failed to adjust the ACC");
         }
       }
     }
 
     // If all outputs are rewritten, then the adjusted ACC is empty
     if (newComponent.outputs.empty()) {
-      llvm::errs() << "Returning 0 for adjusted ACC cost delta since all "
-                      "outputs are rewritten\n";
+      compCostDeltaCache[key] = 0;
       return 0;
     }
 
@@ -2419,20 +2456,33 @@ public:
     InstructionCost candidateCompCost =
         getCompCost(newComponent, TTI, candidates[candidateIndex]);
 
-    // llvm::errs() << "DEBUG calculating adjusted ACC cost delta: \n";
-    // llvm::errs() << "\tInitial cost: " << initialCompCost << "\n";
-    // llvm::errs() << "\tCandidate cost: " << candidateCompCost << "\n";
-    // llvm::errs() << "\tExecutions: " << executions << "\n";
-    // llvm::errs() << "\tAdjusted cost delta: "
-    //  << (candidateCompCost - initialCompCost) * executions << "\n";
+    InstructionCost adjustedCostDelta =
+        (candidateCompCost - initialCompCost) * executions;
 
-    return (candidateCompCost - initialCompCost) * executions;
+    compCostDeltaCache[key] = adjustedCostDelta;
+    return adjustedCostDelta;
   }
 
   double getAdjustedAccCostDelta(
       size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
       std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
       std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    ApplicableOutputSet applicableOutputs;
+    for (const auto &step : steps) {
+      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+        if ((*ptr)->component == component) {
+          applicableOutputs.insert(*ptr);
+        }
+      }
+    }
+
+    CacheKey key{candidateIndex, applicableOutputs};
+
+    auto cacheIt = accCostDeltaCache.find(key);
+    if (cacheIt != accCostDeltaCache.end()) {
+      return cacheIt->second;
+    }
+
     double totalCandidateAccCost = 0.0;
     double totalInitialAccCost = 0.0;
 
@@ -2443,36 +2493,29 @@ public:
         const auto &AO = **ptr;
         if (AO.component == component) {
           auto it = valueToNodeMap.find(AO.oldOutput);
-          if (it != valueToNodeMap.end() && it->second) {
-            // llvm::errs() << "Found step: " << AO.expr << " --> "
-            //              << AO.candidates[step.candidateIndex].expr << "\n";
-            stepNodes.insert(it->second.get());
-          }
+          assert(it != valueToNodeMap.end() && it->second);
+          stepNodes.insert(it->second.get());
         }
       }
     }
 
     // Iterate over all output nodes and sum costs for nodes not erased
     for (auto &[node, cost] : perOutputInitialAccCost) {
-      if (stepNodes.count(node)) {
-        // llvm::errs() << "Node: " << node->symbol
-        //              << " DEBUG erased, initial cost: " << cost << "\n";
-        continue;
+      if (!stepNodes.count(node)) {
+        totalInitialAccCost += cost;
       }
-
-      // llvm::errs() << "Node: " << node->symbol
-      //              << " DEBUG initial cost: " << cost << "\n";
-      totalInitialAccCost += cost;
     }
 
     for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
-      if (stepNodes.count(node))
-        continue;
-
-      totalCandidateAccCost += cost;
+      if (!stepNodes.count(node)) {
+        totalCandidateAccCost += cost;
+      }
     }
 
-    return totalCandidateAccCost - totalInitialAccCost;
+    double adjustedAccCostDelta = totalCandidateAccCost - totalInitialAccCost;
+
+    accCostDeltaCache[key] = adjustedAccCostDelta;
+    return adjustedAccCostDelta;
   }
 };
 
