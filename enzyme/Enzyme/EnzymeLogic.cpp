@@ -2320,6 +2320,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
+      IRBuilder<> b(*newFunc->getEntryBlock().begin());
+      RequestContext context2{nullptr, &b};
+      EmitNoDerivativeError(ss.str(), todiff, context2);
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
@@ -4039,6 +4042,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
+      IRBuilder<> b(*newFunc->getEntryBlock().begin());
+      RequestContext context2{nullptr, &b};
+      EmitNoDerivativeError(ss.str(), todiff, context2);
       return newFunc;
     }
     llvm::errs() << "mod: " << *key.todiff->getParent() << "\n";
