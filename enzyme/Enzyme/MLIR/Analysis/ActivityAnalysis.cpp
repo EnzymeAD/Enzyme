@@ -1826,7 +1826,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         //     }
         //   }
         // }
-        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
+        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
+            funcName == "jl_idtable_rehash" ||
+            funcName == "ijl_idtable_rehash" ||
+            funcName == "jl_genericmemory_copy_slice" ||
+            funcName == "ijl_genericmemory_copy_slice") {
           // This pointer is inactive if it is either not actively stored to
           // and not actively loaded from.
           if (directions & DOWN && directions & UP) {
