@@ -1942,6 +1942,57 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     else
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
+    if (intrinsic != MLIRDerivatives) {
+      os << "    if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogValue\")) {\n"
+         << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
+         << "      getForwardBuilder(BuilderZ);\n"
+         << "      std::string idStr = getLogIdentifier(" << origName << ");\n"
+         << "      Value *idValue = "
+            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
+         << "      Value *origValue = "
+            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "), Type::getDoubleTy(" << origName
+         << ".getContext()));\n"
+         << "      unsigned numOperands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
+         << ".getNumOperands();\n"
+         << "      Value *numOperandsValue = "
+            "ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), numOperands);\n"
+         << "      auto operands = isa<CallInst>(" << origName
+         << ") ? cast<CallInst>(" << origName << ").args() : " << origName
+         << ".operands();\n"
+         << "      ArrayType *operandArrayType = "
+            "ArrayType::get(Type::getDoubleTy("
+         << origName << ".getContext()), numOperands);\n"
+         << "      Value *operandArrayValue = "
+            "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
+            "operandArrayType);\n"
+         << "      for (auto operand : enumerate(operands)) {\n"
+         << "        Value *operandValue = "
+            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "        Value *ptr = "
+            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), operand.index())});\n"
+         << "        BuilderZ.CreateStore(operandValue, ptr);\n"
+         << "      }\n"
+         << "      Value *operandPtrValue = "
+            "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
+            "{ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
+         << origName << ".getContext()), 0)});\n"
+         << "      CallInst *logCallInst = BuilderZ.CreateCall(logFunc, "
+         << "{idValue, origValue, numOperandsValue, operandPtrValue});\n"
+         << "      logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
+         << "    }\n";
+    }
+
     if (intrinsic == MLIRDerivatives) {
       os << "    if (gutils->isConstantInstruction(op))\n";
       os << "      return success();\n";
@@ -2238,87 +2289,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        assert(res);\n";
 
       // Insert logging function call (optional)
-      os << "        Function *logFunc = " << origName
-         << ".getModule()->getFunction(\"enzymeLogError\");\n";
-      os << "        if (logFunc) {\n"
-         << "            std::string moduleName = " << origName
-         << ".getModule()->getModuleIdentifier() ;\n"
-         << "            std::string functionName = " << origName
-         << ".getFunction()->getName().str();\n"
-         << "            std::string blockName = " << origName
-         << ".getParent()->getName().str();\n"
-         << "            int funcIdx = -1, blockIdx = -1, instIdx = -1;\n"
-         << "            auto funcIt = std::find_if(" << origName
-         << ".getModule()->begin(), " << origName
-         << ".getModule()->end(),\n"
-            "              [&](const auto& func) { return &func == "
-         << origName
-         << ".getFunction(); });\n"
-            "            if (funcIt != "
-         << origName
-         << ".getModule()->end()) {\n"
-            "              funcIdx = "
-            "std::distance("
-         << origName << ".getModule()->begin(), funcIt);\n"
-         << "            }\n"
-         << "            auto blockIt = std::find_if(" << origName
-         << ".getFunction()->begin(), " << origName
-         << ".getFunction()->end(),\n"
-            "              [&](const auto& block) { return &block == "
-         << origName
-         << ".getParent(); });\n"
-            "            if (blockIt != "
-         << origName
-         << ".getFunction()->end()) {\n"
-            "              blockIdx = std::distance("
-         << origName << ".getFunction()->begin(), blockIt);\n"
-         << "            }\n"
-         << "            auto instIt = std::find_if(" << origName
-         << ".getParent()->begin(), " << origName
-         << ".getParent()->end(),\n"
-            "              [&](const auto& curr) { return &curr == &"
-         << origName
-         << "; });\n"
-            "            if (instIt != "
-         << origName
-         << ".getParent()->end()) {\n"
-            "              instIdx = std::distance("
-         << origName << ".getParent()->begin(), instIt);\n"
-         << "            }\n"
-         << "            Value *origValue = "
-            "Builder2.CreateFPExt(gutils->getNewFromOriginal(&"
-         << origName << "), Type::getDoubleTy(" << origName
-         << ".getContext()));\n"
+      os << "        if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogError\")) {\n"
+         << "          std::string idStr = getLogIdentifier(" << origName
+         << ");\n"
+         << "          Value *idValue = "
+            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
          << "            Value *errValue = Builder2.CreateFPExt(res, "
             "Type::getDoubleTy("
          << origName << ".getContext()));\n"
-         << "            std::string opcodeName = " << origName
-         << ".getOpcodeName();\n"
-         << "            std::string calleeName = \"<N/A>\";\n"
-         << "            if (auto CI = dyn_cast<CallInst>(&" << origName
-         << ")) {\n"
-         << "                if (Function *fn = CI->getCalledFunction()) {\n"
-         << "                    calleeName = fn->getName();\n"
-         << "                } else {\n"
-         << "                    calleeName = \"<Unknown>\";\n"
-         << "                }\n"
-         << "            }\n"
-         << "            Value *moduleNameValue = "
-            "Builder2.CreateGlobalStringPtr(moduleName);\n"
-         << "            Value *functionNameValue = "
-            "Builder2.CreateGlobalStringPtr(functionName + \" (\" +"
-            "std::to_string(funcIdx) + \")\");\n"
-         << "            Value *blockNameValue = "
-            "Builder2.CreateGlobalStringPtr(blockName + \" (\" +"
-            "std::to_string(blockIdx) + \")\");\n"
-         << "            Value *opcodeNameValue = "
-            "Builder2.CreateGlobalStringPtr(opcodeName + \" (\" "
-            "+std::to_string(instIdx) + \")\");\n"
-         << "            Value *calleeNameValue = "
-            "Builder2.CreateGlobalStringPtr(calleeName);\n"
-         << "            Builder2.CreateCall(logFunc, {origValue, "
-            "errValue, opcodeNameValue, calleeNameValue, moduleNameValue, "
-            "functionNameValue, blockNameValue});\n"
+         << "            CallInst *logCallInst = Builder2.CreateCall(logFunc, "
+            "{idValue, errValue});\n"
+         << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
          << "        }\n";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
@@ -2340,6 +2323,21 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
+      os << "        if (auto *logFunc = getLogFunction(" << origName
+         << ".getModule(), \"enzymeLogGrad\")) {\n"
+         << "          std::string idStr = getLogIdentifier(" << origName
+         << ");\n"
+         << "          Value *idValue = "
+            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
+         << "            Value *diffValue = Builder2.CreateFPExt(dif, "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "            CallInst *logCallInst = Builder2.CreateCall(logFunc, "
+            "{idValue, diffValue});\n"
+         << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
+         << "        }\n";
+
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
       os << "        if (found != gutils->invertedPointers.end() && "
