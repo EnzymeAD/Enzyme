@@ -9267,15 +9267,10 @@ void GradientUtils::computeGuaranteedFrees() {
         if (hasMetadata(CI, "enzyme_fromstack")) {
           allocationsWithGuaranteedFree[CI].insert(CI);
         }
-        if (funcName == "jl_alloc_array_1d" ||
-            funcName == "jl_alloc_array_2d" ||
-            funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-            funcName == "ijl_alloc_array_1d" ||
-            funcName == "ijl_alloc_array_2d" ||
-            funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-            funcName == "julia.gc_alloc_obj" ||
-            funcName == "jl_gc_alloc_typed" ||
-            funcName == "ijl_gc_alloc_typed") {
+        // TODO: special case object managed by the GC as it is automatically
+        // freed.
+        if (EnzymeJuliaAddrLoad && isa<PointerType>(CI->getType()) &&
+            cast<PointerType>(CI->getType())->getAddressSpace() == 10) {
         }
       }
     }

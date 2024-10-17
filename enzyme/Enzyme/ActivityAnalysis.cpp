@@ -1708,7 +1708,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
         if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
             funcName == "jl_idtable_rehash" ||
-            funcName == "ijl_idtable_rehash") {
+            funcName == "ijl_idtable_rehash" ||
+            funcName == "jl_genericmemory_copy_slice" ||
+            funcName == "ijl_genericmemory_copy_slice") {
           // This pointer is inactive if it is either not actively stored to
           // and not actively loaded from and the copied input is inactive.
           if (directions & DOWN && directions & UP) {

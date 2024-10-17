@@ -3386,15 +3386,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           }
 
           // No need to free GC.
-          if (funcName == "ijl_alloc_array_1d" ||
-              funcName == "ijl_alloc_array_2d" ||
-              funcName == "ijl_alloc_array_3d" ||
-              funcName == "ijl_array_copy" || funcName == "jl_alloc_array_1d" ||
-              funcName == "jl_alloc_array_2d" ||
-              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-              funcName == "julia.gc_alloc_obj" ||
-              funcName == "jl_gc_alloc_typed" ||
-              funcName == "ijl_gc_alloc_typed") {
+          if (EnzymeJuliaAddrLoad && isa<PointerType>(call.getType()) &&
+              cast<PointerType>(call.getType())->getAddressSpace() == 10) {
             if (Mode == DerivativeMode::ReverseModeGradient && AllocationLoop)
               gutils->rematerializedPrimalOrShadowAllocations.push_back(
                   newCall);
@@ -3459,12 +3452,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // If an object is managed by the GC do not preserve it for later free,
     // Thus it only needs caching if there is a need for it in the reverse.
-    if (funcName == "jl_alloc_array_1d" || funcName == "jl_alloc_array_2d" ||
-        funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-        funcName == "ijl_alloc_array_1d" || funcName == "ijl_alloc_array_2d" ||
-        funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-        funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-        funcName == "ijl_gc_alloc_typed") {
+    if (EnzymeJuliaAddrLoad && isa<PointerType>(call.getType()) &&
+        cast<PointerType>(call.getType())->getAddressSpace() == 10) {
       if (!subretused) {
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         return true;

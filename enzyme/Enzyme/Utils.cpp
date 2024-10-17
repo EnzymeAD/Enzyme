@@ -2331,6 +2331,10 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
+      return false;
+
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
       return false;
 
@@ -2492,6 +2496,10 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
     }
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
+      return false;
+
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
       return false;
 
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
