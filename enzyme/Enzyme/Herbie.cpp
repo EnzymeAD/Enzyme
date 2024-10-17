@@ -3187,8 +3187,7 @@ bool accuracyDPSolver(
             llvm::errs() << "AO candidate with computation cost: "
                          << currCompCost
                          << " and accuracy cost: " << currAccCost
-                         << " is dominated by candidate with computation cost:
-                            "
+                         << " is dominated by candidate with computation cost:"
                          << otherCompCost
                          << " and accuracy cost: " << otherAccCost << "\n";
           dominated = true;
@@ -3271,8 +3270,7 @@ bool accuracyDPSolver(
             llvm::errs() << "ACC candidate with computation cost: "
                          << currCompCost
                          << " and accuracy cost: " << currAccCost
-                         << " is dominated by candidate with computation cost:
-                            "
+                         << " is dominated by candidate with computation cost:"
                          << otherCompCost
                          << " and accuracy cost: " << otherAccCost << "\n";
           dominated = true;
