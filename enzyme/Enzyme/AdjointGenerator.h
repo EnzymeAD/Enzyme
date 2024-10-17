@@ -6000,6 +6000,7 @@ public:
           eraseIfUnused(call);
         }
 
+        ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
           if (invertedReturn && invertedReturn != placeholder) {
