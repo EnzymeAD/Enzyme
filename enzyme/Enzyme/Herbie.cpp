@@ -3143,9 +3143,10 @@ bool accuracyDPSolver(
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
 
-        llvm::errs() << "AO candidate " << i
-                     << " has accuracy cost: " << candAccCost
-                     << " and computation cost: " << candCompCost << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "AO candidate " << i
+                       << " has accuracy cost: " << candAccCost
+                       << " and computation cost: " << candCompCost << "\n";
 
         if (newCostToAccuracyMap.find(newCompCost) ==
                 newCostToAccuracyMap.end() ||
@@ -3153,9 +3154,10 @@ bool accuracyDPSolver(
           newCostToAccuracyMap[newCompCost] = newAccCost;
           newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
           newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
-          llvm::errs() << "Updating accuracy map (AO candidate " << i
-                       << "): computation cost " << newCompCost
-                       << " -> accuracy cost " << newAccCost << "\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "Updating accuracy map (AO candidate " << i
+                         << "): computation cost " << newCompCost
+                         << " -> accuracy cost " << newAccCost << "\n";
         }
       }
     }
@@ -3181,11 +3183,14 @@ bool accuracyDPSolver(
         double otherAccCost = r.second;
 
         if (currCompCost > otherCompCost && currAccCost >= otherAccCost) {
-          llvm::errs() << "AO candidate with computation cost: " << currCompCost
-                       << " and accuracy cost: " << currAccCost
-                       << " is dominated by candidate with computation cost: "
-                       << otherCompCost
-                       << " and accuracy cost: " << otherAccCost << "\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "AO candidate with computation cost: "
+                         << currCompCost
+                         << " and accuracy cost: " << currAccCost
+                         << " is dominated by candidate with computation cost:
+                            "
+                         << otherCompCost
+                         << " and accuracy cost: " << otherAccCost << "\n";
           dominated = true;
           break;
         }
@@ -3229,9 +3234,11 @@ bool accuracyDPSolver(
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
 
-        llvm::errs() << "ACC candidate " << i << " (" << candidate.value().desc
-                     << ") has accuracy cost: " << candAccCost
-                     << " and computation cost: " << candCompCost << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "ACC candidate " << i << " ("
+                       << candidate.value().desc
+                       << ") has accuracy cost: " << candAccCost
+                       << " and computation cost: " << candCompCost << "\n";
 
         if (newCostToAccuracyMap.find(newCompCost) ==
                 newCostToAccuracyMap.end() ||
@@ -3239,9 +3246,10 @@ bool accuracyDPSolver(
           newCostToAccuracyMap[newCompCost] = newAccCost;
           newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
           newCostToSolutionMap[newCompCost].emplace_back(&ACC, i);
-          llvm::errs() << "Updating accuracy map (ACC candidate " << i
-                       << "): computation cost " << newCompCost
-                       << " -> accuracy cost " << newAccCost << "\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "Updating accuracy map (ACC candidate " << i
+                         << "): computation cost " << newCompCost
+                         << " -> accuracy cost " << newAccCost << "\n";
         }
       }
     }
@@ -3259,11 +3267,14 @@ bool accuracyDPSolver(
         double otherAccCost = r.second;
 
         if (currCompCost > otherCompCost && currAccCost >= otherAccCost) {
-          llvm::errs() << "ACC candidate with computation cost: "
-                       << currCompCost << " and accuracy cost: " << currAccCost
-                       << " is dominated by candidate with computation cost: "
-                       << otherCompCost
-                       << " and accuracy cost: " << otherAccCost << "\n";
+          if (EnzymePrintFPOpt)
+            llvm::errs() << "ACC candidate with computation cost: "
+                         << currCompCost
+                         << " and accuracy cost: " << currAccCost
+                         << " is dominated by candidate with computation cost:
+                            "
+                         << otherCompCost
+                         << " and accuracy cost: " << otherAccCost << "\n";
           dominated = true;
           break;
         }
@@ -3280,42 +3291,40 @@ bool accuracyDPSolver(
     costToSolutionMap.swap(prunedCostToSolutionMap);
   }
 
-  if (EnzymePrintFPOpt) {
-    llvm::errs() << "\n*** DP Table ***\n";
-    for (const auto &pair : costToAccuracyMap) {
-      llvm::errs() << "Computation cost: " << pair.first
-                   << ", Accuracy cost: " << pair.second << "\n";
-      llvm::errs() << "\tSolution steps: \n";
-      for (const auto &step : costToSolutionMap[pair.first]) {
-        std::visit(
-            [&](auto *item) {
-              using T = std::decay_t<decltype(*item)>;
-              if constexpr (std::is_same_v<T, ApplicableOutput>) {
-                llvm::errs()
-                    << "\t\t" << item->expr << " --(" << step.candidateIndex
-                    << ")-> " << item->candidates[step.candidateIndex].expr
-                    << "\n";
-              } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
-                llvm::errs()
-                    << "\t\tACC: " << item->candidates[step.candidateIndex].desc
-                    << " (#" << step.candidateIndex << ")\n";
-              } else {
-                llvm_unreachable(
-                    "accuracyDPSolver: Unexpected type of solution step");
-              }
-            },
-            step.item);
-      }
+  llvm::errs() << "\n*** DP Table ***\n";
+  for (const auto &pair : costToAccuracyMap) {
+    llvm::errs() << "Computation cost: " << pair.first
+                 << ", Accuracy cost: " << pair.second << "\n";
+    llvm::errs() << "\tSolution steps: \n";
+    for (const auto &step : costToSolutionMap[pair.first]) {
+      std::visit(
+          [&](auto *item) {
+            using T = std::decay_t<decltype(*item)>;
+            if constexpr (std::is_same_v<T, ApplicableOutput>) {
+              llvm::errs() << "\t\t" << item->expr << " --("
+                           << step.candidateIndex << ")-> "
+                           << item->candidates[step.candidateIndex].expr
+                           << "\n";
+            } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+              llvm::errs() << "\t\tACC: "
+                           << item->candidates[step.candidateIndex].desc
+                           << " (#" << step.candidateIndex << ")\n";
+            } else {
+              llvm_unreachable(
+                  "accuracyDPSolver: Unexpected type of solution step");
+            }
+          },
+          step.item);
     }
-    llvm::errs() << "*** End of DP Table ***\n\n";
-    llvm::errs() << "*** Critical Computation Costs ***\n";
-    // Just print all computation costs in the DP table
-    for (const auto &pair : costToAccuracyMap) {
-      llvm::errs() << pair.first << ",";
-    }
-    llvm::errs() << "\n";
-    llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
   }
+  llvm::errs() << "*** End of DP Table ***\n\n";
+  llvm::errs() << "*** Critical Computation Costs ***\n";
+  // Just print all computation costs in the DP table
+  for (const auto &pair : costToAccuracyMap) {
+    llvm::errs() << pair.first << ",";
+  }
+  llvm::errs() << "\n";
+  llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
 
   double minAccCost = std::numeric_limits<double>::infinity();
   InstructionCost bestCompCost = 0;
