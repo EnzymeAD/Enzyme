@@ -739,7 +739,7 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
 }
 
 // Will be used by Julia
-SmallString<80> ValueType_helper(const TGPattern &pattern, ssize_t actPos,
+SmallString<80> ValueType_helper(const TGPattern &pattern, size_t actPos,
                                  DagInit *ruleDag) {
   const auto nameVec = pattern.getArgNames();
   const auto typeMap = pattern.getArgTypeMap();
