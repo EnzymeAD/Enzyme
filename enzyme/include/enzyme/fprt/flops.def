@@ -1,3 +1,4 @@
+// -*- mode: c++ -*-
 
 #define __ENZYME_MPFR_DOUBLE_BINOP(LLVM_OP_NAME, MPFR_FUNC_NAME,               \
                                    ROUNDING_MODE)                              \
@@ -111,6 +112,9 @@ __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(lgamma, lngamma);
 
 // TODO This is not accurate (I think we cast int to double)
 __ENZYME_MPFR_SINGOP_DOUBLE_FLOAT(nearbyint, rint);
+
+__ENZYME_MPFR_SINGOP(unaryop, fneg, neg, 64_52, double, d, double,
+                     d, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE)
 
 // Ternary operation
 __ENZYME_MPFR_FMULADD(llvm_fmuladd, 64_52, double, d, f64,
