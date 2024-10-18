@@ -22,6 +22,10 @@
 // results of a given function.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef ENZYME_ACTIVITY_ANALYSIS_PRINTER_H
+#define ENZYME_ACTIVITY_ANALYSIS_PRINTER_H
+
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/IR/PassManager.h"
@@ -46,3 +50,5 @@ public:
 
   static bool isRequired() { return true; }
 };
+
+#endif // ENZYME_ACTIVITY_ANALYSIS_PRINTER_H

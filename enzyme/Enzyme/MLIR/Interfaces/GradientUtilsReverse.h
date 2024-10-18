@@ -7,6 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H
+#define ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H
+
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -71,3 +74,5 @@ public:
 
 } // namespace enzyme
 } // namespace mlir
+
+#endif // ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H
