@@ -23,6 +23,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
+#define ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
+
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassPlugin.h"
 
@@ -45,3 +48,5 @@ public:
 
   static bool isRequired() { return true; }
 };
+
+#endif // ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
