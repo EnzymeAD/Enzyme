@@ -1352,21 +1352,6 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
   return modifyPrimal;
 }
 
-static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                                            ModRefInfo mri) {
-  if (mri == ModRefInfo::NoModRef)
-    return os << "nomodref";
-  else if (mri == ModRefInfo::ModRef)
-    return os << "modref";
-  else if (mri == ModRefInfo::Mod)
-    return os << "mod";
-  else if (mri == ModRefInfo::Ref)
-    return os << "ref";
-  else
-    llvm_unreachable("unknown modref");
-  return os;
-}
-
 bool legalCombinedForwardReverse(
     CallInst *origop,
     const std::map<ReturnInst *, StoreInst *> &replacedReturns,
