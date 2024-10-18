@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -71,6 +72,8 @@ int main(int argc, char **argv) {
   registry.insert<mlir::enzyme::EnzymeDialect>();
 
   mlir::registerenzymePasses();
+
+  mlir::func::registerInlinerExtension(registry);
 
   // Register the standard passes we want.
   mlir::registerCSEPass();
