@@ -61,10 +61,10 @@ os << "  bool need_" << name << " = false;\n";
 // for the case of multiple inputs
 void get_input_mat(const DagInit *ruleDag, StringSet<> &inputs) {
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      Init *subArg = ruleDag->getArg(i);
-      if (DagInit *sub_Dag = dyn_cast<DagInit>(subArg))
+      auto subArg = ruleDag->getArg(i);
+      if (auto sub_Dag = dyn_cast<DagInit>(subArg))
           get_input_mat(sub_Dag, inputs);
-      else if (DefInit* def = dyn_cast<DefInit>(subArg)) {
+      else if (auto def = dyn_cast<DefInit>(subArg)) {
           const auto Def = def->getDef();
         if (Def->isSubClassOf("input")) {
           inputs.insert(Def->getValueAsString("name"));
