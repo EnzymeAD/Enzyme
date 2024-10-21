@@ -4781,16 +4781,16 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
     if (funcName == "julia.gc_loaded") {
-      if (directions & UP)
+      if (direction & UP)
         updateAnalysis(call.getArgOperand(2), getAnalysis(&call), &call);
-      if (directions & DOWN)
+      if (direction & DOWN)
         updateAnalysis(&call, getAnalysis(call.getArgOperand(2)), &call);
       return;
     }
     if (funcName == "julia.pointer_from_objref") {
-      if (directions & UP)
+      if (direction & UP)
         updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
-      if (directions & DOWN)
+      if (direction & DOWN)
         updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
       return;
     }
