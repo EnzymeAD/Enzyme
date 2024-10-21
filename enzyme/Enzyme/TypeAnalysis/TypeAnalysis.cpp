@@ -4782,9 +4782,9 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
     if (funcName == "julia.gc_loaded") {
       if (direction & UP)
-        updateAnalysis(call.getArgOperand(2), getAnalysis(&call), &call);
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
       if (direction & DOWN)
-        updateAnalysis(&call, getAnalysis(call.getArgOperand(2)), &call);
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
       return;
     }
     if (funcName == "julia.pointer_from_objref") {
