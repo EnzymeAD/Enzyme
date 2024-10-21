@@ -1709,6 +1709,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         auto gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, offset);
         if (T != T_prjlvalue)
           V = B.CreatePointerCast(V, T_prjlvalue);
+        assert(!isa<UndefValue>(gep));
         B.CreateStore(V, gep);
         offset++;
       }
@@ -1739,6 +1740,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       IRBuilder<> B(RT);
       Value *gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
       Value *rval = RT->getReturnValue();
+      assert(!isa<UndefValue>(gep));
       B.CreateStore(rval, gep);
       recur(B, rval, 0);
       auto NR = B.CreateRetVoid();
@@ -1929,6 +1931,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                 }
                 if (outinds.size() > 1)
                   out = B.CreateInBoundsGEP(sretTy, out, outinds);
+                assert(!isa<UndefValue>(out));
                 B.CreateStore(getUndefinedValueForType(M, PT), out);
               }
               return;
@@ -1972,6 +1975,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             in = B.CreateInBoundsGEP(ptrTy, in, ininds);
 
           auto ld = B.CreateLoad(curType, in);
+          assert(!isa<UndefValue>(out));
           B.CreateStore(ld, out);
         };
 
@@ -2022,6 +2026,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto gep =
           ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
       auto ld = B.CreateLoad(Types[sretCount], gep);
+      assert(!isa<UndefValue>(ptr));
       auto SI = B.CreateStore(ld, ptr);
       PostCacheStore(SI, B);
       sretCount++;
@@ -2033,6 +2038,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                       : sret;
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
         auto ld = B.CreateLoad(Types[sretCount], gep);
+        assert(!isa<UndefValue>(ptr));
         auto SI = B.CreateStore(ld, ptr);
         PostCacheStore(SI, B);
       }
