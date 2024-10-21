@@ -4780,6 +4780,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "julia.gc_loaded") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
+      return;
+    }
+    if (funcName == "julia.pointer_from_objref") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
+      return;
+    }
     if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
