@@ -68,13 +68,20 @@ public:
     auto narg = orig->getNumOperands();
     auto nret = orig->getNumResults();
 
-    std::vector<DIFFE_TYPE> RetActivity(nret, DIFFE_TYPE::OUT_DIFF);
+    std::vector<DIFFE_TYPE> RetActivity;
+    for (auto res : callOp.getResults()) {
+      RetActivity.push_back(gutils->isConstantValue(res)
+                                ? DIFFE_TYPE::CONSTANT
+                                : DIFFE_TYPE::OUT_DIFF);
+    }
 
     std::vector<DIFFE_TYPE> ArgActivity;
     for (auto arg : callOp.getOperands()) {
-      ArgActivity.push_back(gutils->isConstantValue(arg)
-                                ? DIFFE_TYPE::CONSTANT
-                                : DIFFE_TYPE::OUT_DIFF);
+      ArgActivity.push_back(
+          gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
+          : arg.getType().cast<AutoDiffTypeInterface>().isMutable()
+              ? DIFFE_TYPE::DUP_ARG
+              : DIFFE_TYPE::OUT_DIFF);
     }
 
     std::vector<bool> volatile_args(narg, true);
@@ -98,6 +105,8 @@ public:
     }
 
     for (auto result : callOp.getResults()) {
+      if (gutils->isConstantValue(result))
+        continue;
       revArguments.push_back(gutils->diffe(result, builder));
     }
 
