@@ -1966,6 +1966,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             outinds.push_back(ConstantInt::get(B.getInt32Ty(), v));
           }
 
+          if (isa<UndefValue>(in) || isa<PoisonValue>(in))
+            return;
+
+          if (isa<UndefValue>(out) || isa<PoisonValue>(out))
+            return;
+
           if (outinds.size() > 1)
             out = B.CreateInBoundsGEP(sretTy, out, outinds);
           if (ininds.size() > 1)
