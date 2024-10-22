@@ -14,6 +14,7 @@ def : InactiveOp<"LLVM", "Prefetch">;
 def : InactiveOp<"LLVM", "MemsetOp">;
 
 def : InactiveOp<"LLVM", "UndefOp">;
+def : InactiveOp<"LLVM", "PoisonOp">;
 def : InactiveOp<"LLVM", "ConstantOp">;
 def : InactiveOp<"LLVM", "UnreachableOp">;
 
