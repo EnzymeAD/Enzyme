@@ -5489,8 +5489,11 @@ public:
             It.setHeadBit(true);
             BuilderZ.SetInsertPoint(It);
 #endif
-            cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
-                                              call.getName() + "_tmpcacheB");
+            if (Mode == DerivativeMode::ReverseModeCombined)
+              cachereplace = newCall;
+            else
+              cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
+                                                call.getName() + "_tmpcacheB");
             cachereplace = gutils->cacheForReverse(
                 BuilderZ, cachereplace,
                 getIndex(&call, CacheType::Self, BuilderZ));
