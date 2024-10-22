@@ -70,9 +70,11 @@ public:
 
     std::vector<DIFFE_TYPE> RetActivity;
     for (auto res : callOp.getResults()) {
-      RetActivity.push_back(gutils->isConstantValue(res)
-                                ? DIFFE_TYPE::CONSTANT
-                                : DIFFE_TYPE::OUT_DIFF);
+      RetActivity.push_back(
+          gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+          : res.getType().cast<AutoDiffTypeInterface>().isMutable()
+              ? DIFFE_TYPE::DUP_ARG
+              : DIFFE_TYPE::OUT_DIFF);
     }
 
     std::vector<DIFFE_TYPE> ArgActivity;
@@ -82,6 +84,17 @@ public:
           : arg.getType().cast<AutoDiffTypeInterface>().isMutable()
               ? DIFFE_TYPE::DUP_ARG
               : DIFFE_TYPE::OUT_DIFF);
+    }
+
+    if (llvm::any_of(ArgActivity,
+                     [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; }) ||
+        llvm::any_of(RetActivity,
+                     [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
+      // NOTE: this current approach fails when the function is not read only.
+      //       i.e. it can modify its arguments.
+      orig->emitError() << "could not emit adjoint with mutable types in: "
+                        << *orig << "\n";
+      return failure();
     }
 
     std::vector<bool> volatile_args(narg, true);
