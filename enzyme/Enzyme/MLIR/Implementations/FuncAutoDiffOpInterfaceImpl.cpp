@@ -29,7 +29,8 @@ namespace {
 #include "Implementations/FuncDerivatives.inc"
 } // namespace
 
-static std::optional<mlir::FunctionOpInterface> getContainingFunction(Operation *orig) {
+static std::optional<mlir::FunctionOpInterface>
+getContainingFunction(Operation *orig) {
   Operation *parent;
   while (parent = orig->getParentOp()) {
     if (auto func = dyn_cast<mlir::FunctionOpInterface>(parent)) {
