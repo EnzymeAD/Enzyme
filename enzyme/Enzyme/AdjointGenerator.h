@@ -23,6 +23,10 @@
 // LLVM instructions.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef ENZYME_ADJOINT_GENERATOR_H
+#define ENZYME_ADJOINT_GENERATOR_H
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -6417,3 +6421,5 @@ public:
                                         subretused);
   }
 };
+
+#endif // ENZYME_ADJOINT_GENERATOR_H
