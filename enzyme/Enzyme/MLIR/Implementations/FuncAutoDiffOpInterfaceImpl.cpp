@@ -29,10 +29,10 @@ namespace {
 #include "Implementations/FuncDerivatives.inc"
 } // namespace
 
-static std::optional<func::FuncOp> getContainingFunction(Operation *orig) {
+static std::optional<mlir::FunctionOpInterface> getContainingFunction(Operation *orig) {
   Operation *parent;
   while (parent = orig->getParentOp()) {
-    if (auto func = dyn_cast<func::FuncOp>(parent)) {
+    if (auto func = dyn_cast<mlir::FunctionOpInterface>(parent)) {
       return std::optional(func);
     }
   }
@@ -55,7 +55,7 @@ public:
 
     auto parent = getContainingFunction(orig);
     if (parent.has_value() &&
-        callOp.getCallee() == parent.value().getSymName()) {
+        callOp.getCallee() == parent.value().getNameAttr()) {
       // TODO: Recursion chains
       orig->emitError() << "could not emit adjoint of recursive call at: "
                         << *orig << "\n";
