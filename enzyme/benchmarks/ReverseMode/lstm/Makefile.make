@@ -14,15 +14,16 @@ $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.to
 	clang++ $(BENCH) $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
 %-raw.ll: %-unopt.ll
-	@echo $(LOAD)
+	@echo opt $(LOAD) -o $@ -S
 	opt $^ $(LOAD) -o $@ -S
 
 %-opt.ll: %-raw.ll
+	@echo opt $^ -o $@ -S
 	opt $^ -o $@ -S
 	#opt $^ -O2 -o $@ -S
 
 lstm.o: lstm-opt.ll $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
-	clang++ -pthread -O2 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
+	clang++ -pthread -O3 $^ -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
 
 results.json: lstm.o
 	./$^
