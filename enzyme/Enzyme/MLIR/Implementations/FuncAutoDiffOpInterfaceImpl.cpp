@@ -77,7 +77,7 @@ public:
     auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
 
     bool freeMemory = true;
-    size_t width = 1;
+    size_t width = gutils->width;
 
     std::vector<bool> volatile_args(narg, false);
 
@@ -189,7 +189,7 @@ public:
     auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
 
     bool freeMemory = true;
-    size_t width = 1;
+    size_t width = gutils->width;
 
     auto revFn = gutils->Logic.CreateReverseDiff(
         fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
