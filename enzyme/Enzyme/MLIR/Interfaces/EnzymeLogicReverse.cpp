@@ -190,10 +190,17 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   }
 
   MReverseCacheKey tup = {
-      fn,        retType,
-      constants, returnPrimals,
-      mode,      static_cast<unsigned>(width),
-      addedType, type_args,
+      fn,
+      retType,
+      constants,
+      returnPrimals,
+      returnShadows,
+      mode,
+      freeMemory,
+      static_cast<unsigned>(width),
+      addedType,
+      type_args,
+      volatile_args,
   };
 
   {

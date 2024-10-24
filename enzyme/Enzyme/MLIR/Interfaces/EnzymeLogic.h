@@ -110,10 +110,13 @@ public:
     const std::vector<DIFFE_TYPE> retActivity;
     const std::vector<DIFFE_TYPE> argActivity;
     const std::vector<bool> returnPrimals;
+    const std::vector<bool> returnShadows;
     DerivativeMode mode;
+    bool freeMemory;
     unsigned width;
     mlir::Type additionalType;
     const MFnTypeInfo typeInfo;
+    const std::vector<bool> volatileArgs;
 
     inline bool operator<(const MReverseCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -144,9 +147,19 @@ public:
       if (rhs.returnPrimals < rhs.returnPrimals)
         return false;
 
+      if (returnShadows < rhs.returnShadows)
+        return true;
+      if (rhs.returnShadows < rhs.returnShadows)
+        return false;
+
       if (mode < rhs.mode)
         return true;
       if (rhs.mode < mode)
+        return false;
+
+      if (freeMemory < rhs.freeMemory)
+        return true;
+      if (rhs.freeMemory < freeMemory)
         return false;
 
       if (width < rhs.width)
@@ -162,6 +175,11 @@ public:
       if (typeInfo < rhs.typeInfo)
         return true;
       if (rhs.typeInfo < typeInfo)
+        return false;
+
+      if (volatileArgs < rhs.volatileArgs)
+        return true;
+      if (rhs.volatileArgs < volatileArgs)
         return false;
 
       // equal
