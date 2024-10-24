@@ -138,15 +138,6 @@ public:
 
     func::CallOp callOp = cast<func::CallOp>(orig);
 
-    auto parent = getContainingFunction(orig);
-    if (parent.has_value() &&
-        callOp.getCallee() == parent.value().getNameAttr()) {
-      // TODO: Recursion chains
-      orig->emitError() << "could not emit adjoint of recursive call at: "
-                        << *orig << "\n";
-      return failure();
-    }
-
     Operation *callee = symbolTable.lookup(callOp.getCallee());
     auto fn = cast<FunctionOpInterface>(callee);
 
