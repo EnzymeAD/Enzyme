@@ -41,6 +41,90 @@ getContainingFunction(Operation *orig) {
   return std::nullopt;
 }
 
+class AutoDiffCallFwd
+    : public AutoDiffOpInterface::ExternalModel<AutoDiffCallFwd, func::CallOp> {
+public:
+  LogicalResult createForwardModeTangent(Operation *orig, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    DerivativeMode mode = DerivativeMode::ForwardMode;
+
+    auto callOp = cast<func::CallOp>(orig);
+    SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
+
+    Operation *callee = symbolTable.lookup(callOp.getCallee());
+    auto fn = cast<FunctionOpInterface>(callee);
+
+    auto narg = orig->getNumOperands();
+    auto nret = orig->getNumResults();
+
+    std::vector<DIFFE_TYPE> RetActivity;
+    RetActivity.reserve(nret);
+    for (auto res : callOp.getResults()) {
+      RetActivity.push_back(gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
+                                                         : DIFFE_TYPE::DUP_ARG);
+    }
+
+    std::vector<DIFFE_TYPE> ArgActivity;
+    ArgActivity.reserve(narg);
+    for (auto arg : callOp.getOperands()) {
+      ArgActivity.push_back(gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
+                                                         : DIFFE_TYPE::DUP_ARG);
+    }
+
+    std::vector<bool> returnPrimal(nret, true);
+    std::vector<bool> returnShadow(nret, false);
+
+    auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
+
+    bool freeMemory = true;
+    size_t width = 1;
+
+    std::vector<bool> volatile_args(narg, false);
+
+    auto forwardFn = gutils->Logic.CreateForwardDiff(
+        fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, mode,
+        freeMemory, width,
+        /* addedType */ nullptr, type_args, volatile_args,
+        /* augmented */ nullptr);
+
+    SmallVector<Value> fwdArguments;
+
+    for (auto &&[arg, act] :
+         llvm::zip_equal(callOp.getOperands(), ArgActivity)) {
+
+      fwdArguments.push_back(gutils->getNewFromOriginal(arg));
+      if (act == DIFFE_TYPE::DUP_ARG)
+        fwdArguments.push_back(gutils->invertPointerM(arg, builder));
+    }
+
+    auto fwdCallOp = builder.create<func::CallOp>(
+        orig->getLoc(), cast<func::FuncOp>(forwardFn), fwdArguments);
+
+    SmallVector<Value> primals;
+    primals.reserve(nret);
+
+    int fwdIndex = 0;
+    for (auto &&[ret, act] :
+         llvm::zip_equal(callOp.getResults(), RetActivity)) {
+      auto fwdRet = fwdCallOp.getResult(fwdIndex);
+      primals.push_back(fwdRet);
+
+      fwdIndex++;
+
+      if (act == DIFFE_TYPE::DUP_ARG) {
+        gutils->setDiffe(ret, fwdCallOp.getResult(fwdIndex), builder);
+        fwdIndex++;
+      }
+    }
+
+    auto newOp = gutils->getNewFromOriginal(orig);
+    gutils->replaceOrigOpWith(orig, primals);
+    gutils->erase(newOp);
+
+    return success();
+  }
+};
+
 class AutoDiffCallRev
     : public ReverseAutoDiffOpInterface::ExternalModel<AutoDiffCallRev,
                                                        func::CallOp> {
@@ -163,6 +247,7 @@ void mlir::enzyme::registerFuncDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, func::FuncDialect *) {
     registerInterfaces(context);
+    func::CallOp::attachInterface<AutoDiffCallFwd>(*context);
     func::CallOp::attachInterface<AutoDiffCallRev>(*context);
   });
 }
