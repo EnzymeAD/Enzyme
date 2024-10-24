@@ -105,7 +105,90 @@ public:
     }
   };
 
+  struct MReverseCacheKey {
+    FunctionOpInterface todiff;
+    const std::vector<DIFFE_TYPE> retActivity;
+    const std::vector<DIFFE_TYPE> argActivity;
+    const std::vector<bool> returnPrimals;
+    const std::vector<bool> returnShadows;
+    DerivativeMode mode;
+    bool freeMemory;
+    unsigned width;
+    mlir::Type additionalType;
+    const MFnTypeInfo typeInfo;
+    const std::vector<bool> volatileArgs;
+
+    inline bool operator<(const MReverseCacheKey &rhs) const {
+      if (todiff < rhs.todiff)
+        return true;
+      if (rhs.todiff < todiff)
+        return false;
+
+      if (std::lexicographical_compare(retActivity.begin(), retActivity.end(),
+                                       rhs.retActivity.begin(),
+                                       rhs.retActivity.end()))
+        return true;
+      if (std::lexicographical_compare(rhs.retActivity.begin(),
+                                       rhs.retActivity.end(),
+                                       retActivity.begin(), retActivity.end()))
+        return false;
+
+      if (std::lexicographical_compare(argActivity.begin(), argActivity.end(),
+                                       rhs.argActivity.begin(),
+                                       rhs.argActivity.end()))
+        return true;
+      if (std::lexicographical_compare(rhs.argActivity.begin(),
+                                       rhs.argActivity.end(),
+                                       argActivity.begin(), argActivity.end()))
+        return false;
+
+      if (returnPrimals < rhs.returnPrimals)
+        return true;
+      if (rhs.returnPrimals < rhs.returnPrimals)
+        return false;
+
+      if (returnShadows < rhs.returnShadows)
+        return true;
+      if (rhs.returnShadows < rhs.returnShadows)
+        return false;
+
+      if (mode < rhs.mode)
+        return true;
+      if (rhs.mode < mode)
+        return false;
+
+      if (freeMemory < rhs.freeMemory)
+        return true;
+      if (rhs.freeMemory < freeMemory)
+        return false;
+
+      if (width < rhs.width)
+        return true;
+      if (rhs.width < width)
+        return false;
+
+      if (additionalType.getImpl() < rhs.additionalType.getImpl())
+        return true;
+      if (rhs.additionalType.getImpl() < additionalType.getImpl())
+        return false;
+
+      if (typeInfo < rhs.typeInfo)
+        return true;
+      if (rhs.typeInfo < typeInfo)
+        return false;
+
+      if (volatileArgs < rhs.volatileArgs)
+        return true;
+      if (rhs.volatileArgs < volatileArgs)
+        return false;
+
+      // equal
+      return false;
+    }
+  };
+
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
+  std::map<MReverseCacheKey, FunctionOpInterface> ReverseCachedFunctions;
 
   FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,

@@ -189,12 +189,34 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
+  MReverseCacheKey tup = {
+      fn,
+      retType,
+      constants,
+      returnPrimals,
+      returnShadows,
+      mode,
+      freeMemory,
+      static_cast<unsigned>(width),
+      addedType,
+      type_args,
+      volatile_args,
+  };
+
+  {
+    auto cachedFn = ReverseCachedFunctions.find(tup);
+    if (cachedFn != ReverseCachedFunctions.end())
+      return cachedFn->second;
+  }
+
   SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
   SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
 
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       retType, constants, addedType);
+
+  ReverseCachedFunctions[tup] = gutils->newFunc;
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
