@@ -32,16 +32,11 @@ fn lstm_model(
     let (a, b) = gates.split_at_mut(2 * hsize);
     let ((forget, ingate), (outgate, change)) = (a.split_at_mut(hsize), b.split_at_mut(hsize));
 
-    #[cfg(debug_assertions)]
-    debug_assert_eq!(weight.len(), 4 * hsize);
-    #[cfg(debug_assertions)]
-    debug_assert_eq!(bias.len(), 4 * hsize);
-    #[cfg(debug_assertions)]
-    debug_assert_eq!(hidden.len(), hsize);
-    #[cfg(debug_assertions)]
-    debug_assert!(cell.len() >= hsize);
-    #[cfg(debug_assertions)]
-    debug_assert!(input.len() >= hsize);
+    //debug_assert_eq!(weight.len(), 4 * hsize);
+    //debug_assert_eq!(bias.len(), 4 * hsize);
+    //debug_assert_eq!(hidden.len(), hsize);
+    //debug_assert!(cell.len() >= hsize);
+    //debug_assert!(input.len() >= hsize);
     // caching input
     for i in 0..hsize {
         forget[i] = sigmoid(input[i] * weight[i] + bias[i]);
@@ -118,7 +113,7 @@ fn lstm_predict(
     Duplicated,
     Const,
     Const,
-    Duplicated
+    DuplicatedOnly
 )]
 pub(crate) fn lstm_objective(
     l: usize,
@@ -136,8 +131,7 @@ pub(crate) fn lstm_objective(
     let mut ypred = vec![0.0; b];
     let mut ynorm = vec![0.0; b];
 
-    #[cfg(debug_assertions)]
-    debug_assert!(b > 0);
+    //debug_assert!(b > 0);
 
     let limit = (c - 1) * b;
     for j in 0..(c - 1) {

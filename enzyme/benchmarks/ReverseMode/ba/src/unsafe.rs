@@ -82,7 +82,7 @@ pub unsafe extern "C" fn rust_unsafe_dcompute_reproj_error(
     err: *mut f64,
     derr: *mut f64,
 ) {
-    dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
+    unsafe {dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr)};
 }
 
 
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn rust_unsafe_dcompute_reproj_error(
     Duplicated,
     Duplicated,
     Const,
-    Duplicated
+    DuplicatedOnly
 )]
 pub unsafe fn compute_reproj_error(
     cam: *const f64,

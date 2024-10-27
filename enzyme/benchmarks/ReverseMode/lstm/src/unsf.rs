@@ -81,7 +81,7 @@ unsafe fn lstm_predict(
 }
 
 // LSTM objective (loss function)
-#[autodiff(d_lstm_unsafe_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Const, Const, Duplicated)]
+#[autodiff(d_lstm_unsafe_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Const, Const, DuplicatedOnly)]
 pub (crate) unsafe fn lstm_unsafe_objective(l: usize, c: usize, b: usize, main_params: *const f64, extra_params: *const f64, state: *mut f64, sequence: *const f64, loss: *mut f64) {
     let mut total = 0.0;
     let mut count = 0;

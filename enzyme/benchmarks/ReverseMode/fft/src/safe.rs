@@ -78,7 +78,7 @@ fn ifft(data: &mut [f64]) {
     rescale(data, data.len() / 2);
 }
 
-#[autodiff(dfoobar, Reverse, Duplicated)]
+#[autodiff(dfoobar, Reverse, DuplicatedOnly)]
 pub fn foobar(data: &mut [f64]) {
     fft(data);
     ifft(data);
@@ -94,7 +94,7 @@ pub extern "C" fn rust_dfoobar(n: usize, data: *mut f64, ddata: *mut f64) {
         )
     };
 
-    dfoobar(data, ddata);
+    unsafe {dfoobar(data, ddata)};
 }
 
 #[no_mangle]

@@ -38,7 +38,7 @@ pub extern "C" fn rust_unsafe_gmm_objective(d: i32, k: i32, n: i32, alphas: *con
 //    gmm_objective(d, k, n, alphas, means, icf, x, wishart, &mut my_err);
 //}
 
-#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, Duplicated)]
+#[autodiff(dgmm_objective, Reverse, Const, Const, Const, Duplicated, Duplicated, Duplicated, Const, Const, DuplicatedOnly)]
 pub unsafe fn gmm_objective(d: usize, k: usize, n: usize, alphas: *const f64, means: *const f64, icf: *const f64, x: *const f64, wishart: *const Wishart, err: *mut f64) {
     let constant = -(n as f64) * d as f64 * 0.5 * (2.0 * PI).ln();
     let icf_sz = d * (d + 1) / 2;

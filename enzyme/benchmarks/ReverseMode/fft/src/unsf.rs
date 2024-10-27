@@ -103,7 +103,7 @@ unsafe fn ifft(data: *mut f64, n: usize) {
     rescale(data, n);
 }
 
-#[autodiff(unsafe_dfoobar, Reverse, Const, Duplicated)]
+#[autodiff(unsafe_dfoobar, Reverse, Const, DuplicatedOnly)]
 pub unsafe fn unsafe_foobar(n: usize, data: *mut f64) {
     fft(data, n );
     ifft(data, n );

@@ -78,7 +78,7 @@ pub extern "C" fn rust_dcompute_reproj_error(
     err: *mut [f64; 2],
     derr: *mut [f64; 2],
 ) {
-    dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr);
+    unsafe {dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr)};
 }
 
 #[autodiff(
@@ -88,7 +88,7 @@ pub extern "C" fn rust_dcompute_reproj_error(
     Duplicated,
     Duplicated,
     Const,
-    Duplicated
+    DuplicatedOnly
 )]
 pub fn compute_reproj_error(
     cam: *const [f64; 11],
