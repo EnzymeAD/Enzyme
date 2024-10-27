@@ -14,8 +14,10 @@ libm = ["dep:libm"]
 [profile.release]
 lto = "fat"
 opt-level = 3
-#debug = true
-#strip = "none"
+codegen-units = 1
+panic = "abort"
+strip = true
+#overflow-checks = false
 
 [profile.dev]
 lto = "fat"

@@ -1,5 +1,6 @@
 use std::slice;
 use std::f64::consts::PI;
+use std::autodiff::autodiff;
 
 fn bitreversal_perm<T>(data: &mut [T]) {
     let len = data.len() / 2;

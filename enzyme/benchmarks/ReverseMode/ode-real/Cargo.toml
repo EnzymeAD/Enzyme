@@ -13,10 +13,10 @@ crate-type = ["lib"]
 [profile.release]
 lto = "fat"
 opt-level = 3
-panic = 'abort'
-strip = true
 codegen-units = 1
-#debug = true
+unwind = "abort"
+strip = true
+#overflow-checks = false
 
 [profile.dev]
 lto = "fat"

@@ -1,4 +1,5 @@
 use std::f64::consts::PI;
+use std::autodiff::autodiff;
 
 //static void scramble(double* data, unsigned N) {
 //  int j=1;

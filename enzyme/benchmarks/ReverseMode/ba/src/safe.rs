@@ -1,5 +1,6 @@
 use crate::BA_NCAMPARAMS;
 use crate::compute_zach_weight_error;
+use std::autodiff::autodiff;
 
 fn sqsum(x: &[f64]) -> f64 {
     x.iter().map(|&v| v * v).sum()

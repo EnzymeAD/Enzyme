@@ -8,6 +8,8 @@
 //#define BOOST_MATH_NO_LONG_DOUBLE_MATH_FUNCTIONS
 //#define BOOST_NO_EXCEPTIONS
 
+use std::autodiff::autodiff;
+
 const N: usize = 32;
 const xmin: f64 = 0.;
 const xmax: f64 = 1.;

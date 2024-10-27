@@ -1,7 +1,7 @@
 #![feature(autodiff)]
-#![feature(slice_first_last_chunk)]
 #![allow(non_snake_case)]
 
+use std::autodiff::autodiff;
 pub mod safe;
 pub mod r#unsafe;
 

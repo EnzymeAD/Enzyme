@@ -3,7 +3,6 @@ name = "bars"
 version = "0.1.0"
 edition = "2021"
 
-
 [lib]
 crate-type = ["cdylib"]
 
@@ -11,6 +10,11 @@ crate-type = ["cdylib"]
 
 [profile.release]
 lto = "fat"
+opt-level = 3
+codegen-units = 1
+unwind = "abort"
+strip = true
+#overflow-checks = false
 
 [profile.dev]
 lto = "fat"

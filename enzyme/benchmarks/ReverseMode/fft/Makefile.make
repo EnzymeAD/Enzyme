@@ -11,7 +11,7 @@ $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a: src/lib.rs Cargo.toml
 	cargo +enzyme rustc --release --lib --crate-type=staticlib 
 
 fft.o: fft.cpp $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
-	clang++ $(LOAD) $(BENCH) fft.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o fft.o -lpthread $(BENCHLINK) -lm -lfft -L $(dir)/benchmarks/ReverseMode/fft/target/release/ -L /usr/lib/gcc/x86_64-linux-gnu/11
+	clang++ $(LOAD) $(BENCH) fft.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O3 -o fft.o -lpthread $(BENCHLINK) -lm -lfft -L $(dir)/benchmarks/ReverseMode/fft/target/release/ -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.txt: fft.o
 	./$^ 1048576 | tee $@

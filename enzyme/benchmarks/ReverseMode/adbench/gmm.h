@@ -213,10 +213,10 @@ int main(const int argc, const char* argv[]) {
 
     std::vector<std::string> paths;// = { "1k/gmm_d10_K100.txt" };
 
-    // getTests(paths, "data/1k", "1k/");
-    // getTests(paths, "data/2.5k", "2.5k/");
-    // getTests(paths, "data/10k", "10k/");
-    paths.push_back("1k/gmm_d2_K5.txt");
+    //getTests(paths, "data/1k", "1k/");
+    //getTests(paths, "data/2.5k", "2.5k/");
+    getTests(paths, "data/10k", "10k/");
+    //paths.push_back("1k/gmm_d2_K5.txt");
 
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
     json test_results;
@@ -267,7 +267,7 @@ int main(const int argc, const char* argv[]) {
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
-    if (0) {
+    //if (0) {
       try {
         struct timeval start, end;
         gettimeofday(&start, NULL);
@@ -287,7 +287,7 @@ int main(const int argc, const char* argv[]) {
       } catch (std::bad_alloc) {
         printf("Adept combined 88888888 ooms\n");
       }
-    }
+    //}
     }
 
     {

@@ -1,5 +1,6 @@
 use crate::BA_NCAMPARAMS;
 use crate::compute_zach_weight_error;
+use std::autodiff::autodiff;
 
 unsafe fn sqsum(x: *const f64, n: usize) -> f64 {
     let mut sum = 0.;

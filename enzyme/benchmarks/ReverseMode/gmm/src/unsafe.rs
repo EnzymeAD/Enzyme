@@ -1,5 +1,6 @@
 use std::f64::consts::PI;
 use crate::Wishart;
+use std::autodiff::autodiff;
 
 #[cfg(feature = "libm")]
 use libm::lgamma;
