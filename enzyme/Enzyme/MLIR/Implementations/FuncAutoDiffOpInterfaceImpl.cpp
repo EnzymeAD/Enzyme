@@ -29,18 +29,6 @@ namespace {
 #include "Implementations/FuncDerivatives.inc"
 } // namespace
 
-static std::optional<mlir::FunctionOpInterface>
-getContainingFunction(Operation *orig) {
-  Operation *parent;
-  while (parent = orig->getParentOp()) {
-    if (auto func = dyn_cast<mlir::FunctionOpInterface>(parent)) {
-      return std::optional(func);
-    }
-  }
-
-  return std::nullopt;
-}
-
 class AutoDiffCallFwd
     : public AutoDiffOpInterface::ExternalModel<AutoDiffCallFwd, func::CallOp> {
 public:
