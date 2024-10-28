@@ -17,6 +17,10 @@
 // }
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef ENZYME_JL_INST_SIMPLIFY_H
+#define ENZYME_JL_INST_SIMPLIFY_H
+
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/IR/PassManager.h"
@@ -41,3 +45,5 @@ public:
 
   static bool isRequired() { return true; }
 };
+
+#endif // ENZYME_JL_INST_SIMPLIFY_H

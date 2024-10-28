@@ -3333,8 +3333,7 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
-  auto PB0 = new llvm::PassBuilder(PB);
-  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level) {
+  auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
     FunctionPassManager OptimizePM;
     OptimizePM.addPass(Float2IntPass());
     OptimizePM.addPass(LowerConstantIntrinsicsPass());
