@@ -1031,10 +1031,10 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     }
     assert(fntypeinfo.Function == I->getParent()->getParent());
     assert(Origin);
-    if (!EnzymeStrictAliasing) {
-      if (auto OI = dyn_cast<Instruction>(Origin)) {
-        if (OI->getParent() != I->getParent() &&
-            !PDT.dominates(OI->getParent(), I->getParent())) {
+    if (auto OI = dyn_cast<Instruction>(Origin)) {
+      if (OI->getParent() != I->getParent()) {
+      if (!EnzymeStrictAliasing) {
+        if (!PDT.dominates(OI->getParent(), I->getParent())) {
           bool allocationWithAllUsersInBlock = false;
           if (auto AI = dyn_cast<AllocaInst>(I)) {
             allocationWithAllUsersInBlock = true;
@@ -1059,15 +1059,27 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
             return;
           }
         }
+      } else {
+          if (OI->getParent()->hasNPredecessors(1) && hasMetadata(OI->getParent()->getTerminator(), "enzyme_notypeprop")) {
+            if (EnzymePrintType) {
+              llvm::errs() << " skipping update into ";
+              I->print(llvm::errs(), *MST);
+              llvm::errs() << " of " << Data.str() << " from ";
+              OI->print(llvm::errs(), *MST);
+              llvm::errs() << "\n";
+            }
+            return;
+          }
+        }
       }
-    }
+      }
   } else if (auto Arg = dyn_cast<Argument>(Val)) {
     assert(fntypeinfo.Function == Arg->getParent());
-    if (!EnzymeStrictAliasing)
-      if (auto OI = dyn_cast<Instruction>(Origin)) {
-        auto I = &*fntypeinfo.Function->getEntryBlock().begin();
-        if (OI->getParent() != I->getParent() &&
-            !PDT.dominates(OI->getParent(), I->getParent())) {
+    if (auto OI = dyn_cast<Instruction>(Origin)) {
+      auto I = &*fntypeinfo.Function->getEntryBlock().begin();
+      if (OI->getParent() != I->getParent()) {
+      if (!EnzymeStrictAliasing) {
+        if (!PDT.dominates(OI->getParent(), I->getParent())) {
           if (EnzymePrintType) {
             llvm::errs() << " skipping update into ";
             Arg->print(llvm::errs(), *MST);
@@ -1077,7 +1089,20 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
           }
           return;
         }
+      } else {
+          if (OI->getParent()->hasNPredecessors(1) && hasMetadata(OI->getParent()->getTerminator(), "enzyme_notypeprop")) {
+            if (EnzymePrintType) {
+              llvm::errs() << " skipping update into ";
+              I->print(llvm::errs(), *MST);
+              llvm::errs() << " of " << Data.str() << " from ";
+              OI->print(llvm::errs(), *MST);
+              llvm::errs() << "\n";
+            }
+            return;
+          }
       }
+      }
+    }
   }
 
   // Attempt to update the underlying analysis
