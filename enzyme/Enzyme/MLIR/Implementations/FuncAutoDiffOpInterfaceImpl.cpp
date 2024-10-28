@@ -29,18 +29,6 @@ namespace {
 #include "Implementations/FuncDerivatives.inc"
 } // namespace
 
-static std::optional<mlir::FunctionOpInterface>
-getContainingFunction(Operation *orig) {
-  Operation *parent;
-  while (parent = orig->getParentOp()) {
-    if (auto func = dyn_cast<mlir::FunctionOpInterface>(parent)) {
-      return std::optional(func);
-    }
-  }
-
-  return std::nullopt;
-}
-
 class AutoDiffCallFwd
     : public AutoDiffOpInterface::ExternalModel<AutoDiffCallFwd, func::CallOp> {
 public:
@@ -137,15 +125,6 @@ public:
     SymbolTable symbolTable = SymbolTable::getNearestSymbolTable(orig);
 
     func::CallOp callOp = cast<func::CallOp>(orig);
-
-    auto parent = getContainingFunction(orig);
-    if (parent.has_value() &&
-        callOp.getCallee() == parent.value().getNameAttr()) {
-      // TODO: Recursion chains
-      orig->emitError() << "could not emit adjoint of recursive call at: "
-                        << *orig << "\n";
-      return failure();
-    }
 
     Operation *callee = symbolTable.lookup(callOp.getCallee());
     auto fn = cast<FunctionOpInterface>(callee);
