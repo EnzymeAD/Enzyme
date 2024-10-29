@@ -1962,6 +1962,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
+      returnMapping[AugmentedStruct::Return] = -1;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
