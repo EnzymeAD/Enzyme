@@ -2317,7 +2317,8 @@ public:
         }
         // If the user is not an intruction or the user instruction is not an
         // erasable instruction, then the current instruction is not erasable
-        llvm::errs() << "Can't erase " << *I << " because of " << *user << "\n";
+        // llvm::errs() << "Can't erase " << *I << " because of " << *user <<
+        // "\n";
         usedOutside = true;
         break;
       }
@@ -2327,11 +2328,11 @@ public:
       }
     }
 
-    llvm::errs() << "Erasable instructions:\n";
-    for (auto *I : erasableInsts) {
-      llvm::errs() << *I << "\n";
-    }
-    llvm::errs() << "End of erasable instructions\n";
+    // llvm::errs() << "Erasable instructions:\n";
+    // for (auto *I : erasableInsts) {
+    //   llvm::errs() << *I << "\n";
+    // }
+    // llvm::errs() << "End of erasable instructions\n";
   }
 };
 
@@ -3233,7 +3234,7 @@ bool accuracyDPSolver(
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
 
-        if (EnzymePrintFPOpt)
+        // if (EnzymePrintFPOpt)
           llvm::errs() << "ACC candidate " << i << " ("
                        << candidate.value().desc
                        << ") has accuracy cost: " << candAccCost
@@ -3841,27 +3842,29 @@ B2:
       auto *o0 = component.outputs[0];
       ACC.executions = valueToNodeMap[o0]->executions;
 
+      const SmallVector<PrecisionChangeType> precTypes{
+          PrecisionChangeType::FP32,
+          PrecisionChangeType::FP64,
+      };
+
+      // TODO: since we are only doing FP64 -> FP32, we can skip more expensive
+      // operations for now.
+      static const std::unordered_set<std::string> Funcs = {
+          "sin",   "cos",  "tan", "exp",  "log",   "sqrt", "expm1",
+          "log1p", "cbrt", "pow", "fabs", "hypot", "fma"};
+
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
-        operations.push_back(cast<FPLLValue>(valueToNodeMap[I].get()));
+        auto node = cast<FPLLValue>(valueToNodeMap[I].get());
+        if (Funcs.count(node->op) != 0) {
+          operations.push_back(node);
+        }
       }
 
-      // TODO: computation cost conflicts with Herbie rewrites
-
-      // Sort the operations by the gradient
+      // Sort operations by the gradient
       llvm::sort(operations, [](const auto &a, const auto &b) {
-        // llvm::errs() << "Gradient of " << *(a->value) << " is " << a->grad
-        //              << "\n";
-        // llvm::errs() << "Gradient of " << *(b->value) << " is " << b->grad
-        //              << "\n";
-        // llvm::errs() << "Geometric average of " << *(a->value) << " is "
-        //              << a->geometricAvg << "\n";
-        // llvm::errs() << "Geometric average of " << *(b->value) << " is "
-        //              << b->geometricAvg << "\n";
-        // assert(!std::isnan(a->grad) && "Gradient is NaN for an operation");
-        // assert(!std::isnan(b->grad) && "Gradient is NaN for an operation");
         return std::fabs(a->grad * a->geometricAvg) <
                std::fabs(b->grad * b->geometricAvg);
       });
@@ -3875,23 +3878,62 @@ B2:
 
         if (EnzymePrintFPOpt && !opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
-                       << "% of operations (" << numToChange << ")\n";
+                       << "% of Funcs (" << numToChange << ")\n";
           llvm::errs() << "Subset gradient range: ["
                        << std::fabs(opsToChange.front()->grad) << ", "
                        << std::fabs(opsToChange.back()->grad) << "]\n";
         }
 
-        SmallVector<PrecisionChangeType> precTypes{
-            // PrecisionChangeType::BF16,
-            // PrecisionChangeType::FP16,
-            PrecisionChangeType::FP32, PrecisionChangeType::FP64,
-            // PrecisionChangeType::FP80,
-            //  PrecisionChangeType::FP128
-        };
+        for (auto prec : precTypes) {
+          StringRef precStr = getPrecisionChangeTypeString(prec);
+          Twine desc =
+              Twine("Funcs 0% -- ") + Twine(percent) + "% -> " + precStr;
+
+          PrecisionChange change(
+              opsToChange,
+              getPrecisionChangeType(component.outputs[0]->getType()), prec);
+
+          SmallVector<PrecisionChange, 1> changes{std::move(change)};
+          PTCandidate candidate(changes, desc);
+          candidate.CompCost = getCompCost(component, TTI, candidate);
+
+          ACC.candidates.push_back(std::move(candidate));
+        }
+      }
+
+      // Create candidates by considering all operations without filtering
+      SmallVector<FPLLValue *, 8> allOperations;
+      for (auto *I : component.operations) {
+        assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
+               "Corrupted FPNode for original instructions");
+        auto node = cast<FPLLValue>(valueToNodeMap[I].get());
+        allOperations.push_back(node);
+      }
+
+      // Sort all operations by the gradient
+      llvm::sort(allOperations, [](const auto &a, const auto &b) {
+        return std::fabs(a->grad * a->geometricAvg) <
+               std::fabs(b->grad * b->geometricAvg);
+      });
+
+      // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
+      for (int percent = 10; percent <= 100; percent += 10) {
+        size_t numToChange = allOperations.size() * percent / 100;
+
+        SetVector<FPLLValue *> opsToChange(allOperations.begin(),
+                                           allOperations.begin() + numToChange);
+
+        if (EnzymePrintFPOpt && !opsToChange.empty()) {
+          llvm::errs() << "Created PrecisionChange for " << percent
+                       << "% of all operations (" << numToChange << ")\n";
+          llvm::errs() << "Subset gradient range: ["
+                       << std::fabs(opsToChange.front()->grad) << ", "
+                       << std::fabs(opsToChange.back()->grad) << "]\n";
+        }
 
         for (auto prec : precTypes) {
           StringRef precStr = getPrecisionChangeTypeString(prec);
-          Twine desc = Twine("0% -- ") + Twine(percent) + "% -> " + precStr;
+          Twine desc = Twine("All 0% -- ") + Twine(percent) + "% -> " + precStr;
 
           PrecisionChange change(
               opsToChange,
