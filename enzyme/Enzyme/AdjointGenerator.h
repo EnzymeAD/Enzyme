@@ -5509,9 +5509,8 @@ public:
               else
                 cachereplace = BuilderZ.CreatePHI(
                     call.getType(), 1, call.getName() + "_tmpcacheB");
-              cachereplace = gutils->cacheForReverse(
-                  BuilderZ, cachereplace,
-                  getIndex(&call, CacheType::Self, BuilderZ));
+              cachereplace =
+                  gutils->cacheForReverse(BuilderZ, cachereplace, idx);
             }
           } else {
 #if LLVM_VERSION_MAJOR >= 18
