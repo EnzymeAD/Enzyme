@@ -215,13 +215,14 @@ public:
     llvm_unreachable(msg.c_str());
   }
 
-  virtual Value *getLLValue(IRBuilder<> &builder) {
+  virtual Value *getLLValue(IRBuilder<> &builder,
+                            const ValueToValueMapTy *VMap = nullptr) {
     // if (EnzymePrintFPOpt)
     //   llvm::errs() << "Generating new instruction for op: " << op << "\n";
     Module *M = builder.GetInsertBlock()->getModule();
 
     if (op == "if") {
-      Value *condValue = operands[0]->getLLValue(builder);
+      Value *condValue = operands[0]->getLLValue(builder, VMap);
       auto IP = builder.GetInsertPoint();
 
       Instruction *Then, *Else;
@@ -229,14 +230,14 @@ public:
 
       Then->getParent()->setName("herbie.then");
       builder.SetInsertPoint(Then);
-      Value *ThenVal = operands[1]->getLLValue(builder);
+      Value *ThenVal = operands[1]->getLLValue(builder, VMap);
       if (Instruction *I = dyn_cast<Instruction>(ThenVal)) {
         I->setName("herbie.then_val");
       }
 
       Else->getParent()->setName("herbie.else");
       builder.SetInsertPoint(Else);
-      Value *ElseVal = operands[2]->getLLValue(builder);
+      Value *ElseVal = operands[2]->getLLValue(builder, VMap);
       if (Instruction *I = dyn_cast<Instruction>(ElseVal)) {
         I->setName("herbie.else_val");
       }
@@ -252,7 +253,7 @@ public:
 
     SmallVector<Value *, 2> operandValues;
     for (auto operand : operands) {
-      operandValues.push_back(operand->getLLValue(builder));
+      operandValues.push_back(operand->getLLValue(builder, VMap));
     }
 
     Value *val = nullptr;
@@ -476,7 +477,14 @@ public:
   double getLowerBound() const override { return lb; }
   double getUpperBound() const override { return ub; }
 
-  Value *getLLValue(IRBuilder<> &builder) override { return value; }
+  Value *getLLValue(IRBuilder<> &builder,
+                    const ValueToValueMapTy *VMap = nullptr) override {
+    if (VMap) {
+      assert(VMap->count(value) && "FPLLValue not found in passed-in VMap!");
+      return VMap->lookup(value);
+    }
+    return value;
+  }
 
   static bool classof(const FPNode *N) {
     return N->getType() == NodeType::LLValue;
@@ -547,7 +555,8 @@ public:
 
   double getUpperBound() const override { return getLowerBound(); }
 
-  virtual Value *getLLValue(IRBuilder<> &builder) override {
+  virtual Value *getLLValue(IRBuilder<> &builder,
+                            const ValueToValueMapTy *VMap = nullptr) override {
     Type *Ty;
     if (dtype == "f64") {
       Ty = builder.getDoubleTy();
@@ -1819,6 +1828,10 @@ InstructionCost getInstructionCompCost(const Instruction *I,
 
     std::string PrecisionName;
     Type *Ty = I->getType();
+    if (I->getOpcode() == Instruction::FCmp) {
+      Ty = I->getOperand(0)->getType();
+    }
+
     if (Ty->isBFloatTy()) {
       PrecisionName = "bf16";
     } else if (Ty->isHalfTy()) {
@@ -1938,6 +1951,58 @@ InstructionCost getInstructionCompCost(const Instruction *I,
   }
 }
 
+InstructionCost computeMaxCost(
+    BasicBlock *BB, std::unordered_map<BasicBlock *, InstructionCost> &MaxCost,
+    std::unordered_set<BasicBlock *> &Visited, const TargetTransformInfo &TTI) {
+  if (MaxCost.find(BB) != MaxCost.end())
+    return MaxCost[BB];
+
+  if (!Visited.insert(BB).second)
+    return 0;
+
+  InstructionCost BBCost = 0;
+  for (const Instruction &I : *BB) {
+    if (I.isTerminator())
+      continue;
+
+    auto instCost = getInstructionCompCost(&I, TTI);
+
+    if (EnzymePrintFPOpt)
+      // llvm::errs() << "Cost of " << I << " is: " << instCost << "\n";
+
+      BBCost += instCost;
+  }
+
+  InstructionCost succCost = 0;
+
+  if (!succ_empty(BB)) {
+    InstructionCost maxSuccCost = 0;
+    for (BasicBlock *Succ : successors(BB)) {
+      InstructionCost succBBCost = computeMaxCost(Succ, MaxCost, Visited, TTI);
+      if (succBBCost > maxSuccCost)
+        maxSuccCost = succBBCost;
+    }
+    // llvm::errs() << "Max succ cost: " << maxSuccCost << "\n";
+    succCost = maxSuccCost;
+  }
+
+  InstructionCost totalCost = BBCost + succCost;
+  // llvm::errs() << "BB " << BB->getName() << " cost: " << totalCost << "\n";
+  MaxCost[BB] = totalCost;
+  Visited.erase(BB);
+  return totalCost;
+}
+
+InstructionCost getCompCost(Function *F, const TargetTransformInfo &TTI) {
+  std::unordered_map<BasicBlock *, InstructionCost> MaxCost;
+  std::unordered_set<BasicBlock *> Visited;
+
+  BasicBlock *EntryBB = &F->getEntryBlock();
+  InstructionCost TotalCost = computeMaxCost(EntryBB, MaxCost, Visited, TTI);
+  // llvm::errs() << "Total cost: " << TotalCost << "\n";
+  return TotalCost;
+}
+
 // Sum up the cost of `output` and its FP operands recursively up to `inputs`
 // (exclusive).
 InstructionCost getCompCost(const SmallVector<Value *> &outputs,
@@ -1983,20 +2048,35 @@ InstructionCost getCompCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     const FastMathFlags &FMF) {
+  // llvm::errs() << "Evaluating cost of " << expr << "\n";
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
   SetVector<Value *> args;
+  SmallVector<Type *, 8> argTypes;
+  SmallVector<std::string, 8> argNames;
   for (const auto &argStr : argStrSet) {
-    args.insert(symbolToValueMap[argStr]);
+    Value *argValue = symbolToValueMap[argStr];
+    args.insert(argValue);
+    argTypes.push_back(argValue->getType());
+    argNames.push_back(argStr);
   }
 
   auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
 
   // Materialize the expression in a temporary function
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M->getContext()), false);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M->getContext()), argTypes, false);
   Function *tempFunction =
       Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
+
+  ValueToValueMapTy VMap;
+  Function::arg_iterator AI = tempFunction->arg_begin();
+  for (const auto &argStr : argNames) {
+    VMap[symbolToValueMap[argStr]] = &*AI;
+    ++AI;
+  }
+
   BasicBlock *entry =
       BasicBlock::Create(M->getContext(), "entry", tempFunction);
   Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
@@ -2004,11 +2084,9 @@ InstructionCost getCompCost(
   IRBuilder<> builder(ReturnInst);
 
   builder.setFastMathFlags(FMF);
-  Value *newOutput = parsedNode->getLLValue(builder);
+  parsedNode->getLLValue(builder, &VMap);
 
-  // tempFunction->print(llvm::errs());
-
-  InstructionCost cost = getCompCost({newOutput}, args, TTI);
+  InstructionCost cost = getCompCost(tempFunction, TTI);
 
   tempFunction->eraseFromParent();
   return cost;
@@ -3235,10 +3313,9 @@ bool accuracyDPSolver(
         double newAccCost = currAccCost + candAccCost;
 
         // if (EnzymePrintFPOpt)
-          llvm::errs() << "ACC candidate " << i << " ("
-                       << candidate.value().desc
-                       << ") has accuracy cost: " << candAccCost
-                       << " and computation cost: " << candCompCost << "\n";
+        llvm::errs() << "ACC candidate " << i << " (" << candidate.value().desc
+                     << ") has accuracy cost: " << candAccCost
+                     << " and computation cost: " << candCompCost << "\n";
 
         if (newCostToAccuracyMap.find(newCompCost) ==
                 newCostToAccuracyMap.end() ||
