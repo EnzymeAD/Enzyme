@@ -5493,14 +5493,29 @@ public:
             It.setHeadBit(true);
             BuilderZ.SetInsertPoint(It);
 #endif
-            if (Mode == DerivativeMode::ReverseModeCombined)
-              cachereplace = newCall;
-            else
-              cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
-                                                call.getName() + "_tmpcacheB");
-            cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace,
-                getIndex(&call, CacheType::Self, BuilderZ));
+            auto idx = getIndex(&call, CacheType::Self, BuilderZ);
+            if (idx == IndexMappingError) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Failed to compute consistent cache index for operation: "
+                 << call << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&call),
+                                   ErrorType::InternalError, nullptr, nullptr,
+                                   nullptr);
+              } else {
+                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                            ss.str());
+              }
+            } else {
+              if (Mode == DerivativeMode::ReverseModeCombined)
+                cachereplace = newCall;
+              else
+                cachereplace = BuilderZ.CreatePHI(
+                    call.getType(), 1, call.getName() + "_tmpcacheB");
+              cachereplace =
+                  gutils->cacheForReverse(BuilderZ, cachereplace, idx);
+            }
           } else {
 #if LLVM_VERSION_MAJOR >= 18
             auto It = BuilderZ.GetInsertPoint();
