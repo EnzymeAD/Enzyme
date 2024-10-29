@@ -5494,9 +5494,25 @@ public:
             else
               cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
                                                 call.getName() + "_tmpcacheB");
-            cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace,
-                getIndex(&call, CacheType::Self, BuilderZ));
+            auto idx = getIndex(&call, CacheType::Self, BuilderZ);
+            if (idx == IndexMappingError) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Failed to compute consistent cache index for operation: "
+                 << call << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(&call),
+                                   ErrorType::InternalError, nullptr, nullptr,
+                                   nullptr);
+              } else {
+                EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                            ss.str());
+              }
+            } else {
+              cachereplace = gutils->cacheForReverse(
+                  BuilderZ, cachereplace,
+                  getIndex(&call, CacheType::Self, BuilderZ));
+            }
           } else {
 #if LLVM_VERSION_MAJOR >= 18
             auto It = BuilderZ.GetInsertPoint();
