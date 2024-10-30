@@ -10,6 +10,8 @@ fn bitreversal_perm<T>(data: &mut [T]) {
     while i < 2*len {
         if j > i {
             //dbg!(&i, &j);
+            //data.swap(j-1, i-1);
+            //data.swap(j, i);
             unsafe {data.swap_unchecked(j-1, i-1);}
             unsafe {data.swap_unchecked(j, i);}
         }
@@ -40,10 +42,9 @@ fn radix2(data: &mut [f64], i_sign: f64, n: usize) {
     let mut wr = 1.0;
     let mut wi = 0.0;
 
-    let mut i = 0;
-    while i < n {
+    assert_eq!(data.len(), 2*n);
+    for i in (0..n).step_by(2)  {
         let in_n = i + n;
-
         let tempr = data[in_n] * wr - data[in_n + 1] * wi;
         let tempi = data[in_n] * wi + data[in_n + 1] * wr;
 
@@ -55,9 +56,8 @@ fn radix2(data: &mut [f64], i_sign: f64, n: usize) {
         let wtemp_new = wr;
         wr += wr * wpr - wi * wpi;
         wi += wi * wpr + wtemp_new * wpi;
-
-        i += 2;
     }
+
 }
 
 fn rescale(data: &mut [f64], scale: usize) {
