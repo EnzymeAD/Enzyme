@@ -1,33 +1,13 @@
 use std::f64::consts::PI;
 use std::autodiff::autodiff;
 
-//static void scramble(double* data, unsigned N) {
-//  int j=1;
-//  for (int i=1; i<2*N; i+=2) {
-//    if (j>i) {
-//      swap(&data[j-1], &data[i-1]);
-//      swap(&data[j], &data[i]);
-//    }
-//    int m = N;
-//    while (m>=2 && j>m) {
-//      j -= m;
-//      m >>= 1;
-//    }
-//    j += m;
-//  }
-//}
 unsafe fn bitreversal_perm(data: *mut f64, len: usize) {
-    //let len = data.len() / 2;
     let mut j = 1;
 
     for i in (1..2*len).step_by(2) {
-    //let mut i = 1;
-    //while i < 2*len {
         if j > i {
             std::ptr::swap(data.add(j-1), data.add(i-1));
             std::ptr::swap(data.add(j), data.add(i));
-            //data.swap(j-1, i-1);
-            //data.swap(j, i);
         }
 
         let mut m = len;
@@ -37,20 +17,13 @@ unsafe fn bitreversal_perm(data: *mut f64, len: usize) {
         }
 
         j += m;
-        //i += 2;
     }
 }
 
 unsafe fn radix2(data: *mut f64, i_sign: f64, n: usize) {
-    if n == 1 {
-        return;
-    }
-
-    let b = data.add(n);
-    let a = data;
-    //let (a,b) = data.split_at_mut(n);
-    radix2(a, i_sign, n/2);
-    radix2(b, i_sign, n/2);
+    if n == 1 { return; }
+    radix2(data, i_sign, n/2);
+    radix2(data.add(n), i_sign, n/2);
 
     let wtemp = i_sign * (PI / n as f64).sin();
     let wpi = -i_sign * (2.0 * PI / n as f64).sin();
@@ -58,8 +31,7 @@ unsafe fn radix2(data: *mut f64, i_sign: f64, n: usize) {
     let mut wr = 1.0;
     let mut wi = 0.0;
 
-    let mut i = 0;
-    while i < n {
+    for i in (0..n).step_by(2) {
         let in_n = i + n;
 
         let tempr = *data.add(in_n) * wr - *data.add(in_n + 1) * wi;
@@ -73,17 +45,8 @@ unsafe fn radix2(data: *mut f64, i_sign: f64, n: usize) {
         let wtemp_new = wr;
         wr += wr * wpr - wi * wpi;
         wi += wi * wpr + wtemp_new * wpi;
-
-        i += 2;
     }
 }
-
-//static void rescale(double* data, unsigned N) {
-//  double scale = ((double)1)/N;
-//  for (unsigned i=0; i<2*N; i++) {
-//    data[i] *= scale;
-//  }
-//}
 
 unsafe fn rescale(data: *mut f64, n: usize) {
     let scale = 1. / n as f64;
