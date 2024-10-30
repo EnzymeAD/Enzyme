@@ -3,7 +3,7 @@
 
 #include "datastructures.h"
 
-void emit_BLASTypes(raw_ostream &os) {
+inline void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
   os << "const bool byRefFloat = byRef || blas.prefix == "
@@ -68,7 +68,7 @@ void emit_BLASTypes(raw_ostream &os) {
 
 // cblas lv23 => layout
 // cublas => always handle
-void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
+inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
 
@@ -183,7 +183,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   os << "}\n";
 }
 
-void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
+inline void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
