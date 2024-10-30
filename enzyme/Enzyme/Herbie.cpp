@@ -131,6 +131,12 @@ static cl::opt<unsigned>
 static cl::opt<bool> FPOptEarlyPrune(
     "fpopt-early-prune", cl::init(true), cl::Hidden,
     cl::desc("Prune dominated candidates in expression transformation phases"));
+static cl::opt<double> FPOptCostDominanceThreshold(
+    "fpopt-cost-dom-thres", cl::init(0.05), cl::Hidden,
+    cl::desc("The threshold for cost dominance in DP solver"));
+static cl::opt<double> FPOptAccuracyDominanceThreshold(
+    "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
+    cl::desc("The threshold for accuracy dominance in DP solver"));
 }
 
 class FPNode {
@@ -3261,7 +3267,11 @@ bool accuracyDPSolver(
         InstructionCost otherCompCost = r.first;
         double otherAccCost = r.second;
 
-        if (currCompCost > otherCompCost && currAccCost >= otherAccCost) {
+        if (currCompCost - otherCompCost >
+                std::fabs(FPOptCostDominanceThreshold *
+                          otherCompCost.getValue().getValue()) &&
+            currAccCost - otherAccCost >
+                std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
           if (EnzymePrintFPOpt)
             llvm::errs() << "AO candidate with computation cost: "
                          << currCompCost
@@ -3343,7 +3353,11 @@ bool accuracyDPSolver(
         InstructionCost otherCompCost = r.first;
         double otherAccCost = r.second;
 
-        if (currCompCost > otherCompCost && currAccCost >= otherAccCost) {
+        if (currCompCost - otherCompCost >
+                std::fabs(FPOptCostDominanceThreshold *
+                          otherCompCost.getValue().getValue()) &&
+            currAccCost - otherAccCost >
+                std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
           if (EnzymePrintFPOpt)
             llvm::errs() << "ACC candidate with computation cost: "
                          << currCompCost
