@@ -560,6 +560,17 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["tgamma"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["logabsgamma"],
                   [
                   (
