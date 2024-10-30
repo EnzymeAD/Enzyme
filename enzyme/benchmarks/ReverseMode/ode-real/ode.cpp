@@ -64,7 +64,39 @@ void init_brusselator(double* __restrict u, double* __restrict v) {
 }
 
 __attribute__((noinline))
-void brusselator_2d_loop(double* __restrict du, double* __restrict dv, const double* __restrict u, const double* __restrict v, const double* __restrict p, double t) {
+void brusselator_2d_loop_restrict(double* __restrict du, double* __restrict dv, const double* __restrict u, const double* __restrict v, const double* __restrict p, double t) {
+  double A = p[0];
+  double B = p[1];
+  double alpha = p[2];
+  double dx = (double)1/(N-1);
+
+  alpha = alpha/(dx*dx);
+
+  for(int i=0; i<N; i++) {
+    for(int j=0; j<N; j++) {
+
+      double x = RANGE(xmin, xmax, i, N);
+      double y = RANGE(ymin, ymax, j, N);
+
+      unsigned ip1 = (i == N-1) ? i : (i+1);
+      unsigned im1 = (i == 0) ? i : (i-1);
+
+      unsigned jp1 = (j == N-1) ? j : (j+1);
+      unsigned jm1 = (j == 0) ? j : (j-1);
+
+      double u2v = GET(u, i, j) * GET(u, i, j) * GET(v, i, j);
+
+      GETnb(du, i, j) = alpha*( GET(u, im1, j) + GET(u, ip1, j) + GET(u, i, jp1) + GET(u, i, jm1) - 4 * GET(u, i, j))
+                      + B + u2v - (A + 1)*GET(u, i, j) + brusselator_f(x, y, t);
+
+      GETnb(dv, i, j) = alpha*( GET(v, im1, j) + GET(v, ip1, j) + GET(v, i, jp1) + GET(v, i, jm1) - 4 * GET(v, i, j))
+                      + A * GET(u, i, j) - u2v;
+    }
+  }
+}
+
+__attribute__((noinline))
+void brusselator_2d_loop_norestrict(double* du, double* dv, const double* u, const double* v, const double* p, double t) {
   double A = p[0];
   double B = p[1];
   double alpha = p[2];
@@ -97,17 +129,26 @@ void brusselator_2d_loop(double* __restrict du, double* __restrict dv, const dou
 
 typedef double state_type[2*N*N];
 
-void lorenz( const state_type &x, state_type &dxdt, double t )
+void lorenz_norestrict( const state_type &x, state_type &dxdt, double t )
 {
     // Extract the parameters
   double p[3] = { /*A*/ 3.4, /*B*/ 1, /*alpha*/10. };
-  brusselator_2d_loop(dxdt, dxdt + N * N, x, x + N * N, p, t);
+  brusselator_2d_loop_norestrict(dxdt, dxdt + N * N, x, x + N * N, p, t);
 }
 
-extern "C" void rust_lorenz(const double* x, double* dxdt, double t);
-extern "C" void rust_dbrusselator_2d_loop(double* adjoint, const double* x, double* dx, const double* p, double* dp, double t);
+void lorenz_restrict( const state_type &x, state_type &dxdt, double t )
+{
+    // Extract the parameters
+  double p[3] = { /*A*/ 3.4, /*B*/ 1, /*alpha*/10. };
+  brusselator_2d_loop_restrict(dxdt, dxdt + N * N, x, x + N * N, p, t);
+}
 
-double rustfoobar(const double *p, const state_type x, const state_type adjoint, double t) {
+extern "C" void rust_lorenz_safe(const double* x, double* dxdt, double t);
+extern "C" void rust_dbrusselator_2d_loop_safe(double* adjoint, const double* x, double* dx, const double* p, double* dp, double t);
+extern "C" void rust_lorenz_unsf(const double* x, double* dxdt, double t);
+extern "C" void rust_dbrusselator_2d_loop_unsf(double* adjoint, const double* x, double* dx, const double* p, double* dp, double t);
+
+double rustfoobar_unsf(const double *p, const state_type x, const state_type adjoint, double t) {
   double dp[3] = { 0. };
 
   state_type dx = { 0. };
@@ -117,11 +158,25 @@ double rustfoobar(const double *p, const state_type x, const state_type adjoint,
     dadjoint_inp[i] = adjoint[i];
   }
 
-  rust_dbrusselator_2d_loop(dadjoint_inp, x, dx, p, dp, t);
+  rust_dbrusselator_2d_loop_unsf(dadjoint_inp, x, dx, p, dp, t);
   return dx[0];
 }
 
-double foobar(const double* p, const state_type x, const state_type adjoint, double t) {
+double rustfoobar_safe(const double *p, const state_type x, const state_type adjoint, double t) {
+  double dp[3] = { 0. };
+
+  state_type dx = { 0. };
+
+  state_type dadjoint_inp;// = adjoint
+  for (int i = 0; i < N * N; i++) {
+    dadjoint_inp[i] = adjoint[i];
+  }
+
+  rust_dbrusselator_2d_loop_safe(dadjoint_inp, x, dx, p, dp, t);
+  return dx[0];
+}
+
+double foobar_restrict(const double* p, const state_type x, const state_type adjoint, double t) {
     double dp[3] = { 0. };
 
     state_type dx = { 0. };
@@ -133,7 +188,32 @@ double foobar(const double* p, const state_type x, const state_type adjoint, dou
 
     state_type dxdu;
 
-    __enzyme_autodiff<void>(brusselator_2d_loop,
+    __enzyme_autodiff<void>(brusselator_2d_loop_restrict,
+                            enzyme_dup, dxdu, dadjoint_inp,
+                            enzyme_dup, dxdu + N * N, dadjoint_inp + N * N,
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp,
+ //                           enzyme_dupnoneed, nullptr, dadjoint_inp + N * N,
+                            enzyme_dup, x, dx,
+                            enzyme_dup, x + N * N, dx + N * N,
+                            enzyme_dup, p, dp,
+                            enzyme_const, t);
+
+    return dx[0];
+}
+
+double foobar_norestrict(const double* p, const state_type x, const state_type adjoint, double t) {
+    double dp[3] = { 0. };
+
+    state_type dx = { 0. };
+
+    state_type dadjoint_inp;// = adjoint
+    for (int i = 0; i < N * N; i++) {
+      dadjoint_inp[i] = adjoint[i];
+    }
+
+    state_type dxdu;
+
+    __enzyme_autodiff<void>(brusselator_2d_loop_norestrict,
                             enzyme_dup, dxdu, dadjoint_inp,
                             enzyme_dup, dxdu + N * N, dadjoint_inp + N * N,
  //                           enzyme_dupnoneed, nullptr, dadjoint_inp,
@@ -551,10 +631,22 @@ int main(int argc, char** argv) {
 
   double res;
   for(int i=0; i<10000; i++)
-  res = foobar(p, x, adjoint, t);
+  res = foobar_norestrict(p, x, adjoint, t);
 
   gettimeofday(&end, NULL);
-  printf("C++  Enzyme combined %0.6f res=%f\n", tdiff(&start, &end), res);
+  printf("C++  Enzyme combined mayalias %0.6f res=%f\n", tdiff(&start, &end), res);
+  }
+  
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res;
+  for(int i=0; i<10000; i++)
+  res = foobar_restrict(p, x, adjoint, t);
+
+  gettimeofday(&end, NULL);
+  printf("C++  Enzyme combined restrict %0.6f res=%f\n", tdiff(&start, &end), res);
   }
   
   {
@@ -563,10 +655,22 @@ int main(int argc, char** argv) {
 
     double res;
     for(int i=0; i<10000; i++)
-    res = rustfoobar(p, x, adjoint, t);
+    res = rustfoobar_safe(p, x, adjoint, t);
 
     gettimeofday(&end, NULL);
-    printf("Rust Enzyme combined %0.6f res=%f\n", tdiff(&start, &end), res);
+    printf("Rust Enzyme combined safe %0.6f res=%f\n", tdiff(&start, &end), res);
+  }
+
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+
+    double res;
+    for(int i=0; i<10000; i++)
+    res = rustfoobar_unsf(p, x, adjoint, t);
+
+    gettimeofday(&end, NULL);
+    printf("Rust Enzyme combined unsf %0.6f res=%f\n", tdiff(&start, &end), res);
   }
 
   {
@@ -575,11 +679,24 @@ int main(int argc, char** argv) {
     state_type x2;
 
     for(int i=0; i<10000; i++) {
-      lorenz(x, x2, t);
+      lorenz_norestrict(x, x2, t);
     }
 
     gettimeofday(&end, NULL);
-    printf("C++  fwd %0.6f res=%f\n", tdiff(&start, &end), x2[0]);
+    printf("C++  fwd mayalias %0.6f res=%f\n", tdiff(&start, &end), x2[0]);
+  }
+
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    state_type x2;
+
+    for(int i=0; i<10000; i++) {
+      lorenz_restrict(x, x2, t);
+    }
+
+    gettimeofday(&end, NULL);
+    printf("C++  fwd restrict %0.6f res=%f\n", tdiff(&start, &end), x2[0]);
   }
 
   {
@@ -588,10 +705,22 @@ int main(int argc, char** argv) {
     state_type x2;
 
     for(int i=0; i<10000; i++)
-    rust_lorenz(x, x2, t);
+    rust_lorenz_safe(x, x2, t);
 
     gettimeofday(&end, NULL);
-    printf("Rust fwd %0.6f res=%f\n\n", tdiff(&start, &end), x2[0]);
+    printf("Rust fwd safe %0.6f res=%f\n\n", tdiff(&start, &end), x2[0]);
+  }
+
+  {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    state_type x2;
+
+    for(int i=0; i<10000; i++)
+    rust_lorenz_unsf(x, x2, t);
+
+    gettimeofday(&end, NULL);
+    printf("Rust fwd unsf %0.6f res=%f\n\n", tdiff(&start, &end), x2[0]);
   }
 
   //printf("res=%f\n", foobar(1000));
