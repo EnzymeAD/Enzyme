@@ -1,3 +1,6 @@
+#ifndef ENZYME_TBLGEN_BLAS_DIFF_USE_UPDATER_H
+#define ENZYME_TBLGEN_BLAS_DIFF_USE_UPDATER_H
+
 #include "blas-tblgen.h"
 #include "caching.h"
 #include "datastructures.h"
@@ -193,3 +196,5 @@ void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   os << "    }\n";
   os << "}\n";
 }
+
+#endif // ENZYME_TBLGEN_BLAS_DIFF_USE_UPDATER_H

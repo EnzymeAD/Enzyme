@@ -1,3 +1,6 @@
+#ifndef ENZYME_TBLGEN_BLAS_DECL_UPDATER_H
+#define ENZYME_TBLGEN_BLAS_DECL_UPDATER_H
+
 #include "datastructures.h"
 
 void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
@@ -283,3 +286,5 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   os << "  return changed;\n";
   os << "}\n";
 }
+
+#endif // ENZYME_TBLGEN_BLAS_DECL_UPDATER_H

@@ -1,3 +1,6 @@
+#ifndef ENZYME_TBLGEN_BLAS_TA_UPDATER_H
+#define ENZYME_TBLGEN_BLAS_TA_UPDATER_H
+
 #include "datastructures.h"
 
 void emit_BLASTypes(raw_ostream &os) {
@@ -199,3 +202,5 @@ void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
     emit_BLASTA(newPattern, os);
   }
 }
+
+#endif // ENZYME_TBLGEN_BLAS_TA_UPDATER_H
