@@ -83,6 +83,9 @@ static cl::opt<bool> FPOptEnableHerbie(
 static cl::opt<bool> FPOptEnablePT(
     "fpopt-enable-pt", cl::init(false), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
+static cl::opt<int> HerbieNumIters(
+    "herbie-num-iters", cl::init(6), cl::Hidden,
+    cl::desc("Number of times Herbie attempts to improve accuracy."));
 static cl::opt<bool> HerbieDisableNumerics(
     "herbie-disable-numerics", cl::init(false), cl::Hidden,
     cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
@@ -1008,6 +1011,271 @@ struct PTCandidate {
   }
 };
 
+class FPEvaluator {
+  std::unordered_map<const FPNode *, double> cache;
+  std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
+
+public:
+  FPEvaluator(PTCandidate *pt = nullptr) {
+    if (pt) {
+      for (const auto &change : pt->changes) {
+        for (auto node : change.nodes) {
+          nodePrecisions[node] = change.newType;
+        }
+      }
+    }
+  }
+
+  PrecisionChangeType getNodePrecision(const FPNode *node) const {
+    // If the node has a new precision from PT, use it
+    PrecisionChangeType precType;
+
+    auto it = nodePrecisions.find(node);
+    if (it != nodePrecisions.end()) {
+      precType = it->second;
+    } else {
+      // Otherwise, use the node's original precision
+      if (node->dtype == "f32") {
+        precType = PrecisionChangeType::FP32;
+      } else if (node->dtype == "f64") {
+        precType = PrecisionChangeType::FP64;
+      } else {
+        llvm_unreachable("Unsupported FP node precision type");
+      }
+    }
+
+    if (precType != PrecisionChangeType::FP32 &&
+        precType != PrecisionChangeType::FP64) {
+      llvm_unreachable("Unsupported FP precision");
+    }
+
+    return precType;
+  }
+
+  void evaluateNode(const FPNode *node,
+                    const SmallMapVector<Value *, double, 4> &inputValues) {
+    if (cache.find(node) != cache.end())
+      return;
+
+    if (isa<FPConst>(node)) {
+      double constVal = node->getLowerBound(); // TODO: Can be improved
+      cache.emplace(node, constVal);
+      return;
+    }
+
+    if (isa<FPLLValue>(node) &&
+        inputValues.count(cast<FPLLValue>(node)->value)) {
+      double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
+      cache.emplace(node, inputValue);
+      return;
+    }
+
+    if (node->op == "if") {
+      evaluateNode(node->operands[0].get(), inputValues);
+      double cond = getResult(node->operands[0].get());
+
+      if (cond == 1.0) {
+        evaluateNode(node->operands[1].get(), inputValues);
+        double then_val = getResult(node->operands[1].get());
+        cache.emplace(node, then_val);
+      } else {
+        evaluateNode(node->operands[2].get(), inputValues);
+        double else_val = getResult(node->operands[2].get());
+        cache.emplace(node, else_val);
+      }
+      return;
+    }
+
+    PrecisionChangeType nodePrec = getNodePrecision(node);
+
+    for (const auto &operand : node->operands) {
+      evaluateNode(operand.get(), inputValues);
+    }
+
+    double res = 0.0;
+
+    if (node->op == "neg") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32) ? -static_cast<float>(op)
+                                                    : -op;
+    } else if (node->op == "+") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? static_cast<float>(op0) + static_cast<float>(op1)
+                : op0 + op1;
+    } else if (node->op == "-") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? static_cast<float>(op0) - static_cast<float>(op1)
+                : op0 - op1;
+    } else if (node->op == "*") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? static_cast<float>(op0) * static_cast<float>(op1)
+                : op0 * op1;
+    } else if (node->op == "/") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? static_cast<float>(op0) / static_cast<float>(op1)
+                : op0 / op1;
+    } else if (node->op == "sin") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::sin(static_cast<float>(op))
+                : std::sin(op);
+    } else if (node->op == "cos") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::cos(static_cast<float>(op))
+                : std::cos(op);
+    } else if (node->op == "tan") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::tan(static_cast<float>(op))
+                : std::tan(op);
+    } else if (node->op == "exp") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::exp(static_cast<float>(op))
+                : std::exp(op);
+    } else if (node->op == "expm1") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::expm1(static_cast<float>(op))
+                : std::expm1(op);
+    } else if (node->op == "log") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::log(static_cast<float>(op))
+                : std::log(op);
+    } else if (node->op == "log1p") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::log1p(static_cast<float>(op))
+                : std::log1p(op);
+    } else if (node->op == "sqrt") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::sqrt(static_cast<float>(op))
+                : std::sqrt(op);
+    } else if (node->op == "cbrt") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::cbrt(static_cast<float>(op))
+                : std::cbrt(op);
+    } else if (node->op == "pow") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::pow(static_cast<float>(op0), static_cast<float>(op1))
+                : std::pow(op0, op1);
+    } else if (node->op == "fabs") {
+      double op = getResult(node->operands[0].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::fabs(static_cast<float>(op))
+                : std::fabs(op);
+    } else if (node->op == "fma") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      double op2 = getResult(node->operands[2].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::fma(static_cast<float>(op0), static_cast<float>(op1),
+                           static_cast<float>(op2))
+                : std::fma(op0, op1, op2);
+    } else if (node->op == "==") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) == static_cast<float>(op1)
+                        : op0 == op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == "!=") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) != static_cast<float>(op1)
+                        : op0 != op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == "<") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) < static_cast<float>(op1)
+                        : op0 < op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == ">") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) > static_cast<float>(op1)
+                        : op0 > op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == "<=") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) <= static_cast<float>(op1)
+                        : op0 <= op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == ">=") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      bool result = (nodePrec == PrecisionChangeType::FP32)
+                        ? static_cast<float>(op0) >= static_cast<float>(op1)
+                        : op0 >= op1;
+      res = result ? 1.0 : 0.0;
+    } else if (node->op == "and") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (op0 == 1.0 && op1 == 1.0) ? 1.0 : 0.0;
+    } else if (node->op == "or") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (op0 == 1.0 || op1 == 1.0) ? 1.0 : 0.0;
+    } else if (node->op == "not") {
+      double op = getResult(node->operands[0].get());
+      res = (op == 1.0) ? 0.0 : 1.0;
+    } else if (node->op == "TRUE") {
+      res = 1.0;
+    } else if (node->op == "FALSE") {
+      res = 0.0;
+    } else {
+      std::string msg = "FPEvaluator: Unexpected operator " + node->op;
+      llvm_unreachable(msg.c_str());
+    }
+
+    cache.emplace(node, res);
+  }
+
+  double getResult(const FPNode *node) const {
+    auto it = cache.find(node);
+    assert(it != cache.end() && "Node not evaluated yet");
+    return it->second;
+  }
+};
+
+// Emulate computation using native floating-point types
+void getFPValues(ArrayRef<FPNode *> outputs,
+                 const SmallMapVector<Value *, double, 4> &inputValues,
+                 SmallVectorImpl<double> &results, PTCandidate *pt = nullptr) {
+  assert(!outputs.empty());
+  results.resize(outputs.size());
+
+  FPEvaluator evaluator(pt);
+
+  for (const auto *output : outputs) {
+    evaluator.evaluateNode(output, inputValues);
+  }
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    results[i] = evaluator.getResult(outputs[i]);
+  }
+}
+
 class MPFREvaluator {
   struct CachedValue {
     mpfr_t value;
@@ -1406,7 +1674,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
                    SmallVectorImpl<double> &results, bool groundTruth = false,
                    const unsigned groundTruthPrec = 53,
                    PTCandidate *pt = nullptr) {
-  assert(outputs.size() > 0);
+  assert(!outputs.empty());
   results.resize(outputs.size());
 
   if (!groundTruth) {
@@ -2626,7 +2894,7 @@ void setUnifiedAccuracyCost(
     // llvm::errs() << "DEBUG AO gold value: " << goldVal << "\n";
     goldVals[pair.index()] = goldVal;
 
-    getMPFRValues(outputs, pair.value(), results, false);
+    getFPValues(outputs, pair.value(), results);
     double realVal = results[0];
     // llvm::errs() << "DEBUG AO real value: " << realVal << "\n";
 
@@ -2668,7 +2936,7 @@ void setUnifiedAccuracyCost(
 
       ArrayRef<FPNode *> outputs = {parsedNode.get()};
       SmallVector<double, 1> results;
-      getMPFRValues(outputs, pair.value(), results, false);
+      getFPValues(outputs, pair.value(), results);
       double realVal = results[0];
 
       // llvm::errs() << "Real value: " << realVal << "\n";
@@ -2723,7 +2991,7 @@ void setUnifiedAccuracyCost(
     }
 
     // Emulate FPCC with parsed precision
-    getMPFRValues(outputs, pair.value(), results, false);
+    getFPValues(outputs, pair.value(), results);
 
     for (const auto &[output, result] : zip(outputs, results)) {
       // llvm::errs() << "DEBUG ACC real value: " << result << "\n";
@@ -2761,7 +3029,7 @@ void setUnifiedAccuracyCost(
 
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 8> results;
-      getMPFRValues(outputs, pair.value(), results, false, 0, &candidate);
+      getFPValues(outputs, pair.value(), results, &candidate);
 
       for (const auto &[output, result] : zip(outputs, results)) {
         double goldVal = goldVals[output][pair.index()];
@@ -2801,8 +3069,8 @@ bool improveViaHerbie(
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
 
   SmallVector<llvm::StringRef> BaseArgs = {
-      Program,     "report", "--seed", std::to_string(FPOptRandomSeed),
-      "--timeout", "60"};
+      Program,     "report", "--seed",      std::to_string(FPOptRandomSeed),
+      "--timeout", "60",     "--num-iters", HerbieNumIters};
 
   BaseArgs.push_back("--disable");
   BaseArgs.push_back("generate:proofs");
