@@ -69,8 +69,9 @@ void enzyme::ForwardActivityAnnotationAnalysis::markResultsUnknown(
 static bool isFullyActive(Operation *op) {
   return isa<LLVM::FMulOp, LLVM::FAddOp, LLVM::FDivOp, LLVM::FSubOp,
              LLVM::FNegOp, LLVM::FAbsOp, LLVM::SqrtOp, LLVM::SinOp, LLVM::CosOp,
-             LLVM::Exp2Op, LLVM::ExpOp, LLVM::LogOp, LLVM::InsertValueOp,
-             LLVM::ExtractValueOp, LLVM::BitcastOp, LLVM::SelectOp>(op);
+             LLVM::TanhOp, LLVM::Exp2Op, LLVM::ExpOp, LLVM::LogOp,
+             LLVM::InsertValueOp, LLVM::ExtractValueOp, LLVM::BitcastOp,
+             LLVM::SelectOp>(op);
 }
 
 static bool isNoOp(Operation *op) {
@@ -810,7 +811,7 @@ namespace {
 // TODO: the alias summary attribute is sufficent to get the correct behaviour
 // here, but it would be nice if these were not hardcoded.
 void annotateHardcoded(FunctionOpInterface func) {
-  if (func.getName() == "lgamma" || func.getName() == "tanh") {
+  if (func.getName() == "lgamma") {
     MLIRContext *ctx = func.getContext();
     SmallVector<Attribute> arr = {StringAttr::get(ctx, "<undefined>")};
     func->setAttr(enzyme::EnzymeDialect::getAliasSummaryAttrName(),
