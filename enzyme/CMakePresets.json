@@ -1,0 +1,82 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "config-base",
+            "description": "Base configure preset.",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "installDir": "${sourceDir}/out/install/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CXX_STANDARD": "17",
+                "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "config-base-linux",
+            "description": "Base configure preset for Linux.",
+            "inherits": "config-base",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_POSITION_INDEPENDENT_CODE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "config-base-x64",
+            "description": "Base preset for x64 platforms.",
+            "hidden": true,
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "x64-linux-clang",
+            "description": "Base preset for Linux development using Clang compilers.",
+            "hidden": true,
+            "inherits": [
+                "config-base-x64",
+                "config-base-linux"
+            ],
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_CXX_FLAGS": "-Wall -fno-rtti -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -ggdb -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2",
+                "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -ggdb"
+            }
+        },
+        {
+            "name": "x64-linux-clang-debug",
+            "displayName": "Clang x64 Linux Debug",
+            "inherits": "x64-linux-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "x64-linux-clang-release",
+            "displayName": "Clang x64 Linux Release",
+            "inherits": "x64-linux-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "x64-linux-clang-release-with-debug-info",
+            "displayName": "Clang x64 Linux Release with Debug Info",
+            "inherits": "x64-linux-clang",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        }
+    ]
+}
