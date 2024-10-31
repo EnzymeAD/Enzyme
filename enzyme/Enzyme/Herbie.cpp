@@ -2797,152 +2797,188 @@ bool improveViaHerbie(
     const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  SmallString<32> tmpin, tmpout;
-
-  if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
-                                      llvm::sys::fs::perms::owner_all)) {
-    llvm::errs() << "Failed to create a unique input file.\n";
-    return false;
-  }
-
-  if (llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
-                                           tmpout)) {
-    llvm::errs() << "Failed to create a unique output directory.\n";
-    return false;
-  }
-
-  std::ofstream input(tmpin.c_str());
-  if (!input) {
-    llvm::errs() << "Failed to open input file.\n";
-    return 1;
-  }
-  input << inputExpr;
-  input.close();
-
   std::string Program = HERBIE_BINARY;
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
-  SmallVector<llvm::StringRef> Args = {
+
+  SmallVector<llvm::StringRef> BaseArgs = {
       Program,     "report", "--seed", std::to_string(FPOptRandomSeed),
       "--timeout", "60"};
 
-  Args.push_back("--disable");
-  Args.push_back("generate:proofs");
+  BaseArgs.push_back("--disable");
+  BaseArgs.push_back("generate:proofs");
 
   if (HerbieDisableNumerics) {
-    Args.push_back("--disable");
-    Args.push_back("rules:numerics");
-  }
-
-  if (HerbieDisableTaylor) {
-    Args.push_back("--disable");
-    Args.push_back("generate:taylor");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("rules:numerics");
   }
 
   if (HerbieDisableSetupSimplify) {
-    Args.push_back("--disable");
-    Args.push_back("setup:simplify");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("setup:simplify");
   }
 
   if (HerbieDisableGenSimplify) {
-    Args.push_back("--disable");
-    Args.push_back("generate:simplify");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("generate:simplify");
+  }
+
+  if (HerbieDisableTaylor) {
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("generate:taylor");
   }
 
   if (HerbieDisableRegime) {
-    Args.push_back("--disable");
-    Args.push_back("reduce:regimes");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("reduce:regimes");
   }
 
   if (HerbieDisableBranchExpr) {
-    Args.push_back("--disable");
-    Args.push_back("reduce:branch-expressions");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("reduce:branch-expressions");
   }
 
   if (HerbieDisableAvgError) {
-    Args.push_back("--disable");
-    Args.push_back("reduce:avg-error");
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("reduce:avg-error");
   }
 
-  Args.push_back(tmpin);
-  Args.push_back(tmpout);
+  SmallVector<SmallVector<llvm::StringRef>> BaseArgsList;
 
-  std::string ErrMsg;
-  bool ExecutionFailed = false;
+  if (!HerbieDisableTaylor) {
+    SmallVector<llvm::StringRef> Args1 = BaseArgs;
+    BaseArgsList.push_back(Args1);
 
-  if (EnzymePrintFPOpt)
-    llvm::errs() << "Executing: " << Program << "\n";
-
-  llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
-                            /*Redirects=*/llvm::None,
-                            /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
-                            &ExecutionFailed);
-
-  std::remove(tmpin.c_str());
-  if (ExecutionFailed) {
-    llvm::errs() << "Execution failed: " << ErrMsg << "\n";
-    return false;
+    SmallVector<llvm::StringRef> Args2 = BaseArgs;
+    Args2.push_back("--disable");
+    Args2.push_back("generate:taylor");
+    BaseArgsList.push_back(Args2);
   }
 
-  std::ifstream output((tmpout + "/results.json").str());
-  if (!output) {
-    llvm::errs() << "Failed to open output file.\n";
-    return false;
-  }
-  std::string content((std::istreambuf_iterator<char>(output)),
-                      std::istreambuf_iterator<char>());
-  output.close();
-  std::remove(tmpout.c_str());
+  bool InitialValuesSet = false;
 
-  llvm::errs() << "Herbie output: " << content << "\n";
+  for (const auto &BaseArgs : BaseArgsList) {
+    SmallString<32> tmpin, tmpout;
 
-  Expected<json::Value> parsed = json::parse(content);
-  if (!parsed) {
-    llvm::errs() << "Failed to parse Herbie result!\n";
-    return false;
-  }
+    if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
+                                        llvm::sys::fs::perms::owner_all)) {
+      llvm::errs() << "Failed to create a unique input file.\n";
+      continue;
+    }
 
-  json::Object *obj = parsed->getAsObject();
-  json::Array &tests = *obj->getArray("tests");
-  StringRef bestExpr = tests[0].getAsObject()->getString("output").getValue();
+    if (llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
+                                             tmpout)) {
+      llvm::errs() << "Failed to create a unique output directory.\n";
+      llvm::sys::fs::remove(tmpin);
+      continue;
+    }
 
-  if (bestExpr == "#f") {
-    return false;
-  }
+    std::ofstream input(tmpin.c_str());
+    if (!input) {
+      llvm::errs() << "Failed to open input file.\n";
+      llvm::sys::fs::remove(tmpin);
+      llvm::sys::fs::remove(tmpout);
+      continue;
+    }
+    input << inputExpr;
+    input.close();
 
-  double bits = tests[0].getAsObject()->getNumber("bits").getValue();
-  json::Array &costAccuracy =
-      *tests[0].getAsObject()->getArray("cost-accuracy");
+    SmallVector<llvm::StringRef> Args = BaseArgs;
+    Args.push_back(tmpin);
+    Args.push_back(tmpout);
 
-  json::Array &initial = *costAccuracy[0].getAsArray();
-  double initialCostVal = initial[0].getAsNumber().getValue();
-  double initialCost = 1.0;
-  double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
-  AO.initialHerbieCost = initialCost;
-  AO.initialHerbieAccuracy = initialAccuracy;
+    std::string ErrMsg;
+    bool ExecutionFailed = false;
 
-  json::Array &best = *costAccuracy[1].getAsArray();
-  double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
-  double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+    if (EnzymePrintFPOpt) {
+      llvm::errs() << "Executing Herbie with arguments: ";
+      for (const auto &arg : Args) {
+        llvm::errs() << arg << " ";
+      }
+      llvm::errs() << "\n";
+    }
 
-  RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
-  bestCandidate.CompCost =
-      getCompCost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-                  cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-  AO.candidates.push_back(bestCandidate);
+    llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
+                              /*Redirects=*/llvm::None,
+                              /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
+                              &ExecutionFailed);
 
-  json::Array &alternatives = *costAccuracy[2].getAsArray();
+    std::remove(tmpin.c_str());
+    if (ExecutionFailed) {
+      llvm::errs() << "Execution failed: " << ErrMsg << "\n";
+      llvm::sys::fs::remove(tmpout);
+      continue;
+    }
 
-  // Handle alternatives
-  for (size_t i = 0; i < alternatives.size(); ++i) {
-    json::Array &entry = *alternatives[i].getAsArray();
-    double cost = entry[0].getAsNumber().getValue() / initialCostVal;
-    double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
-    StringRef expr = entry[2].getAsString().getValue();
-    RewriteCandidate candidate(cost, accuracy, expr.str());
-    candidate.CompCost =
-        getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+    std::ifstream output((tmpout + "/results.json").str());
+    if (!output) {
+      llvm::errs() << "Failed to open output file.\n";
+      llvm::sys::fs::remove(tmpout);
+      continue;
+    }
+    std::string content((std::istreambuf_iterator<char>(output)),
+                        std::istreambuf_iterator<char>());
+    output.close();
+    llvm::sys::fs::remove(tmpout.c_str());
+
+    llvm::errs() << "Herbie output: " << content << "\n";
+
+    Expected<json::Value> parsed = json::parse(content);
+    if (!parsed) {
+      llvm::errs() << "Failed to parse Herbie result!\n";
+      continue;
+    }
+
+    json::Object *obj = parsed->getAsObject();
+    json::Array &tests = *obj->getArray("tests");
+    StringRef bestExpr = tests[0].getAsObject()->getString("output").getValue();
+
+    if (bestExpr == "#f") {
+      continue;
+    }
+
+    double bits = tests[0].getAsObject()->getNumber("bits").getValue();
+    json::Array &costAccuracy =
+        *tests[0].getAsObject()->getArray("cost-accuracy");
+
+    json::Array &initial = *costAccuracy[0].getAsArray();
+    double initialCostVal = initial[0].getAsNumber().getValue();
+    double initialCost = 1.0;
+    double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
+
+    if (!InitialValuesSet) {
+      AO.initialHerbieCost = initialCost;
+      AO.initialHerbieAccuracy = initialAccuracy;
+      InitialValuesSet = true;
+    }
+
+    json::Array &best = *costAccuracy[1].getAsArray();
+    double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
+    double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+
+    RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
+    bestCandidate.CompCost =
+        getCompCost(bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
                     cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-    AO.candidates.push_back(candidate);
+    AO.candidates.push_back(bestCandidate);
+
+    json::Array &alternatives = *costAccuracy[2].getAsArray();
+
+    // Handle alternatives
+    for (size_t i = 0; i < alternatives.size(); ++i) {
+      json::Array &entry = *alternatives[i].getAsArray();
+      double cost = entry[0].getAsNumber().getValue() / initialCostVal;
+      double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
+      StringRef expr = entry[2].getAsString().getValue();
+      RewriteCandidate candidate(cost, accuracy, expr.str());
+      candidate.CompCost =
+          getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                      cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+      AO.candidates.push_back(candidate);
+    }
+  }
+
+  if (AO.candidates.empty()) {
+    return false;
   }
 
   setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
