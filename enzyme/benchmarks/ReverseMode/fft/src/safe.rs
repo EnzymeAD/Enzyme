@@ -31,7 +31,7 @@ fn bitreversal_perm<T>(data: &mut [T]) {
     }
 }
 
-fn radix2(data: &mut [f64], i_sign: f64) {
+fn radix2(data: &mut [f64], i_sign: i32) {
     let n = data.len() / 2;
     if n == 1 {
         return;
@@ -41,8 +41,8 @@ fn radix2(data: &mut [f64], i_sign: f64) {
     radix2(a, i_sign);
     radix2(b, i_sign);
 
-    let wtemp = i_sign * (PI / n as f64).sin();
-    let wpi = -i_sign * (2.0 * PI / n as f64).sin();
+    let wtemp = i_sign as f64 * (PI / n as f64).sin();
+    let wpi = -i_sign as f64 * (2.0 * PI / n as f64).sin();
     let wpr = -2.0 * wtemp * wtemp;
     let mut wr = 1.0;
     let mut wi = 0.0;
@@ -71,12 +71,12 @@ fn rescale(data: &mut [f64], scale: usize) {
 
 fn fft(data: &mut [f64]) {
     bitreversal_perm(data);
-    radix2(data, 1.0);
+    radix2(data, 1);
 }
 
 fn ifft(data: &mut [f64]) {
     bitreversal_perm(data);
-    radix2(data, -1.0);
+    radix2(data, -1);
     rescale(data, data.len() / 2);
 }
 

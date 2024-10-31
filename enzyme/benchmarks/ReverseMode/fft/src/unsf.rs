@@ -20,13 +20,13 @@ unsafe fn bitreversal_perm(data: *mut f64, len: usize) {
     }
 }
 
-unsafe fn radix2(data: *mut f64, i_sign: f64, n: usize) {
+unsafe fn radix2(data: *mut f64, i_sign: i32, n: usize) {
     if n == 1 { return; }
     radix2(data, i_sign, n/2);
     radix2(data.add(n), i_sign, n/2);
 
-    let wtemp = i_sign * (PI / n as f64).sin();
-    let wpi = -i_sign * (2.0 * PI / n as f64).sin();
+    let wtemp = i_sign as f64 * (PI / n as f64).sin();
+    let wpi = -i_sign as f64 * (2.0 * PI / n as f64).sin();
     let wpr = -2.0 * wtemp * wtemp;
     let mut wr = 1.0;
     let mut wi = 0.0;
@@ -57,12 +57,12 @@ unsafe fn rescale(data: *mut f64, n: usize) {
 
 unsafe fn fft(data: *mut f64, n: usize) {
     bitreversal_perm(data, n);
-    radix2(data, 1.0, n);
+    radix2(data, 1, n);
 }
 
 unsafe fn ifft(data: *mut f64, n: usize) {
     bitreversal_perm(data, n);
-    radix2(data, -1.0, n);
+    radix2(data, -1, n);
     rescale(data, n);
 }
 
