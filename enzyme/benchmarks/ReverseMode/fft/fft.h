@@ -39,8 +39,9 @@ static void recursiveApply(double *data, int iSign, size_t N) {
   double wr = 1.0;
   double wi = 0.0;
 
-  for (size_t i = 0; i < N; i += 2) {
-    int iN = i + N;
+  for (size_t ii = 0; ii < N / 2; ii++) {
+    size_t i = 2 * ii;
+    size_t iN = i + N;
 
     double tempr = data[iN] * wr - data[iN + 1] * wi;
     double tempi = data[iN] * wi + data[iN + 1] * wr;
@@ -57,13 +58,14 @@ static void recursiveApply(double *data, int iSign, size_t N) {
 }
 
 static void scramble(double *data, size_t N) {
-  int j = 1;
-  for (int i = 1; i < 2 * N; i += 2) {
+  size_t j = 1;
+  for (size_t ii = 0; ii < N; ii++) {
+    size_t i = 2 * ii + 1;
     if (j > i) {
       swap(&data[j - 1], &data[i - 1]);
       swap(&data[j], &data[i]);
     }
-    int m = N;
+    size_t m = N;
     while (m >= 2 && j > m) {
       j -= m;
       m >>= 1;
@@ -109,8 +111,9 @@ static void recursiveApply(aVector data, int iSign, size_t N) {
   adouble wr = 1.0;
   adouble wi = 0.0;
 
-  for (size_t i = 0; i < N; i += 2) {
-    int iN = i + N;
+  for (size_t ii = 0; ii < N / 2; ii++) {
+    size_t i = 2 * ii;
+    size_t iN = i + N;
 
     adouble tempr = data(iN) * wr - data(iN + 1) * wi;
     adouble tempi = data(iN) * wi + data(iN + 1) * wr;
@@ -127,13 +130,14 @@ static void recursiveApply(aVector data, int iSign, size_t N) {
 }
 
 static void scramble(aVector data, size_t N) {
-  int j = 1;
-  for (int i = 1; i < 2 * N; i += 2) {
+  size_t j = 1;
+  for (size_t ii = 0; ii < N; ii++) {
+    size_t i = 2 * ii + 1;
     if (j > i) {
       swapad(data(j - 1), data(i - 1));
       swapad(data(j), data(i));
     }
-    int m = N;
+    size_t m = N;
     while (m >= 2 && j > m) {
       j -= m;
       m >>= 1;
@@ -209,8 +213,9 @@ static void recursiveApply_c(double *data, int iSign, size_t N) {
     double wpr = -2.0 * wtemp * wtemp;
     double wr = 1.0;
     double wi = 0.0;
-    for (size_t i = 0; i <= N - 1; i += 2) {
-      int iN = i + N;
+    for (size_t ii = 0; ii < N / 2; ii++) {
+      size_t i = 2 * ii;
+      size_t iN = i + N;
       double tempr = data[iN] * wr - data[iN + 1] * wi;
       double tempi = data[iN] * wi + data[iN + 1] * wr;
       data[iN] = data[i] - tempr;
@@ -254,7 +259,8 @@ static void recursiveApply_b(double *data, double *datab, int iSign, size_t N) {
     double wpr = -2.0 * wtemp * wtemp;
     double wr = 1.0;
     double wi = 0.0;
-    for (size_t i = 0; i <= N - 1; i += 2) {
+    for (size_t ii = 0; ii < N / 2; ii++) {
+      size_t i = 2 * ii;
       int iN = i + N;
       double tempr = data[iN] * wr - data[iN + 1] * wi;
       double tempi = data[iN] * wi + data[iN + 1] * wr;
@@ -316,7 +322,8 @@ static void recursiveApply_b(double *data, double *datab, int iSign, size_t N) {
 static void scramble_b(double *data, double *datab, size_t N) {
   int j = 1;
   int branch;
-  for (int i = 1; i <= 2 * N - 1; i += 2) {
+  for (size_t ii = 0; ii < N; ii++) {
+    size_t i = 2 * ii + 1;
     int adCount;
     if (j > i) {
       pushReal8(data[i - 1]);
@@ -328,7 +335,7 @@ static void scramble_b(double *data, double *datab, size_t N) {
       pushControl1b(0);
     } else
       pushControl1b(1);
-    int m = N;
+    size_t m = N;
     adCount = 0;
     while (m >= 2 && j > m) {
       pushInteger4(j);
@@ -340,10 +347,10 @@ static void scramble_b(double *data, double *datab, size_t N) {
     pushInteger4(j);
     j = j + m;
   }
-  for (int i = 2 * N - (2 * N - 2) % 2 - 1; i >= 1; i -= 2) {
-    int m;
+  for (size_t i = 2 * N - (2 * N - 2) % 2 - 1; i >= 1; i -= 2) {
+    size_t m;
     int adCount;
-    int i0;
+    size_t i0;
     popInteger4(&j);
     popInteger4(&adCount);
     for (i0 = 1; i0 < adCount + 1; ++i0)
@@ -361,13 +368,14 @@ static void scramble_b(double *data, double *datab, size_t N) {
 }
 
 static void scramble_c(double *data, size_t N) {
-  int j = 1;
-  for (int i = 1; i <= 2 * N - 1; i += 2) {
+  size_t j = 1;
+  for (size_t ii = 0; ii < N; ii++) {
+    size_t i = 2 * ii + 1;
     if (j > i) {
       swap_c(&(data[j - 1]), &(data[i - 1]));
       swap_c(&(data[j]), &(data[i]));
     }
-    int m = N;
+    size_t m = N;
     while (m >= 2 && j > m) {
       j -= m;
       m >>= 1;
