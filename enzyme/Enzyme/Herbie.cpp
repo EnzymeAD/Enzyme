@@ -83,6 +83,13 @@ static cl::opt<bool> FPOptEnableHerbie(
 static cl::opt<bool> FPOptEnablePT(
     "fpopt-enable-pt", cl::init(false), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
+static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(60), cl::Hidden,
+                                  cl::desc("Herbie's timeout to use for each "
+                                           "candidate expressions."));
+static cl::opt<int>
+    HerbieNumPoints("herbie-num-pts", cl::init(512), cl::Hidden,
+                    cl::desc("Number of input points Herbie uses to evaluate "
+                             "candidate expressions."));
 static cl::opt<int> HerbieNumIters(
     "herbie-num-iters", cl::init(6), cl::Hidden,
     cl::desc("Number of times Herbie attempts to improve accuracy."));
@@ -3069,8 +3076,11 @@ bool improveViaHerbie(
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
 
   SmallVector<llvm::StringRef> BaseArgs = {
-      Program,     "report", "--seed",      std::to_string(FPOptRandomSeed),
-      "--timeout", "60",     "--num-iters", HerbieNumIters};
+      Program,        "report",
+      "--seed",       std::to_string(FPOptRandomSeed),
+      "--timeout",    std::to_string(HerbieTimeout),
+      "--num-points", std::to_string(HerbieNumPoints),
+      "--num-iters",  std::to_string(HerbieNumIters)};
 
   BaseArgs.push_back("--disable");
   BaseArgs.push_back("generate:proofs");
