@@ -1346,10 +1346,19 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {
-              "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
-              "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
-              "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
+          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
+                                         "jl_alloc_array_1d",
+                                         "jl_alloc_array_2d",
+                                         "jl_alloc_array_3d",
+                                         "ijl_alloc_array_1d",
+                                         "ijl_alloc_array_2d",
+                                         "ijl_alloc_array_3d",
+                                         "jl_gc_alloc_typed",
+                                         "ijl_gc_alloc_typed",
+                                         "jl_alloc_genericmemory",
+                                         "ijl_alloc_genericmemory",
+                                         "jl_new_array",
+                                         "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;
@@ -4769,6 +4778,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (funcName == "jl_get_binding_or_error" ||
         funcName == "ijl_get_binding_or_error") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "julia.gc_loaded") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
+      return;
+    }
+    if (funcName == "julia.pointer_from_objref") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
       return;
     }
     if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {

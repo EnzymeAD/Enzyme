@@ -32,13 +32,13 @@
 
 using namespace mlir;
 
-// bool enzyme::sortAttributes(Attribute a, Attribute b) {
-//   std::string strA, strB;
-//   llvm::raw_string_ostream sstreamA(strA), sstreamB(strB);
-//   sstreamA << a;
-//   sstreamB << b;
-//   return strA < strB;
-// }
+bool enzyme::sortAttributes(Attribute a, Attribute b) {
+  std::string strA, strB;
+  llvm::raw_string_ostream sstreamA(strA), sstreamB(strB);
+  sstreamA << a;
+  sstreamB << b;
+  return strA < strB;
+}
 
 bool enzyme::sortArraysLexicographic(ArrayAttr a, ArrayAttr b) {
   return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),

@@ -87,6 +87,8 @@ private:
   void processMemoryRead(Operation *op, Value address,
                          ArrayRef<ForwardOriginsLattice *> results);
 
+  void markResultsUnknown(ArrayRef<ForwardOriginsLattice *> results);
+
   void
   processCallToSummarizedFunc(CallOpInterface call,
                               ArrayRef<ValueOriginSet> summary,
@@ -124,6 +126,8 @@ private:
                               ArrayRef<ValueOriginSet> summary,
                               ArrayRef<BackwardOriginsLattice *> operands,
                               ArrayRef<const BackwardOriginsLattice *> results);
+
+  void markOperandsUnknown(ArrayRef<BackwardOriginsLattice *> operands);
 };
 
 //===----------------------------------------------------------------------===//
@@ -216,6 +220,11 @@ class ActivityPrinterConfig {
 public:
   ActivityPrinterConfig() = default;
 
+  /// Whether to use the data-flow based algorithm or the classic activity
+  /// analysis.
+  bool dataflow = true;
+  /// Use function summaries
+  bool relative = true;
   /// Output extra information for debugging
   bool verbose = false;
   /// Annotate the IR with activity information for every operation. Currently

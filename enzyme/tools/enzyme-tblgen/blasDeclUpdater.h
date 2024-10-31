@@ -106,7 +106,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   }
   os << "  if (!cublas && !cblas) {\n";
   for (int i = 0; i < numChars; i++) {
-    os << "  if (prevFT->getNumParams() >= argTys.size())";
+    os << "  if (prevFT->getNumParams() > argTys.size())";
     os << "    argTys.push_back(prevFT->getParamType(argTys.size()));\n";
     os << "  else";
     os << "    argTys.push_back(blas.intType(F->getContext()));\n";
@@ -226,7 +226,7 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   {
     const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
     for (const Record *pattern : patterns) {
-      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+      auto tree = pattern->getValueAsDag("PatternToMatch");
       os << "  if ((";
       bool prev = false;
       for (auto nameI : *pattern->getValueAsListInit("names")) {
@@ -262,9 +262,9 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
            << attrName << "));\n";
         os << "  #endif \n";
       }
-      ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+      auto argOps = pattern->getValueAsListInit("ArgDerivatives");
       for (auto argOpEn : enumerate(*argOps)) {
-        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (opName == "InactiveArgSpec" ||

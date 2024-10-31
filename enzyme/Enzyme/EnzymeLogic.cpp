@@ -1352,21 +1352,6 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
   return modifyPrimal;
 }
 
-static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
-                                            ModRefInfo mri) {
-  if (mri == ModRefInfo::NoModRef)
-    return os << "nomodref";
-  else if (mri == ModRefInfo::ModRef)
-    return os << "modref";
-  else if (mri == ModRefInfo::Mod)
-    return os << "mod";
-  else if (mri == ModRefInfo::Ref)
-    return os << "ref";
-  else
-    llvm_unreachable("unknown modref");
-  return os;
-}
-
 bool legalCombinedForwardReverse(
     CallInst *origop,
     const std::map<ReturnInst *, StoreInst *> &replacedReturns,
@@ -1962,6 +1947,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = todiff;
       std::map<AugmentedStruct, int> returnMapping;
+      returnMapping[AugmentedStruct::Return] = -1;
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
@@ -2320,6 +2306,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (EmitNoDerivativeError(ss.str(), todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
+      IRBuilder<> b(&*newFunc->getEntryBlock().begin());
+      RequestContext context2{nullptr, &b};
+      EmitNoDerivativeError(ss.str(), todiff, context2);
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
@@ -4039,6 +4028,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
       auto newFunc = gutils->newFunc;
       delete gutils;
+      IRBuilder<> b(&*newFunc->getEntryBlock().begin());
+      RequestContext context2{nullptr, &b};
+      EmitNoDerivativeError(ss.str(), key.todiff, context2);
       return newFunc;
     }
     llvm::errs() << "mod: " << *key.todiff->getParent() << "\n";
@@ -4349,18 +4341,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       Value *tx, *ty, *tz;
       if (Arch == Triple::nvptx || Arch == Triple::nvptx64) {
-        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_x));
-        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
-        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
       } else if (Arch == Triple::amdgcn) {
-        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_x));
-        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_y));
-        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_z));
       } else {
         llvm_unreachable("unknown gpu architecture");
@@ -4377,7 +4369,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
       instbuilder.CreateCall(
-          Intrinsic::getDeclaration(gutils->newFunc->getParent(), BarrierInst),
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {});
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);

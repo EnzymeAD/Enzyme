@@ -2019,11 +2019,13 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     }
 
     for (auto ptr : sret_vals) {
-      auto gep =
-          ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
-      auto ld = B.CreateLoad(Types[sretCount], gep);
-      auto SI = B.CreateStore(ld, ptr);
-      PostCacheStore(SI, B);
+      if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
+        auto gep =
+            ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
+        auto ld = B.CreateLoad(Types[sretCount], gep);
+        auto SI = B.CreateStore(ld, ptr);
+        PostCacheStore(SI, B);
+      }
       sretCount++;
     }
     for (auto ptr_v : sretv_vals) {
@@ -2032,9 +2034,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
                       : sret;
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
-        auto ld = B.CreateLoad(Types[sretCount], gep);
-        auto SI = B.CreateStore(ld, ptr);
-        PostCacheStore(SI, B);
+        if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
+          auto ld = B.CreateLoad(Types[sretCount], gep);
+          auto SI = B.CreateStore(ld, ptr);
+          PostCacheStore(SI, B);
+        }
       }
       sretCount += AT->getNumElements();
     }

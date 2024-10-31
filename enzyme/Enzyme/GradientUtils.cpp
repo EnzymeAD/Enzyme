@@ -4972,8 +4972,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     } else {
       assert(start == 0 && size == storeSize);
       Type *tys[] = {newval->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                         Intrinsic::masked_store, tys);
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
+                                       Intrinsic::masked_store, tys);
       assert(align);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
@@ -5379,7 +5379,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-      bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
+      bb.CreateCall(getIntrinsicDeclaration(M, Intrinsic::memset, tys), args);
 
       return antialloca;
     };
@@ -5464,7 +5464,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
-                  Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+                  getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
               if (arg->getAlignment()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
@@ -6095,7 +6095,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
-          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+          getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
       memset->addParamAttr(
           0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
       memset->addParamAttr(0, Attribute::NonNull);
@@ -7370,8 +7370,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), src_arg->getType(),
                              len_arg->getType()};
 
-              auto memcpyF = Intrinsic::getDeclaration(newFunc->getParent(),
-                                                       Intrinsic::memcpy, tys);
+              auto memcpyF = getIntrinsicDeclaration(newFunc->getParent(),
+                                                     Intrinsic::memcpy, tys);
               auto mem = cast<CallInst>(v.CreateCall(memcpyF, nargs));
 
               mem->addParamAttr(0, Attribute::NonNull);
@@ -8646,7 +8646,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                                               getInt8PtrTy(MTI->getContext()));
 
           Type *tys[] = {args[0]->getType(), args[2]->getType()};
-          auto memsetIntr = Intrinsic::getDeclaration(
+          auto memsetIntr = getIntrinsicDeclaration(
               MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
               tys);
           auto cal = Builder2.CreateCall(memsetIntr, args);
@@ -8776,8 +8776,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       Type *tys[] = {args[0]->getType(), args[1]->getType(),
                      args[2]->getType()};
 
-      auto memtransIntr = Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), intrinsic, tys);
+      auto memtransIntr =
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), intrinsic, tys);
       auto cal = BuilderZ.CreateCall(memtransIntr, args);
       cal->setAttributes(MTI->getAttributes());
       cal->setCallingConv(memtransIntr->getCallingConv());
@@ -9339,15 +9339,10 @@ void GradientUtils::computeGuaranteedFrees() {
         if (hasMetadata(CI, "enzyme_fromstack")) {
           allocationsWithGuaranteedFree[CI].insert(CI);
         }
-        if (funcName == "jl_alloc_array_1d" ||
-            funcName == "jl_alloc_array_2d" ||
-            funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-            funcName == "ijl_alloc_array_1d" ||
-            funcName == "ijl_alloc_array_2d" ||
-            funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-            funcName == "julia.gc_alloc_obj" ||
-            funcName == "jl_gc_alloc_typed" ||
-            funcName == "ijl_gc_alloc_typed") {
+        // TODO: special case object managed by the GC as it is automatically
+        // freed.
+        if (EnzymeJuliaAddrLoad && isa<PointerType>(CI->getType()) &&
+            cast<PointerType>(CI->getType())->getAddressSpace() == 10) {
         }
       }
     }

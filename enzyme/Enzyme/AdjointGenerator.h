@@ -23,6 +23,10 @@
 // LLVM instructions.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef ENZYME_ADJOINT_GENERATOR_H
+#define ENZYME_ADJOINT_GENERATOR_H
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -1137,8 +1141,8 @@ public:
             } else {
               maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
-              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                                 Intrinsic::masked_load, tys);
+              auto F = getIntrinsicDeclaration(gutils->oldFunc->getParent(),
+                                               Intrinsic::masked_load, tys);
               Value *alignv =
                   ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                    align ? align->value() : 0);
@@ -3789,10 +3793,9 @@ public:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0), args));
-        cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0)
-                ->getCallingConv());
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
+                                ->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3804,8 +3807,8 @@ public:
       case Intrinsic::nvvm_membar_sys: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(
-            Builder2.CreateCall(Intrinsic::getDeclaration(M, ID), args));
-        cal->setCallingConv(Intrinsic::getDeclaration(M, ID)->getCallingConv());
+            Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3818,9 +3821,9 @@ public:
             lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
         Type *tys[] = {args[1]->getType()};
         auto cal = Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys), args);
         cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys)
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys)
                 ->getCallingConv());
         return false;
       }
@@ -5482,19 +5485,42 @@ public:
         }
 
         if (subretused) {
+          Intrinsic::ID ID = Intrinsic::not_intrinsic;
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
+
+            if (!isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+
 #if LLVM_VERSION_MAJOR >= 18
-            auto It = BuilderZ.GetInsertPoint();
-            It.setHeadBit(true);
-            BuilderZ.SetInsertPoint(It);
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
 #endif
-            cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
-                                              call.getName() + "_tmpcacheB");
-            cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace,
-                getIndex(&call, CacheType::Self, BuilderZ));
+              auto idx = getIndex(&call, CacheType::Self, BuilderZ);
+              if (idx == IndexMappingError) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Failed to compute consistent cache index for operation: "
+                   << call << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(&call),
+                                     ErrorType::InternalError, nullptr, nullptr,
+                                     nullptr);
+                } else {
+                  EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                              ss.str());
+                }
+              } else {
+                if (Mode == DerivativeMode::ReverseModeCombined)
+                  cachereplace = newCall;
+                else
+                  cachereplace = BuilderZ.CreatePHI(
+                      call.getType(), 1, call.getName() + "_tmpcacheB");
+                cachereplace =
+                    gutils->cacheForReverse(BuilderZ, cachereplace, idx);
+              }
+            }
           } else {
 #if LLVM_VERSION_MAJOR >= 18
             auto It = BuilderZ.GetInsertPoint();
@@ -6001,6 +6027,7 @@ public:
           eraseIfUnused(call);
         }
 
+        ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
           if (invertedReturn && invertedReturn != placeholder) {
@@ -6414,3 +6441,5 @@ public:
                                         subretused);
   }
 };
+
+#endif // ENZYME_ADJOINT_GENERATOR_H
