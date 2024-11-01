@@ -5754,6 +5754,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         subnull = false;
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
         if (isConstantValue(op)) {
+          ivops[i] = getNewFromOriginal(arg);
           if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
