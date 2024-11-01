@@ -306,9 +306,12 @@ public:
   void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
     using namespace llvm;
 
-    if (gutils->isConstantValue(&I))
-      return;
     auto found = gutils->invertedPointers.find(&I);
+    if (gutils->isConstantValue(&I)) {
+      assert(found == gutils->invertedPointers.end());
+      return;
+    }
+
     assert(found != gutils->invertedPointers.end());
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
@@ -323,6 +326,8 @@ public:
     getForwardBuilder(Builder2);
 
     auto toset = gutils->invertPointerM(&I, Builder2, /*nullShadow*/ true);
+
+    assert(toset != placeholder);
 
     gutils->replaceAWithB(placeholder, toset);
     placeholder->replaceAllUsesWith(toset);
@@ -2145,18 +2150,6 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     eraseIfUnused(BO);
 
-    size_t size = 1;
-    if (BO.getType()->isSized())
-      size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                  BO.getType()) +
-              7) /
-             8;
-
-    if (BO.getType()->isIntOrIntVectorTy() &&
-        TR.intType(size, &BO, /*errifnotfound*/ false) == BaseType::Pointer) {
-      return;
-    }
-
     if (BO.getOpcode() == llvm::Instruction::FDiv &&
         (Mode == DerivativeMode::ReverseModeGradient ||
          Mode == DerivativeMode::ReverseModeCombined) &&
@@ -2289,6 +2282,9 @@ public:
   }
 
   void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
+    if (gutils->isConstantInstruction(&BO)) {
+      return;
+    }
     using namespace llvm;
 
     IRBuilder<> Builder2(&BO);
@@ -2770,8 +2766,19 @@ public:
       auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
       if (!rval)
         rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-      if (!gutils->isConstantValue(&BO))
-        setDiffe(&BO, rval, Builder2);
+      auto ifound = gutils->invertedPointers.find(&BO);
+      if (!gutils->isConstantValue(&BO)) {
+        if (ifound != gutils->invertedPointers.end()) {
+          auto placeholder = cast<PHINode>(&*ifound->second);
+          gutils->invertedPointers.erase(ifound);
+          gutils->replaceAWithB(placeholder, rval);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)&BO, InvertedPointerVH(gutils, rval)));
+        }
+      } else {
+        assert(ifound == gutils->invertedPointers.end());
+      }
       break;
     }
   }
