@@ -2775,15 +2775,15 @@ public:
       auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
       if (!rval)
         rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-      auto ifound = gutils->invertedPointers.find(&call);
+      auto ifound = gutils->invertedPointers.find(&BO);
       if (!gutils->isConstantValue(&BO)) {
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
+          gutils->invertedPointers.erase(ifound);
           gutils->replaceAWithB(placeholder, rval);
           gutils->erase(placeholder);
-          gutils->invertedPointers.erase(found);
           gutils->invertedPointers.insert(std::make_pair(
-              (const Value *)&I, InvertedPointerVH(gutils, rval)));
+              (const Value *)&BO, InvertedPointerVH(gutils, rval)));
         }
       } else {
         assert(ifound == gutils->invertedPointers.end());
