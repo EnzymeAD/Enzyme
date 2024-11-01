@@ -1346,10 +1346,19 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {
-              "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
-              "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
-              "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
+          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
+                                         "jl_alloc_array_1d",
+                                         "jl_alloc_array_2d",
+                                         "jl_alloc_array_3d",
+                                         "ijl_alloc_array_1d",
+                                         "ijl_alloc_array_2d",
+                                         "ijl_alloc_array_3d",
+                                         "jl_gc_alloc_typed",
+                                         "ijl_gc_alloc_typed",
+                                         "jl_alloc_genericmemory",
+                                         "ijl_alloc_genericmemory",
+                                         "jl_new_array",
+                                         "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;
@@ -1922,7 +1931,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   APInt constOffset(BitWidth, 0);
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
@@ -4767,6 +4780,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "julia.gc_loaded") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
+      return;
+    }
+    if (funcName == "julia.pointer_from_objref") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
+      return;
+    }
     if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
@@ -5122,6 +5149,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
       }
       updateAnalysis(&call, ptr.Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "__size_returning_new_experiment") {
+      auto ptr = TypeTree(BaseType::Pointer);
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      ptr = ptr.Only(0, &call);
+      ptr |= TypeTree(BaseType::Integer).Only(DL.getPointerSize(), &call);
+      updateAnalysis(&call, ptr.Only(0, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;

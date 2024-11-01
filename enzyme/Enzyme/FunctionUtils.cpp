@@ -313,7 +313,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         continue;
       }
       IRBuilder<> B(CI);
-      auto nCI = cast<CastInst>(B.CreateCast(
+      auto nCI0 = B.CreateCast(
           CI->getOpcode(), rep,
 #if LLVM_VERSION_MAJOR < 17
           PointerType::get(CI->getType()->getPointerElementType(),
@@ -321,11 +321,12 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 #else
           rep->getType()
 #endif
-              ));
-      nCI->takeName(CI);
+      );
+      if (auto nCI = dyn_cast<CastInst>(nCI0))
+        nCI->takeName(CI);
       for (auto U : CI->users()) {
         Todo.push_back(
-            std::make_tuple((Value *)nCI, (Value *)CI, cast<Instruction>(U)));
+            std::make_tuple((Value *)nCI0, (Value *)CI, cast<Instruction>(U)));
       }
       toErase.push_back(CI);
       continue;
@@ -387,12 +388,10 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 
       Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
                         MS->getArgOperand(3)};
-
       Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
-
       auto nMS = cast<CallInst>(B.CreateCall(
-          Intrinsic::getDeclaration(MS->getParent()->getParent()->getParent(),
-                                    Intrinsic::memset, tys),
+          getIntrinsicDeclaration(MS->getParent()->getParent()->getParent(),
+                                  Intrinsic::memset, tys),
           nargs));
       nMS->copyMetadata(*MS);
       nMS->setAttributes(MS->getAttributes());
@@ -415,8 +414,8 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
                      nargs[2]->getType()};
 
       auto nMTI = cast<CallInst>(B.CreateCall(
-          Intrinsic::getDeclaration(MTI->getParent()->getParent()->getParent(),
-                                    MTI->getIntrinsicID(), tys),
+          getIntrinsicDeclaration(MTI->getParent()->getParent()->getParent(),
+                                  MTI->getIntrinsicID(), tys),
           nargs));
       nMTI->copyMetadata(*MTI);
       nMTI->setAttributes(MTI->getAttributes());
@@ -656,11 +655,18 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
       }
       if (success)
         continue;
+
+      auto v2 = simplifyLoad(LI);
+      if (v2) {
+        todo.push_back({v2, next.second});
+        continue;
+      }
     }
 
     EmitFailure("DynamicReallocSize", Loc->getDebugLoc(), Loc,
                 "could not statically determine size of realloc ", *Loc,
                 " - because of - ", *next.first);
+    return AI;
 
     std::string allocName;
     switch (llvm::Triple(NewF->getParent()->getTargetTriple()).getOS()) {
@@ -833,6 +839,12 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
+#if !defined(FLANG)
+    PA = GVNPass().run(*NewF, FAM);
+#else
+    PA = GVN().run(*NewF, FAM);
+#endif
+    FAM.invalidate(*NewF, PA);
   }
 
   SmallVector<CallInst *, 4> ToConvert;
@@ -901,7 +913,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     Type *tys[] = {next->getType(), p->getType(), old->getType()};
 
     auto memcpyF =
-        Intrinsic::getDeclaration(NewF->getParent(), Intrinsic::memcpy, tys);
+        getIntrinsicDeclaration(NewF->getParent(), Intrinsic::memcpy, tys);
 
     auto mem = cast<CallInst>(B.CreateCall(memcpyF, nargs));
     mem->setCallingConv(memcpyF->getCallingConv());
@@ -1720,7 +1732,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           Type *tys[] = {args[0]->getType(), args[1]->getType(),
                          args[2]->getType()};
           auto intr =
-              Intrinsic::getDeclaration(g.getParent(), Intrinsic::memcpy, tys);
+              getIntrinsicDeclaration(g.getParent(), Intrinsic::memcpy, tys);
           {
 
             auto cal = bb.CreateCall(intr, args);

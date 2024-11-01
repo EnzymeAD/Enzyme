@@ -543,7 +543,8 @@ public:
       // In forward-flow, a value is active if loaded from a memory resource
       // that has previously been actively stored to.
       if (isa<MemoryEffects::Read>(effect.getEffect())) {
-        auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
+        auto *ptrAliasClass =
+            getOrCreateFor<AliasClassLattice>(getProgramPointAfter(op), value);
         forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
           if (before.hasActiveData(alloc)) {
             for (OpResult opResult : op->getResults()) {
@@ -577,21 +578,23 @@ public:
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
         std::optional<Value> stored = getStored(op);
         if (stored.has_value()) {
-          auto *valueState = getOrCreateFor<ForwardValueActivity>(op, *stored);
+          auto *valueState = getOrCreateFor<ForwardValueActivity>(
+              getProgramPointAfter(op), *stored);
           if (valueState->getValue().isActiveVal()) {
-            auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
+            auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(
+                getProgramPointAfter(op), value);
             forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
               // Mark the pointer as having been actively stored into
               result |= after->setActiveIn(alloc);
             });
           }
         } else if (auto copySource = getCopySource(op)) {
-          auto *srcAliasClass =
-              getOrCreateFor<AliasClassLattice>(op, *copySource);
+          auto *srcAliasClass = getOrCreateFor<AliasClassLattice>(
+              getProgramPointAfter(op), *copySource);
           forEachAliasedAlloc(srcAliasClass, [&](DistinctAttr srcAlloc) {
             if (before.hasActiveData(srcAlloc)) {
-              auto *destAliasClass =
-                  getOrCreateFor<AliasClassLattice>(op, value);
+              auto *destAliasClass = getOrCreateFor<AliasClassLattice>(
+                  getProgramPointAfter(op), value);
               forEachAliasedAlloc(destAliasClass, [&](DistinctAttr destAlloc) {
                 result |= after->setActiveIn(destAlloc);
               });
@@ -605,11 +608,11 @@ public:
                   dpsInit.getOperandNumber() - linalgOp.getNumDpsInputs();
               Value yieldOperand =
                   linalgOp.getBlock()->getTerminator()->getOperand(resultIndex);
-              auto *valueState =
-                  getOrCreateFor<ForwardValueActivity>(op, yieldOperand);
+              auto *valueState = getOrCreateFor<ForwardValueActivity>(
+                  getProgramPointAfter(op), yieldOperand);
               if (valueState->getValue().isActiveVal()) {
-                auto *ptrAliasClass =
-                    getOrCreateFor<AliasClassLattice>(op, value);
+                auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(
+                    getProgramPointAfter(op), value);
                 forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
                   result |= after->setActiveIn(alloc);
                 });
@@ -632,15 +635,16 @@ public:
 
   /// Initialize the entry block with the supplied argument activities.
   void setToEntryState(ForwardMemoryActivity *lattice) override {
-    if (auto pp = dyn_cast_if_present<ProgramPoint>(lattice->getAnchor()))
-      if (Block *block = llvm::dyn_cast_if_present<Block *>(pp);
-          block && block == entryBlock) {
+    if (auto pp = dyn_cast_if_present<ProgramPoint *>(lattice->getAnchor()))
+      if (Block *block = pp->getBlock();
+          block && block == entryBlock && pp->isBlockStart()) {
         for (const auto &[arg, activity] :
              llvm::zip(block->getArguments(), argumentActivity)) {
           if (activity != enzyme::Activity::enzyme_dup &&
               activity != enzyme::Activity::enzyme_dupnoneed)
             continue;
-          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(block, arg);
+          auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(
+              getProgramPointBefore(block), arg);
           ChangeResult changed =
               argAliasClasses->getAliasClassesObject().foreachElement(
                   [lattice](DistinctAttr argAliasClass,
@@ -692,7 +696,8 @@ public:
             argActivity != enzyme::Activity::enzyme_dupnoneed) {
           continue;
         }
-        auto *argAliasClasses = getOrCreateFor<AliasClassLattice>(op, arg);
+        auto *argAliasClasses =
+            getOrCreateFor<AliasClassLattice>(getProgramPointBefore(op), arg);
         ChangeResult changed =
             argAliasClasses->getAliasClassesObject().foreachElement(
                 [before](DistinctAttr argAliasClass,
@@ -707,8 +712,8 @@ public:
       // Initialize the return activity of the operands
       for (Value operand : op->getOperands()) {
         if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
-          auto *retAliasClasses =
-              getOrCreateFor<AliasClassLattice>(op, operand);
+          auto *retAliasClasses = getOrCreateFor<AliasClassLattice>(
+              getProgramPointBefore(op), operand);
           ChangeResult changed =
               retAliasClasses->getAliasClassesObject().foreachElement(
                   [before](DistinctAttr retAliasClass,
@@ -745,10 +750,11 @@ public:
       // that has subsequently been actively loaded from.
       if (isa<MemoryEffects::Read>(effect.getEffect())) {
         for (Value opResult : op->getResults()) {
-          auto *valueState =
-              getOrCreateFor<BackwardValueActivity>(op, opResult);
+          auto *valueState = getOrCreateFor<BackwardValueActivity>(
+              getProgramPointBefore(op), opResult);
           if (valueState->getValue().isActiveVal()) {
-            auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
+            auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(
+                getProgramPointBefore(op), value);
             forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
               result |= before->setActiveOut(alloc);
             });
@@ -756,7 +762,8 @@ public:
         }
       }
       if (isa<MemoryEffects::Write>(effect.getEffect())) {
-        auto *ptrAliasClass = getOrCreateFor<AliasClassLattice>(op, value);
+        auto *ptrAliasClass =
+            getOrCreateFor<AliasClassLattice>(getProgramPointBefore(op), value);
         std::optional<Value> stored = getStored(op);
         std::optional<Value> copySource = getCopySource(op);
         forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
@@ -768,8 +775,8 @@ public:
             }
           } else if (copySource.has_value() &&
                      after.activeDataFlowsOut(alloc)) {
-            auto *srcAliasClass =
-                getOrCreateFor<AliasClassLattice>(op, *copySource);
+            auto *srcAliasClass = getOrCreateFor<AliasClassLattice>(
+                getProgramPointBefore(op), *copySource);
             forEachAliasedAlloc(srcAliasClass, [&](DistinctAttr srcAlloc) {
               result |= before->setActiveOut(srcAlloc);
             });
@@ -825,7 +832,7 @@ void traverseCallGraph(FunctionOpInterface root,
 
     curr.walk([&](CallOpInterface call) {
       auto neighbor = dyn_cast_if_present<FunctionOpInterface>(
-          call.resolveCallable(symbolTable));
+          call.resolveCallableInTable(symbolTable));
       if (neighbor && !visited.contains(neighbor)) {
         frontier.push_back(neighbor);
         visited.insert(neighbor);
@@ -834,7 +841,7 @@ void traverseCallGraph(FunctionOpInterface root,
   }
 }
 
-void printActivityAnalysisResults(const DataFlowSolver &solver,
+void printActivityAnalysisResults(DataFlowSolver &solver,
                                   FunctionOpInterface callee,
                                   const SmallPtrSet<Operation *, 2> &returnOps,
                                   SymbolTableCollection *symbolTable,
@@ -851,12 +858,15 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     // TODO: integers/vectors that might be pointers
     if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
       assert(returnOps.size() == 1);
-      auto *fma = solver.lookupState<ForwardMemoryActivity>(*returnOps.begin());
+      auto *fma = solver.lookupState<ForwardMemoryActivity>(
+          solver.getProgramPointAfter(*returnOps.begin()));
       auto *bma = solver.lookupState<BackwardMemoryActivity>(
-          &callee.getFunctionBody().front().front());
+          solver.getProgramPointBefore(
+              &callee.getFunctionBody().front().front()));
 
       const enzyme::PointsToSets *pointsToSets =
-          solver.lookupState<enzyme::PointsToSets>(*returnOps.begin());
+          solver.lookupState<enzyme::PointsToSets>(
+              solver.getProgramPointAfter(*returnOps.begin()));
       auto *aliasClassLattice = solver.lookupState<AliasClassLattice>(value);
       // Traverse the points-to sets in a simple BFS
       std::deque<DistinctAttr> frontier;
@@ -1038,7 +1048,8 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     }
 
     for (Operation *returnOp : returnOps) {
-      auto *state = solver.lookupState<ForwardMemoryActivity>(returnOp);
+      auto *state = solver.lookupState<ForwardMemoryActivity>(
+          solver.getProgramPointAfter(returnOp));
       if (state)
         errs() << "forward end state:\n" << *state << "\n";
       else
@@ -1046,7 +1057,7 @@ void printActivityAnalysisResults(const DataFlowSolver &solver,
     }
 
     auto startState = solver.lookupState<BackwardMemoryActivity>(
-        &callee.getFunctionBody().front().front());
+        solver.getProgramPointAfter(&callee.getFunctionBody().front().front()));
     if (startState)
       errs() << "backwards end state:\n" << *startState << "\n";
     else

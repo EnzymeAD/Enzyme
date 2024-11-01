@@ -811,50 +811,53 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           // returned when the original value would be recomputed (e.g. this
           // function would not return null). See note below about the condition
           // as applied to this case.
-          if (orig && knownRecomputeHeuristic.find(orig) !=
-                          knownRecomputeHeuristic.end()) {
-            if (!knownRecomputeHeuristic[orig]) {
-              if (mode == DerivativeMode::ReverseModeCombined) {
-                // Don't unnecessarily cache a value if the caching
-                // heuristic says we should preserve this precise (and not
-                // an lcssa wrapped) value
-                if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
-                  Value *nval = inst;
-                  if (scope)
-                    nval = fixLCSSA(inst, scope);
-                  if (nval == inst)
-                    goto endCheck;
-                }
-              } else {
-                // Note that this logic (original load must dominate or
-                // alternatively be in the reverse block) is only valid iff when
-                // applicable (here if in split mode), an overwritten load
-                // cannot be hoisted outside of a loop to be used as a loop
-                // limit. This optimization is currently done in the combined
-                // mode (e.g. if a load isn't modified between a prior insertion
-                // point and the actual load, it is legal to recompute).
-                if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
-                    DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
-                  assert(inst->getParent()->getParent() == newFunc);
-                  auto placeholder = BuilderM.CreatePHI(
-                      val->getType(), 0,
-                      val->getName() + "_krcAFUWLreplacement");
-                  unwrappedLoads[placeholder] = inst;
-                  SmallVector<Metadata *, 1> avail;
-                  for (auto pair : available)
-                    if (pair.second)
-                      avail.push_back(
-                          MDNode::get(placeholder->getContext(),
-                                      {ValueAsMetadata::get(
-                                           const_cast<Value *>(pair.first)),
-                                       ValueAsMetadata::get(pair.second)}));
-                  placeholder->setMetadata(
-                      "enzyme_available",
-                      MDNode::get(placeholder->getContext(), avail));
-                  if (!permitCache)
-                    return placeholder;
-                  return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
-                                     [idx.second] = placeholder;
+          if (orig) {
+            auto found = knownRecomputeHeuristic.find(orig);
+            if (found != knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                if (mode == DerivativeMode::ReverseModeCombined) {
+                  // Don't unnecessarily cache a value if the caching
+                  // heuristic says we should preserve this precise (and not
+                  // an lcssa wrapped) value
+                  if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
+                    Value *nval = inst;
+                    if (scope)
+                      nval = fixLCSSA(inst, scope);
+                    if (nval == inst)
+                      goto endCheck;
+                  }
+                } else {
+                  // Note that this logic (original load must dominate or
+                  // alternatively be in the reverse block) is only valid iff
+                  // when applicable (here if in split mode), an overwritten
+                  // load cannot be hoisted outside of a loop to be used as a
+                  // loop limit. This optimization is currently done in the
+                  // combined mode (e.g. if a load isn't modified between a
+                  // prior insertion point and the actual load, it is legal to
+                  // recompute).
+                  if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
+                      DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+                    assert(inst->getParent()->getParent() == newFunc);
+                    auto placeholder = BuilderM.CreatePHI(
+                        val->getType(), 0,
+                        val->getName() + "_krcAFUWLreplacement");
+                    unwrappedLoads[placeholder] = inst;
+                    SmallVector<Metadata *, 1> avail;
+                    for (auto pair : available)
+                      if (pair.second)
+                        avail.push_back(
+                            MDNode::get(placeholder->getContext(),
+                                        {ValueAsMetadata::get(
+                                             const_cast<Value *>(pair.first)),
+                                         ValueAsMetadata::get(pair.second)}));
+                    placeholder->setMetadata(
+                        "enzyme_available",
+                        MDNode::get(placeholder->getContext(), avail));
+                    if (!permitCache)
+                      return placeholder;
+                    return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
+                                       [idx.second] = placeholder;
+                  }
                 }
               }
             }
@@ -4934,8 +4937,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     } else {
       assert(start == 0 && size == storeSize);
       Type *tys[] = {newval->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                         Intrinsic::masked_store, tys);
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
+                                       Intrinsic::masked_store, tys);
       assert(align);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
@@ -5341,7 +5344,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-      bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
+      bb.CreateCall(getIntrinsicDeclaration(M, Intrinsic::memset, tys), args);
 
       return antialloca;
     };
@@ -5426,7 +5429,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
               Type *tys[] = {dst_arg->getType(), len_arg->getType()};
               auto memset = cast<CallInst>(bb.CreateCall(
-                  Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+                  getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
               if (arg->getAlignment()) {
                 memset->addParamAttr(
                     0, Attribute::getWithAlignment(arg->getContext(),
@@ -5745,10 +5748,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *ivops[2] = {nullptr, nullptr};
     for (int i = 0; i < 2; i++) {
       auto op = arg->getOperand(i);
+      bool subnull = nullShadow;
+      auto vd = TR.query(op);
+      if (!TR.anyFloat(op))
+        subnull = false;
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
-
         if (isConstantValue(op)) {
-          auto vd = TR.query(op);
           if (TR.anyPointer(op) && vd[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
@@ -5766,7 +5771,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
       }
       if (!ivops[i]) {
-        ivops[i] = invertPointerM(op, bb, nullShadow);
+        ivops[i] = invertPointerM(op, bb, subnull);
       }
     }
 
@@ -6055,7 +6060,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
-          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+          getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
       memset->addParamAttr(
           0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
       memset->addParamAttr(0, Attribute::NonNull);
@@ -7330,8 +7335,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               Type *tys[] = {dst_arg->getType(), src_arg->getType(),
                              len_arg->getType()};
 
-              auto memcpyF = Intrinsic::getDeclaration(newFunc->getParent(),
-                                                       Intrinsic::memcpy, tys);
+              auto memcpyF = getIntrinsicDeclaration(newFunc->getParent(),
+                                                     Intrinsic::memcpy, tys);
               auto mem = cast<CallInst>(v.CreateCall(memcpyF, nargs));
 
               mem->addParamAttr(0, Attribute::NonNull);
@@ -8569,7 +8574,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                                               getInt8PtrTy(MTI->getContext()));
 
           Type *tys[] = {args[0]->getType(), args[2]->getType()};
-          auto memsetIntr = Intrinsic::getDeclaration(
+          auto memsetIntr = getIntrinsicDeclaration(
               MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
               tys);
           auto cal = Builder2.CreateCall(memsetIntr, args);
@@ -8699,8 +8704,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       Type *tys[] = {args[0]->getType(), args[1]->getType(),
                      args[2]->getType()};
 
-      auto memtransIntr = Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), intrinsic, tys);
+      auto memtransIntr =
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), intrinsic, tys);
       auto cal = BuilderZ.CreateCall(memtransIntr, args);
       cal->setAttributes(MTI->getAttributes());
       cal->setCallingConv(memtransIntr->getCallingConv());
@@ -9262,15 +9267,10 @@ void GradientUtils::computeGuaranteedFrees() {
         if (hasMetadata(CI, "enzyme_fromstack")) {
           allocationsWithGuaranteedFree[CI].insert(CI);
         }
-        if (funcName == "jl_alloc_array_1d" ||
-            funcName == "jl_alloc_array_2d" ||
-            funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-            funcName == "ijl_alloc_array_1d" ||
-            funcName == "ijl_alloc_array_2d" ||
-            funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-            funcName == "julia.gc_alloc_obj" ||
-            funcName == "jl_gc_alloc_typed" ||
-            funcName == "ijl_gc_alloc_typed") {
+        // TODO: special case object managed by the GC as it is automatically
+        // freed.
+        if (EnzymeJuliaAddrLoad && isa<PointerType>(CI->getType()) &&
+            cast<PointerType>(CI->getType())->getAddressSpace() == 10) {
         }
       }
     }
@@ -9294,7 +9294,7 @@ void GradientUtils::computeGuaranteedFrees() {
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
 llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::Value *tofree,
-                                    const llvm::StringRef allocationfn,
+                                    llvm::StringRef allocationfn,
                                     const llvm::DebugLoc &debuglocation,
                                     const llvm::TargetLibraryInfo &TLI,
                                     llvm::CallInst *orig,
@@ -9385,6 +9385,11 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
   if (shadowErasers.find(allocationfn) != shadowErasers.end()) {
     return shadowErasers[allocationfn](builder, tofree);
+  }
+
+  if (allocationfn == "__size_returning_new_experiment") {
+    allocationfn = "malloc";
+    tofree = builder.CreateExtractValue(tofree, 0);
   }
 
   if (tofree->getType()->isIntegerTy())

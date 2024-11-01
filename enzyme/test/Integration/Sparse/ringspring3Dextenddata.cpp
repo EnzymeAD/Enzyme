@@ -1,8 +1,8 @@
 // This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
 // a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  -mllvm -enable-load-pre=0 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
+// RUN: if [ %llvmver -lt 18 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
+// RUN: if [ %llvmver -lt 18 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  -mllvm -enable-load-pre=0 | %lli - ; fi
+// RUN: if [ %llvmver -lt 18 ]; then %clang++ -fno-exceptions  -ffast-math -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 -mllvm -enable-load-pre=0 | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 // TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
@@ -36,16 +36,6 @@ extern void __enzyme_autodiff(void *, ...);
 extern void __enzyme_fwddiff(void *, ...);
 
 extern double* __enzyme_todense(void *, ...) noexcept;
-
-
-// This should work on LLVM 7, 8, 9, however in CI the version of clang installed on Ubuntu 18.04 cannot load
-// a clang plugin properly without segfaulting on exit. This is fine on Ubuntu 20.04 or later LLVM versions...
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O1 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O2 %s -S -emit-llvm -o - %loadClangEnzyme -mllvm -enzyme-auto-sparsity=1  | %lli - ; fi
-// RUN: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions  -ffast-math -mllvm -enable-load-pre=0 -std=c++11 -O3 %s -S -emit-llvm -o - %loadClangEnzyme  -mllvm -enzyme-auto-sparsity=1 | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O1 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O2 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
-// TODO: if [ %llvmver -ge 12 ]; then %clang++ -fno-exceptions -ffast-math -mllvm -enable-load-pre=0  -std=c++11 -O3 %s -S -emit-llvm -o - %newLoadClangEnzyme -mllvm -enzyme-auto-sparsity=1 -S | %lli - ; fi
 
 #include <stdio.h>
 #include <assert.h>

@@ -251,6 +251,36 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
 
 constexpr bool EnzymePrintActivity = false;
 
+static bool isReadOnly(Operation *op) {
+  bool hasRecursiveEffects = op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+  if (hasRecursiveEffects) {
+    for (Region &region : op->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          if (!isReadOnly(&nestedOp))
+            return false;
+      }
+    }
+    return true;
+  }
+
+  // If the op has memory effects, try to characterize them to see if the op
+  // is trivially dead here.
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    // Check to see if this op either has no effects, or only allocates/reads
+    // memory.
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+          return isa<MemoryEffects::Read>(it.getEffect());
+        })) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
@@ -653,7 +683,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   // doesn't write to any memory
   bool noActiveWrite = false;
 
-  if (isa<MemoryEffectOpInterface>(I) && !hasEffect<MemoryEffects::Write>(I))
+  if (isReadOnly(I))
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallOpInterface>(I)) {
     // if (AA.onlyReadsMemory(CI)) {
@@ -911,9 +941,9 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
   if (isFunctionReturn(op))
     return {};
 
-  SmallVector<Value> results;
-
-  if (isa<RegionBranchOpInterface>(op->getParentOp()))
+  if (auto termIface = dyn_cast<ADDataFlowOpInterface>(op->getParentOp())) {
+    return termIface.getPotentialTerminatorUsers(op, parent);
+  } else if (isa<RegionBranchOpInterface>(op->getParentOp())) {
     if (auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
       SmallVector<RegionSuccessor> successors;
       termIface.getSuccessorRegions(
@@ -936,6 +966,8 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
       }
       return std::move(results);
     }
+  }
+  SmallVector<Value> results;
   if (auto iface = dyn_cast<BranchOpInterface>(op)) {
     for (auto &operand : op->getOpOperands())
       if (operand.get() == parent)
@@ -972,7 +1004,11 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
 
   auto resultNo = res.getResultNumber();
 
-  if (auto iface = dyn_cast<RegionBranchOpInterface>(owner)) {
+  if (auto iface = dyn_cast<ADDataFlowOpInterface>(owner)) {
+    for (auto val : iface.getPotentialIncomingValuesRes(res))
+      potentialSources.push_back(val);
+    return potentialSources;
+  } else if (auto iface = dyn_cast<RegionBranchOpInterface>(owner)) {
     SmallVector<RegionSuccessor> successors;
     iface.getSuccessorRegions(RegionBranchPoint::parent(), successors);
     for (auto &succ : successors) {
@@ -1053,7 +1089,11 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
   Operation *parent = arg.getOwner()->getParentOp();
   Region *parentRegion = arg.getOwner()->getParent();
   // Use region interface to find the values flowing into the entry block.
-  if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
+  if (auto iface = dyn_cast<ADDataFlowOpInterface>(parent)) {
+    for (auto val : iface.getPotentialIncomingValuesArg(arg))
+      potentialSources.insert(val);
+    return potentialSources.takeVector();
+  } else if (auto iface = dyn_cast<RegionBranchOpInterface>(parent)) {
     auto isRegionSucessorOf = [arg](RegionBranchOpInterface iface,
                                     Region *region,
                                     RegionBranchPoint predecessor,
@@ -1786,7 +1826,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         //     }
         //   }
         // }
-        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
+        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
+            funcName == "jl_idtable_rehash" ||
+            funcName == "ijl_idtable_rehash" ||
+            funcName == "jl_genericmemory_copy_slice" ||
+            funcName == "ijl_genericmemory_copy_slice") {
           // This pointer is inactive if it is either not actively stored to
           // and not actively loaded from.
           if (directions & DOWN && directions & UP) {
@@ -3351,23 +3395,26 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         }
         continue;
       }
-      // if (!I->mayWriteToMemory() || isa<LoadInst>(I)) {
-      //   if (TR.query(I)[{-1}].isIntegral()) {
-      //     continue;
-      //   }
-      //   UseActivity NU = UA;
-      //   if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
-      //       UA == UseActivity::OnlyNonPointerStores) {
-      //     if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
-      //         !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
-      //       NU = UseActivity::None;
-      //   }
 
-      //   for (auto u : I->users()) {
-      //     todo.push_back(std::make_tuple(u, (Value *)I, NU));
-      //   }
-      //   continue;
-      // }
+      if (isReadOnly(I)) {
+        // if (TR.query(I)[{-1}].isIntegral()) {
+        //  continue;
+        //}
+        UseActivity NU = UA;
+        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
+            UA == UseActivity::OnlyNonPointerStores) {
+          // if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
+          //    !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
+          NU = UseActivity::None;
+        }
+
+        for (Value result : I->getResults()) {
+          for (Operation *u : result.getUsers()) {
+            todo.push_back(std::make_tuple(u, result, NU));
+          }
+        }
+        continue;
+      }
 
       if (FoundInst)
         *FoundInst = I;

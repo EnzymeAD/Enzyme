@@ -554,6 +554,17 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["tgamma"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["logabsgamma"],
                   [
                   (
@@ -867,8 +878,20 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   >;
 
 def : IntrPattern<(Op $x),
-                  [["tanh"]],
+                  [["tanh", "19", ""]],
                   [(FDiv (DiffeRet), (FMul(Intrinsic<"cosh"> $x):$c, $c))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sinh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"cosh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["cosh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"sinh"> $x))],
                   (ForwardFromSummedReverse)
                   >;
 

@@ -133,6 +133,35 @@ def ActivityOpInterface
   ];
 }
 
+def ADDataFlowOpInterface
+    : OpInterface<"ADDataFlowOpInterface"> {
+  let cppNamespace = "::mlir::enzyme";
+  
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"SmallVector<Value>",
+    /*methodName=*/"getPotentialIncomingValuesRes",
+    /*args=*/(ins "::mlir::OpResult":$v)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"SmallVector<Value>",
+    /*methodName=*/"getPotentialIncomingValuesArg",
+    /*args=*/(ins "::mlir::BlockArgument":$v)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+    }],
+    /*retTy=*/"SmallVector<Value>",
+    /*methodName=*/"getPotentialTerminatorUsers",
+    /*args=*/(ins "::mlir::Operation*":$terminator, "::mlir::Value":$val)
+    >
+  ];
+}
+
 def BatchOpInterface : OpInterface<"BatchOpInterface"> {
   let description = [{
     A batchable MLIR operation.

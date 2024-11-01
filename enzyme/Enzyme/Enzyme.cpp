@@ -2853,12 +2853,17 @@ public:
               return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
             };
 
+            TargetTransformInfo TTI(F->getParent()->getDataLayout());
             auto GetInlineCost = [&](CallBase &CB) {
-              TargetTransformInfo TTI(F->getParent()->getDataLayout());
               auto cst = llvm::getInlineCost(CB, Params, TTI, getAC, GetTLI);
               return cst;
             };
-            if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
+#if LLVM_VERSION_MAJOR >= 20
+            if (llvm::shouldInline(*cur, TTI, GetInlineCost, ORE))
+#else
+            if (llvm::shouldInline(*cur, GetInlineCost, ORE))
+#endif
+            {
               InlineFunctionInfo IFI;
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
@@ -2964,19 +2969,13 @@ public:
             if (F && F->getName() == "f90_mzero8") {
               IRBuilder<> B(CI);
 
-              SmallVector<Value *, 4> args;
-              args.push_back(CI->getArgOperand(0));
-              args.push_back(
-                  ConstantInt::get(Type::getInt8Ty(M.getContext()), 0));
-              args.push_back(B.CreateMul(
+              Value *args[3];
+              args[0] = CI->getArgOperand(0);
+              args[1] = ConstantInt::get(Type::getInt8Ty(M.getContext()), 0);
+              args[2] = B.CreateMul(
                   CI->getArgOperand(1),
-                  ConstantInt::get(CI->getArgOperand(1)->getType(), 8)));
-              args.push_back(ConstantInt::getFalse(M.getContext()));
-
-              Type *tys[] = {args[0]->getType(), args[2]->getType()};
-              auto memsetIntr =
-                  Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
-              B.CreateCall(memsetIntr, args);
+                  ConstantInt::get(CI->getArgOperand(1)->getType(), 8));
+              B.CreateMemSet(args[0], args[1], args[2], MaybeAlign());
 
               CI->eraseFromParent();
             }
@@ -3334,8 +3333,7 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
-  auto PB0 = new llvm::PassBuilder(PB);
-  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level) {
+  auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
     FunctionPassManager OptimizePM;
     OptimizePM.addPass(Float2IntPass());
     OptimizePM.addPass(LowerConstantIntrinsicsPass());

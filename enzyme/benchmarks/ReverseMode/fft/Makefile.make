@@ -1,17 +1,18 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%newLoadClangEnzyme" make -B fft.o results.txt VERBOSE=1 -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" PTR="%ptr" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" LOADCLANG="%loadClangEnzyme" ENZYME="%enzyme" make -B fft.o results.json -f %s
 
 .PHONY: clean
 
 dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
-	rm -f *.ll *.o results.txt
+	rm -f *.ll *.o results.txt results.json
+	cargo +enzyme clean
 
 $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a: src/lib.rs Cargo.toml
 	cargo +enzyme rustc --release --lib --crate-type=staticlib 
 
 fft.o: fft.cpp $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
-	clang++ $(LOAD) $(BENCH) fft.cpp -fno-math-errno -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O3 -o fft.o -lpthread $(BENCHLINK) -lm -lfft -L $(dir)/benchmarks/ReverseMode/fft/target/release/ -L /usr/lib/gcc/x86_64-linux-gnu/11
+	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@
 
-results.txt: fft.o
+results.json: fft.o
 	./$^ 1048576 | tee $@

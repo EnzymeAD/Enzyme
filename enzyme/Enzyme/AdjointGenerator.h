@@ -23,6 +23,10 @@
 // LLVM instructions.
 //
 //===----------------------------------------------------------------------===//
+
+#ifndef ENZYME_ADJOINT_GENERATOR_H
+#define ENZYME_ADJOINT_GENERATOR_H
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
@@ -302,9 +306,12 @@ public:
   void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
     using namespace llvm;
 
-    if (gutils->isConstantValue(&I))
-      return;
     auto found = gutils->invertedPointers.find(&I);
+    if (gutils->isConstantValue(&I)) {
+      assert(found == gutils->invertedPointers.end());
+      return;
+    }
+
     assert(found != gutils->invertedPointers.end());
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
@@ -319,6 +326,8 @@ public:
     getForwardBuilder(Builder2);
 
     auto toset = gutils->invertPointerM(&I, Builder2, /*nullShadow*/ true);
+
+    assert(toset != placeholder);
 
     gutils->replaceAWithB(placeholder, toset);
     placeholder->replaceAllUsesWith(toset);
@@ -1137,8 +1146,8 @@ public:
             } else {
               maskL = lookup(mask, Builder2);
               Type *tys[] = {valType, orig_ptr->getType()};
-              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                                 Intrinsic::masked_load, tys);
+              auto F = getIntrinsicDeclaration(gutils->oldFunc->getParent(),
+                                               Intrinsic::masked_load, tys);
               Value *alignv =
                   ConstantInt::get(Type::getInt32Ty(mask->getContext()),
                                    align ? align->value() : 0);
@@ -2141,18 +2150,6 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     eraseIfUnused(BO);
 
-    size_t size = 1;
-    if (BO.getType()->isSized())
-      size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                  BO.getType()) +
-              7) /
-             8;
-
-    if (BO.getType()->isIntOrIntVectorTy() &&
-        TR.intType(size, &BO, /*errifnotfound*/ false) == BaseType::Pointer) {
-      return;
-    }
-
     if (BO.getOpcode() == llvm::Instruction::FDiv &&
         (Mode == DerivativeMode::ReverseModeGradient ||
          Mode == DerivativeMode::ReverseModeCombined) &&
@@ -2285,6 +2282,9 @@ public:
   }
 
   void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
+    if (gutils->isConstantInstruction(&BO)) {
+      return;
+    }
     using namespace llvm;
 
     IRBuilder<> Builder2(&BO);
@@ -2766,8 +2766,19 @@ public:
       auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
       if (!rval)
         rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-      if (!gutils->isConstantValue(&BO))
-        setDiffe(&BO, rval, Builder2);
+      auto ifound = gutils->invertedPointers.find(&BO);
+      if (!gutils->isConstantValue(&BO)) {
+        if (ifound != gutils->invertedPointers.end()) {
+          auto placeholder = cast<PHINode>(&*ifound->second);
+          gutils->invertedPointers.erase(ifound);
+          gutils->replaceAWithB(placeholder, rval);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)&BO, InvertedPointerVH(gutils, rval)));
+        }
+      } else {
+        assert(ifound == gutils->invertedPointers.end());
+      }
       break;
     }
   }
@@ -3108,7 +3119,11 @@ public:
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
 
-    for (auto &&[secretty, seg_start, seg_size] : toIterate) {
+    for (auto &&[secretty_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto secretty = secretty_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
+
       Value *length = new_size;
       if (seg_start != std::get<1>(toIterate.back())) {
         length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
@@ -3484,7 +3499,11 @@ public:
       }
     }
 
-    for (auto &&[floatTy, seg_start, seg_size] : toIterate) {
+    for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
+      auto floatTy = floatTy_ref;
+      auto seg_start = seg_start_ref;
+      auto seg_size = seg_size_ref;
+
       Value *length = new_size;
       if (seg_start != std::get<1>(toIterate.back())) {
         length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
@@ -3781,10 +3800,9 @@ public:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0), args));
-        cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::nvvm_barrier0)
-                ->getCallingConv());
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
+                                ->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3796,8 +3814,8 @@ public:
       case Intrinsic::nvvm_membar_sys: {
         SmallVector<Value *, 1> args = {};
         auto cal = cast<CallInst>(
-            Builder2.CreateCall(Intrinsic::getDeclaration(M, ID), args));
-        cal->setCallingConv(Intrinsic::getDeclaration(M, ID)->getCallingConv());
+            Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
+        cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
@@ -3810,9 +3828,9 @@ public:
             lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
         Type *tys[] = {args[1]->getType()};
         auto cal = Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys), args);
         cal->setCallingConv(
-            Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys)
+            getIntrinsicDeclaration(M, Intrinsic::lifetime_end, tys)
                 ->getCallingConv());
         return false;
       }
@@ -5474,19 +5492,42 @@ public:
         }
 
         if (subretused) {
+          Intrinsic::ID ID = Intrinsic::not_intrinsic;
           if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(&call)) {
+
+            if (!isMemFreeLibMFunction(getFuncNameFromCall(&call), &ID)) {
+
 #if LLVM_VERSION_MAJOR >= 18
-            auto It = BuilderZ.GetInsertPoint();
-            It.setHeadBit(true);
-            BuilderZ.SetInsertPoint(It);
+              auto It = BuilderZ.GetInsertPoint();
+              It.setHeadBit(true);
+              BuilderZ.SetInsertPoint(It);
 #endif
-            cachereplace = BuilderZ.CreatePHI(call.getType(), 1,
-                                              call.getName() + "_tmpcacheB");
-            cachereplace = gutils->cacheForReverse(
-                BuilderZ, cachereplace,
-                getIndex(&call, CacheType::Self, BuilderZ));
+              auto idx = getIndex(&call, CacheType::Self, BuilderZ);
+              if (idx == IndexMappingError) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Failed to compute consistent cache index for operation: "
+                   << call << "\n";
+                if (CustomErrorHandler) {
+                  CustomErrorHandler(str.c_str(), wrap(&call),
+                                     ErrorType::InternalError, nullptr, nullptr,
+                                     nullptr);
+                } else {
+                  EmitFailure("GetIndexError", call.getDebugLoc(), &call,
+                              ss.str());
+                }
+              } else {
+                if (Mode == DerivativeMode::ReverseModeCombined)
+                  cachereplace = newCall;
+                else
+                  cachereplace = BuilderZ.CreatePHI(
+                      call.getType(), 1, call.getName() + "_tmpcacheB");
+                cachereplace =
+                    gutils->cacheForReverse(BuilderZ, cachereplace, idx);
+              }
+            }
           } else {
 #if LLVM_VERSION_MAJOR >= 18
             auto It = BuilderZ.GetInsertPoint();
@@ -5993,6 +6034,7 @@ public:
           eraseIfUnused(call);
         }
 
+        ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
           if (invertedReturn && invertedReturn != placeholder) {
@@ -6406,3 +6448,5 @@ public:
                                         subretused);
   }
 };
+
+#endif // ENZYME_ADJOINT_GENERATOR_H
