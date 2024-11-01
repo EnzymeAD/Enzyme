@@ -2150,18 +2150,6 @@ public:
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     eraseIfUnused(BO);
 
-    size_t size = 1;
-    if (BO.getType()->isSized())
-      size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                  BO.getType()) +
-              7) /
-             8;
-
-    if (BO.getType()->isIntOrIntVectorTy() &&
-        TR.intType(size, &BO, /*errifnotfound*/ false) == BaseType::Pointer) {
-      return;
-    }
-
     if (BO.getOpcode() == llvm::Instruction::FDiv &&
         (Mode == DerivativeMode::ReverseModeGradient ||
          Mode == DerivativeMode::ReverseModeCombined) &&
@@ -2294,6 +2282,9 @@ public:
   }
 
   void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
+    if (gutils->isConstantInstruction(&BO)) {
+      return;
+    }
     using namespace llvm;
 
     IRBuilder<> Builder2(&BO);
