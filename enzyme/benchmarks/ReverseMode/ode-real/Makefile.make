@@ -29,7 +29,7 @@ $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a: src/lib.rs Cargo
 
 ode.o: ode.cpp $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a
 	#/home/manuel/prog/llvm18/build/bin/clang++ $(LOAD) $(BENCH) ode.cpp -I /u/drehwald/prog/boost_1_81_0 -DBOOST_DIR=/u/drehwald/prog/boost_1_81_0 -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o ode.o -lpthread $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a -L /usr/lib/gcc/x86_64-linux-gnu/11
-	clang++ $(LOAD) $(BENCH) ode.cpp -I /u/drehwald/prog/boost_1_81_0 -DBOOST_DIR=/u/drehwald/prog/boost_1_81_0 -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O3 -o ode.o -lpthread $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a -L /usr/lib/gcc/x86_64-linux-gnu/11
+	clang++ $(LOAD) $(BENCH) ode.cpp -I /u/drehwald/prog/boost_1_81_0 -DBOOST_DIR=/u/drehwald/prog/boost_1_81_0 -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -fno-math-errno -O3 -o ode.o -lpthread $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 #fft.o: fft.cpp $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
 #	clang++ $(LOAD) $(BENCH) fft.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o fft.o -lpthread $(BENCHLINK) -lm -lfft -L $(dir)/benchmarks/ReverseMode/fft/target/release/ -L /usr/lib/gcc/x86_64-linux-gnu/11

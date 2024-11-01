@@ -23,7 +23,7 @@ $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.to
 # 	#opt $^ -O2 -o $@ -S
 
 lstm.o: lstm.cpp $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
-	clang++ $(LOAD) $(BENCH) -pthread -O3 lstm.cpp -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
+	clang++ $(LOAD) $(BENCH) -pthread -fno-math-errno -O3 lstm.cpp -o $@ $(BENCHLINK) -lm $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
 
 results.json: lstm.o
 	./$^
