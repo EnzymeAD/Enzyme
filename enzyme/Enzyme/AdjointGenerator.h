@@ -2782,11 +2782,11 @@ public:
           gutils->replaceAWithB(placeholder, rval);
           gutils->erase(placeholder);
           gutils->invertedPointers.erase(found);
-          gutils->invertedPointers.insert(
-            std::make_pair((const Value *)&I, InvertedPointerVH(gutils, toset)));
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)&I, InvertedPointerVH(gutils, toset)));
         }
       } else {
-        assert (ifound == gutils->invertedPointers.end());
+        assert(ifound == gutils->invertedPointers.end());
       }
       break;
     }
