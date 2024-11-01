@@ -84,8 +84,11 @@ struct PrintActivityAnalysisPass
       Value arg = autodiff_call.getArgOperands()[argIdx];
       if (auto loadOp =
               dyn_cast_if_present<LLVM::LoadOp>(arg.getDefiningOp())) {
-        if (auto addressOf = dyn_cast_if_present<LLVM::AddressOfOp>(
-                loadOp.getAddr().getDefiningOp())) {
+        Operation *op = loadOp.getAddr().getDefiningOp();
+        if (auto castOp = dyn_cast_if_present<LLVM::AddrSpaceCastOp>(op))
+          op = castOp.getArg().getDefiningOp();
+
+        if (auto addressOf = dyn_cast_if_present<LLVM::AddressOfOp>(op)) {
           if (addressOf.getGlobalName() == "enzyme_const") {
             argActivities[paramIdx] = enzyme::Activity::enzyme_const;
           } else if (addressOf.getGlobalName() == "enzyme_dup") {
