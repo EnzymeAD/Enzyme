@@ -2783,7 +2783,7 @@ public:
           gutils->erase(placeholder);
           gutils->invertedPointers.erase(found);
           gutils->invertedPointers.insert(std::make_pair(
-              (const Value *)&I, InvertedPointerVH(gutils, toset)));
+              (const Value *)&I, InvertedPointerVH(gutils, rval)));
         }
       } else {
         assert(ifound == gutils->invertedPointers.end());
