@@ -306,9 +306,12 @@ public:
   void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
     using namespace llvm;
 
-    if (gutils->isConstantValue(&I))
-      return;
     auto found = gutils->invertedPointers.find(&I);
+    if (gutils->isConstantValue(&I)) {
+      assert(found == gutils->invertedPointers.end());
+      return;
+    }
+
     assert(found != gutils->invertedPointers.end());
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
@@ -323,6 +326,8 @@ public:
     getForwardBuilder(Builder2);
 
     auto toset = gutils->invertPointerM(&I, Builder2, /*nullShadow*/ true);
+
+    assert(toset != placeholder);
 
     gutils->replaceAWithB(placeholder, toset);
     placeholder->replaceAllUsesWith(toset);
@@ -2770,8 +2775,19 @@ public:
       auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
       if (!rval)
         rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
-      if (!gutils->isConstantValue(&BO))
-        setDiffe(&BO, rval, Builder2);
+      auto ifound = gutils->invertedPointers.find(&call);
+      if (!gutils->isConstantValue(&BO)) {
+        if (ifound != gutils->invertedPointers.end()) {
+          auto placeholder = cast<PHINode>(&*ifound->second);
+          gutils->replaceAWithB(placeholder, rval);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.erase(found);
+          gutils->invertedPointers.insert(
+            std::make_pair((const Value *)&I, InvertedPointerVH(gutils, toset)));
+        }
+      } else {
+        assert (ifound == gutils->invertedPointers.end());
+      }
       break;
     }
   }
