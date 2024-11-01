@@ -33,8 +33,8 @@ static void recursiveApply(double *data, int iSign, size_t N) {
   recursiveApply(data, iSign, N / 2);
   recursiveApply(data + N, iSign, N / 2);
 
-  double wtemp = iSign * __builtin_sin(M_PI / N);
-  double wpi = -iSign * __builtin_sin(2 * M_PI / N);
+  double wtemp = iSign * sin(M_PI / N);
+  double wpi = -iSign * sin(2 * M_PI / N);
   double wpr = -2.0 * wtemp * wtemp;
   double wr = 1.0;
   double wi = 0.0;
