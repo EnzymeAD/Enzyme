@@ -9,7 +9,7 @@ clean:
 	cargo +enzyme clean
 
 $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a: src/lib.rs Cargo.toml
-	cargo +enzyme rustc --release --lib --crate-type=staticlib 
+	cargo +enzyme rustc --release --lib --crate-type=staticlib
 
 fft.o: fft.cpp $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
 	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@

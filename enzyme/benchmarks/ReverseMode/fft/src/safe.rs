@@ -34,37 +34,30 @@ fn radix2(data: &mut [f64], i_sign: i32) {
     }
 
     let (a, b) = data.split_at_mut(n);
+    // assert_eq!(a.len(), b.len());
     radix2(a, i_sign);
     radix2(b, i_sign);
 
     let wtemp = i_sign as f64 * (PI / n as f64).sin();
-    let wpi = -i_sign as f64 * (2.0 * PI / n as f64).sin();
+    let wpi = -i_sign as f64 * (2.0 * (PI / n as f64)).sin();
     let wpr = -2.0 * wtemp * wtemp;
     let mut wr = 1.0;
     let mut wi = 0.0;
 
-    for i in (0..n).step_by(2) {
-        let tempr = b[i] * wr - b[i + 1] * wi;
-        let tempi = b[i] * wi + b[i + 1] * wr;
+    let (achunks, _) = a.as_chunks_mut();
+    let (bchunks, _) = b.as_chunks_mut();
+    for ([ax, ay], [bx, by]) in achunks.iter_mut().zip(bchunks.iter_mut()) {
+        let tempr = *bx * wr - *by * wi;
+        let tempi = *bx * wi + *by * wr;
 
-        b[i] = a[i] - tempr;
-        b[i + 1] = a[i + 1] - tempi;
-        a[i] += tempr;
-        a[i + 1] += tempi;
-
-        //unsafe {
-        //  let tempr = b.get_unchecked(i) * wr - b.get_unchecked(i + 1) * wi;
-        //  let tempi = b.get_unchecked(i) * wi + b.get_unchecked(i + 1) * wr;
-
-        //  *b.get_unchecked_mut(i) = a.get_unchecked(i) - tempr;
-        //  *b.get_unchecked_mut(i + 1) = a.get_unchecked(i + 1) - tempi;
-        //  *a.get_unchecked_mut(i) += tempr;
-        //  *a.get_unchecked_mut(i + 1) += tempi;
-        //}
+        *bx = *ax - tempr;
+        *by = *ay - tempi;
+        *ax += tempr;
+        *ay += tempi;
 
         let wtemp_new = wr;
-        wr += wr * wpr - wi * wpi;
-        wi += wi * wpr + wtemp_new * wpi;
+        wr = wr * (wpr + 1.0) - wi * wpi;
+        wi = wi * (wpr + 1.0) + wtemp_new * wpi;
     }
 }
 

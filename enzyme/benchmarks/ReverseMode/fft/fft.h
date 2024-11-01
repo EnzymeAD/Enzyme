@@ -27,14 +27,14 @@ inline void swap(double *a, double *b) {
   *b = temp;
 }
 
-static void recursiveApply(double *data, int iSign, size_t N) {
+static void recursiveApply(double *data, size_t N, int iSign) {
   if (N == 1)
     return;
-  recursiveApply(data, iSign, N / 2);
-  recursiveApply(data + N, iSign, N / 2);
+  recursiveApply(data, N / 2, iSign);
+  recursiveApply(data + N, N / 2, iSign);
 
   double wtemp = iSign * sin(M_PI / N);
-  double wpi = -iSign * sin(2 * M_PI / N);
+  double wpi = -iSign * sin(2 * (M_PI / N));
   double wpr = -2.0 * wtemp * wtemp;
   double wr = 1.0;
   double wi = 0.0;
@@ -52,8 +52,8 @@ static void recursiveApply(double *data, int iSign, size_t N) {
     data[i + 1] += tempi;
 
     wtemp = wr;
-    wr += wr * wpr - wi * wpi;
-    wi += wi * wpr + wtemp * wpi;
+    wr = wr * (wpr + 1.) - wi * wpi;
+    wi = wi * (wpr + 1.) + wtemp * wpi;
   }
 }
 
@@ -83,12 +83,12 @@ static void rescale(double *data, size_t N) {
 
 static void fft(double *data, size_t N) {
   scramble(data, N);
-  recursiveApply(data, 1, N);
+  recursiveApply(data, N, 1);
 }
 
 static void ifft(double *data, size_t N) {
   scramble(data, N);
-  recursiveApply(data, -1, N);
+  recursiveApply(data, N, -1);
   rescale(data, N);
 }
 
@@ -99,14 +99,14 @@ inline void swapad(adept::ActiveReference<double> a,
   b = temp;
 }
 
-static void recursiveApply(aVector data, int iSign, size_t N) {
+static void recursiveApply(aVector data, size_t N, int iSign) {
   if (N == 1)
     return;
-  recursiveApply(data, iSign, N / 2);
-  recursiveApply(data(adept::range(N, adept::end)), iSign, N / 2);
+  recursiveApply(data, N / 2, iSign);
+  recursiveApply(data(adept::range(N, adept::end)), N / 2, iSign);
 
   adouble wtemp = iSign * std::sin(M_PI / N);
-  adouble wpi = -iSign * std::sin(2 * M_PI / N);
+  adouble wpi = -iSign * std::sin(2 * (M_PI / N));
   adouble wpr = -2.0 * wtemp * wtemp;
   adouble wr = 1.0;
   adouble wi = 0.0;
@@ -124,8 +124,8 @@ static void recursiveApply(aVector data, int iSign, size_t N) {
     data(i + 1) += tempi;
 
     wtemp = wr;
-    wr += wr * wpr - wi * wpi;
-    wi += wi * wpr + wtemp * wpi;
+    wr = wr * (wpr + 1.) - wi * wpi;
+    wi = wi * (wpr + 1.) + wtemp * wpi;
   }
 }
 
@@ -155,12 +155,12 @@ static void rescale(aVector data, size_t N) {
 
 static void fft(aVector data, size_t N) {
   scramble(data, N);
-  recursiveApply(data, 1, N);
+  recursiveApply(data, N, 1);
 }
 
 static void ifft(aVector data, size_t N) {
   scramble(data, N);
-  recursiveApply(data, -1, N);
+  recursiveApply(data, N, -1);
   rescale(data, N);
 }
 
