@@ -15,7 +15,8 @@ lto = "fat"
 opt-level = 3
 codegen-units = 1
 unwind = "abort"
-strip = true
+debug = true
+#strip = true
 #overflow-checks = false
 
 [profile.dev]
