@@ -103,7 +103,10 @@ Operation *clone(Operation *src, IRMapping &mapper,
 
   if (batchSizes.size())
     if (auto ifaceOp = dyn_cast<BatchOpInterface>(src)) {
-      newOp = ifaceOp.createBatch(mapper, options, opMap, batchSizes);
+      assert(false);
+      // mlir::OpBuilder builder();
+      // auto result = ifaceOp.createBatch(builder, mapper, options, opMap,
+      // batchSizes).succeeded(); assert(result.succeeded()); return opMap[src];
     }
 
   if (!newOp) {
