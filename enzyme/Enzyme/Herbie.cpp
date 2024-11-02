@@ -83,11 +83,11 @@ static cl::opt<bool> FPOptEnableHerbie(
 static cl::opt<bool> FPOptEnablePT(
     "fpopt-enable-pt", cl::init(false), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
-static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(60), cl::Hidden,
+static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
                                   cl::desc("Herbie's timeout to use for each "
                                            "candidate expressions."));
 static cl::opt<int>
-    HerbieNumPoints("herbie-num-pts", cl::init(512), cl::Hidden,
+    HerbieNumPoints("herbie-num-pts", cl::init(1024), cl::Hidden,
                     cl::desc("Number of input points Herbie uses to evaluate "
                              "candidate expressions."));
 static cl::opt<int> HerbieNumIters(
@@ -133,7 +133,7 @@ static cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
                     cl::desc("The random seed used in the FPOpt pass"));
 static cl::opt<unsigned>
-    FPOptNumSamples("fpopt-num-samples", cl::init(10), cl::Hidden,
+    FPOptNumSamples("fpopt-num-samples", cl::init(1024), cl::Hidden,
                     cl::desc("Number of sampled points for input hypercube"));
 static cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
