@@ -2856,6 +2856,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               vtodo.push_back(LI->getPointerOperand());
               continue;
             }
+          }
+          if (PUA == UseActivity::None || PUA == UseActivity::OnlyLoads) {
             if (isAllocationCall(TmpOrig, TLI)) {
               done.insert(
                   std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
