@@ -59,7 +59,8 @@ static void batchCloneRegion(Region *src, Region *dest, IRMapping &mapper,
 
       if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
         auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
-        if (res.succeeded()) continue;
+        if (res.succeeded())
+          continue;
       }
 
       SmallVector<Value, 8> operands;
