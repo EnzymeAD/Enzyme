@@ -2826,6 +2826,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         bool shouldContinue = true;
         SmallVector<Value *, 1> vtodo = {SI->getPointerOperand()};
         SmallSet<Value *, 1> seen;
+        if (EnzymePrintActivity)
+          llvm::errs() << "      @@ analyzing store2 " << *SI << " " << *val
+                       << " via " << *SI->getPointerOperand() << "\n";
         while (vtodo.size()) {
           auto TmpOrig = vtodo.back();
           vtodo.pop_back();
@@ -2835,11 +2838,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
           if (AllocaSet.count(TmpOrig)) {
             if (EnzymePrintActivity)
-              llvm::errs() << "      -- continuing indirect store2 from "
-                           << *val << " via " << *TmpOrig << "\n";
-            break;
+              llvm::errs()
+                  << "      -- continuing indirect store2(seen alloca) from "
+                  << *val << " via " << *TmpOrig << "\n";
+            continue;
           }
-          if (isa<AllocaInst>(TmpOrig)) {
+          if (isa<AllocaInst>(TmpOrig) || isAllocationCall(TmpOrig, TLI)) {
             done.insert(
                 std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
             for (const auto a : TmpOrig->users()) {
@@ -2847,33 +2851,31 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             }
             AllocaSet.insert(TmpOrig);
             if (EnzymePrintActivity)
-              llvm::errs() << "      -- continuing indirect store2 from "
-                           << *val << " via " << *TmpOrig << "\n";
-            break;
-          }
-          if (isAllocationCall(TmpOrig, TLI)) {
-            done.insert(
-                std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
-            for (const auto a : TmpOrig->users()) {
-              todo.push_back(std::make_tuple(a, TmpOrig, UA));
-            }
-            AllocaSet.insert(TmpOrig);
-            if (EnzymePrintActivity)
-              llvm::errs() << "      -- continuing indirect store2 from "
-                           << *val << " via " << *TmpOrig << "\n";
-            break;
+              llvm::errs()
+                  << "      -- continuing indirect store2(allocation) from "
+                  << *val << " via " << *TmpOrig << "\n";
+            continue;
           }
           if (PUA == UseActivity::None) {
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
               vtodo.push_back(LI->getPointerOperand());
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "      -- continuing indirect store2(load) from " << *val
+                    << " via " << *TmpOrig << "\n";
               continue;
             }
           }
 
           auto TmpOrig_2 = getBaseObjects(TmpOrig);
           if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
-            for (auto v : TmpOrig_2)
+            for (auto v : TmpOrig_2) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "      -- continuing indirect store2(base) from " << *val
+                    << " via " << *TmpOrig << " - v:" << *v << "\n";
               vtodo.push_back(v);
+            }
             continue;
           }
           if (EnzymePrintActivity)
