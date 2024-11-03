@@ -2851,24 +2851,22 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                            << *val << " via " << *TmpOrig << "\n";
             break;
           }
+          if (isAllocationCall(TmpOrig, TLI)) {
+            done.insert(
+                std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+            for (const auto a : TmpOrig->users()) {
+              todo.push_back(std::make_tuple(a, TmpOrig, UA));
+            }
+            AllocaSet.insert(TmpOrig);
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- continuing indirect store2 from "
+                           << *val << " via " << *TmpOrig << "\n";
+            break;
+          }
           if (PUA == UseActivity::None) {
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
               vtodo.push_back(LI->getPointerOperand());
               continue;
-            }
-          }
-          if (PUA == UseActivity::None || PUA == UseActivity::OnlyLoads) {
-            if (isAllocationCall(TmpOrig, TLI)) {
-              done.insert(
-                  std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
-              for (const auto a : TmpOrig->users()) {
-                todo.push_back(std::make_tuple(a, TmpOrig, UA));
-              }
-              AllocaSet.insert(TmpOrig);
-              if (EnzymePrintActivity)
-                llvm::errs() << "      -- continuing indirect store2 from "
-                             << *val << " via " << *TmpOrig << "\n";
-              break;
             }
           }
 
