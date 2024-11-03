@@ -270,6 +270,9 @@ struct CacheAnalysis {
       return false;
     }
 
+    if (getMetadata(li, "enzyme_force_recompute"))
+      return false;
+
     if (EnzymeJuliaAddrLoad)
       if (auto PT = dyn_cast<PointerType>(li.getType()))
         if (PT->getAddressSpace() == 13)
