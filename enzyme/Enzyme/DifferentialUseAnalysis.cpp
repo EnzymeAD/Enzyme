@@ -917,6 +917,15 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
+      if (auto CI = dyn_cast<CastInst>((*mp.begin()).V)) {
+        if (CI->getType()->isPointerTy() &&
+            CI->getType()->getPointerAddressSpace() == 13)
+          continue;
+      }
+      if (auto G = dyn_cast<GetElementPtrInst>((*mp.begin()).V)) {
+        if (G->getType()->getPointerAddressSpace() == 13)
+          continue;
+      }
       if (hasNoCache((*mp.begin()).V)) {
         continue;
       }
