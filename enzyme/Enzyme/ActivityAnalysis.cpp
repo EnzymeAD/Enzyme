@@ -2853,7 +2853,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           if (PUA == UseActivity::None) {
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              TmpOrig = LI->getPointerOperand();
+              vtodo.push_back(LI->getPointerOperand());
               continue;
             }
             if (isAllocationCall(TmpOrig, TLI)) {
