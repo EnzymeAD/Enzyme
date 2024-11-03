@@ -2729,7 +2729,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             (ConstantValues.count(SI->getValueOperand()) ||
              isa<ConstantInt>(SI->getValueOperand())))
           continue;
-        if (UA == UseActivity::None) {
+        if (UA == UseActivity::None ||
+            UA == UseActivity::OnlyNonPointerStores) {
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
@@ -2786,9 +2787,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
             }
-            auto TmpOrig_2 = getBaseObject(TmpOrig);
-            if (TmpOrig != TmpOrig_2) {
-              vtodo.push_back(TmpOrig_2);
+            auto TmpOrig_2 = getBaseObjects(TmpOrig);
+            if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
+              for (auto v : TmpOrig_2)
+                vtodo.push_back(v);
+              continue;
+            }
+            if (UA == PUA && TmpOrig == val) {
               continue;
             }
             if (EnzymePrintActivity)
@@ -2817,58 +2822,86 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
       }
       if (SI->getPointerOperand() != parent) {
-        auto TmpOrig = SI->getPointerOperand();
         // If storing into itself, all potential uses are taken care of
         // elsewhere in the recursion.
-        bool shouldContinue = false;
-        while (1) {
+        bool shouldContinue = true;
+        SmallVector<Value *, 1> vtodo = {SI->getPointerOperand()};
+        SmallSet<Value *, 1> seen;
+        if (EnzymePrintActivity)
+          llvm::errs() << "      @@ analyzing store2 " << *SI << " " << *val
+                       << " via " << *SI->getPointerOperand() << "\n";
+        while (vtodo.size()) {
+          auto TmpOrig = vtodo.back();
+          vtodo.pop_back();
+          if (seen.count(TmpOrig))
+            continue;
+          seen.insert(TmpOrig);
+
           if (AllocaSet.count(TmpOrig)) {
-            shouldContinue = true;
-            break;
+            if (EnzymePrintActivity)
+              llvm::errs()
+                  << "      -- continuing indirect store2(seen alloca) from "
+                  << *val << " via " << *TmpOrig << "\n";
+            continue;
           }
-          if (isa<AllocaInst>(TmpOrig)) {
+          if (isa<AllocaInst>(TmpOrig) || isAllocationCall(TmpOrig, TLI)) {
             done.insert(
                 std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
             for (const auto a : TmpOrig->users()) {
               todo.push_back(std::make_tuple(a, TmpOrig, UA));
             }
             AllocaSet.insert(TmpOrig);
-            shouldContinue = true;
-            break;
+            if (EnzymePrintActivity)
+              llvm::errs()
+                  << "      -- continuing indirect store2(allocation) from "
+                  << *val << " via " << *TmpOrig << "\n";
+            continue;
           }
           if (PUA == UseActivity::None) {
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              TmpOrig = LI->getPointerOperand();
+              vtodo.push_back(LI->getPointerOperand());
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "      -- continuing indirect store2(load) from " << *val
+                    << " via " << *TmpOrig << "\n";
               continue;
             }
-            if (isAllocationCall(TmpOrig, TLI)) {
-              done.insert(
-                  std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
-              for (const auto a : TmpOrig->users()) {
-                todo.push_back(std::make_tuple(a, TmpOrig, UA));
-              }
-              AllocaSet.insert(TmpOrig);
-              shouldContinue = true;
-              break;
-            }
           }
-          auto TmpOrig_2 = getBaseObject(TmpOrig);
-          if (TmpOrig != TmpOrig_2) {
-            TmpOrig = TmpOrig_2;
+
+          auto TmpOrig_2 = getBaseObjects(TmpOrig);
+          if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
+            for (auto v : TmpOrig_2) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "      -- continuing indirect store2(base) from " << *val
+                    << " via " << *TmpOrig << " - v:" << *v << "\n";
+              vtodo.push_back(v);
+            }
             continue;
           }
+          if (UA == PUA && TmpOrig == val) {
+            continue;
+          }
+          if (EnzymePrintActivity)
+            llvm::errs() << "      -- failed to continue indirect store2 from "
+                         << *val << " via " << *TmpOrig_2[0] << "\n";
+          shouldContinue = false;
           break;
         }
         if (shouldContinue) {
-          if (EnzymePrintActivity)
-            llvm::errs() << "      -- continuing indirect store2 from " << *val
-                         << " via " << *TmpOrig << "\n";
           continue;
         }
       }
       if (PUA == UseActivity::OnlyLoads) {
-        auto TmpOrig = getBaseObject(SI->getPointerOperand());
-        if (TmpOrig == val) {
+        auto TmpOrig = getBaseObjects(SI->getPointerOperand());
+        bool AllVals = true;
+        for (auto v : TmpOrig) {
+          if (v != val) {
+            AllVals = false;
+            break;
+          }
+        }
+        if (AllVals) {
           continue;
         }
       }
@@ -2888,7 +2921,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (EnzymePrintActivity)
         llvm::errs() << "      unknown non instruction use of " << *val << " - "
                      << *a << "\n";
-      return false;
+      goto endloop;
     }
 
     if (isa<AllocaInst>(a)) {
@@ -2908,21 +2941,23 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
     // if this instruction is in a different function, conservatively assume
     // it is active
-    Function *InstF = cast<Instruction>(a)->getParent()->getParent();
-    while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
-      InstF = PPC.CloneOrigin[InstF];
+    {
+      Function *InstF = cast<Instruction>(a)->getParent()->getParent();
+      while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
+        InstF = PPC.CloneOrigin[InstF];
 
-    Function *F = TR.getFunction();
-    while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
-      F = PPC.CloneOrigin[F];
+      Function *F = TR.getFunction();
+      while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
+        F = PPC.CloneOrigin[F];
 
-    if (InstF != F) {
-      if (EnzymePrintActivity)
-        llvm::errs() << "found use in different function(" << (int)directions
-                     << ")  val:" << *val << " user " << *a << " in "
-                     << InstF->getName() << "@" << InstF
-                     << " self: " << F->getName() << "@" << F << "\n";
-      return false;
+      if (InstF != F) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "found use in different function(" << (int)directions
+                       << ")  val:" << *val << " user " << *a << " in "
+                       << InstF->getName() << "@" << InstF
+                       << " self: " << F->getName() << "@" << F << "\n";
+        goto endloop;
+      }
     }
     if (cast<Instruction>(a)->getParent()->getParent() != TR.getFunction())
       continue;
@@ -2933,7 +2968,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           UA != UseActivity::AllStores) {
         continue;
       } else {
-        return false;
+        goto endloop;
       }
     }
 
@@ -3218,9 +3253,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (TR.query(I)[{-1}].isIntegral()) {
           continue;
         }
+        if (UA == UseActivity::OnlyNonPointerStores &&
+            TR.query(I)[{-1}].isFloat()) {
+          continue;
+        }
         UseActivity NU = UA;
-        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
-            UA == UseActivity::OnlyNonPointerStores) {
+        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores) {
           if (!isPointerArithmeticInst(I))
             NU = UseActivity::None;
         }
@@ -3235,6 +3273,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         *FoundInst = I;
     }
 
+  endloop:;
     if (EnzymePrintActivity)
       llvm::errs() << "Value nonconstant inst (uses):" << *val << " user " << *a
                    << "\n";

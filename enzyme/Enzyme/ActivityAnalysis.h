@@ -234,7 +234,8 @@ public:
     // No Additional use activity info
     None = 0,
 
-    // Only consider loads of memory
+    // Recursively consider loads to identify a potential active load.
+    // Intermediate stores into local allocations will be looked through.
     OnlyLoads = 1,
 
     // Only consider active stores into

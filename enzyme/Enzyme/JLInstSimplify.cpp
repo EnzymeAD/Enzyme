@@ -97,10 +97,13 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
         if (inst->comesBefore(UI))
           continue;
 
+      if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        todo.push_back(UI);
+        continue;
+      }
+
       if (auto CI = dyn_cast<CallBase>(UI)) {
-        auto fname = getFuncNameFromCall(CI);
-        if (fname == "julia.pointer_from_objref")
-          continue;
 #if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -119,7 +122,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
       if (isa<CmpInst>(UI)) {
         continue;
       }
-      if (isa<CastInst, GetElementPtrInst, LoadInst, PHINode>(UI)) {
+      if (isa<LoadInst>(UI)) {
         todo.push_back(UI);
         continue;
       }

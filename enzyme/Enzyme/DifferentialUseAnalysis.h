@@ -370,6 +370,9 @@ inline bool is_value_needed_in_reverse(
       if (funcName == "julia.pointer_from_objref") {
         primalUsedInShadowPointer = false;
       }
+      if (funcName == "julia.gc_loaded") {
+        primalUsedInShadowPointer = false;
+      }
       if (funcName.contains("__enzyme_todense")) {
         primalUsedInShadowPointer = false;
       }
