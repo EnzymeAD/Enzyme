@@ -3636,10 +3636,11 @@ bool accuracyDPSolver(
         InstructionCost newCompCost = currCompCost + candCompCost;
         double newAccCost = currAccCost + candAccCost;
 
-        // if (EnzymePrintFPOpt)
-        llvm::errs() << "ACC candidate " << i << " (" << candidate.value().desc
-                     << ") has accuracy cost: " << candAccCost
-                     << " and computation cost: " << candCompCost << "\n";
+        if (EnzymePrintFPOpt)
+          llvm::errs() << "ACC candidate " << i << " ("
+                       << candidate.value().desc
+                       << ") has accuracy cost: " << candAccCost
+                       << " and computation cost: " << candCompCost << "\n";
 
         if (newCostToAccuracyMap.find(newCompCost) ==
                 newCostToAccuracyMap.end() ||
