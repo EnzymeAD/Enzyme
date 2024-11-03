@@ -1181,6 +1181,9 @@ static inline bool hasNoCache(llvm::Value *op) {
         return true;
     }
   }
+  if (auto I = dyn_cast<Instruction>(op))
+    if (hasMetadata(I, "enzyme_nocache"))
+      return true;
   return false;
 }
 
