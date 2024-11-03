@@ -1362,6 +1362,9 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName == "julia.pointer_from_objref") {
       return true;
     }
+    if (funcName == "julia.gc_loaded") {
+      return true;
+    }
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
@@ -1418,6 +1421,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       }
       if (funcName == "julia.pointer_from_objref") {
         V = Call->getArgOperand(0);
+        continue;
+      }
+      if (funcName == "julia.gc_loaded") {
+        V = Call->getArgOperand(1);
         continue;
       }
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
@@ -1495,6 +1502,37 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
 }
 static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
   return getBaseObject(const_cast<llvm::Value *>(V));
+}
+
+static inline llvm::SetVector<llvm::Value *>
+getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
+  llvm::SmallSet<llvm::Value *, 1> seen;
+  llvm::SetVector<llvm::Value *> results;
+  llvm::SmallVector<llvm::Value *, 1> todo = {V};
+
+  while (todo.size()) {
+    auto obj = todo.back();
+    todo.pop_back();
+    if (seen.contains(obj))
+      continue;
+    seen.insert(obj);
+
+    if (auto PN = llvm::dyn_cast<llvm::PHINode>(obj)) {
+      for (auto &x : PN->incoming_values()) {
+        todo.push_back(x);
+      }
+      continue;
+    }
+
+    auto cur = getBaseObject(obj, offsetAllowed);
+    if (cur != obj) {
+      todo.push_back(cur);
+      continue;
+    }
+
+    results.insert(obj);
+  }
+  return results;
 }
 
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {

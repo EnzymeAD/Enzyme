@@ -461,6 +461,9 @@ struct CacheAnalysis {
     if (funcName == "julia.pointer_from_objref")
       return {};
 
+    if (funcName == "julia.gc_loaded")
+      return {};
+
     if (funcName == "julia.write_barrier")
       return {};
 

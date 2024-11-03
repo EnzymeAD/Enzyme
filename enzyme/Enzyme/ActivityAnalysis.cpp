@@ -2786,9 +2786,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
             }
-            auto TmpOrig_2 = getBaseObject(TmpOrig);
-            if (TmpOrig != TmpOrig_2) {
-              vtodo.push_back(TmpOrig_2);
+            auto TmpOrig_2 = getBaseObjects(TmpOrig);
+            if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
+              for (auto v : TmpOrig_2)
+                vtodo.push_back(v);
               continue;
             }
             if (UA == PUA && TmpOrig == val) {
@@ -2820,13 +2821,22 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
       }
       if (SI->getPointerOperand() != parent) {
-        auto TmpOrig = SI->getPointerOperand();
         // If storing into itself, all potential uses are taken care of
         // elsewhere in the recursion.
-        bool shouldContinue = false;
-        while (1) {
+        bool shouldContinue = true;
+        SmallVector<Value *, 1> vtodo = {SI->getPointerOperand()};
+        SmallSet<Value *, 1> seen;
+        while (vtodo.size()) {
+          auto TmpOrig = vtodo.back();
+          vtodo.pop_back();
+          if (seen.count(TmpOrig))
+            continue;
+          seen.insert(TmpOrig);
+
           if (AllocaSet.count(TmpOrig)) {
-            shouldContinue = true;
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- continuing indirect store2 from "
+                           << *val << " via " << *TmpOrig << "\n";
             break;
           }
           if (isa<AllocaInst>(TmpOrig)) {
@@ -2836,7 +2846,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               todo.push_back(std::make_tuple(a, TmpOrig, UA));
             }
             AllocaSet.insert(TmpOrig);
-            shouldContinue = true;
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- continuing indirect store2 from "
+                           << *val << " via " << *TmpOrig << "\n";
             break;
           }
           if (PUA == UseActivity::None) {
@@ -2851,27 +2863,39 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 todo.push_back(std::make_tuple(a, TmpOrig, UA));
               }
               AllocaSet.insert(TmpOrig);
-              shouldContinue = true;
+              if (EnzymePrintActivity)
+                llvm::errs() << "      -- continuing indirect store2 from "
+                             << *val << " via " << *TmpOrig << "\n";
               break;
             }
           }
-          auto TmpOrig_2 = getBaseObject(TmpOrig);
-          if (TmpOrig != TmpOrig_2) {
-            TmpOrig = TmpOrig_2;
+
+          auto TmpOrig_2 = getBaseObjects(TmpOrig);
+          if (TmpOrig_2.size() != 1 || TmpOrig != TmpOrig_2[0]) {
+            for (auto v : TmpOrig_2)
+              vtodo.push_back(v);
             continue;
           }
+          if (EnzymePrintActivity)
+            llvm::errs() << "      -- failed to continueindirect store2 from "
+                         << *val << " via " << *TmpOrig_2[0] << "\n";
+          shouldContinue = false;
           break;
         }
         if (shouldContinue) {
-          if (EnzymePrintActivity)
-            llvm::errs() << "      -- continuing indirect store2 from " << *val
-                         << " via " << *TmpOrig << "\n";
           continue;
         }
       }
       if (PUA == UseActivity::OnlyLoads) {
-        auto TmpOrig = getBaseObject(SI->getPointerOperand());
-        if (TmpOrig == val) {
+        auto TmpOrig = getBaseObjects(SI->getPointerOperand());
+        bool AllVals = true;
+        for (auto v : TmpOrig) {
+          if (v != val) {
+            AllVals = false;
+            break;
+          }
+        }
+        if (AllVals) {
           continue;
         }
       }
