@@ -3696,40 +3696,46 @@ bool accuracyDPSolver(
     costToSolutionMap.swap(prunedCostToSolutionMap);
   }
 
-  llvm::errs() << "\n*** DP Table ***\n";
-  for (const auto &pair : costToAccuracyMap) {
-    llvm::errs() << "Computation cost: " << pair.first
-                 << ", Accuracy cost: " << pair.second << "\n";
-    llvm::errs() << "\tSolution steps: \n";
-    for (const auto &step : costToSolutionMap[pair.first]) {
-      std::visit(
-          [&](auto *item) {
-            using T = std::decay_t<decltype(*item)>;
-            if constexpr (std::is_same_v<T, ApplicableOutput>) {
-              llvm::errs() << "\t\t" << item->expr << " --("
-                           << step.candidateIndex << ")-> "
-                           << item->candidates[step.candidateIndex].expr
-                           << "\n";
-            } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
-              llvm::errs() << "\t\tACC: "
-                           << item->candidates[step.candidateIndex].desc
-                           << " (#" << step.candidateIndex << ")\n";
-            } else {
-              llvm_unreachable(
-                  "accuracyDPSolver: Unexpected type of solution step");
-            }
-          },
-          step.item);
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "\n*** DP Table ***\n";
+    for (const auto &pair : costToAccuracyMap) {
+      llvm::errs() << "Computation cost: " << pair.first
+                   << ", Accuracy cost: " << pair.second << "\n";
+      llvm::errs() << "\tSolution steps: \n";
+      for (const auto &step : costToSolutionMap[pair.first]) {
+        std::visit(
+            [&](auto *item) {
+              using T = std::decay_t<decltype(*item)>;
+              if constexpr (std::is_same_v<T, ApplicableOutput>) {
+                llvm::errs()
+                    << "\t\t" << item->expr << " --(" << step.candidateIndex
+                    << ")-> " << item->candidates[step.candidateIndex].expr
+                    << "\n";
+              } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+                llvm::errs()
+                    << "\t\tACC: " << item->candidates[step.candidateIndex].desc
+                    << " (#" << step.candidateIndex << ")\n";
+              } else {
+                llvm_unreachable(
+                    "accuracyDPSolver: Unexpected type of solution step");
+              }
+            },
+            step.item);
+      }
     }
+    llvm::errs() << "*** End of DP Table ***\n\n";
+    llvm::errs() << "*** Critical Computation Costs ***\n";
+    // Just print all computation costs in the DP table
+    for (const auto &pair : costToAccuracyMap) {
+      llvm::errs() << pair.first << ",";
+    }
+    llvm::errs() << "\n";
+    llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
   }
-  llvm::errs() << "*** End of DP Table ***\n\n";
-  llvm::errs() << "*** Critical Computation Costs ***\n";
-  // Just print all computation costs in the DP table
-  for (const auto &pair : costToAccuracyMap) {
-    llvm::errs() << pair.first << ",";
-  }
-  llvm::errs() << "\n";
-  llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
+
+  llvm::errs() << "Critical computation cost range: ["
+               << costToAccuracyMap.begin()->first << ", "
+               << costToAccuracyMap.rbegin()->first << "]\n";
 
   double minAccCost = std::numeric_limits<double>::infinity();
   InstructionCost bestCompCost = 0;
