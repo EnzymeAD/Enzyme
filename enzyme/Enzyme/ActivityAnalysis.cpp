@@ -2877,7 +2877,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             continue;
           }
           if (EnzymePrintActivity)
-            llvm::errs() << "      -- failed to continueindirect store2 from "
+            llvm::errs() << "      -- failed to continue indirect store2 from "
                          << *val << " via " << *TmpOrig_2[0] << "\n";
           shouldContinue = false;
           break;
@@ -2915,7 +2915,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (EnzymePrintActivity)
         llvm::errs() << "      unknown non instruction use of " << *val << " - "
                      << *a << "\n";
-      return false;
+      goto endloop;
     }
 
     if (isa<AllocaInst>(a)) {
@@ -2935,21 +2935,23 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
     // if this instruction is in a different function, conservatively assume
     // it is active
-    Function *InstF = cast<Instruction>(a)->getParent()->getParent();
-    while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
-      InstF = PPC.CloneOrigin[InstF];
+    {
+      Function *InstF = cast<Instruction>(a)->getParent()->getParent();
+      while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
+        InstF = PPC.CloneOrigin[InstF];
 
-    Function *F = TR.getFunction();
-    while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
-      F = PPC.CloneOrigin[F];
+      Function *F = TR.getFunction();
+      while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
+        F = PPC.CloneOrigin[F];
 
-    if (InstF != F) {
-      if (EnzymePrintActivity)
-        llvm::errs() << "found use in different function(" << (int)directions
-                     << ")  val:" << *val << " user " << *a << " in "
-                     << InstF->getName() << "@" << InstF
-                     << " self: " << F->getName() << "@" << F << "\n";
-      return false;
+      if (InstF != F) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "found use in different function(" << (int)directions
+                       << ")  val:" << *val << " user " << *a << " in "
+                       << InstF->getName() << "@" << InstF
+                       << " self: " << F->getName() << "@" << F << "\n";
+        goto endloop;
+      }
     }
     if (cast<Instruction>(a)->getParent()->getParent() != TR.getFunction())
       continue;
@@ -2960,7 +2962,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           UA != UseActivity::AllStores) {
         continue;
       } else {
-        return false;
+        goto endloop;
       }
     }
 
@@ -3262,6 +3264,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         *FoundInst = I;
     }
 
+  endloop:;
     if (EnzymePrintActivity)
       llvm::errs() << "Value nonconstant inst (uses):" << *val << " user " << *a
                    << "\n";
