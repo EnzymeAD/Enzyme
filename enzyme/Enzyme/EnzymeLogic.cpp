@@ -270,7 +270,7 @@ struct CacheAnalysis {
       return false;
     }
 
-    if (getMetadata(li, "enzyme_force_recompute"))
+    if (hasMetadata(li, "enzyme_force_recompute"))
       return false;
 
     if (EnzymeJuliaAddrLoad)
