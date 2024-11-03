@@ -3253,6 +3253,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (TR.query(I)[{-1}].isIntegral()) {
           continue;
         }
+        if (UA == UseActivity::OnlyNonPointerStores &&
+            TR.query(I)[{-1}].isFloat()) {
+          continue;
+        }
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
