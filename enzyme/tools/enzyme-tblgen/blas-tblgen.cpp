@@ -137,7 +137,6 @@ void emit_handleBLAS(ArrayRef<TGPattern> blasPatterns, raw_ostream &os) {
     first = false;
   }
   os << "    } else {                                                       \n"
-     << "      llvm::errs() << \" fallback?\\n\";                           \n"
      << "      return false;                                                \n"
      << "    }                                                              \n"
      << "  } else {                                                         \n"
