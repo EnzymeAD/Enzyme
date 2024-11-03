@@ -2879,6 +2879,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             }
             continue;
           }
+          if (UA == PUA && TmpOrig == val) {
+            continue;
+          }
           if (EnzymePrintActivity)
             llvm::errs() << "      -- failed to continue indirect store2 from "
                          << *val << " via " << *TmpOrig_2[0] << "\n";
