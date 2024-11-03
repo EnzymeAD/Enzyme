@@ -1506,7 +1506,7 @@ static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
 
 static inline llvm::SetVector<llvm::Value *>
 getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
-  llvm::SmallSet<llvm::Value *, 1> seen;
+  llvm::SmallPtrSet<llvm::Value *, 1> seen;
   llvm::SetVector<llvm::Value *> results;
   llvm::SmallVector<llvm::Value *, 1> todo = {V};
 
