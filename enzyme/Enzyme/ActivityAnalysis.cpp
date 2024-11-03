@@ -2729,7 +2729,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             (ConstantValues.count(SI->getValueOperand()) ||
              isa<ConstantInt>(SI->getValueOperand())))
           continue;
-        if (UA == UseActivity::None) {
+        if (UA == UseActivity::None ||
+            UA == UseActivity::OnlyNonPointerStores) {
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
