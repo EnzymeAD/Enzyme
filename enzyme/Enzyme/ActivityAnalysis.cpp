@@ -2791,6 +2791,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               vtodo.push_back(TmpOrig_2);
               continue;
             }
+            if (UA == PUA && TmpOrig == val) {
+              continue;
+            }
             if (EnzymePrintActivity)
               llvm::errs() << "      -- cannot continuing indirect store from "
                            << *val << " due to " << *TmpOrig << "\n";
