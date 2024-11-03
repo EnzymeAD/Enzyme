@@ -2,7 +2,7 @@
 new_local_repository(
     name = "llvm-raw",
     build_file_content = "# empty",
-    path = "../llvm-project",
+    path = "/home/vimarsh6739/llvm-project",
 )
 
 load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
