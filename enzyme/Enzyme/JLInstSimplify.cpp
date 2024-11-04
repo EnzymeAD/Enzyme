@@ -159,7 +159,14 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
       bool legal = false;
       ICmpInst::Predicate pred;
-      if (auto cmp = dyn_cast<ICmpInst>(&I)) {
+      if (auto LI = dyn_cast<LoadInst>(&I)) {
+        auto obj = getBaseObject(LI->getPointerOperand(), /*offsetAllowed=*/false);
+        if (auto CI = dyn_cast<CallBase>(obj)) {
+          if (getFuncNameFromCall(CI) == "jl_alloc_genericmemory") {
+            LI->replaceAllUsesWith(CI->getArgOperand(0));
+          }
+        }
+      } else if (auto cmp = dyn_cast<ICmpInst>(&I)) {
         pred = cmp->getPredicate();
         legal = true;
       } else if (auto CI = dyn_cast<CallBase>(&I)) {
