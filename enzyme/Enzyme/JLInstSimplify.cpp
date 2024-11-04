@@ -160,10 +160,22 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
       bool legal = false;
       ICmpInst::Predicate pred;
       if (auto LI = dyn_cast<LoadInst>(&I)) {
-        auto obj = getBaseObject(LI->getPointerOperand(), /*offsetAllowed=*/false);
+        size_t offset = 0;
+        auto obj = getBaseObject(LI->getPointerOperand(),
+                                 /*offsetAllowed=*/false, &offset);
         if (auto CI = dyn_cast<CallBase>(obj)) {
           if (getFuncNameFromCall(CI) == "jl_alloc_genericmemory") {
-            LI->replaceAllUsesWith(CI->getArgOperand(0));
+            if (offset == 0) {
+              // Size
+              LI->replaceAllUsesWith(CI->getArgOperand(1));
+            } else if (offset ==
+                       F.getParent()->getDataLayout().getIndexSize(0) * 1) {
+              // Underlying data pointer
+            } else if (offset ==
+                       F.getParent()->getDataLayout().getIndexSize(0) * 2) {
+              // Owner pointer
+              LI->replaceAllUsesWith(CI);
+            }
           }
         }
       } else if (auto cmp = dyn_cast<ICmpInst>(&I)) {
