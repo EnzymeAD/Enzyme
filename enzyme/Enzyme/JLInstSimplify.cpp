@@ -224,8 +224,11 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         }
         auto llhs = dyn_cast<LoadInst>(lhs);
         auto lrhs = dyn_cast<LoadInst>(rhs);
-        if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&
-            isa<PointerType>(lrhs->getType())) {
+        if (llhs && lrhs &&
+            (isa<PointerType>(llhs->getType()) ||
+             isa<IntegerType>(llhs->getType())) &&
+            (isa<PointerType>(lrhs->getType()) ||
+             isa<IntegerType>(lrhs->getType()))) {
           auto lhsv =
               getBaseObject(llhs->getOperand(0), /*offsetAllowed*/ false);
           auto rhsv =
