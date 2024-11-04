@@ -136,7 +136,7 @@ def ActivityOpInterface
 def ADDataFlowOpInterface
     : OpInterface<"ADDataFlowOpInterface"> {
   let cppNamespace = "::mlir::enzyme";
-  
+
   let methods = [
     InterfaceMethod<
     /*desc=*/[{
@@ -171,11 +171,11 @@ def BatchOpInterface : OpInterface<"BatchOpInterface"> {
   let methods = [
     InterfaceMethod<
     /*desc=*/[{
-      Emits a batched version of a given operation.
+      Emits a batched version of a given operation and maps the newly created batched results to their correspondents in the original version.
     }],
-    /*retTy=*/"::mlir::Operation*",
+    /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createBatch",
-    /*args=*/(ins "::mlir::IRMapping &":$mapper, "::mlir::Operation::CloneOptions":$options, "::std::map<mlir::Operation*, mlir::Operation*>&":$opMap,  "::llvm::ArrayRef<int64_t>":$batchSizes)
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::IRMapping &":$mapper, "::llvm::ArrayRef<int64_t>":$batchSizes)
     >
   ];
 }
