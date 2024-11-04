@@ -24,6 +24,15 @@ static inline bool endsWith(llvm::StringRef string, llvm::StringRef suffix) {
 #endif // LLVM_VERSION_MAJOR
 }
 
+static inline llvm::StringRef getFuncName(llvm::Function *called) {
+  if (called->hasFnAttribute("enzyme_math"))
+    return called->getFnAttribute("enzyme_math").getValueAsString();
+  else if (called->hasFnAttribute("enzyme_allocator"))
+    return "enzyme_allocator";
+  else
+    return called->getName();
+}
+
 bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
                         std::vector<std::string> &replaced) {
   std::vector<StringRef> todo;
@@ -32,22 +41,23 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
   for (auto &F : M) {
     if (!F.empty())
       continue;
-    if (ignoreFunctions.count(F.getName().str()))
+    auto name = getFuncName(F);
+    if (ignoreFunctions.count(name.str()))
       continue;
     int index = 0;
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
       if (strlen(postfix) == 0) {
         str = F.getName().str();
-      } else if (endsWith(F.getName(), postfix)) {
+      } else if (endsWith(name, postfix)) {
         auto blasName =
-            F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+            name.substr(0, name.size() - strlen(postfix)).str();
         str = "cblas_" + blasName;
       }
 
       auto found = EnzymeBlasBC.find(str);
       if (found != EnzymeBlasBC.end()) {
-        replaced.push_back(F.getName().str());
+        replaced.push_back(name.str());
         todo.push_back(found->second);
         if (index == 1)
           seen32 = true;
