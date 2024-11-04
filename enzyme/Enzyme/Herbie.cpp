@@ -3130,6 +3130,8 @@ bool improveViaHerbie(
     Args2.push_back("--disable");
     Args2.push_back("generate:taylor");
     BaseArgsList.push_back(Args2);
+  } else {
+    BaseArgsList.push_back(BaseArgs);
   }
 
   bool InitialValuesSet = false;
@@ -3772,9 +3774,16 @@ bool accuracyDPSolver(
         [&](auto *item) {
           using T = std::decay_t<decltype(*item)>;
           if constexpr (std::is_same_v<T, ApplicableOutput>) {
+            llvm::errs() << "Applying solution for " << item->expr << " --("
+                         << solution.candidateIndex << ")-> "
+                         << item->candidates[solution.candidateIndex].expr
+                         << "\n";
             item->apply(solution.candidateIndex, valueToNodeMap,
                         symbolToValueMap);
           } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+            llvm::errs() << "Applying solution for ACC: "
+                         << item->candidates[solution.candidateIndex].desc
+                         << " (#" << solution.candidateIndex << ")\n";
             item->apply(solution.candidateIndex);
           } else {
             llvm_unreachable(
