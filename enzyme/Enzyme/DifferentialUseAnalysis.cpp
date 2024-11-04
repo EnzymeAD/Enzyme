@@ -912,7 +912,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
       continue;
     }
-    
+
     // When ambiguous, push to cache the last value in a computation chain
     // This should be considered in a cost for the max flow
     if (mp.size() == 1 && !Required.count(V)) {
@@ -987,7 +987,6 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
     }
   }
-
 
   // Fix up non-repeatable writing calls that chain within rematerialized
   // allocations. We could iterate from the keys of the valuemap, but that would

@@ -8177,7 +8177,7 @@ void GradientUtils::computeMinCache() {
                                    notForAnalysis);
             if (oneneed) {
               knownRecomputeHeuristic[&I] = false;
- 
+
               CountTrackedPointers T(I.getType());
               assert(!T.derived);
             } else
@@ -8273,10 +8273,10 @@ void GradientUtils::computeMinCache() {
         assert(!MinReq.count(V));
         unnecessaryIntermediates.insert(cast<Instruction>(V));
       }
- 
+
       if (NeedGraph.count(V) && MinReq.count(V)) {
-            CountTrackedPointers T(V->getType());
-            assert(!T.derived);
+        CountTrackedPointers T(V->getType());
+        assert(!T.derived);
       }
     }
   }
