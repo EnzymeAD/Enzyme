@@ -41,7 +41,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
   for (auto &F : M) {
     if (!F.empty())
       continue;
-    auto name = getFuncName(F);
+    auto name = getFuncName(&F);
     if (ignoreFunctions.count(name.str()))
       continue;
     int index = 0;
