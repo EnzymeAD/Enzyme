@@ -75,8 +75,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
 
   for (auto &&[realname, F] : name_rewrites) {
     auto decl = M.getOrInsertFunction(realname, F->getFunctionType());
-    auto entry = BasicBlock::Create(F->getContext(), "entry",
-                                    cast<Function>(decl.getCallee()));
+    auto entry = BasicBlock::Create(F->getContext(), "entry", F);
     IRBuilder<> B(entry);
     SmallVector<Value *, 1> vals;
     for (auto &arg : F->args())
