@@ -3317,7 +3317,8 @@ public:
     } else {
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
-      vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
+      vd |= TR.query(orig_src).Data0().PurgeAnything().ShiftIndices(DL, 0, size,
+                                                                    0);
       for (size_t i = 0; i < MTI.getNumOperands(); i++)
         if (MTI.getOperand(i) == orig_dst)
           if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
