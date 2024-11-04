@@ -3322,7 +3322,7 @@ void extractValueFromLog(const std::string &logPath,
   std::string line;
   std::regex valuePattern("^Value:" + functionName + ":" +
                           std::to_string(blockIdx) + ":" +
-                          std::to_string(instIdx));
+                          std::to_string(instIdx) + "$");
   std::regex newEntryPattern("^(Value|Grad):");
 
   while (getline(file, line)) {
@@ -3391,7 +3391,7 @@ bool extractGradFromLog(const std::string &logPath,
   std::string line;
   std::regex gradPattern("^Grad:" + functionName + ":" +
                          std::to_string(blockIdx) + ":" +
-                         std::to_string(instIdx));
+                         std::to_string(instIdx) + "$");
 
   while (getline(file, line)) {
     if (std::regex_search(line, gradPattern)) {
