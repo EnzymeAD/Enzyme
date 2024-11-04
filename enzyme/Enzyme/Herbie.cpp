@@ -3326,6 +3326,10 @@ void extractValueFromLog(const std::string &logPath,
   std::regex newEntryPattern("^(Value|Grad):");
 
   while (getline(file, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+
     if (std::regex_search(line, valuePattern)) {
       std::string minResLine, maxResLine, executionsLine, geometricAvgLine;
       if (getline(file, minResLine) && getline(file, maxResLine) &&
@@ -3394,6 +3398,10 @@ bool extractGradFromLog(const std::string &logPath,
                          std::to_string(instIdx) + "$");
 
   while (getline(file, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+
     if (std::regex_search(line, gradPattern)) {
 
       // Extract Grad data
@@ -4129,10 +4137,9 @@ B2:
                                               blockIdx, instIdx, grad);
 
               auto node = valueToNodeMap[op];
+              node->grad = grad;
 
               if (found) {
-                node->grad = grad;
-
                 ValueInfo valueInfo;
                 extractValueFromLog(FPOptLogPath, functionName, blockIdx,
                                     instIdx, valueInfo);
@@ -4154,7 +4161,8 @@ B2:
               } else { // Unknown bounds
                 if (EnzymePrintFPOpt)
                   llvm::errs()
-                      << "Grad of " << *op << " are not found in the log\n";
+                      << "Grad of " << *op
+                      << " are not found in the log; using 0 instead\n";
               }
             }
           }
