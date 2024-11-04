@@ -873,7 +873,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
   std::map<Node, Node> parent;
   bfs(G, Recomputes, parent);
 
-  std::deque<Value *> todo;
+  SetVector<Value *> todo;
 
   // Print all edges that are from a reachable vertex to
   // non-reachable vertex in the original graph
@@ -885,20 +885,36 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
           if (Orig.find(Node(N.V, true)) != Orig.end()) {
-            todo.push_back(N.V);
+            todo.insert(N.V);
           }
         }
       }
   }
 
-  // When ambiguous, push to cache the last value in a computation chain
-  // This should be considered in a cost for the max flow
   while (todo.size()) {
     auto V = todo.front();
-    todo.pop_front();
+    todo.remove(V);
     auto found = Orig.find(Node(V, true));
     assert(found != Orig.end());
     const auto &mp = found->second;
+
+    assert(MinReq.count(V));
+
+    // Fix up non-cacheable calls to use their operand(s) instead
+    if (hasNoCache(V)) {
+      assert(!Required.count(V));
+      MinReq.remove(V);
+      for (auto &pair : Orig) {
+        if (pair.second.count(Node(V, false))) {
+          MinReq.insert(pair.first.V);
+          todo.insert(pair.first.V);
+        }
+      }
+      continue;
+    }
+    
+    // When ambiguous, push to cache the last value in a computation chain
+    // This should be considered in a cost for the max flow
     if (mp.size() == 1 && !Required.count(V)) {
       bool potentiallyRecursive =
           isa<PHINode>((*mp.begin()).V) &&
@@ -967,24 +983,11 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         auto nnode = (*mp.begin()).V;
         MinReq.insert(nnode);
         if (Orig.find(Node(nnode, true)) != Orig.end())
-          todo.push_back(nnode);
+          todo.insert(nnode);
       }
     }
   }
 
-  // Fix up non-cacheable calls to use their operand(s) instead
-  for (auto V : Intermediates) {
-    if (!hasNoCache(V))
-      continue;
-    if (!MinReq.count(V))
-      continue;
-    MinReq.remove(V);
-    for (auto &pair : Orig) {
-      if (pair.second.count(Node(V, false))) {
-        MinReq.insert(pair.first.V);
-      }
-    }
-  }
 
   // Fix up non-repeatable writing calls that chain within rematerialized
   // allocations. We could iterate from the keys of the valuemap, but that would
