@@ -48,10 +48,9 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
       if (strlen(postfix) == 0) {
-        str = F.getName().str();
+        str = name.str();
       } else if (endsWith(name, postfix)) {
-        auto blasName =
-            name.substr(0, name.size() - strlen(postfix)).str();
+        auto blasName = name.substr(0, name.size() - strlen(postfix)).str();
         str = "cblas_" + blasName;
       }
 
@@ -102,7 +101,8 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
     for (auto &F : *BC) {
       if (F.empty())
         continue;
-      if (ignoreFunctions.count(F.getName().str())) {
+      auto name = getFuncName(F);
+      if (ignoreFunctions.count(name.str())) {
         F.dropAllReferences();
 #if LLVM_VERSION_MAJOR >= 16
         F.erase(F.begin(), F.end());
@@ -111,7 +111,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
 #endif
         continue;
       }
-      toReplace.push_back(F.getName().str());
+      toReplace.push_back(name.str());
     }
     BC->setTargetTriple("");
     Linker L(M);
