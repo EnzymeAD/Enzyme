@@ -1221,7 +1221,19 @@ void TypeAnalyzer::considerTBAA() {
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
       if (auto MD = I.getMetadata("enzyme_type")) {
-        updateAnalysis(&I, TypeTree::fromMD(MD), &I);
+        auto TT = TypeTree::fromMD(MD);
+
+        auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+        for (const auto &pair : TT.getMapping()) {
+          if (pair.first[0] != -1) {
+            if ((size_t)pair.first[0] >= RegSize) {
+              llvm::errs() << " bad enzyme_type " << TT.str()
+                           << " RegSize=" << RegSize << " I:" << I << "\n";
+              llvm::report_fatal_error("Canonicalization failed");
+            }
+          }
+        }
+        updateAnalysis(&I, TT, &I);
       }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
@@ -1237,6 +1249,17 @@ void TypeAnalyzer::considerTBAA() {
               AttributeList::ReturnIndex, "enzyme_type");
           auto TT =
               TypeTree::parse(attr.getValueAsString(), call->getContext());
+
+          auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+          for (const auto &pair : TT.getMapping()) {
+            if (pair.first[0] != -1) {
+              if ((size_t)pair.first[0] >= RegSize) {
+                llvm::errs() << " bad enzyme_type " << TT.str()
+                             << " RegSize=" << RegSize << " I:" << I << "\n";
+                llvm::report_fatal_error("Canonicalization failed");
+              }
+            }
+          }
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1244,6 +1267,16 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1257,6 +1290,16 @@ void TypeAnalyzer::considerTBAA() {
                 AttributeList::ReturnIndex, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1265,6 +1308,17 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
+              auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+              for (const auto &pair : TT.getMapping()) {
+                if (pair.first[0] != -1) {
+                  if ((size_t)pair.first[0] >= RegSize) {
+                    llvm::errs()
+                        << " bad enzyme_type " << TT.str()
+                        << " RegSize=" << RegSize << " I:" << I << "\n";
+                    llvm::report_fatal_error("Canonicalization failed");
+                  }
+                }
+              }
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
