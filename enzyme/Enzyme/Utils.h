@@ -94,6 +94,7 @@ extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
+extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -1184,6 +1185,15 @@ static inline bool hasNoCache(llvm::Value *op) {
   if (auto I = dyn_cast<Instruction>(op))
     if (hasMetadata(I, "enzyme_nocache"))
       return true;
+
+  if (EnzymeJuliaAddrLoad) {
+    if (auto PT = dyn_cast<PointerType>(op->getType())) {
+      if (PT->getAddressSpace() == 11 || PT->getAddressSpace() == 13) {
+        if (isa<CastInst>(op) || isa<GetElementPtrInst>(op))
+          return true;
+      }
+    }
+  }
   return false;
 }
 
