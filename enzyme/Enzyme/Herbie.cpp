@@ -904,9 +904,9 @@ struct PTCandidate {
   std::unordered_map<FPNode *, double> perOutputAccCost;
 
   // TODO:
-  explicit PTCandidate(SmallVector<PrecisionChange> &changes,
-                       const Twine &desc = "")
-      : changes(changes), desc(desc.str()) {}
+  explicit PTCandidate(SmallVector<PrecisionChange> changes,
+                       const std::string &desc)
+      : changes(std::move(changes)), desc(desc) {}
 
   // If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
   // values and change outputs in VMap to new casted outputs.
@@ -4314,18 +4314,17 @@ B2:
         }
 
         for (auto prec : precTypes) {
-          StringRef precStr = getPrecisionChangeTypeString(prec);
-          Twine desc =
-              Twine("Funcs 0% -- ") + Twine(percent) + "% -> " + precStr;
+          std::string precStr = getPrecisionChangeTypeString(prec).str();
+          std::string desc =
+              "Funcs 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
           PrecisionChange change(
               opsToChange,
               getPrecisionChangeType(component.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
-          PTCandidate candidate(changes, desc);
+          PTCandidate candidate{std::move(changes), desc};
           candidate.CompCost = getCompCost(component, TTI, candidate);
-
           ACC.candidates.push_back(std::move(candidate));
         }
       }
@@ -4361,17 +4360,17 @@ B2:
         }
 
         for (auto prec : precTypes) {
-          StringRef precStr = getPrecisionChangeTypeString(prec);
-          Twine desc = Twine("All 0% -- ") + Twine(percent) + "% -> " + precStr;
+          std::string precStr = getPrecisionChangeTypeString(prec).str();
+          std::string desc =
+              "All 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
           PrecisionChange change(
               opsToChange,
               getPrecisionChangeType(component.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
-          PTCandidate candidate(changes, desc);
+          PTCandidate candidate{std::move(changes), desc};
           candidate.CompCost = getCompCost(component, TTI, candidate);
-
           ACC.candidates.push_back(std::move(candidate));
         }
       }
