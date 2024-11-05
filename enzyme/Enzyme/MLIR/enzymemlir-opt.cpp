@@ -77,6 +77,7 @@ int main(int argc, char **argv) {
 
   // Register the standard passes we want.
   mlir::registerCSEPass();
+  mlir::registerMem2RegPass();
   mlir::registerConvertAffineToStandardPass();
   mlir::registerSCCPPass();
   mlir::registerInlinerPass();
@@ -84,6 +85,7 @@ int main(int argc, char **argv) {
   mlir::registerSymbolDCEPass();
   mlir::registerLoopInvariantCodeMotionPass();
   mlir::registerConvertSCFToOpenMPPass();
+  mlir::registerSCFToControlFlowPass();
   mlir::affine::registerAffinePasses();
   mlir::registerReconcileUnrealizedCasts();
 
