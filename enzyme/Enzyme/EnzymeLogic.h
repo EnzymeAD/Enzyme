@@ -52,7 +52,6 @@
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
-extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 }
 
 constexpr char EnzymeFPRTPrefix[] = "__enzyme_fprt_";
