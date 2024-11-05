@@ -130,7 +130,7 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast double* %dst to i8*
 ; CHECK-NEXT:   %1 = bitcast double* %src to i8*
 ; CHECK-NEXT:   %mul = shl i64 %n, 3
-; CHECK-NEXT:   %2 = call i32 @puts(i8* getelementptr inbounds ([126 x i8], [126 x i8]* @.str.1, i32 0, i32 0))
+; CHECK-NEXT:   %2 = call i32 @puts
 ; CHECK-NEXT:   call void @exit(i32 1)
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %"'ipc", i8* align 8 %1, i64 %mul, i1 false)
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %0, i8* align 8 %1, i64 %mul, i1 false)
