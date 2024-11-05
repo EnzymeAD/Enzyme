@@ -1250,7 +1250,9 @@ void TypeAnalyzer::considerTBAA() {
           auto TT =
               TypeTree::parse(attr.getValueAsString(), call->getContext());
 
-          auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+          auto RegSize = I.getType()->isVoidTy()
+                             ? 0
+                             : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
           for (const auto &pair : TT.getMapping()) {
             if (pair.first[0] != -1) {
               if ((size_t)pair.first[0] >= RegSize) {
@@ -1267,7 +1269,9 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
-            auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
             for (const auto &pair : TT.getMapping()) {
               if (pair.first[0] != -1) {
                 if ((size_t)pair.first[0] >= RegSize) {
@@ -1290,7 +1294,9 @@ void TypeAnalyzer::considerTBAA() {
                 AttributeList::ReturnIndex, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
-            auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
             for (const auto &pair : TT.getMapping()) {
               if (pair.first[0] != -1) {
                 if ((size_t)pair.first[0] >= RegSize) {
@@ -1308,7 +1314,9 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
-              auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+              auto RegSize = I.getType()->isVoidTy()
+                                 ? 0
+                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
               for (const auto &pair : TT.getMapping()) {
                 if (pair.first[0] != -1) {
                   if ((size_t)pair.first[0] >= RegSize) {
