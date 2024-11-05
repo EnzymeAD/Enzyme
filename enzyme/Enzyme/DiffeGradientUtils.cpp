@@ -499,6 +499,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       for (auto idx : idxs)
         ss << *idx << ",";
       ss << "}\n";
+      assert(0);
       if (auto inst = dyn_cast<Instruction>(val)) {
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
