@@ -175,10 +175,6 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
             } else if (offset ==
                        F.getParent()->getDataLayout().getIndexSize(0) * 1) {
               // Underlying data pointer
-            } else if (offset ==
-                       F.getParent()->getDataLayout().getIndexSize(0) * 2) {
-              // Owner pointer
-              LI->replaceAllUsesWith(CI);
             }
           }
         }
