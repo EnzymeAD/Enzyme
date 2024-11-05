@@ -696,8 +696,8 @@ public:
         if ((size_t)pair.first[0] >= len) {
           llvm::errs() << str() << "\n";
           llvm::errs() << " canonicalizing " << len << "\n";
+          llvm::report_fatal_error("Canonicalization failed");
         }
-        assert((size_t)pair.first[0] < len);
       }
       staging[next][pair.second].insert(pair.first[0]);
     }
