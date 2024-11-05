@@ -167,8 +167,6 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         size_t offset = 0;
         auto obj = getBaseObject(LI->getPointerOperand(),
                                  /*offsetAllowed=*/true, &offset);
-        // llvm::errs() << " LI: " << *LI << " obj: " << *obj << " off " <<
-        // offset << " ptr: " << *LI->getPointerOperand() << "\n";
         if (auto CI = dyn_cast<CallBase>(obj)) {
           if (getFuncNameFromCall(CI) == "jl_alloc_genericmemory") {
             if (offset == 0) {
