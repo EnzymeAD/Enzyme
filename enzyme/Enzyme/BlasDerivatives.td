@@ -101,6 +101,7 @@ def is_diag_int : IntMatchers<
 
 def is_left : MagicInst;
 def is_lower : MagicInst;
+def is_zero : MagicInst;
 def is_nonunit : MagicInst;
 
 def First : MagicInst;
@@ -757,7 +758,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                       
                       (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, $n) ,
 
-                      (For<"i", 0> (Sub $n, ConstantInt<1>),
+                      (For<"i", 0> (ISelect (is_zero $n), ConstantInt<0>, (Sub $n, ConstantInt<1>)),
                         (BlasCall<"axpy">
                             (Sub (Sub $n, ConstantInt<1>), $i),
                             Constant<"1.0">,
