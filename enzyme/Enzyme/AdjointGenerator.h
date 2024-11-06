@@ -1809,24 +1809,54 @@ public:
         SmallVector<Value *, 4> sv;
         for (auto i : EVI.getIndices())
           sv.push_back(ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
-        size_t size = 1;
+        size_t storeSize = 1;
         if (EVI.getType()->isSized())
-          size =
+          storeSize =
               (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
                    EVI.getType()) +
                7) /
               8;
-        for (size_t i = 0; i < gutils->getWidth(); ++i) {
-          Value *tdiff = (gutils->getWidth() == 1)
-                             ? prediff
-                             : gutils->extractMeta(Builder2, prediff, i);
-          SmallVector<Value *, 4> sv2 = sv;
-          if (gutils->getWidth() != 1)
-            sv2.insert(sv2.begin(),
-                       ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(orig_op0, tdiff, Builder2, TR.addingType(size, &EVI),
-                           sv2);
+
+        unsigned start = 0;
+        auto vd = TR.query(&EVI);
+
+        while (1) {
+          unsigned nextStart = storeSize;
+
+          auto dt = vd[{-1}];
+          for (size_t i = start; i < storeSize; ++i) {
+            auto nex = vd[{(int)i}];
+            if ((nex == BaseType::Anything && dt.isFloat()) ||
+                (dt == BaseType::Anything && nex.isFloat())) {
+              nextStart = i;
+              break;
+            }
+            bool Legal = true;
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
+            }
+          }
+          unsigned size = nextStart - start;
+          if (!dt.isKnown()) {
+
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of extract " << EVI << vd.str()
+               << " start: " << start << " size: " << size
+               << " extractSize: " << storeSize;
+            EmitNoTypeError(str, EVI, gutils, Builder2);
+            break;
+          }
+          if (auto FT = dt.isFloat())
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0, prediff, Builder2, FT, start, size, sv,
+                             nullptr, /*ignoreFirstSlicesToDiff*/ sv.size());
+
+          if (nextStart == storeSize)
+            break;
+          start = nextStart;
         }
       }
 
