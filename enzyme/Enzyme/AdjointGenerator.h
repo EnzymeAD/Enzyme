@@ -1817,47 +1817,47 @@ public:
                7) /
               8;
 
-          unsigned start = 0;
-          auto vd = TR.query(&EVI);
+        unsigned start = 0;
+        auto vd = TR.query(&EVI);
 
-          while (1) {
-            unsigned nextStart = storeSize;
+        while (1) {
+          unsigned nextStart = storeSize;
 
-            auto dt = vd[{-1}];
-            for (size_t i = start; i < storeSize; ++i) {
-              auto nex = vd[{(int)i}];
-              if ((nex == BaseType::Anything && dt.isFloat()) ||
-                  (dt == BaseType::Anything && nex.isFloat())) {
-                nextStart = i;
-                break;
-              }
-              bool Legal = true;
-              dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
-              if (!Legal) {
-                nextStart = i;
-                break;
-              }
-            }
-            unsigned size = nextStart - start;
-            if (!dt.isKnown()) {
-
-              std::string str;
-              raw_string_ostream ss(str);
-              ss << "Cannot deduce type of extract " << EVI << vd.str()
-                 << " start: " << start << " size: " << size
-                 << " extractSize: " << storeSize;
-              EmitNoTypeError(str, EVI, gutils, Builder2);
+          auto dt = vd[{-1}];
+          for (size_t i = start; i < storeSize; ++i) {
+            auto nex = vd[{(int)i}];
+            if ((nex == BaseType::Anything && dt.isFloat()) ||
+                (dt == BaseType::Anything && nex.isFloat())) {
+              nextStart = i;
               break;
             }
-            if (auto FT = dt.isFloat())
-              ((DiffeGradientUtils *)gutils)
-                  ->addToDiffe(orig_op0, prediff, Builder2, FT, start, size, sv,
-                               nullptr, /*ignoreFirstSlicesToDiff*/ sv.size());
-
-            if (nextStart == storeSize)
+            bool Legal = true;
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
               break;
-            start = nextStart;
+            }
           }
+          unsigned size = nextStart - start;
+          if (!dt.isKnown()) {
+
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Cannot deduce type of extract " << EVI << vd.str()
+               << " start: " << start << " size: " << size
+               << " extractSize: " << storeSize;
+            EmitNoTypeError(str, EVI, gutils, Builder2);
+            break;
+          }
+          if (auto FT = dt.isFloat())
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0, prediff, Builder2, FT, start, size, sv,
+                             nullptr, /*ignoreFirstSlicesToDiff*/ sv.size());
+
+          if (nextStart == storeSize)
+            break;
+          start = nextStart;
+        }
       }
 
       setDiffe(&EVI,

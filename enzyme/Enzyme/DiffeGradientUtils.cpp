@@ -271,6 +271,8 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
             ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
         for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
           eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+        }
+        for (auto idx : idxs) {
           lidxs.push_back(idx);
         }
         for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs),
