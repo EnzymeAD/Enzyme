@@ -34,10 +34,10 @@ extern "C" {
 //}
 //
 //// log(sum(exp(x), 2))
-// double logsumexp(double const* vect, int sz)
+// double logsumexp(double const* vect, size_t sz)
 //{
 //     double sum = 0.0;
-//     int i;
+//     size_t i;
 //
 //     for (i = 0; i < sz; i++)
 //     {
@@ -50,7 +50,7 @@ extern "C" {
 
 // LSTM OBJECTIVE
 // The LSTM model
-void lstm_model(int hsize, double const *weight, double const *bias,
+void lstm_model(size_t hsize, double const *weight, double const *bias,
                 double *hidden, double *cell, double const *input) {
   // TODO NOTE THIS
   //__builtin_assume(hsize > 0);
@@ -61,7 +61,7 @@ void lstm_model(int hsize, double const *weight, double const *bias,
   double *outgate = &(gates[2 * hsize]);
   double *change = &(gates[3 * hsize]);
 
-  int i;
+  size_t i;
   // caching input
   // hidden (needed)
   for (i = 0; i < hsize; i++) {
@@ -85,9 +85,9 @@ void lstm_model(int hsize, double const *weight, double const *bias,
 }
 
 // Predict LSTM output given an input
-void lstm_predict(int l, int b, double const *w, double const *w2, double *s,
+void lstm_predict(size_t l, size_t b, double const *w, double const *w2, double *s,
                   double const *x, double *x2) {
-  int i;
+  size_t i;
   for (i = 0; i < b; i++) {
     x2[i] = x[i] * w2[i];
   }
@@ -104,12 +104,12 @@ void lstm_predict(int l, int b, double const *w, double const *w2, double *s,
 }
 
 // LSTM objective (loss function)
-void cxx_mayalias_lstm_objective(int l, int c, int b, double const *main_params,
+void cxx_mayalias_lstm_objective(size_t l, size_t c, size_t b, double const *main_params,
                                  double const *extra_params, double *state,
                                  double const *sequence, double *loss) {
-  int i, t;
+  size_t i, t;
   double total = 0.0;
-  int count = 0;
+  size_t count = 0;
   const double *input = &(sequence[0]);
   double *ypred = (double *)malloc(b * sizeof(double));
   double *ynorm = (double *)malloc(b * sizeof(double));
@@ -146,7 +146,7 @@ void __enzyme_autodiff(...) noexcept;
 
 // *      tapenade -b -o lstm_tapenade -head "lstm_objective(loss)/(main_params extra_params)" lstm.c
 
-void dlstm_objective_mayalias(int l, int c, int b, double const *main_params,
+void dlstm_objective_mayalias(size_t l, size_t c, size_t b, double const *main_params,
                               double *dmain_params, double const *extra_params,
                               double *dextra_params, double *state,
                               double const *sequence, double *loss,
