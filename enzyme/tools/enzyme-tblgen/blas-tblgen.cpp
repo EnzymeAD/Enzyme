@@ -932,9 +932,8 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         if (Dag->getNumArgs() != 1)
           PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
         const auto name = Dag->getArgNameStr(0);
-        os << "    ({ auto V = arg_" << name << ";\n";
-        os << "    if (byRef) V = Builder2.CreateLoad(intType, V, \"ld." << name
-           << "\");\n";
+        os << "    ({ auto V = load_if_ref(Builder2, intType, arg_" << name
+           << ", byRef);\n";
         os << "    SmallVector<Value*, 1> vs = {to_blas_callconv(Builder2, "
               "Builder2.CreateICmpEQ(V, ConstantInt::get(V->getType(), 0)), "
               "byRef, cublas, julia_decl_type, allocationBuilder, "
