@@ -1816,14 +1816,6 @@ public:
                    EVI.getType()) +
                7) /
               8;
-        for (size_t i = 0; i < gutils->getWidth(); ++i) {
-          Value *tdiff = (gutils->getWidth() == 1)
-                             ? prediff
-                             : gutils->extractMeta(Builder2, prediff, i);
-          SmallVector<Value *, 4> sv2 = sv;
-          if (gutils->getWidth() != 1)
-            sv2.insert(sv2.begin(),
-                       ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
 
           unsigned start = 0;
           auto vd = TR.query(&EVI);
@@ -1859,13 +1851,13 @@ public:
             }
             if (auto FT = dt.isFloat())
               ((DiffeGradientUtils *)gutils)
-                  ->addToDiffe(orig_op0, tdiff, Builder2, FT, start, size, sv2);
+                  ->addToDiffe(orig_op0, prediff, Builder2, FT, start, size, sv,
+                               nullptr, /*extractDiff*/ false);
 
             if (nextStart == storeSize)
               break;
             start = nextStart;
           }
-        }
       }
 
       setDiffe(&EVI,
