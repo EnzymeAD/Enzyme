@@ -1852,7 +1852,7 @@ public:
             if (auto FT = dt.isFloat())
               ((DiffeGradientUtils *)gutils)
                   ->addToDiffe(orig_op0, prediff, Builder2, FT, start, size, sv,
-                               nullptr, /*extractDiff*/ false);
+                               nullptr, /*ignoreFirstSlicesToDiff*/ sv.size());
 
             if (nextStart == storeSize)
               break;

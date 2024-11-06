@@ -227,11 +227,10 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
   return BuilderM.CreateLoad(ty, getDifferential(val));
 }
 
-SmallVector<SelectInst *, 4>
-DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
-                               Type *addingType, unsigned start, unsigned size,
-                               llvm::ArrayRef<llvm::Value *> idxs,
-                               llvm::Value *mask, bool extractDiff) {
+SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
+    Value *val, Value *dif, IRBuilder<> &BuilderM, Type *addingType,
+    unsigned start, unsigned size, llvm::ArrayRef<llvm::Value *> idxs,
+    llvm::Value *mask, size_t ignoreFirstSlicesOfDif) {
   assert(addingType);
   auto &DL = oldFunc->getParent()->getDataLayout();
   Type *VT = val->getType();
@@ -258,12 +257,11 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   if (start == 0 && size == storeSize && !isa<StructType>(VT)) {
     if (getWidth() == 1) {
       SmallVector<unsigned, 1> eidxs;
-      for (auto idx : idxs) {
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
         eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
       }
-      return addToDiffe(val,
-                        extractDiff ? extractMeta(BuilderM, dif, eidxs) : dif,
-                        BuilderM, addingType, idxs, mask);
+      return addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM,
+                        addingType, idxs, mask);
     } else {
       SmallVector<SelectInst *, 4> res;
       for (unsigned j = 0; j < getWidth(); j++) {
@@ -271,9 +269,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         SmallVector<unsigned, 1> eidxs = {(unsigned)j};
         lidxs.push_back(
             ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
-        for (auto idx : idxs) {
-          if (extractDiff)
-            eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+        for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+          eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
           lidxs.push_back(idx);
         }
         for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs),
@@ -306,8 +303,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                          ? min(start + size - (unsigned)SL->getElementOffset(i),
                                (unsigned)subTypeSize)
                          : subTypeSize;
-      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
-                               sub_end - sub_start, lidxs, mask))
+      for (auto v :
+           addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                      sub_end - sub_start, lidxs, mask, ignoreFirstSlicesOfDif))
         res.push_back(v);
     }
     return res;
@@ -334,8 +332,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                          ? min(start + size - (unsigned)(i * subTypeSize),
                                (unsigned)subTypeSize)
                          : subTypeSize;
-      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
-                               sub_end - sub_start, lidxs, mask))
+      for (auto v :
+           addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                      sub_end - sub_start, lidxs, mask, ignoreFirstSlicesOfDif))
         res.push_back(v);
     }
     return res;

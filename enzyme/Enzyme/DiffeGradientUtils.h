@@ -101,7 +101,7 @@ public:
   addToDiffe(llvm::Value *val, llvm::Value *dif, llvm::IRBuilder<> &BuilderM,
              llvm::Type *addingType, unsigned start, unsigned size,
              llvm::ArrayRef<llvm::Value *> idxs = {},
-             llvm::Value *mask = nullptr, bool extractDiff = true);
+             llvm::Value *mask = nullptr, size_t ignoreFirstSlicesToDiff = 0);
 
   void setDiffe(llvm::Value *val, llvm::Value *toset,
                 llvm::IRBuilder<> &BuilderM);
