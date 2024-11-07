@@ -18,7 +18,7 @@ using namespace std;
 using json = nlohmann::json;
 
 struct GMMInput {
-    int d, k, n;
+    size_t d, k, n;
     std::vector<double> alphas, means, icf, x;
     Wishart wishart;
 };
@@ -33,54 +33,54 @@ struct GMMParameters {
 };
 
 extern "C" {
-void gmm_objective(int d, int k, int n, double const *alphas,
+void gmm_objective(size_t d, size_t k, size_t n, double const *alphas,
                    double const *means, double const *icf, double const *x,
                    Wishart wishart, double *err);
-void gmm_objective_restrict(int d, int k, int n, double const *alphas,
+void gmm_objective_restrict(size_t d, size_t k, size_t n, double const *alphas,
                             double const *means, double const *icf,
                             double const *x, Wishart wishart, double *err);
-void dgmm_objective_restrict(int d, int k, int n, const double *alphas,
+void dgmm_objective_restrict(size_t d, size_t k, size_t n, const double *alphas,
                              double *alphasb, const double *means,
                              double *meansb, const double *icf, double *icfb,
                              const double *x, Wishart wishart, double *err,
                              double *errb);
-void dgmm_objective(int d, int k, int n, const double *alphas, double *alphasb,
+void dgmm_objective(size_t d, size_t k, size_t n, const double *alphas, double *alphasb,
                     const double *means, double *meansb, const double *icf,
                     double *icfb, const double *x, Wishart wishart, double *err,
                     double *errb);
 
-void gmm_objective_b(int d, int k, int n, const double *alphas, double *alphasb,
+void gmm_objective_b(size_t d, size_t k, size_t n, const double *alphas, double *alphasb,
                      const double *means, double *meansb, const double *icf,
                      double *icfb, const double *x, Wishart wishart,
                      double *err, double *errb);
 
-void adept_dgmm_objective(int d, int k, int n, const double *alphas,
+void adept_dgmm_objective(size_t d, size_t k, size_t n, const double *alphas,
                           double *alphasb, const double *means, double *meansb,
                           const double *icf, double *icfb, const double *x,
                           Wishart wishart, double *err, double *errb);
 
-void rust_unsafe_dgmm_objective(int d, int k, int n, const double *alphas,
+void rust_unsafe_dgmm_objective(size_t d, size_t k, size_t n, const double *alphas,
                                 double *alphasb, const double *means,
                                 double *meansb, const double *icf, double *icfb,
                                 const double *x, Wishart &wishart, double *err,
                                 double *errb);
 
-void rust_unsafe_gmm_objective(int d, int k, int n, const double *alphas,
+void rust_unsafe_gmm_objective(size_t d, size_t k, size_t n, const double *alphas,
                                const double *means, const double *icf,
                                const double *x, Wishart &wishart, double *err);
 
-void rust_dgmm_objective(int d, int k, int n, const double *alphas,
+void rust_dgmm_objective(size_t d, size_t k, size_t n, const double *alphas,
                          double *alphasb, const double *means, double *meansb,
                          const double *icf, double *icfb, const double *x,
                          Wishart &wishart, double *err, double *errb);
 
-void rust_gmm_objective(int d, int k, int n, const double *alphas,
+void rust_gmm_objective(size_t d, size_t k, size_t n, const double *alphas,
                         const double *means, const double *icf, const double *x,
                         Wishart &wishart, double *err);
 }
 
 void read_gmm_instance(const string& fn,
-    int* d, int* k, int* n,
+    size_t* d, size_t* k, size_t* n,
     vector<double>& alphas,
     vector<double>& means,
     vector<double>& icf,
@@ -95,32 +95,32 @@ void read_gmm_instance(const string& fn,
         exit(1);
     }
 
-    fscanf(fid, "%i %i %i", d, k, n);
+    fscanf(fid, "%zu %zu %zu", d, k, n);
 
-    int d_ = *d, k_ = *k, n_ = *n;
+    size_t d_ = *d, k_ = *k, n_ = *n;
 
-    int icf_sz = d_ * (d_ + 1) / 2;
+    size_t icf_sz = d_ * (d_ + 1) / 2;
     alphas.resize(k_);
     means.resize(d_ * k_);
     icf.resize(icf_sz * k_);
     x.resize(d_ * n_);
 
-    for (int i = 0; i < k_; i++)
+    for (size_t i = 0; i < k_; i++)
     {
         fscanf(fid, "%lf", &alphas[i]);
     }
 
-    for (int i = 0; i < k_; i++)
+    for (size_t i = 0; i < k_; i++)
     {
-        for (int j = 0; j < d_; j++)
+        for (size_t j = 0; j < d_; j++)
         {
             fscanf(fid, "%lf", &means[i * d_ + j]);
         }
     }
 
-    for (int i = 0; i < k_; i++)
+    for (size_t i = 0; i < k_; i++)
     {
-        for (int j = 0; j < icf_sz; j++)
+        for (size_t j = 0; j < icf_sz; j++)
         {
             fscanf(fid, "%lf", &icf[i * icf_sz + j]);
         }
@@ -128,20 +128,20 @@ void read_gmm_instance(const string& fn,
 
     if (replicate_point)
     {
-        for (int j = 0; j < d_; j++)
+        for (size_t j = 0; j < d_; j++)
         {
             fscanf(fid, "%lf", &x[j]);
         }
-        for (int i = 0; i < n_; i++)
+        for (size_t i = 0; i < n_; i++)
         {
             memcpy(&x[i * d_], &x[0], d_ * sizeof(double));
         }
     }
     else
     {
-        for (int i = 0; i < n_; i++)
+        for (size_t i = 0; i < n_; i++)
         {
-            for (int j = 0; j < d_; j++)
+            for (size_t j = 0; j < d_; j++)
             {
                 fscanf(fid, "%lf", &x[i * d_ + j]);
             }
@@ -234,7 +234,7 @@ int main(const int argc, const char* argv[]) {
     read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
         input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
@@ -264,7 +264,7 @@ int main(const int argc, const char* argv[]) {
     read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
         input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
@@ -297,7 +297,7 @@ int main(const int argc, const char* argv[]) {
     read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
         input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
@@ -327,7 +327,7 @@ int main(const int argc, const char* argv[]) {
                       input.alphas, input.means, input.icf, input.x,
                       input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
@@ -356,7 +356,7 @@ int main(const int argc, const char* argv[]) {
     read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
         input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = { 0, std::vector<double>(Jcols) };
 
@@ -427,7 +427,7 @@ int main(const int argc, const char* argv[]) {
                       input.alphas, input.means, input.icf, input.x,
                       input.wishart, params.replicate_point);
 
-    int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    size_t Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
     struct GMMOutput result = {0, std::vector<double>(Jcols)};
 

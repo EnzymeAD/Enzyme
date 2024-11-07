@@ -1,10 +1,9 @@
-void gmm_objective(int d, int k, int n, double const *alphas,
+void gmm_objective(size_t d, size_t k, size_t n, double const *alphas,
                    double const *means, double const *icf, double const *x,
                    Wishart wishart, double *err) {
-#define int int64_t
-  int ix, ik;
+  size_t ix, ik;
   const double CONSTANT = -n * d * 0.5 * log(2 * PI);
-  int icf_sz = d * (d + 1) / 2;
+  size_t icf_sz = d * (d + 1) / 2;
 
   double *Qdiags = (double *)malloc(d * k * sizeof(double));
   double *sum_qs = (double *)malloc(k * sizeof(double));
@@ -41,11 +40,10 @@ void gmm_objective(int d, int k, int n, double const *alphas,
   free(xcentered);
   free(Qxcentered);
   free(main_term);
-#undef int
 }
 
 // *      tapenade -b -o gmm_tapenade -head "gmm_objective(err)/(alphas means icf)" gmm.c
-void dgmm_objective(int d, int k, int n, const double *alphas, double *
+void dgmm_objective(size_t d, size_t k, size_t n, const double *alphas, double *
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb) {

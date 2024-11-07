@@ -13,7 +13,7 @@
  *   typedef struct
  *   {
  *       double gamma;
- *       int m;
+ *       size_t m;
  *   } Wishart;
  *
  *   After Tapenade CLI installing use the next command to generate a file:
@@ -39,9 +39,9 @@ extern "C" {
 /* ==================================================================== */
 
 // This throws error on n<1
-double arr_max(int n, double const* x)
+double arr_max(size_t n, double const* x)
 {
-    int i;
+    size_t i;
     double m = x[0];
     for (i = 1; i < n; i++)
     {
@@ -57,9 +57,9 @@ double arr_max(int n, double const* x)
 
 
 // sum of component squares
-double sqnorm(int n, double const* x)
+double sqnorm(size_t n, double const* x)
 {
-    int i;
+    size_t i;
     double res = x[0] * x[0];
     for (i = 1; i < n; i++)
     {
@@ -73,13 +73,13 @@ double sqnorm(int n, double const* x)
 
 // out = a - b
 void subtract(
-    int d,
+    size_t d,
     double const* x,
     double const* y,
     double* out
 )
 {
-    int id;
+    size_t id;
     for (id = 0; id < d; id++)
     {
         out[id] = x[id] - y[id];
@@ -87,9 +87,9 @@ void subtract(
 }
 
 
-double log_sum_exp(int n, double const* x)
+double log_sum_exp(size_t n, double const* x)
 {
-    int i;
+    size_t i;
     double mx = arr_max(n, x);
     double semx = 0.0;
 
@@ -105,7 +105,7 @@ double log_sum_exp(int n, double const* x)
 __attribute__((const))
 double log_gamma_distrib(double a, double p)
 {
-    int j;
+    size_t j;
     double out = 0.25 * p * (p - 1) * log(PI);
 
     for (j = 1; j <= p; j++)
@@ -123,17 +123,17 @@ double log_gamma_distrib(double a, double p)
 /* ======================================================================== */
 
 double log_wishart_prior(
-    int p,
-    int k,
+    size_t p,
+    size_t k,
     Wishart wishart,
     double const* sum_qs,
     double const* Qdiags,
     double const* icf
 )
 {
-    int ik;
-    int n = p + wishart.m + 1;
-    int icf_sz = p * (p + 1) / 2;
+    size_t ik;
+    size_t n = p + wishart.m + 1;
+    size_t icf_sz = p * (p + 1) / 2;
 
     double C = n * p * (log(wishart.gamma) - 0.5 * log(2)) - log_gamma_distrib(0.5 * n, p);
 
@@ -150,15 +150,15 @@ double log_wishart_prior(
 
 
 void preprocess_qs(
-    int d,
-    int k,
+    size_t d,
+    size_t k,
     double const* icf,
     double* sum_qs,
     double* Qdiags
 )
 {
-    int ik, id;
-    int icf_sz = d * (d + 1) / 2;
+    size_t ik, id;
+    size_t icf_sz = d * (d + 1) / 2;
     for (ik = 0; ik < k; ik++)
     {
         sum_qs[ik] = 0.;
@@ -174,14 +174,14 @@ void preprocess_qs(
 
 
 void Qtimesx(
-    int d,
+    size_t d,
     double const* Qdiag,
     double const* ltri, // strictly lower triangular part
     double const* x,
     double* out
 )
 {
-    int i, j;
+    size_t i, j;
     for (i = 0; i < d; i++)
     {
         out[i] = Qdiag[i] * x[i];
@@ -189,10 +189,10 @@ void Qtimesx(
 
     //caching lparams as scev doesn't replicate index calculation
     // todo note changing to strengthened form
-    //int Lparamsidx = 0;
+    //size_t Lparamsidx = 0;
     for (i = 0; i < d; i++)
     {
-    	int Lparamsidx = i*(2*d-i-1)/2;
+    	size_t Lparamsidx = i*(2*d-i-1)/2;
         for (j = i + 1; j < d; j++)
         {
             // and this x
@@ -202,16 +202,15 @@ void Qtimesx(
     }
 }
 
-void gmm_objective_restrict(int d, int k, int n,
+void gmm_objective_restrict(size_t d, size_t k, size_t n,
                             double const *__restrict alphas,
                             double const *__restrict means,
                             double const *__restrict icf,
                             double const *__restrict x, Wishart wishart,
                             double *__restrict err) {
-#define int int64_t
-    int ix, ik;
+    size_t ix, ik;
     const double CONSTANT = -n * d * 0.5 * log(2 * PI);
-    int icf_sz = d * (d + 1) / 2;
+    size_t icf_sz = d * (d + 1) / 2;
 
     double* Qdiags = (double*)malloc(d * k * sizeof(double));
     double* sum_qs = (double*)malloc(k * sizeof(double));
@@ -248,7 +247,6 @@ void gmm_objective_restrict(int d, int k, int n,
     free(xcentered);
     free(Qxcentered);
     free(main_term);
-    #undef int
 }
 
 extern int enzyme_const;
@@ -257,7 +255,7 @@ extern int enzyme_dupnoneed;
 void __enzyme_autodiff(...) noexcept;
 
 // *      tapenade -b -o gmm_tapenade -head "gmm_objective(err)/(alphas means icf)" gmm.c
-void dgmm_objective_restrict(int d, int k, int n, const double *alphas,
+void dgmm_objective_restrict(size_t d, size_t k, size_t n, const double *alphas,
                              double *alphasb, const double *means,
                              double *meansb, const double *icf, double *icfb,
                              const double *x, Wishart wishart, double *err,
@@ -285,8 +283,8 @@ extern "C" {
                                 UTILS
  ==================================================================== */
 // This throws error on n<1
-void arr_max_b(int n, const double *x, double *xb, double arr_maxb) {
-    int i;
+void arr_max_b(size_t n, const double *x, double *xb, double arr_maxb) {
+    size_t i;
     double m = x[0];
     double mb = 0.0;
     int branch;
@@ -312,8 +310,8 @@ void arr_max_b(int n, const double *x, double *xb, double arr_maxb) {
                                 UTILS
  ==================================================================== */
 // This throws error on n<1
-double arr_max_nodiff(int n, const double *x) {
-    int i;
+double arr_max_nodiff(size_t n, const double *x) {
+    size_t i;
     double m = x[0];
     for (i = 1; i < n; ++i)
         if (m < x[i])
@@ -328,8 +326,8 @@ double arr_max_nodiff(int n, const double *x) {
    Plus diff mem management of: x:in
 */
 // sum of component squares
-void sqnorm_b(int n, const double *x, double *xb, double sqnormb) {
-    int i;
+void sqnorm_b(size_t n, const double *x, double *xb, double sqnormb) {
+    size_t i;
     double res = x[0]*x[0];
     double resb = 0.0;
     double sqnorm;
@@ -340,8 +338,8 @@ void sqnorm_b(int n, const double *x, double *xb, double sqnormb) {
 }
 
 // sum of component squares
-double sqnorm_nodiff(int n, const double *x) {
-    int i;
+double sqnorm_nodiff(size_t n, const double *x) {
+    size_t i;
     double res = x[0]*x[0];
     for (i = 1; i < n; ++i)
         res = res + x[i]*x[i];
@@ -355,9 +353,9 @@ double sqnorm_nodiff(int n, const double *x) {
    Plus diff mem management of: out:in y:in
 */
 // out = a - b
-void subtract_b(int d, const double *x, const double *y, double *yb, double *
+void subtract_b(size_t d, const double *x, const double *y, double *yb, double *
         out, double *outb) {
-    int id;
+    size_t id;
     for (id = d-1; id > -1; --id) {
         yb[id] = yb[id] - outb[id];
         outb[id] = 0.0;
@@ -365,8 +363,8 @@ void subtract_b(int d, const double *x, const double *y, double *yb, double *
 }
 
 // out = a - b
-void subtract_nodiff(int d, const double *x, const double *y, double *out) {
-    int id;
+void subtract_nodiff(size_t d, const double *x, const double *y, double *out) {
+    size_t id;
     for (id = 0; id < d; ++id)
         out[id] = x[id] - y[id];
 }
@@ -377,8 +375,8 @@ void subtract_nodiff(int d, const double *x, const double *y, double *out) {
    with respect to varying inputs: *x
    Plus diff mem management of: x:in
 */
-void log_sum_exp_b(int n, const double *x, double *xb, double log_sum_expb) {
-    int i;
+void log_sum_exp_b(size_t n, const double *x, double *xb, double log_sum_expb) {
+    size_t i;
     double mx;
     double mxb;
     double tempb;
@@ -398,8 +396,8 @@ void log_sum_exp_b(int n, const double *x, double *xb, double log_sum_expb) {
     arr_max_b(n, x, xb, mxb);
 }
 
-double log_sum_exp_nodiff(int n, const double *x) {
-    int i;
+double log_sum_exp_nodiff(size_t n, const double *x) {
+    size_t i;
     double mx;
     mx = arr_max_nodiff(n, x);
     double semx = 0.0;
@@ -409,7 +407,7 @@ double log_sum_exp_nodiff(int n, const double *x) {
 }
 
 double log_gamma_distrib_nodiff(double a, double p) {
-    int j;
+    size_t j;
     /* TFIX */
     double out = 0.25*p*(p-1)*log(PI);
     double arg1;
@@ -431,12 +429,12 @@ double log_gamma_distrib_nodiff(double a, double p) {
  ========================================================================
                                 MAIN LOGIC
  ======================================================================== */
-void log_wishart_prior_b(int p, int k, Wishart wishart, const double *sum_qs,
+void log_wishart_prior_b(size_t p, size_t k, Wishart wishart, const double *sum_qs,
         double *sum_qsb, const double *Qdiags, double *Qdiagsb, const double *
         icf, double *icfb, double log_wishart_priorb) {
-    int ik;
-    int n = p + wishart.m + 1;
-    int icf_sz = p*(p+1)/2;
+    size_t ik;
+    size_t n = p + wishart.m + 1;
+    size_t icf_sz = p*(p+1)/2;
     double C;
     float arg1;
     double result1;
@@ -446,7 +444,7 @@ void log_wishart_prior_b(int p, int k, Wishart wishart, const double *sum_qs,
     for (ik = 0; ik < k; ++ik) {
         double frobenius;
         double result1;
-        int arg1;
+        size_t arg1;
         double result2;
     }
     outb = log_wishart_priorb;
@@ -461,7 +459,7 @@ void log_wishart_prior_b(int p, int k, Wishart wishart, const double *sum_qs,
         double frobeniusb;
         double result1;
         double result1b;
-        int arg1;
+        size_t arg1;
         double result2;
         double result2b;
         frobeniusb = wishart.gamma*wishart.gamma*0.5*outb;
@@ -478,11 +476,11 @@ void log_wishart_prior_b(int p, int k, Wishart wishart, const double *sum_qs,
 /* ========================================================================
                                 MAIN LOGIC
  ======================================================================== */
-double log_wishart_prior_nodiff(int p, int k, Wishart wishart, const double *
+double log_wishart_prior_nodiff(size_t p, size_t k, Wishart wishart, const double *
         sum_qs, const double *Qdiags, const double *icf) {
-    int ik;
-    int n = p + wishart.m + 1;
-    int icf_sz = p*(p+1)/2;
+    size_t ik;
+    size_t n = p + wishart.m + 1;
+    size_t icf_sz = p*(p+1)/2;
     double C;
     float arg1;
     double result1;
@@ -493,7 +491,7 @@ double log_wishart_prior_nodiff(int p, int k, Wishart wishart, const double *
     for (ik = 0; ik < k; ++ik) {
         double frobenius;
         double result1;
-        int arg1;
+        size_t arg1;
         double result2;
         result1 = sqnorm_nodiff(p, &(Qdiags[ik*p]));
         arg1 = icf_sz - p;
@@ -511,10 +509,10 @@ double log_wishart_prior_nodiff(int p, int k, Wishart wishart, const double *
    with respect to varying inputs: *icf
    Plus diff mem management of: Qdiags:in sum_qs:in icf:in
 */
-void preprocess_qs_b(int d, int k, const double *icf, double *icfb, double *
+void preprocess_qs_b(size_t d, size_t k, const double *icf, double *icfb, double *
         sum_qs, double *sum_qsb, double *Qdiags, double *Qdiagsb) {
-    int ik, id;
-    int icf_sz = d*(d+1)/2;
+    size_t ik, id;
+    size_t icf_sz = d*(d+1)/2;
     for (ik = 0; ik < k; ++ik)
         for (id = 0; id < d; ++id) {
             double q = icf[ik*icf_sz + id];
@@ -534,10 +532,10 @@ void preprocess_qs_b(int d, int k, const double *icf, double *icfb, double *
     }
 }
 
-void preprocess_qs_nodiff(int d, int k, const double *icf, double *sum_qs,
+void preprocess_qs_nodiff(size_t d, size_t k, const double *icf, double *sum_qs,
         double *Qdiags) {
-    int ik, id;
-    int icf_sz = d*(d+1)/2;
+    size_t ik, id;
+    size_t icf_sz = d*(d+1)/2;
     for (ik = 0; ik < k; ++ik) {
         sum_qs[ik] = 0.;
         for (id = 0; id < d; ++id) {
@@ -554,13 +552,13 @@ void preprocess_qs_nodiff(int d, int k, const double *icf, double *sum_qs,
    with respect to varying inputs: *out *Qdiag *x *ltri
    Plus diff mem management of: out:in Qdiag:in x:in ltri:in
 */
-void Qtimesx_b(int d, const double *Qdiag, double *Qdiagb, const double *ltri,
+void Qtimesx_b(size_t d, const double *Qdiag, double *Qdiagb, const double *ltri,
         double *ltrib, const double *x, double *xb, double *out, double *outb)
 {
     // strictly lower triangular part
-    int i, j;
+    size_t i, j;
     int adFrom;
-    int Lparamsidx = 0;
+    size_t Lparamsidx = 0;
     for (i = 0; i < d; ++i) {
         adFrom = i + 1;
         for (j = adFrom; j < d; ++j)
@@ -582,13 +580,13 @@ void Qtimesx_b(int d, const double *Qdiag, double *Qdiagb, const double *ltri,
     }
 }
 
-void Qtimesx_nodiff(int d, const double *Qdiag, const double *ltri, const
+void Qtimesx_nodiff(size_t d, const double *Qdiag, const double *ltri, const
         double *x, double *out) {
     // strictly lower triangular part
-    int i, j;
+    size_t i, j;
     for (i = 0; i < d; ++i)
         out[i] = Qdiag[i]*x[i];
-    int Lparamsidx = 0;
+    size_t Lparamsidx = 0;
     for (i = 0; i < d; ++i)
         for (j = i+1; j < d; ++j) {
             out[j] = out[j] + ltri[Lparamsidx]*x[i];
@@ -604,19 +602,19 @@ void Qtimesx_nodiff(int d, const double *Qdiag, const double *ltri, const
                 *alphas:out
    Plus diff mem management of: err:in means:in icf:in alphas:in
 */
-void gmm_objective_b(int d, int k, int n, const double *alphas, double *
+void gmm_objective_b(size_t d, size_t k, size_t n, const double *alphas, double *
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb) {
-    int ix, ik;
+    size_t ix, ik;
     /* TFIX */
     const double CONSTANT = -n*d*0.5*log(2*PI);
-    int icf_sz = d*(d+1)/2;
+    size_t icf_sz = d*(d+1)/2;
     double *Qdiags;
     double *Qdiagsb;
     double result1;
     double result1b;
-    int ii1;
+    size_t ii1;
     Qdiagsb = (double *)malloc(d*k*sizeof(double));
     for (ii1 = 0; ii1 < d*k; ++ii1)
         Qdiagsb[ii1] = 0.0;
@@ -718,32 +716,32 @@ namespace adeptTest {
 
     // out = a - b
 template<typename T1, typename T2, typename T3>
-void subtract(int d,
+void subtract(size_t d,
     const T1* const x,
     const T2* const y,
     T3* out)
 {
-    for (int id = 0; id < d; id++)
+    for (size_t id = 0; id < d; id++)
     {
         out[id] = x[id] - y[id];
     }
 }
 
 template<typename T>
-T sqnorm(int n, const T* const x)
+T sqnorm(size_t n, const T* const x)
 {
     T res = x[0] * x[0];
-    for (int i = 1; i < n; i++)
+    for (size_t i = 1; i < n; i++)
         res = res + x[i] * x[i];
     return res;
 }
 
 // This throws error on n<1
 template<typename T>
-T arr_max(int n, const T* const x)
+T arr_max(size_t n, const T* const x)
 {
     T m = x[0];
-    for (int i = 1; i < n; i++)
+    for (size_t i = 1; i < n; i++)
     {
         if (m < x[i])
             m = x[i];
@@ -752,12 +750,12 @@ T arr_max(int n, const T* const x)
 }
 
     template<typename T>
-void gmm_objective(int d, int k, int n, const T* const alphas, const T* const means,
+void gmm_objective(size_t d, size_t k, size_t n, const T* const alphas, const T* const means,
     const T* const icf, const double* const x, Wishart wishart, T* err);
 
 // split of the outer loop over points
 template<typename T>
-void gmm_objective_split_inner(int d, int k,
+void gmm_objective_split_inner(size_t d, size_t k,
     const T* const alphas,
     const T* const means,
     const T* const icf,
@@ -766,7 +764,7 @@ void gmm_objective_split_inner(int d, int k,
     T* err);
 // other terms which are outside the loop
 template<typename T>
-void gmm_objective_split_other(int d, int k, int n,
+void gmm_objective_split_other(size_t d, size_t k, size_t n,
     const T* const alphas,
     const T* const means,
     const T* const icf,
@@ -774,7 +772,7 @@ void gmm_objective_split_other(int d, int k, int n,
     T* err);
 
 template<typename T>
-T logsumexp(int n, const T* const x);
+T logsumexp(size_t n, const T* const x);
 
 // p: dim
 // k: number of components
@@ -783,20 +781,20 @@ T logsumexp(int n, const T* const x);
 // Qdiags: d*k
 // icf: (p*(p+1)/2)*k inverse covariance factors
 template<typename T>
-T log_wishart_prior(int p, int k,
+T log_wishart_prior(size_t p, size_t k,
     Wishart wishart,
     const T* const sum_qs,
     const T* const Qdiags,
     const T* const icf);
 
 template<typename T>
-void preprocess_qs(int d, int k,
+void preprocess_qs(size_t d, size_t k,
     const T* const icf,
     T* sum_qs,
     T* Qdiags);
 
 template<typename T>
-void Qtimesx(int d,
+void Qtimesx(size_t d,
     const T* const Qdiag,
     const T* const ltri, // strictly lower triangular part
     const T* const x,
@@ -807,11 +805,11 @@ void Qtimesx(int d,
 ////////////////////////////////////////////////////////////
 
 template<typename T>
-T logsumexp(int n, const T* const x)
+T logsumexp(size_t n, const T* const x)
 {
     T mx = arr_max(n, x);
     T semx = 0.;
-    for (int i = 0; i < n; i++)
+    for (size_t i = 0; i < n; i++)
     {
         semx = semx + exp(x[i] - mx);
     }
@@ -819,19 +817,19 @@ T logsumexp(int n, const T* const x)
 }
 
 template<typename T>
-T log_wishart_prior(int p, int k,
+T log_wishart_prior(size_t p, size_t k,
     Wishart wishart,
     const T* const sum_qs,
     const T* const Qdiags,
     const T* const icf)
 {
-    int n = p + wishart.m + 1;
-    int icf_sz = p * (p + 1) / 2;
+    size_t n = p + wishart.m + 1;
+    size_t icf_sz = p * (p + 1) / 2;
 
     double C = n * p * (log(wishart.gamma) - 0.5 * log(2)) - log_gamma_distrib(0.5 * n, p);
 
     T out = 0;
-    for (int ik = 0; ik < k; ik++)
+    for (size_t ik = 0; ik < k; ik++)
     {
         T frobenius = sqnorm(p, &Qdiags[ik * p]) + sqnorm(icf_sz - p, &icf[ik * icf_sz + p]);
         out = out + 0.5 * wishart.gamma * wishart.gamma * (frobenius)
@@ -842,16 +840,16 @@ T log_wishart_prior(int p, int k,
 }
 
 template<typename T>
-void preprocess_qs(int d, int k,
+void preprocess_qs(size_t d, size_t k,
     const T* const icf,
     T* sum_qs,
     T* Qdiags)
 {
-    int icf_sz = d * (d + 1) / 2;
-    for (int ik = 0; ik < k; ik++)
+    size_t icf_sz = d * (d + 1) / 2;
+    for (size_t ik = 0; ik < k; ik++)
     {
         sum_qs[ik] = 0.;
-        for (int id = 0; id < d; id++)
+        for (size_t id = 0; id < d; id++)
         {
             T q = icf[ik * icf_sz + id];
             sum_qs[ik] = sum_qs[ik] + q;
@@ -861,19 +859,19 @@ void preprocess_qs(int d, int k,
 }
 
 template<typename T>
-void Qtimesx(int d,
+void Qtimesx(size_t d,
     const T* const Qdiag,
     const T* const ltri, // strictly lower triangular part
     const T* const x,
     T* out)
 {
-    for (int id = 0; id < d; id++)
+    for (size_t id = 0; id < d; id++)
         out[id] = Qdiag[id] * x[id];
 
-    int Lparamsidx = 0;
-    for (int i = 0; i < d; i++)
+    size_t Lparamsidx = 0;
+    for (size_t i = 0; i < d; i++)
     {
-        for (int j = i + 1; j < d; j++)
+        for (size_t j = i + 1; j < d; j++)
         {
             out[j] = out[j] + ltri[Lparamsidx] * x[i];
             Lparamsidx++;
@@ -882,7 +880,7 @@ void Qtimesx(int d,
 }
 
 template<typename T>
-void gmm_objective(int d, int k, int n,
+void gmm_objective(size_t d, size_t k, size_t n,
     const T* const alphas,
     const T* const means,
     const T* const icf,
@@ -891,7 +889,7 @@ void gmm_objective(int d, int k, int n,
     T* err)
 {
     const double CONSTANT = -n * d * 0.5 * log(2 * PI);
-    int icf_sz = d * (d + 1) / 2;
+    size_t icf_sz = d * (d + 1) / 2;
 
     vector<T> Qdiags(d * k);
     vector<T> sum_qs(k);
@@ -902,9 +900,9 @@ void gmm_objective(int d, int k, int n,
     preprocess_qs(d, k, icf, &sum_qs[0], &Qdiags[0]);
 
     T slse = 0.;
-    for (int ix = 0; ix < n; ix++)
+    for (size_t ix = 0; ix < n; ix++)
     {
-        for (int ik = 0; ik < k; ik++)
+        for (size_t ik = 0; ik < k; ik++)
         {
             subtract(d, &x[ix * d], &means[ik * d], &xcentered[0]);
             Qtimesx(d, &Qdiags[ik * d], &icf[ik * icf_sz + d], &xcentered[0], &Qxcentered[0]);
@@ -922,7 +920,7 @@ void gmm_objective(int d, int k, int n,
 }
 
 template<typename T>
-void gmm_objective_split_inner(int d, int k,
+void gmm_objective_split_inner(size_t d, size_t k,
     const T* const alphas,
     const T* const means,
     const T* const icf,
@@ -930,39 +928,39 @@ void gmm_objective_split_inner(int d, int k,
     Wishart wishart,
     T* err)
 {
-    int icf_sz = d * (d + 1) / 2;
+    size_t icf_sz = d * (d + 1) / 2;
 
     T* Ldiag = new T[d];
     T* xcentered = new T[d];
     T* mahal = new T[d];
     T* lse = new T[k];
 
-    for (int ik = 0; ik < k; ik++)
+    for (size_t ik = 0; ik < k; ik++)
     {
-        int icf_off = ik * icf_sz;
+        size_t icf_off = ik * icf_sz;
         T sumlog_Ldiag(0.);
-        for (int id = 0; id < d; id++)
+        for (size_t id = 0; id < d; id++)
         {
             sumlog_Ldiag = sumlog_Ldiag + icf[icf_off + id];
             Ldiag[id] = exp(icf[icf_off + id]);
         }
 
-        for (int id = 0; id < d; id++)
+        for (size_t id = 0; id < d; id++)
         {
             xcentered[id] = x[id] - means[ik * d + id];
             mahal[id] = Ldiag[id] * xcentered[id];
         }
-        int Lparamsidx = d;
-        for (int i = 0; i < d; i++)
+        size_t Lparamsidx = d;
+        for (size_t i = 0; i < d; i++)
         {
-            for (int j = i + 1; j < d; j++)
+            for (size_t j = i + 1; j < d; j++)
             {
                 mahal[j] = mahal[j] + icf[icf_off + Lparamsidx] * xcentered[i];
                 Lparamsidx++;
             }
         }
         T sqsum_mahal(0.);
-        for (int id = 0; id < d; id++)
+        for (size_t id = 0; id < d; id++)
         {
             sqsum_mahal = sqsum_mahal + mahal[id] * mahal[id];
         }
@@ -979,7 +977,7 @@ void gmm_objective_split_inner(int d, int k,
 }
 
 template<typename T>
-void gmm_objective_split_other(int d, int k, int n,
+void gmm_objective_split_other(size_t d, size_t k, size_t n,
     const T* const alphas,
     const T* const means,
     const T* const icf,
@@ -1000,14 +998,14 @@ void gmm_objective_split_other(int d, int k, int n,
 
 };
 
-void adept_dgmm_objective(int d, int k, int n, const double *alphas, double *
+void adept_dgmm_objective(size_t d, size_t k, size_t n, const double *alphas, double *
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb) {
 
-  int icf_sz = d*(d + 1) / 2;
-  int Jrows = 1;
-  int Jcols = (k*(d + 1)*(d + 2)) / 2;
+  size_t icf_sz = d*(d + 1) / 2;
+  size_t Jrows = 1;
+  size_t Jcols = (k*(d + 1)*(d + 2)) / 2;
 
   adept::Stack stack;
   adouble *aalphas = new adouble[k];
