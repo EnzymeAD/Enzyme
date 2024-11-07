@@ -225,3 +225,5 @@ install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
 if (ENZYME_MLIR)
     add_subdirectory(MLIR)
 endif()
+
+add_subdirectory(Runtimes/FPRT)

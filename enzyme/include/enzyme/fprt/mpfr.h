@@ -70,6 +70,37 @@ typedef struct __enzyme_fp {
   mpfr_t result;
 } __enzyme_fp;
 
+#ifdef ENZYME_ENABLE_GARBAGE_COLLECTION
+
+void enzyme_fprt_gc_dump_status();
+double enzyme_fprt_gc_mark_seen(double a);
+void enzyme_fprt_gc_doit();
+
+__ENZYME_MPFR_ATTRIBUTES
+double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
+                               int64_t mode, const char *loc);
+
+__ENZYME_MPFR_ATTRIBUTES
+double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
+                               int64_t mode, const char *loc);
+
+__ENZYME_MPFR_ATTRIBUTES
+double __enzyme_fprt_64_52_const(double _a, int64_t exponent,
+                                 int64_t significand, int64_t mode,
+                                 const char *loc);
+
+__ENZYME_MPFR_ATTRIBUTES
+__enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
+                                                  int64_t significand,
+                                                  int64_t mode,
+                                                  const char *loc);
+
+__ENZYME_MPFR_ATTRIBUTES
+void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
+                                int64_t mode, const char *loc);
+
+#else
+
 __ENZYME_MPFR_ATTRIBUTES
 double __enzyme_fprt_64_52_get(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
@@ -109,6 +140,14 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
   return a;
 }
 
+__ENZYME_MPFR_ATTRIBUTES
+void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
+                                int64_t mode, const char *loc) {
+  free(__enzyme_fprt_double_to_ptr(a));
+}
+
+#endif
+
 // Handle the case where people zero out memory and expect the floating
 // point numbers there to be zero.
 __ENZYME_MPFR_ATTRIBUTES
@@ -128,12 +167,6 @@ __enzyme_fp *__enzyme_fprt_double_to_ptr_checked(double d, int64_t exponent,
                                                  const char *loc) {
   d = __enzyme_fprt_64_52_check_zero(d, exponent, significand, mode, loc);
   return __enzyme_fprt_double_to_ptr(d);
-}
-
-__ENZYME_MPFR_ATTRIBUTES
-void __enzyme_fprt_64_52_delete(double a, int64_t exponent, int64_t significand,
-                                int64_t mode, const char *loc) {
-  free(__enzyme_fprt_double_to_ptr(a));
 }
 
 #define __ENZYME_MPFR_SINGOP(OP_TYPE, LLVM_OP_NAME, MPFR_FUNC_NAME, FROM_TYPE, \
