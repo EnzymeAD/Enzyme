@@ -3898,12 +3898,14 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     return;
   }
 
-  case Intrinsic::nvvm_ldu_global_i:
-  case Intrinsic::nvvm_ldu_global_p:
-  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
   case Intrinsic::nvvm_ldg_global_i:
   case Intrinsic::nvvm_ldg_global_p:
-  case Intrinsic::nvvm_ldg_global_f: {
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f: {
     auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
 

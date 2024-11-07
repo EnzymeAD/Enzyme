@@ -3360,7 +3360,13 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
   };
 
-  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR >= 20
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
+                            ThinOrFullLTOPhase)
+#else
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
+#endif
+  {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
 
     if (!EnzymeEnable)
@@ -3643,7 +3649,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     LPM.addPass(LoopDeletionPass());
     // FIXME: Add loop interchange.
 
+#if LLVM_VERSION_MAJOR >= 20
+    loadPass(MPM, Level, ThinOrFullLTOPhase::None);
+#else
     loadPass(MPM, Level);
+#endif
   };
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }

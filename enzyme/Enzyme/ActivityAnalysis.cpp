@@ -1442,20 +1442,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
     if (auto LI = dyn_cast<LoadInst>(TmpOrig))
       return isConstantValue(TR, LI->getPointerOperand());
-    if (isa<IntrinsicInst>(TmpOrig) &&
-        (cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldu_global_i ||
-         cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldu_global_p ||
-         cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldu_global_f ||
-         cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldg_global_i ||
-         cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldg_global_p ||
-         cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-             Intrinsic::nvvm_ldg_global_f))
+    if (isNVLoad(TmpOrig)) {
       return isConstantValue(TR, cast<Instruction>(TmpOrig)->getOperand(0));
+    }
 
     if (TmpOrig == Val)
       return false;
@@ -1547,19 +1536,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                 TmpOrig);
           }
         }
-      } else if (isa<IntrinsicInst>(TmpOrig) &&
-                 (cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_i ||
-                  cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_p ||
-                  cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_f ||
-                  cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_i ||
-                  cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_p ||
-                  cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_f)) {
+      } else if (isNVLoad(TmpOrig)) {
         auto II = cast<IntrinsicInst>(TmpOrig);
         if (directions == UP) {
           if (isConstantValue(TR, II->getOperand(0))) {
@@ -1950,19 +1927,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
-        if (isa<LoadInst>(I) || (isa<IntrinsicInst>(I) &&
-                                 (cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldu_global_i ||
-                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldu_global_p ||
-                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldu_global_f ||
-                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldg_global_i ||
-                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldg_global_p ||
-                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
-                                      Intrinsic::nvvm_ldg_global_f))) {
+        if (isa<LoadInst>(I) || isNVLoad(I)) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {

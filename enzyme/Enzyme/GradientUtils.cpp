@@ -3904,15 +3904,9 @@ bool GradientUtils::legalRecompute(const Value *val,
   if (auto li = dyn_cast<Instruction>(val)) {
 
     const IntrinsicInst *II;
-    if (isa<LoadInst>(li) ||
+    if (isa<LoadInst>(li) || isNVLoad(li) ||
         ((II = dyn_cast<IntrinsicInst>(li)) &&
-         (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
-          II->getIntrinsicID() == Intrinsic::masked_load))) {
+         (II->getIntrinsicID() == Intrinsic::masked_load))) {
       // If this is an already unwrapped value, legal to recompute again.
       if (unwrappedLoads.find(li) != unwrappedLoads.end())
         return legalRecompute(unwrappedLoads.find(li)->second, available,
@@ -4174,7 +4168,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
-    if (!op->mayReadOrWriteMemory() || isReadNone(op))
+    if (!op->mayReadOrWriteMemory() || isReadNone(op) || isNVLoad(op))
       return true;
     switch (op->getIntrinsicID()) {
     case Intrinsic::sin:
@@ -4186,12 +4180,6 @@ bool GradientUtils::shouldRecompute(const Value *val,
     case Intrinsic::sinh:
 #endif
     case Intrinsic::log:
-    case Intrinsic::nvvm_ldu_global_i:
-    case Intrinsic::nvvm_ldu_global_p:
-    case Intrinsic::nvvm_ldu_global_f:
-    case Intrinsic::nvvm_ldg_global_i:
-    case Intrinsic::nvvm_ldg_global_p:
-    case Intrinsic::nvvm_ldg_global_f:
       return true;
     default:
       return false;
@@ -6109,12 +6097,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     switch (II->getIntrinsicID()) {
     default:
       goto end;
-    case Intrinsic::nvvm_ldu_global_i:
-    case Intrinsic::nvvm_ldu_global_p:
-    case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:
-    case Intrinsic::nvvm_ldg_global_f: {
+    case Intrinsic::nvvm_ldg_global_f:
+#endif
+    case Intrinsic::nvvm_ldu_global_i:
+    case Intrinsic::nvvm_ldu_global_p:
+    case Intrinsic::nvvm_ldu_global_f: {
       return applyChainRule(
           II->getType(), bb,
           [&](Value *ptr) {
@@ -6388,19 +6378,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   bool reduceRegister = false;
 
   if (EnzymeRegisterReduce) {
-    if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-      switch (II->getIntrinsicID()) {
-      case Intrinsic::nvvm_ldu_global_i:
-      case Intrinsic::nvvm_ldu_global_p:
-      case Intrinsic::nvvm_ldu_global_f:
-      case Intrinsic::nvvm_ldg_global_i:
-      case Intrinsic::nvvm_ldg_global_p:
-      case Intrinsic::nvvm_ldg_global_f:
-        reduceRegister = true;
-        break;
-      default:
-        break;
-      }
+    if (isNVLoad(inst)) {
+      reduceRegister = true;
     }
     if (auto LI = dyn_cast<LoadInst>(inst)) {
       auto Arch =
@@ -9526,17 +9505,11 @@ bool GradientUtils::needsCacheWholeAllocation(
       continue;
     seen.insert(pair);
     // Loads are always fine
-    if (isa<LoadInst>(cur))
+    if (isa<LoadInst>(cur) || isNVLoad(cur))
       continue;
 
     if (auto II = dyn_cast<IntrinsicInst>(cur))
-      if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
-          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
-          II->getIntrinsicID() == Intrinsic::masked_load)
+      if (II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
     bool returnedSameValue = false;

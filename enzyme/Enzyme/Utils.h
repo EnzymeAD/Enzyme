@@ -2095,4 +2095,7 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::ArrayRef<llvm::Value *> Args,
                                     llvm::Instruction *FMFSource = nullptr,
                                     const llvm::Twine &Name = "");
+
+bool isNVLoad(const llvm::Value *V);
+
 #endif // ENZYME_UTILS_H

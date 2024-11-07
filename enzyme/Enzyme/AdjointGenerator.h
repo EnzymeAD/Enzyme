@@ -3725,12 +3725,14 @@ public:
     Module *M = I.getParent()->getParent()->getParent();
 
     switch (ID) {
-    case Intrinsic::nvvm_ldu_global_i:
-    case Intrinsic::nvvm_ldu_global_p:
-    case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:
-    case Intrinsic::nvvm_ldg_global_f: {
+    case Intrinsic::nvvm_ldg_global_f:
+#endif
+    case Intrinsic::nvvm_ldu_global_i:
+    case Intrinsic::nvvm_ldu_global_p:
+    case Intrinsic::nvvm_ldu_global_f: {
       auto CI = cast<ConstantInt>(I.getOperand(1));
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()),
                     /*constantval*/ false);

@@ -422,21 +422,14 @@ struct CacheAnalysis {
         continue;
       for (auto &inst : B) {
         // For each load instruction, determine if it is uncacheable.
-        if (auto op = dyn_cast<LoadInst>(&inst)) {
-          can_modref_map[op] = is_load_uncacheable(*op);
-        }
-        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+        if (isa<LoadInst>(&inst)) {
+          can_modref_map[&inst] = is_load_uncacheable(inst);
+        } else if (isNVLoad(&inst)) {
+          can_modref_map[&inst] = false;
+        } else if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
           switch (II->getIntrinsicID()) {
-          case Intrinsic::nvvm_ldu_global_i:
-          case Intrinsic::nvvm_ldu_global_p:
-          case Intrinsic::nvvm_ldu_global_f:
-          case Intrinsic::nvvm_ldg_global_i:
-          case Intrinsic::nvvm_ldg_global_p:
-          case Intrinsic::nvvm_ldg_global_f:
-            can_modref_map[II] = false;
-            break;
           case Intrinsic::masked_load:
-            can_modref_map[II] = is_load_uncacheable(*II);
+            can_modref_map[&inst] = is_load_uncacheable(inst);
             break;
           default:
             break;
@@ -5364,19 +5357,10 @@ public:
                             llvm::SmallVectorImpl<llvm::Value *> &orig_ops) {
     using namespace llvm;
 
-    switch (ID) {
-    case Intrinsic::nvvm_ldu_global_i:
-    case Intrinsic::nvvm_ldu_global_p:
-    case Intrinsic::nvvm_ldu_global_f:
-    case Intrinsic::nvvm_ldg_global_i:
-    case Intrinsic::nvvm_ldg_global_p:
-    case Intrinsic::nvvm_ldg_global_f: {
+    if (isNVLoad(&I)) {
       auto CI = cast<ConstantInt>(I.getOperand(1));
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()));
       return true;
-    }
-    default:
-      break;
     }
 
     if (ID == Intrinsic::masked_store) {
