@@ -949,17 +949,8 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
         auto next = (*mp.begin()).V;
         bool noncapture = false;
-        if (isa<LoadInst>(next)) {
+        if (isa<LoadInst>(next) || isNVLoad(next)) {
           noncapture = true;
-        } else if (auto II = dyn_cast<IntrinsicInst>(next)) {
-          if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
-              II->getIntrinsicID() == Intrinsic::masked_load)
-            noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
           for (size_t i = 0; i < CI->arg_size(); i++) {

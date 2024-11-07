@@ -3790,3 +3790,23 @@ void dumpBlock(llvm::BasicBlock *blk) { llvm::errs() << *blk << "\n"; }
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
 
 void dumpTypeResults(TypeResults &TR) { TR.dump(); }
+
+bool isNVLoad(const llvm::Value *V) {
+  auto II = dyn_cast<IntrinsicInst>(V);
+  if (!II)
+    return false;
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
+  case Intrinsic::nvvm_ldg_global_i:
+  case Intrinsic::nvvm_ldg_global_p:
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+    return true;
+  default:
+    return false;
+  }
+  return false;
+}
