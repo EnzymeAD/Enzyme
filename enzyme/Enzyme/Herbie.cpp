@@ -826,14 +826,27 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   Value *newI = nullptr;
 
   if (isa<UnaryOperator>(I) || isa<BinaryOperator>(I)) {
-    // llvm::errs() << "PT Changing: " << *I << " to " << *newType << "\n";
     SmallVector<Value *, 2> newOps;
     for (auto &operand : I->operands()) {
       Value *newOp = nullptr;
       if (oldToNew.count(operand)) {
         newOp = oldToNew[operand];
       } else {
-        newOp = Builder.CreateFPCast(operand, newType, "fpopt.fpcast");
+        if (Instruction *opInst = dyn_cast<Instruction>(operand)) {
+          IRBuilder<> OpBuilder(opInst->getParent(),
+                                ++BasicBlock::iterator(opInst));
+          OpBuilder.setFastMathFlags(I->getFastMathFlags());
+          newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
+        } else if (Argument *argOp = dyn_cast<Argument>(operand)) {
+          BasicBlock &entry = argOp->getParent()->getEntryBlock();
+          IRBuilder<> OpBuilder(&*entry.getFirstInsertionPt());
+          OpBuilder.setFastMathFlags(I->getFastMathFlags());
+          newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
+        } else if (Constant *constOp = dyn_cast<Constant>(operand)) {
+          newOp = ConstantExpr::getFPCast(constOp, newType);
+        } else {
+          llvm_unreachable("Unsupported operand type");
+        }
         oldToNew[operand] = newOp;
       }
       newOps.push_back(newOp);
@@ -846,7 +859,21 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       if (oldToNew.count(arg)) {
         newArg = oldToNew[arg];
       } else {
-        newArg = Builder.CreateFPCast(arg, newType, "fpopt.fpcast");
+        if (Instruction *argInst = dyn_cast<Instruction>(arg)) {
+          IRBuilder<> ArgBuilder(argInst->getParent(),
+                                 ++BasicBlock::iterator(argInst));
+          ArgBuilder.setFastMathFlags(I->getFastMathFlags());
+          newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
+        } else if (Argument *argArg = dyn_cast<Argument>(arg)) {
+          BasicBlock &entry = argArg->getParent()->getEntryBlock();
+          IRBuilder<> ArgBuilder(&*entry.getFirstInsertionPt());
+          ArgBuilder.setFastMathFlags(I->getFastMathFlags());
+          newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
+        } else if (Constant *constArg = dyn_cast<Constant>(arg)) {
+          newArg = ConstantExpr::getFPCast(constArg, newType);
+        } else {
+          llvm_unreachable("Unsupported argument type");
+        }
         oldToNew[arg] = newArg;
       }
       newArgs.push_back(newArg);
@@ -892,7 +919,6 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   }
 
   oldToNew[I] = newI;
-  // llvm::errs() << "PT Changing: " << *I << " to " << *newI << "\n";
 }
 
 struct PTCandidate {
