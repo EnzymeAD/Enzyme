@@ -635,6 +635,7 @@ cc_binary(
         "@llvm-project//mlir:ConversionPasses",
         "@llvm-project//mlir:DLTIDialect",
         "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:GPUDialect",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LinalgDialect",
