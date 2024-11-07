@@ -2461,7 +2461,7 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
 #endif
         }
-        if (Fn->getName().contains("strcmp")) {
+        if (getFuncName(Fn) == "strcmp") {
           Fn->addParamAttr(0, Attribute::ReadOnly);
           Fn->addParamAttr(1, Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
