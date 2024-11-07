@@ -139,7 +139,7 @@ static cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
                      cl::desc("Max precision for MPFR gold value computation"));
 static cl::opt<bool> FPOptEarlyPrune(
-    "fpopt-early-prune", cl::init(true), cl::Hidden,
+    "fpopt-early-prune", cl::init(false), cl::Hidden,
     cl::desc("Prune dominated candidates in expression transformation phases"));
 static cl::opt<double> FPOptCostDominanceThreshold(
     "fpopt-cost-dom-thres", cl::init(0.05), cl::Hidden,
@@ -2612,11 +2612,6 @@ public:
     Value *newOutput = parsedNode->getLLValue(builder);
     assert(newOutput && "Failed to get value from parsed node");
 
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Applying Herbie rewrite (#" << candidateIndex
-                   << "): " << expr << "\n --> "
-                   << candidates[candidateIndex].expr << "\n";
-
     oldOutput->replaceAllUsesWith(newOutput);
     symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
     valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
@@ -2754,8 +2749,6 @@ public:
     // topological order with respect to operand dependencies. Insert FP casts
     // between llvm::Value inputs and first level of instructions to be changed.
     // Restore precisions of the last level of instructions to be changed.
-    llvm::errs() << "Applying PT candidate #" << candidateIndex << ": "
-                 << candidates[candidateIndex].desc << "\n";
     candidates[candidateIndex].apply(*component);
   }
 
