@@ -83,7 +83,7 @@ static cl::opt<bool> FPOptEnableHerbie(
 static cl::opt<bool> FPOptEnablePT(
     "fpopt-enable-pt", cl::init(false), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
-static cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(16),
+static cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1),
                                      cl::Hidden,
                                      cl::desc("Number of threads Herbie uses"));
 static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
