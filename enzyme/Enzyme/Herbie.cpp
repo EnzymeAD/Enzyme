@@ -123,6 +123,10 @@ static cl::opt<bool> FPOptEnableSolver(
 static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
+static cl::opt<bool> FPOptShowTable(
+    "fpopt-show-table", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Print the full DP table (highly verbose for large applications)"));
 static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
@@ -3564,6 +3568,8 @@ bool accuracyDPSolver(
   SolutionMap costToSolutionMap;
   costToSolutionMap[0] = {};
 
+  int AOCounter = 0;
+
   for (auto &AO : AOs) {
     CostMap newCostToAccuracyMap;
     SolutionMap newCostToSolutionMap;
@@ -3654,7 +3660,12 @@ bool accuracyDPSolver(
 
     costToAccuracyMap.swap(prunedCostToAccuracyMap);
     costToSolutionMap.swap(prunedCostToSolutionMap);
+
+    llvm::errs() << "Finished processing " << AOCounter << " of " << AOs.size()
+                 << " AOs\n";
   }
+
+  int ACCCounter = 0;
 
   for (auto &ACC : ACCs) {
     CostMap newCostToAccuracyMap;
@@ -3742,38 +3753,41 @@ bool accuracyDPSolver(
 
     costToAccuracyMap.swap(prunedCostToAccuracyMap);
     costToSolutionMap.swap(prunedCostToSolutionMap);
+
+    llvm::errs() << "Finished processing " << ACCCounter << " of "
+                 << ACCs.size() << " ACCs\n";
   }
 
   if (EnzymePrintFPOpt) {
-    //   llvm::errs() << "\n*** DP Table ***\n";
-    //   for (const auto &pair : costToAccuracyMap) {
-    //     llvm::errs() << "Computation cost: " << pair.first
-    //                  << ", Accuracy cost: " << pair.second << "\n";
-    //     llvm::errs() << "\tSolution steps: \n";
-    //     for (const auto &step : costToSolutionMap[pair.first]) {
-    //       std::visit(
-    //           [&](auto *item) {
-    //             using T = std::decay_t<decltype(*item)>;
-    //             if constexpr (std::is_same_v<T, ApplicableOutput>) {
-    //               llvm::errs()
-    //                   << "\t\t" << item->expr << " --(" <<
-    //                   step.candidateIndex
-    //                   << ")-> " << item->candidates[step.candidateIndex].expr
-    //                   << "\n";
-    //             } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
-    //               llvm::errs()
-    //                   << "\t\tACC: " <<
-    //                   item->candidates[step.candidateIndex].desc
-    //                   << " (#" << step.candidateIndex << ")\n";
-    //             } else {
-    //               llvm_unreachable(
-    //                   "accuracyDPSolver: Unexpected type of solution step");
-    //             }
-    //           },
-    //           step.item);
-    //     }
-    //   }
-    //   llvm::errs() << "*** End of DP Table ***\n\n";
+    if (FPOptShowTable) {
+      llvm::errs() << "\n*** DP Table ***\n";
+      for (const auto &pair : costToAccuracyMap) {
+        llvm::errs() << "Computation cost: " << pair.first
+                     << ", Accuracy cost: " << pair.second << "\n";
+        llvm::errs() << "\tSolution steps: \n";
+        for (const auto &step : costToSolutionMap[pair.first]) {
+          std::visit(
+              [&](auto *item) {
+                using T = std::decay_t<decltype(*item)>;
+                if constexpr (std::is_same_v<T, ApplicableOutput>) {
+                  llvm::errs()
+                      << "\t\t" << item->expr << " --(" << step.candidateIndex
+                      << ")-> " << item->candidates[step.candidateIndex].expr
+                      << "\n";
+                } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+                  llvm::errs() << "\t\tACC: "
+                               << item->candidates[step.candidateIndex].desc
+                               << " (#" << step.candidateIndex << ")\n";
+                } else {
+                  llvm_unreachable(
+                      "accuracyDPSolver: Unexpected type of solution step");
+                }
+              },
+              step.item);
+        }
+      }
+      llvm::errs() << "*** End of DP Table ***\n\n";
+    }
     llvm::errs() << "*** Critical Computation Costs ***\n";
     // Just print all computation costs in the DP table
     for (const auto &pair : costToAccuracyMap) {
@@ -4230,6 +4244,8 @@ B2:
   SmallVector<ApplicableOutput, 4> AOs;
   SmallVector<ApplicableFPCC, 4> ACCs;
 
+  int componentCounter = 0;
+
   for (auto &component : connected_components) {
     assert(component.inputs.size() > 0 && "No inputs found for component");
     if (FPOptEnableHerbie) {
@@ -4427,6 +4443,9 @@ B2:
 
       ACCs.push_back(std::move(ACC));
     }
+    llvm::errs() << "Finished synthesizing candidates for "
+                 << componentCounter++ << " of " << connected_components.size()
+                 << " connected components\n";
   }
 
   // Perform rewrites
