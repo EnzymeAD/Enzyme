@@ -3618,6 +3618,8 @@ bool accuracyDPSolver(
       costToAccuracyMap.swap(newCostToAccuracyMap);
       costToSolutionMap.swap(newCostToSolutionMap);
 
+      llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
+                   << AOs.size() << " AOs #####\n";
       continue;
     }
 
@@ -3661,8 +3663,8 @@ bool accuracyDPSolver(
     costToAccuracyMap.swap(prunedCostToAccuracyMap);
     costToSolutionMap.swap(prunedCostToSolutionMap);
 
-    llvm::errs() << "Finished processing " << ++AOCounter << " of "
-                 << AOs.size() << " AOs\n";
+    llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
+                 << AOs.size() << " AOs #####\n";
   }
 
   int ACCCounter = 0;
@@ -3754,8 +3756,8 @@ bool accuracyDPSolver(
     costToAccuracyMap.swap(prunedCostToAccuracyMap);
     costToSolutionMap.swap(prunedCostToSolutionMap);
 
-    llvm::errs() << "Finished processing " << ++ACCCounter << " of "
-                 << ACCs.size() << " ACCs\n";
+    llvm::errs() << "##### Finished processing " << ++ACCCounter << " of "
+                 << ACCs.size() << " ACCs #####\n";
   }
 
   if (EnzymePrintFPOpt) {
@@ -4443,9 +4445,9 @@ B2:
 
       ACCs.push_back(std::move(ACC));
     }
-    llvm::errs() << "Finished synthesizing candidates for "
+    llvm::errs() << "##### Finished synthesizing candidates for "
                  << ++componentCounter << " of " << connected_components.size()
-                 << " connected components\n";
+                 << " connected components! #####\n";
   }
 
   // Perform rewrites
