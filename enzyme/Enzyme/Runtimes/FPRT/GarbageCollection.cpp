@@ -45,6 +45,7 @@ struct GCFloatTy {
   __enzyme_fp fp;
   bool seen;
   GCFloatTy() : seen(false) {}
+  ~GCFloatTy() {}
 };
 struct {
   std::list<GCFloatTy> all;
@@ -118,6 +119,7 @@ void enzyme_fprt_gc_doit() {
   for (auto it = __enzyme_mpfr_fps.all.begin();
        it != __enzyme_mpfr_fps.all.end();) {
     if (!it->seen) {
+      mpfr_clear(it->fp.result);
       it = __enzyme_mpfr_fps.all.erase(it);
     } else {
       ++it;
