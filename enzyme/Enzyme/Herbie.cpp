@@ -4327,6 +4327,10 @@ B2:
         newAOs.push_back(std::move(AO));
       }
 
+      if (herbieInputs.empty()) {
+        continue;
+      }
+
       if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
                             valueToNodeMap, symbolToValueMap)) {
         if (EnzymePrintHerbie)
