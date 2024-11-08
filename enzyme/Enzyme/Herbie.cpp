@@ -3165,7 +3165,7 @@ bool improveViaHerbie(
     BaseArgsList.push_back(BaseArgs);
   }
 
-  std::vector<std::unordered_set<std::string>> seenExprs;
+  std::vector<std::unordered_set<std::string>> seenExprs(AOs.size());
   bool success = false;
 
   for (const auto &BaseArgs : BaseArgsList) {
