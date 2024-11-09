@@ -211,9 +211,9 @@ int main(const int argc, const char* argv[]) {
     const auto replicate_point = (argc > 9 && string(argv[9]) == "-rep");
     const GMMParameters params = { replicate_point };
 
-    std::vector<std::string> paths;// = { "1k/gmm_d10_K100.txt" };
+    std::vector<std::string> paths = { "10k/gmm_d10_K200.txt" };
 
-    getTests(paths, "data/1k", "1k/");
+    //getTests(paths, "data/1k", "1k/");
     if (std::getenv("BENCH_LARGE")) {
       getTests(paths, "data/2.5k", "2.5k/");
       getTests(paths, "data/10k", "10k/");
