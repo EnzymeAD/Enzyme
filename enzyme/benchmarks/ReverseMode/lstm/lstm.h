@@ -17,9 +17,9 @@ extern "C" {
 //      state (2 * l * b)
 //      sequence (c * b)
 void lstm_objective(
-    size_t l,
-    size_t c,
-    size_t b,
+    int l,
+    int c,
+    int b,
     double const* main_params,
     double const* extra_params,
     double* state,
