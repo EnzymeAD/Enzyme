@@ -4600,8 +4600,8 @@ B2:
   }
 
   if (EnzymePrintFPOpt) {
-    llvm::errs() << "Finished fpOptimize\n";
-    F.print(llvm::errs());
+    llvm::errs() << "FPOpt: Finished Optimization\n";
+    // F.print(llvm::errs());
   }
 
   return changed;
