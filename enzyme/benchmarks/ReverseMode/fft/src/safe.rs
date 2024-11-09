@@ -6,8 +6,7 @@ fn bitreversal_perm<T>(data: &mut [T]) {
     let len = data.len() / 2;
     let mut j = 1;
 
-    let mut i = 1;
-    while i < 2 * len {
+    for i in (1..data.len()).step_by(2) {
         if j > i {
             //dbg!(&i, &j);
             //data.swap(j-1, i-1);
@@ -25,7 +24,6 @@ fn bitreversal_perm<T>(data: &mut [T]) {
         }
 
         j += m;
-        i += 2;
     }
 }
 
@@ -46,7 +44,6 @@ fn radix2(data: &mut [f64], i_sign: i32) {
     let mut wi = 0.0;
 
     for i in (0..n).step_by(2) {
-        
         let tempr = b[i] * wr - b[i + 1] * wi;
         let tempi = b[i] * wi + b[i + 1] * wr;
 
