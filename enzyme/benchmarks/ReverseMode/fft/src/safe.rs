@@ -14,8 +14,6 @@ fn bitreversal_perm<T>(data: &mut [T]) {
             //data.swap(j, i);
             unsafe {
                 data.swap_unchecked(j - 1, i - 1);
-            }
-            unsafe {
                 data.swap_unchecked(j, i);
             }
         }
@@ -48,23 +46,24 @@ fn radix2(data: &mut [f64], i_sign: i32) {
     let mut wi = 0.0;
 
     for i in (0..n).step_by(2) {
-        unsafe {
-          let tempr = b.get_unchecked(i) * wr - b.get_unchecked(i + 1) * wi;
-          let tempi = b.get_unchecked(i) * wi + b.get_unchecked(i + 1) * wr;
+        
+        let tempr = b[i] * wr - b[i + 1] * wi;
+        let tempi = b[i] * wi + b[i + 1] * wr;
 
-          *b.get_unchecked_mut(i) = a.get_unchecked(i) - tempr;
-          *b.get_unchecked_mut(i + 1) = a.get_unchecked(i + 1) - tempi;
-          *a.get_unchecked_mut(i) += tempr;
-          *a.get_unchecked_mut(i + 1) += tempi;
-        }
+        b[i] = a[i] - tempr;
+        b[i + 1] = a[i + 1] - tempi;
+        a[i] += tempr;
+        a[i + 1] += tempi;
 
-        //let tempr = b[i] * wr - b[i + 1] * wi;
-        //let tempi = b[i] * wi + b[i + 1] * wr;
+        //unsafe {
+        //  let tempr = b.get_unchecked(i) * wr - b.get_unchecked(i + 1) * wi;
+        //  let tempi = b.get_unchecked(i) * wi + b.get_unchecked(i + 1) * wr;
 
-        //b[i] = a[i] - tempr;
-        //b[i + 1] = a[i + 1] - tempi;
-        //a[i] += tempr;
-        //a[i + 1] += tempi;
+        //  *b.get_unchecked_mut(i) = a.get_unchecked(i) - tempr;
+        //  *b.get_unchecked_mut(i + 1) = a.get_unchecked(i + 1) - tempi;
+        //  *a.get_unchecked_mut(i) += tempr;
+        //  *a.get_unchecked_mut(i + 1) += tempi;
+        //}
 
         let wtemp_new = wr;
         wr += wr * wpr - wi * wpi;
