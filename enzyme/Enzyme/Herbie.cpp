@@ -3593,9 +3593,6 @@ bool accuracyDPSolver(
     newCostToAccuracyMap = costToAccuracyMap;
     newCostToSolutionMap = costToSolutionMap;
 
-    llvm::errs() << "DP table sizes: " << costToAccuracyMap.size() << " (Acc) "
-                 << costToSolutionMap.size() << " (Sol)\n";
-
     for (const auto &pair : costToAccuracyMap) {
       InstructionCost currCompCost = pair.first;
       double currAccCost = pair.second;
@@ -3639,6 +3636,8 @@ bool accuracyDPSolver(
 
       llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
                    << AOs.size() << " AOs #####\n";
+      llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                   << "\n";
       continue;
     }
 
@@ -3683,6 +3682,8 @@ bool accuracyDPSolver(
 
     llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
                  << AOs.size() << " AOs #####\n";
+    llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                 << "\n";
   }
 
   int ACCCounter = 0;
@@ -3694,8 +3695,6 @@ bool accuracyDPSolver(
     newCostToAccuracyMap = costToAccuracyMap;
     newCostToSolutionMap = costToSolutionMap;
 
-    llvm::errs() << "DP table sizes: " << costToAccuracyMap.size() << " (Acc) "
-                 << costToSolutionMap.size() << " (Sol)\n";
 
     for (const auto &pair : costToAccuracyMap) {
       InstructionCost currCompCost = pair.first;
@@ -3733,7 +3732,8 @@ bool accuracyDPSolver(
             // llvm::errs() << "ACC candidate " << i << " ("
             //              << candidate.value().desc
             //              << ") added; has accuracy cost: " << candAccCost
-            //              << " and computation cost: " << candCompCost << "\n";
+            //              << " and computation cost: " << candCompCost <<
+            //              "\n";
             // llvm::errs() << "Updating accuracy map (ACC candidate " << i
             //              << "): computation cost " << newCompCost
             //              << " -> accuracy cost " << newAccCost << "\n";
@@ -3783,6 +3783,8 @@ bool accuracyDPSolver(
 
     llvm::errs() << "##### Finished processing " << ++ACCCounter << " of "
                  << ACCs.size() << " ACCs #####\n";
+    llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                 << "\n";
   }
 
   if (EnzymePrintFPOpt) {
