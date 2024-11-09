@@ -8,9 +8,9 @@ fn sigmoid(x: f64) -> f64 {
 
 // log(sum(exp(x), 2))
 #[inline]
-fn logsumexp(vect: &[f64]) -> f64 {
+fn logsumexp(vect: &mut [f64]) -> f64 {
     let mut sum = 0.0;
-    for &val in vect {
+    for &mut val in vect {
         sum += val.exp();
     }
     sum += 2.0; // Adding 2 to sum
@@ -25,7 +25,7 @@ fn lstm_model(
     bias: &[f64],
     hidden: &mut [f64],
     cell: &mut [f64],
-    input: &[f64],
+    input: &mut [f64],
 ) {
     let mut gates = vec![0.0; 4 * hsize];
     let gates = &mut gates[..4 * hsize];
@@ -59,10 +59,10 @@ fn lstm_model(
 fn lstm_predict(
     l: usize,
     b: usize,
-    w: &[f64],
-    w2: &[f64],
+    w: &mut [f64],
+    w2: &mut [f64],
     s: &mut [f64],
-    x: &[f64],
+    x: &mut [f64],
     x2: &mut [f64],
 ) {
     for i in 0..b {
@@ -85,8 +85,8 @@ fn lstm_predict(
 
         lstm_model(
             b,
-            &w[i * 4..(i + b) * 4],
-            &w[(i + b) * 4..(i + 2 * b) * 4],
+            & w[i * 4..(i + b) * 4],
+            & w[(i + b) * 4..(i + 2 * b) * 4],
             s1,
             s2,
             xp,
@@ -95,7 +95,7 @@ fn lstm_predict(
         i += 2 * b;
     }
 
-    let xp = &s[i - 2 * b..];
+    let xp = &mut s[i - 2 * b..];
 
     for i in 0..b {
         x2[i] = xp[i] * w2[b + i] + w2[2 * b + i];
@@ -119,15 +119,15 @@ pub(crate) fn lstm_objective(
     l: usize,
     c: usize,
     b: usize,
-    main_params: &[f64],
-    extra_params: &[f64],
+    main_params: &mut [f64],
+    extra_params: &mut [f64],
     state: &mut [f64],
-    sequence: &[f64],
+    sequence: &mut [f64],
     loss: &mut f64,
 ) {
     let mut total = 0.0;
 
-    let mut input = &sequence[..b];
+    let mut input = &mut sequence[..b];
     let mut ypred = vec![0.0; b];
     let mut ynorm = vec![0.0; b];
 
@@ -137,12 +137,12 @@ pub(crate) fn lstm_objective(
     for j in 0..(c - 1) {
         let t = j * b;
         lstm_predict(l, b, main_params, extra_params, state, input, &mut ypred);
-        let lse = logsumexp(&ypred);
+        let lse = logsumexp(&mut ypred);
         for i in 0..b {
             ynorm[i] = ypred[i] - lse;
         }
 
-        let ygold = &sequence[t + b..];
+        let ygold = &mut sequence[t + b..];
         for i in 0..b {
             total += ygold[i] * ynorm[i];
         }
@@ -159,18 +159,18 @@ pub extern "C" fn rust_lstm_objective(
     l: usize,
     c: usize,
     b: usize,
-    main_params: *const f64,
-    extra_params: *const f64,
+    main_params: *mut f64,
+    extra_params: *mut f64,
     state: *mut f64,
-    sequence: *const f64,
+    sequence: *mut f64,
     loss: *mut f64,
 ) {
     let (main_params, extra_params, state, sequence) = unsafe {
         (
-            slice::from_raw_parts(main_params, 2 * l * 4 * b),
-            slice::from_raw_parts(extra_params, 3 * b),
+            slice::from_raw_parts_mut(main_params, 2 * l * 4 * b),
+            slice::from_raw_parts_mut(extra_params, 3 * b),
             slice::from_raw_parts_mut(state, 2 * l * b),
-            slice::from_raw_parts(sequence, c * b),
+            slice::from_raw_parts_mut(sequence, c * b),
         )
     };
 
@@ -193,23 +193,23 @@ pub extern "C" fn rust_dlstm_objective(
     l: usize,
     c: usize,
     b: usize,
-    main_params: *const f64,
+    main_params: *mut f64,
     d_main_params: *mut f64,
-    extra_params: *const f64,
+    extra_params: *mut f64,
     d_extra_params: *mut f64,
     state: *mut f64,
-    sequence: *const f64,
+    sequence: *mut f64,
     res: *mut f64,
     d_res: *mut f64,
 ) {
     let (main_params, d_main_params, extra_params, d_extra_params, state, sequence) = unsafe {
         (
-            slice::from_raw_parts(main_params, 2 * l * 4 * b),
+            slice::from_raw_parts_mut(main_params, 2 * l * 4 * b),
             slice::from_raw_parts_mut(d_main_params, 2 * l * 4 * b),
-            slice::from_raw_parts(extra_params, 3 * b),
+            slice::from_raw_parts_mut(extra_params, 3 * b),
             slice::from_raw_parts_mut(d_extra_params, 3 * b),
             slice::from_raw_parts_mut(state, 2 * l * b),
-            slice::from_raw_parts(sequence, c * b),
+            slice::from_raw_parts_mut(sequence, c * b),
         )
     };
 

@@ -243,7 +243,8 @@ double calculate_safe_primal(struct LSTMInput &input) {
 int main(const int argc, const char* argv[]) {
     printf("starting main\n");
 
-    std::vector<std::string> paths = { "lstm_l2_c1024.txt", "lstm_l4_c1024.txt", "lstm_l2_c4096.txt", "lstm_l4_c4096.txt" };
+    //std::vector<std::string> paths = { "lstm_l2_c1024.txt", "lstm_l4_c1024.txt", "lstm_l2_c4096.txt", "lstm_l4_c4096.txt" };
+    std::vector<std::string> paths = { "lstm_l4_c4096.txt" };
     
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
     json test_results;
