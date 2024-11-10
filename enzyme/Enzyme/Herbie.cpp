@@ -89,6 +89,9 @@ static cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1),
 static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
                                   cl::desc("Herbie's timeout to use for each "
                                            "candidate expressions."));
+static cl::opt<std::string>
+    FPOptCachePath("fpopt-cache-path", cl::init(""), cl::Hidden,
+                   cl::desc("Experimental: path to cache Herbie results"));
 static cl::opt<int>
     HerbieNumPoints("herbie-num-pts", cl::init(1024), cl::Hidden,
                     cl::desc("Number of input points Herbie uses to evaluate "
@@ -3103,7 +3106,8 @@ bool improveViaHerbie(
     std::vector<ApplicableOutput> &AOs, Module *M,
     const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    int componentIndex) {
   std::string Program = HERBIE_BINARY;
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
 
@@ -3170,7 +3174,111 @@ bool improveViaHerbie(
   std::vector<std::unordered_set<std::string>> seenExprs(AOs.size());
   bool success = false;
 
-  for (const auto &BaseArgs : BaseArgsList) {
+  for (size_t baseArgsIndex = 0; baseArgsIndex < BaseArgsList.size();
+       ++baseArgsIndex) {
+    const auto &BaseArgs = BaseArgsList[baseArgsIndex];
+    std::string content;
+    bool cached = false;
+    std::string cacheFilePath;
+
+    if (!FPOptCachePath.empty()) {
+      cacheFilePath = FPOptCachePath + "/cachedHerbieOutput_" +
+                      std::to_string(componentIndex) + "_" +
+                      std::to_string(baseArgsIndex) + ".txt";
+      std::ifstream cacheFile(cacheFilePath);
+      if (cacheFile) {
+        content.assign((std::istreambuf_iterator<char>(cacheFile)),
+                       std::istreambuf_iterator<char>());
+        cacheFile.close();
+        llvm::errs() << "Using cached Herbie output from " << cacheFilePath
+                     << "\n";
+        cached = true;
+      }
+    }
+
+    if (cached) {
+      llvm::errs() << "Herbie output: " << content << "\n";
+
+      Expected<json::Value> parsed = json::parse(content);
+      if (!parsed) {
+        llvm::errs() << "Failed to parse Herbie result!\n";
+        continue;
+      }
+
+      json::Object *obj = parsed->getAsObject();
+      json::Array &tests = *obj->getArray("tests");
+
+      assert(tests.size() == AOs.size() &&
+             "improveViaHerbie: Size mismatch between number of tests and AOs");
+
+      for (size_t i = 0; i < tests.size(); ++i) {
+        auto &test = *tests[i].getAsObject();
+
+        StringRef bestExpr = test.getString("output").getValue();
+
+        if (bestExpr == "#f") {
+          continue;
+        }
+
+        double bits = test.getNumber("bits").getValue();
+        json::Array &costAccuracy = *test.getArray("cost-accuracy");
+
+        json::Array &initial = *costAccuracy[0].getAsArray();
+        double initialCostVal = initial[0].getAsNumber().getValue();
+        double initialCost = 1.0;
+        double initialAccuracy =
+            1.0 - initial[1].getAsNumber().getValue() / bits;
+
+        ApplicableOutput &AO = AOs[i];
+
+        AO.initialHerbieCost = initialCost;
+        AO.initialHerbieAccuracy = initialAccuracy;
+
+        if (seenExprs[i].count(bestExpr.str()) == 0) {
+          seenExprs[i].insert(bestExpr.str());
+
+          json::Array &best = *costAccuracy[1].getAsArray();
+          double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
+          double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+
+          RewriteCandidate bestCandidate(bestCost, bestAccuracy,
+                                         bestExpr.str());
+          bestCandidate.CompCost = getCompCost(
+              bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+              cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+          AO.candidates.push_back(bestCandidate);
+        }
+
+        json::Array &alternatives = *costAccuracy[2].getAsArray();
+
+        // Handle alternatives
+        for (size_t j = 0; j < alternatives.size(); ++j) {
+          json::Array &entry = *alternatives[j].getAsArray();
+          StringRef expr = entry[2].getAsString().getValue();
+
+          if (seenExprs[i].count(expr.str()) != 0) {
+            continue;
+          }
+          seenExprs[i].insert(expr.str());
+
+          double cost = entry[0].getAsNumber().getValue() / initialCostVal;
+          double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
+
+          RewriteCandidate candidate(cost, accuracy, expr.str());
+          candidate.CompCost =
+              getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                          cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+          AO.candidates.push_back(candidate);
+        }
+
+        setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
+
+        success = true;
+      }
+
+      continue;
+    }
+
     SmallString<32> tmpin, tmpout;
 
     if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
@@ -3231,12 +3339,25 @@ bool improveViaHerbie(
       llvm::sys::fs::remove(tmpout);
       continue;
     }
-    std::string content((std::istreambuf_iterator<char>(output)),
-                        std::istreambuf_iterator<char>());
+    content.assign((std::istreambuf_iterator<char>(output)),
+                   std::istreambuf_iterator<char>());
     output.close();
     llvm::sys::fs::remove(tmpout.c_str());
 
     llvm::errs() << "Herbie output: " << content << "\n";
+
+    if (!FPOptCachePath.empty()) {
+      llvm::sys::fs::create_directories(FPOptCachePath, true);
+      std::ofstream cacheFile(cacheFilePath);
+      if (!cacheFile) {
+        llvm_unreachable("Failed to open cache file for writing");
+      } else {
+        cacheFile << content;
+        cacheFile.close();
+        llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
+                     << "\n";
+      }
+    }
 
     Expected<json::Value> parsed = json::parse(content);
     if (!parsed) {
@@ -3694,7 +3815,6 @@ bool accuracyDPSolver(
     // and solution steps remain the same.
     newCostToAccuracyMap = costToAccuracyMap;
     newCostToSolutionMap = costToSolutionMap;
-
 
     for (const auto &pair : costToAccuracyMap) {
       InstructionCost currCompCost = pair.first;
@@ -4350,7 +4470,8 @@ B2:
       }
 
       if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
-                            valueToNodeMap, symbolToValueMap)) {
+                            valueToNodeMap, symbolToValueMap,
+                            componentCounter)) {
         if (EnzymePrintHerbie)
           llvm::errs() << "Failed to optimize expressions using Herbie!\n";
       }
