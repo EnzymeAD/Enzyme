@@ -2284,10 +2284,10 @@ InstructionCost computeMaxCost(
 
     auto instCost = getInstructionCompCost(&I, TTI);
 
-    if (EnzymePrintFPOpt)
-      // llvm::errs() << "Cost of " << I << " is: " << instCost << "\n";
+    // if (EnzymePrintFPOpt)
+    // llvm::errs() << "Cost of " << I << " is: " << instCost << "\n";
 
-      BBCost += instCost;
+    BBCost += instCost;
   }
 
   InstructionCost succCost = 0;
@@ -4465,19 +4465,17 @@ B2:
         newAOs.push_back(std::move(AO));
       }
 
-      if (herbieInputs.empty()) {
-        continue;
-      }
+      if (!herbieInputs.empty()) {
+        if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
+                              valueToNodeMap, symbolToValueMap,
+                              componentCounter)) {
+          if (EnzymePrintHerbie)
+            llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+        }
 
-      if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
-                            valueToNodeMap, symbolToValueMap,
-                            componentCounter)) {
-        if (EnzymePrintHerbie)
-          llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+        AOs.insert(AOs.end(), std::make_move_iterator(newAOs.begin()),
+                   std::make_move_iterator(newAOs.end()));
       }
-
-      AOs.insert(AOs.end(), std::make_move_iterator(newAOs.begin()),
-                 std::make_move_iterator(newAOs.end()));
     }
 
     if (FPOptEnablePT) {
