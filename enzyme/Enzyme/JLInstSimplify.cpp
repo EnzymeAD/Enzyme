@@ -197,6 +197,31 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           changed = true;
           continue;
         }
+
+        {
+          bool noalias_from_capture = false;
+          for (int i = 0; i < 2; i++) {
+            Value *start = (i == 0) ? lhs : rhs;
+            Value *end = (i == 0) ? rhs : lhs;
+            if (isNoAlias(start)) {
+              if (auto endi = dyn_cast<Instruction>(end)) {
+                if (notCapturedBefore(start, endi)) {
+                  noalias_from_capture = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (noalias_from_capture) {
+            auto repval = ICmpInst::isTrueWhenEqual(pred)
+                              ? ConstantInt::get(I.getType(), 0)
+                              : ConstantInt::get(I.getType(), 1);
+            I.replaceAllUsesWith(repval);
+            changed = true;
+            continue;
+          }
+        }
+
         auto llhs = dyn_cast<LoadInst>(lhs);
         auto lrhs = dyn_cast<LoadInst>(rhs);
         if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&
