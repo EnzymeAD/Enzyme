@@ -1221,6 +1221,12 @@ public:
       res = (nodePrec == PrecisionChangeType::FP32)
                 ? std::fabs(static_cast<float>(op))
                 : std::fabs(op);
+    } else if (node->op == "hypot") {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      res = (nodePrec == PrecisionChangeType::FP32)
+                ? std::hypot(static_cast<float>(op0), static_cast<float>(op1))
+                : std::hypot(op0, op1);
     } else if (node->op == "fma") {
       double op0 = getResult(node->operands[0].get());
       double op1 = getResult(node->operands[1].get());
