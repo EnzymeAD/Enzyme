@@ -78,5 +78,25 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "x64-linux-clang-debug",
+            "displayName": "Clang x64 Linux Debug",
+            "description": "Builds the project using Clang on Linux in Debug mode.",
+            "configurePreset": "x64-linux-clang-debug"
+        },
+        {
+            "name": "x64-linux-clang-release",
+            "displayName": "Clang x64 Linux Release",
+            "description": "Builds the project using Clang on Linux in Release mode.",
+            "configurePreset": "x64-linux-clang-release"
+        },
+        {
+            "name": "x64-linux-clang-release-with-debug-info",
+            "displayName": "Clang x64 Linux Release with Debug Info",
+            "description": "Builds the project using Clang on Linux in Release mode with debug info.",
+            "configurePreset": "x64-linux-clang-release-with-debug-info"
+        }
     ]
 }
