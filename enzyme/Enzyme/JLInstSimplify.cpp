@@ -122,6 +122,10 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
       if (isa<CmpInst>(UI)) {
         continue;
       }
+      if (isa<SelectInst>(UI) || isa<PHINode>(UI)) {
+        todo.push_back(UI);
+        continue;
+      }
       if (isa<LoadInst>(UI)) {
         todo.push_back(UI);
         continue;
@@ -159,7 +163,22 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
       bool legal = false;
       ICmpInst::Predicate pred;
-      if (auto cmp = dyn_cast<ICmpInst>(&I)) {
+      if (auto LI = dyn_cast<LoadInst>(&I)) {
+        size_t offset = 0;
+        auto obj = getBaseObject(LI->getPointerOperand(),
+                                 /*offsetAllowed=*/true, &offset);
+        if (auto CI = dyn_cast<CallBase>(obj)) {
+          if (getFuncNameFromCall(CI) == "jl_alloc_genericmemory") {
+            if (offset == 0) {
+              // Size
+              LI->replaceAllUsesWith(CI->getArgOperand(1));
+            } else if (offset ==
+                       F.getParent()->getDataLayout().getIndexSize(0) * 1) {
+              // Underlying data pointer
+            }
+          }
+        }
+      } else if (auto cmp = dyn_cast<ICmpInst>(&I)) {
         pred = cmp->getPredicate();
         legal = true;
       } else if (auto CI = dyn_cast<CallBase>(&I)) {
@@ -224,8 +243,11 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 
         auto llhs = dyn_cast<LoadInst>(lhs);
         auto lrhs = dyn_cast<LoadInst>(rhs);
-        if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&
-            isa<PointerType>(lrhs->getType())) {
+        if (llhs && lrhs &&
+            (isa<PointerType>(llhs->getType()) ||
+             isa<IntegerType>(llhs->getType())) &&
+            (isa<PointerType>(lrhs->getType()) ||
+             isa<IntegerType>(lrhs->getType()))) {
           auto lhsv =
               getBaseObject(llhs->getOperand(0), /*offsetAllowed*/ false);
           auto rhsv =

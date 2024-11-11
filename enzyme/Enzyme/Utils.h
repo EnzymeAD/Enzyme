@@ -1387,19 +1387,39 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
 }
 
 static inline llvm::Value *getBaseObject(llvm::Value *V,
-                                         bool offsetAllowed = true) {
+                                         bool offsetAllowed = true,
+                                         size_t *offset = nullptr) {
+  if (offset)
+    *offset = 0;
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
       V = CI->getOperand(0);
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
-      if (offsetAllowed || CI->hasAllZeroIndices()) {
+      if (CI->hasAllZeroIndices()) {
+        V = CI->getOperand(0);
+        continue;
+      }
+      if (offsetAllowed) {
+        if (offset) {
+          llvm::APInt ai(8 * sizeof(size_t), 0);
+          if (CI->accumulateConstantOffset(
+                  CI->getParent()->getParent()->getParent()->getDataLayout(),
+                  ai)) {
+            *offset += ai.getLimitedValue();
+          } else {
+            break;
+          }
+        }
         V = CI->getOperand(0);
         continue;
       }
     } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
                II && isIntelSubscriptIntrinsic(*II)) {
       if (offsetAllowed) {
+        if (offset) {
+          break;
+        }
         V = II->getOperand(3);
         continue;
       }
@@ -1422,7 +1442,8 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       auto funcName = getFuncNameFromCall(Call);
       auto AttrList = Call->getAttributes().getAttributes(
           llvm::AttributeList::FunctionIndex);
-      if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
+      if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed &&
+          !offset) {
         size_t res = 0;
         bool failed = AttrList.getAttribute("enzyme_pointermath")
                           .getValueAsString()
@@ -1458,7 +1479,8 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       if (auto fn = getFunctionFromCall(Call)) {
         auto AttrList = fn->getAttributes().getAttributes(
             llvm::AttributeList::FunctionIndex);
-        if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed) {
+        if (AttrList.hasAttribute("enzyme_pointermath") && offsetAllowed &&
+            !offset) {
           size_t res = 0;
           bool failed = AttrList.getAttribute("enzyme_pointermath")
                             .getValueAsString()
@@ -1488,7 +1510,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
-      if (offsetAllowed)
+      if (offsetAllowed && !offset)
         if (auto *RP =
                 llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
           V = RP;
@@ -1496,7 +1518,7 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         }
     }
 
-    if (offsetAllowed)
+    if (offsetAllowed && !offset)
       if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
 #if LLVM_VERSION_MAJOR >= 12
         auto V2 = llvm::getUnderlyingObject(I, 100);
