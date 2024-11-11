@@ -3490,7 +3490,7 @@ struct ValueInfo {
   SmallVector<double, 2> upper;
 };
 
-void extractValueFromLog(const std::string &logPath,
+bool extractValueFromLog(const std::string &logPath,
                          const std::string &functionName, size_t blockIdx,
                          size_t instIdx, ValueInfo &data) {
   std::ifstream file(logPath);
@@ -3544,7 +3544,7 @@ void extractValueFromLog(const std::string &logPath,
       while (getline(file, line)) {
         if (std::regex_search(line, newEntryPattern)) {
           // All operands have been extracted
-          return;
+          return true;
         }
 
         std::smatch rangeMatch;
@@ -3560,7 +3560,8 @@ void extractValueFromLog(const std::string &logPath,
       "Failed to extract value info for: Function: " + functionName +
       ", BlockIdx: " + std::to_string(blockIdx) +
       ", InstIdx: " + std::to_string(instIdx);
-  llvm_unreachable(error.c_str());
+
+  return false;
 }
 
 bool extractGradFromLog(const std::string &logPath,
@@ -4183,6 +4184,28 @@ B2:
         continue;
       }
 
+      if (!FPOptLogPath.empty()) {
+        auto node = valueToNodeMap[&I];
+        ValueInfo valueInfo;
+        auto blockIt = std::find_if(
+            I.getFunction()->begin(), I.getFunction()->end(),
+            [&](const auto &block) { return &block == I.getParent(); });
+        assert(blockIt != I.getFunction()->end() && "Block not found");
+        size_t blockIdx = std::distance(I.getFunction()->begin(), blockIt);
+        auto instIt =
+            std::find_if(I.getParent()->begin(), I.getParent()->end(),
+                         [&](const auto &curr) { return &curr == &I; });
+        assert(instIt != I.getParent()->end() && "Instruction not found");
+        size_t instIdx = std::distance(I.getParent()->begin(), instIt);
+
+        bool found = extractValueFromLog(FPOptLogPath, functionName, blockIdx,
+                                         instIdx, valueInfo);
+        if (!found) {
+          llvm::errs() << "Instruction " << I << " has no execution logged!\n";
+          continue;
+        }
+      }
+
       if (EnzymePrintFPOpt)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
 
@@ -4327,7 +4350,7 @@ B2:
 
         if (!FPOptLogPath.empty()) {
           for (auto &CC : newCCs) {
-            // Extract grad and value info for all outputs.
+            // Extract grad and value info for all instructions.
             for (auto &op : CC.operations) {
               double grad = 0;
               auto blockIt = std::find_if(
