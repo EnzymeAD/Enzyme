@@ -36,7 +36,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#define ENZYME_ENABLE_GARBAGE_COLLECTION
+#define ENZYME_FPRT_ENABLE_GARBAGE_COLLECTION
 
 #include <enzyme/fprt/fprt.h>
 #include <enzyme/fprt/mpfr.h>
@@ -63,8 +63,6 @@ double __enzyme_fprt_64_52_new(double _a, int64_t exponent, int64_t significand,
                                int64_t mode, const char *loc) {
   __enzyme_mpfr_fps.all.push_back({});
   __enzyme_fp *a = &__enzyme_mpfr_fps.all.back().fp;
-  if (!a)
-    exit(__ENZYME_MPFR_MALLOC_FAILURE_EXIT_STATUS);
   mpfr_init2(a->result, significand);
   mpfr_set_d(a->result, _a, __ENZYME_MPFR_DEFAULT_ROUNDING_MODE);
   return __enzyme_fprt_ptr_to_double(a);
@@ -84,8 +82,6 @@ __enzyme_fp *__enzyme_fprt_64_52_new_intermediate(int64_t exponent,
                                                   const char *loc) {
   __enzyme_mpfr_fps.all.push_back({});
   __enzyme_fp *a = &__enzyme_mpfr_fps.all.back().fp;
-  if (!a)
-    exit(__ENZYME_MPFR_MALLOC_FAILURE_EXIT_STATUS);
   mpfr_init2(a->result, significand);
   return a;
 }
