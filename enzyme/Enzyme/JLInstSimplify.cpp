@@ -97,10 +97,13 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
         if (inst->comesBefore(UI))
           continue;
 
+      if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        todo.push_back(UI);
+        continue;
+      }
+
       if (auto CI = dyn_cast<CallBase>(UI)) {
-        auto fname = getFuncNameFromCall(CI);
-        if (fname == "julia.pointer_from_objref")
-          continue;
 #if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 0, size = CI->arg_size(); i < size; i++)
 #else
@@ -119,7 +122,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
       if (isa<CmpInst>(UI)) {
         continue;
       }
-      if (isa<CastInst, GetElementPtrInst, LoadInst, PHINode>(UI)) {
+      if (isa<LoadInst>(UI)) {
         todo.push_back(UI);
         continue;
       }
@@ -194,6 +197,31 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           changed = true;
           continue;
         }
+
+        {
+          bool noalias_from_capture = false;
+          for (int i = 0; i < 2; i++) {
+            Value *start = (i == 0) ? lhs : rhs;
+            Value *end = (i == 0) ? rhs : lhs;
+            if (isNoAlias(start)) {
+              if (auto endi = dyn_cast<Instruction>(end)) {
+                if (notCapturedBefore(start, endi)) {
+                  noalias_from_capture = true;
+                  break;
+                }
+              }
+            }
+          }
+          if (noalias_from_capture) {
+            auto repval = ICmpInst::isTrueWhenEqual(pred)
+                              ? ConstantInt::get(I.getType(), 0)
+                              : ConstantInt::get(I.getType(), 1);
+            I.replaceAllUsesWith(repval);
+            changed = true;
+            continue;
+          }
+        }
+
         auto llhs = dyn_cast<LoadInst>(lhs);
         auto lrhs = dyn_cast<LoadInst>(rhs);
         if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&

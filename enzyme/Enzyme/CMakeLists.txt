@@ -48,7 +48,6 @@ list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Herbie.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
 # set(ENZYME_LINK_TARGETS)
@@ -190,15 +189,8 @@ add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
-set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
-if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
-    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
-endif()
-
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-if (${LLVM_VERSION_MAJOR} GREATER 14)
-    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-endif()
+target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 
 add_library(LLDEnzymeAssumeUnknownNoFree INTERFACE)
 target_link_options(LLDEnzymeAssumeUnknownNoFree INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-assume-unknown-nofree=1")
@@ -236,20 +228,18 @@ install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
 
 if (${Clang_FOUND})
 install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
 endif()
 install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib
-    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
 
 if (ENZYME_MLIR)

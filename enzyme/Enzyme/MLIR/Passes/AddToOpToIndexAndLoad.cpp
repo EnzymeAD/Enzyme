@@ -76,12 +76,12 @@ struct AddToOpToIndexAndLoadPass
       cacheBuilder.setInsertionPoint(terminator);
 
       // Is it a fine assumption that all indexing maps are the same?
-      for (int i = 0; i < map[0].getNumDims(); i++) {
+      for (size_t i = 0; i < map[0].getNumDims(); i++) {
         indices.push_back(cacheBuilder.create<linalg::IndexOp>(loc, i));
       }
 
       SmallVector<Value> rets;
-      for (int i = 0; i < retargs.size(); i++) {
+      for (size_t i = 0; i < retargs.size(); i++) {
         // auto load = cacheBuilder.create<AffineLoadOp>(loc, inputs[i], map[i],
         // indices); auto store = cacheBuilder.create<AffineStoreOp>(loc, load,
         // inputs[i], map[i], indices);
@@ -95,7 +95,7 @@ struct AddToOpToIndexAndLoadPass
                                              mapAppliedIndices);
       }
 
-      for (int i = 0; i < retargs.size(); i++) {
+      for (size_t i = 0; i < retargs.size(); i++) {
         SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
         auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],

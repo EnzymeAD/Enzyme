@@ -108,19 +108,20 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"__nv_drcp_rn", Intrinsic::not_intrinsic},
     {"__nv_drcp_ru", Intrinsic::not_intrinsic},
     {"__nv_drcp_rz", Intrinsic::not_intrinsic},
-    {"__nv_isnand", Intrinsic::not_intrinsic},
-    {"__nv_isnanf", Intrinsic::not_intrinsic},
-    {"__nv_isinfd", Intrinsic::not_intrinsic},
-    {"__nv_isinff", Intrinsic::not_intrinsic},
-    {"__nv_acos", Intrinsic::not_intrinsic},
     {"asin", Intrinsic::not_intrinsic},
     {"__nv_asin", Intrinsic::not_intrinsic},
     {"atan", Intrinsic::not_intrinsic},
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"cosh", Intrinsic::cosh},
+    {"sinh", Intrinsic::sinh},
+    {"tanh", Intrinsic::tanh},
+#else
     {"cosh", Intrinsic::not_intrinsic},
     {"sinh", Intrinsic::not_intrinsic},
     {"tanh", Intrinsic::not_intrinsic},
+#endif
     {"acosh", Intrinsic::not_intrinsic},
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
@@ -1220,7 +1221,19 @@ void TypeAnalyzer::considerTBAA() {
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
       if (auto MD = I.getMetadata("enzyme_type")) {
-        updateAnalysis(&I, TypeTree::fromMD(MD), &I);
+        auto TT = TypeTree::fromMD(MD);
+
+        auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+        for (const auto &pair : TT.getMapping()) {
+          if (pair.first[0] != -1) {
+            if ((size_t)pair.first[0] >= RegSize) {
+              llvm::errs() << " bad enzyme_type " << TT.str()
+                           << " RegSize=" << RegSize << " I:" << I << "\n";
+              llvm::report_fatal_error("Canonicalization failed");
+            }
+          }
+        }
+        updateAnalysis(&I, TT, &I);
       }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
@@ -1236,6 +1249,19 @@ void TypeAnalyzer::considerTBAA() {
               AttributeList::ReturnIndex, "enzyme_type");
           auto TT =
               TypeTree::parse(attr.getValueAsString(), call->getContext());
+
+          auto RegSize = I.getType()->isVoidTy()
+                             ? 0
+                             : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+          for (const auto &pair : TT.getMapping()) {
+            if (pair.first[0] != -1) {
+              if ((size_t)pair.first[0] >= RegSize) {
+                llvm::errs() << " bad enzyme_type " << TT.str()
+                             << " RegSize=" << RegSize << " I:" << I << "\n";
+                llvm::report_fatal_error("Canonicalization failed");
+              }
+            }
+          }
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1243,6 +1269,18 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1256,6 +1294,18 @@ void TypeAnalyzer::considerTBAA() {
                 AttributeList::ReturnIndex, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1264,6 +1314,19 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
+              auto RegSize = I.getType()->isVoidTy()
+                                 ? 0
+                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+              for (const auto &pair : TT.getMapping()) {
+                if (pair.first[0] != -1) {
+                  if ((size_t)pair.first[0] >= RegSize) {
+                    llvm::errs()
+                        << " bad enzyme_type " << TT.str()
+                        << " RegSize=" << RegSize << " I:" << I << "\n";
+                    llvm::report_fatal_error("Canonicalization failed");
+                  }
+                }
+              }
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
@@ -1340,10 +1403,19 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {
-              "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
-              "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
-              "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
+          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
+                                         "jl_alloc_array_1d",
+                                         "jl_alloc_array_2d",
+                                         "jl_alloc_array_3d",
+                                         "ijl_alloc_array_1d",
+                                         "ijl_alloc_array_2d",
+                                         "ijl_alloc_array_3d",
+                                         "jl_gc_alloc_typed",
+                                         "ijl_gc_alloc_typed",
+                                         "jl_alloc_genericmemory",
+                                         "ijl_alloc_genericmemory",
+                                         "jl_new_array",
+                                         "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;
@@ -1916,7 +1988,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   APInt constOffset(BitWidth, 0);
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
@@ -3822,12 +3898,14 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     return;
   }
 
-  case Intrinsic::nvvm_ldu_global_i:
-  case Intrinsic::nvvm_ldu_global_p:
-  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
   case Intrinsic::nvvm_ldg_global_i:
   case Intrinsic::nvvm_ldg_global_p:
-  case Intrinsic::nvvm_ldg_global_f: {
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f: {
     auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
 
@@ -3849,6 +3927,11 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+#endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
@@ -4756,6 +4839,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "julia.gc_loaded") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
+      return;
+    }
+    if (funcName == "julia.pointer_from_objref") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
+      return;
+    }
     if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
@@ -5111,6 +5208,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
       }
       updateAnalysis(&call, ptr.Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "__size_returning_new_experiment") {
+      auto ptr = TypeTree(BaseType::Pointer);
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      ptr = ptr.Only(0, &call);
+      ptr |= TypeTree(BaseType::Integer).Only(DL.getPointerSize(), &call);
+      updateAnalysis(&call, ptr.Only(0, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;

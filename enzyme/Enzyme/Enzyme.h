@@ -24,12 +24,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef ENZYME_H
+#define ENZYME_H
+
 #include "llvm/Pass.h"
-#if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Passes/PassBuilder.h"
-#endif
 
 llvm::ModulePass *createEnzymePass(bool PostOpt = false);
-#if LLVM_VERSION_MAJOR >= 12
 void augmentPassBuilder(llvm::PassBuilder &PB);
-#endif
+
+#endif // ENZYME_H

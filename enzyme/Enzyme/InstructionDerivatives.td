@@ -414,6 +414,13 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["__nv_fast_expf"],
+                  [(FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) )],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["exp10"],
                   [(FMul (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))],
                   (ForwardFromSummedReverse),
@@ -547,6 +554,17 @@ def : CallPattern<(Op $x, $y),
                         (ConstantFP<"0"> $x),
                         (FMul (FDiv $x, $y), (DiffeRet))
                     )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["tgamma"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -863,6 +881,24 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   ],
                   (CFDiv (CFNeg (Shadow $z)), (CFMul $z, $z)),
                   [ReadNone, NoUnwind]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["tanh", "19", ""]],
+                  [(FDiv (DiffeRet), (FMul(Intrinsic<"cosh"> $x):$c, $c))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sinh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"cosh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["cosh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"sinh"> $x))],
+                  (ForwardFromSummedReverse)
                   >;
 
 def : IntrPattern<(Op $x),

@@ -11,9 +11,9 @@ jobs:
       fail-fast: false
       matrix:
         # BCLoad tests only run with old pass manager [aka up to and including 13]
-        llvm: ["11", "12", "13"]
+        llvm: ["15"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
 
     timeout-minutes: 30
     steps:
@@ -23,10 +23,6 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev
           sudo python3 -m pip install --upgrade pip lit
-          if [[ '${{ matrix.llvm }}' == '13' ]]; then
-            sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-            sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-          fi
     - uses: actions/checkout@v4
     - name: mkdir
       run: cd enzyme && rm -rf build && mkdir build

@@ -20,23 +20,14 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
                         const std::vector<bool> &returnPrimals,
                         const std::vector<bool> &returnShadows,
                         llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
-                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity,
-                        llvm::ArrayRef<int64_t> batchSizes) {
+                        llvm::ArrayRef<DIFFE_TYPE> ArgActivity) {
 
   SmallVector<mlir::Type, 4> RetTypes;
 
   for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
            FTy.getResults(), returnPrimals, returnShadows, ReturnActivity)) {
     if (returnPrimal) {
-      if (batchSizes.size()) {
-        auto T = cast<TensorType>(Ty);
-        SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-        shape.append(T.getShape().begin(), T.getShape().end());
-        auto T2 = T.clone(shape);
-        RetTypes.push_back(T2);
-      } else {
-        RetTypes.push_back(Ty);
-      }
+      RetTypes.push_back(Ty);
     }
     if (returnShadow) {
       assert(activity != DIFFE_TYPE::CONSTANT);
@@ -48,15 +39,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
   SmallVector<mlir::Type, 4> ArgTypes;
 
   for (auto &&[ITy, act] : llvm::zip(FTy.getInputs(), ArgActivity)) {
-    if (batchSizes.size()) {
-      auto T = cast<TensorType>(ITy);
-      SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-      shape.append(T.getShape().begin(), T.getShape().end());
-      auto T2 = T.clone(shape);
-      ArgTypes.push_back(T2);
-    } else {
-      ArgTypes.push_back(ITy);
-    }
+    ArgTypes.push_back(ITy);
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(getShadowType(ITy, width));
     } else if (act == DIFFE_TYPE::OUT_DIFF) {
@@ -81,8 +64,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
 
 Operation *clone(Operation *src, IRMapping &mapper,
                  Operation::CloneOptions options,
-                 std::map<Operation *, Operation *> &opMap,
-                 llvm::ArrayRef<int64_t> batchSizes) {
+                 std::map<Operation *, Operation *> &opMap) {
   SmallVector<Value, 8> operands;
   SmallVector<Block *, 2> successors;
 
@@ -101,22 +83,9 @@ Operation *clone(Operation *src, IRMapping &mapper,
   // Create the new operation.
   Operation *newOp = nullptr;
 
-  if (batchSizes.size())
-    if (auto ifaceOp = dyn_cast<BatchOpInterface>(src)) {
-      newOp = ifaceOp.createBatch(mapper, options, opMap, batchSizes);
-    }
-
   if (!newOp) {
     SmallVector<Type> resultTypes(src->getResultTypes().begin(),
                                   src->getResultTypes().end());
-    if (batchSizes.size()) {
-      for (auto &Ty : resultTypes) {
-        auto T = cast<TensorType>(Ty);
-        SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-        shape.append(T.getShape().begin(), T.getShape().end());
-        Ty = T.clone(shape);
-      }
-    }
     newOp = Operation::create(
         src->getLoc(), src->getName(), resultTypes, operands, src->getAttrs(),
         OpaqueProperties(nullptr), successors, src->getNumRegions());
@@ -124,8 +93,7 @@ Operation *clone(Operation *src, IRMapping &mapper,
     // Clone the regions.
     if (options.shouldCloneRegions()) {
       for (unsigned i = 0; i != src->getNumRegions(); ++i)
-        cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap,
-                  batchSizes);
+        cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap);
     }
   }
 
@@ -138,15 +106,13 @@ Operation *clone(Operation *src, IRMapping &mapper,
 }
 
 void cloneInto(Region *src, Region *dest, IRMapping &mapper,
-               std::map<Operation *, Operation *> &opMap,
-               llvm::ArrayRef<int64_t> batchSizes) {
-  cloneInto(src, dest, dest->end(), mapper, opMap, batchSizes);
+               std::map<Operation *, Operation *> &opMap) {
+  cloneInto(src, dest, dest->end(), mapper, opMap);
 }
 
 /// Clone this region into 'dest' before the given position in 'dest'.
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               IRMapping &mapper, std::map<Operation *, Operation *> &opMap,
-               llvm::ArrayRef<int64_t> batchSizes) {
+               IRMapping &mapper, std::map<Operation *, Operation *> &opMap) {
   assert(src);
   assert(dest && "expected valid region to clone into");
   assert(src != dest && "cannot clone region into itself");
@@ -177,12 +143,6 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
     for (auto arg : block.getArguments())
       if (!mapper.contains(arg)) {
         auto Ty = arg.getType();
-        if (batchSizes.size()) {
-          auto T = cast<TensorType>(Ty);
-          SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-          shape.append(T.getShape().begin(), T.getShape().end());
-          Ty = T.clone(shape);
-        }
         mapper.map(arg, newBlock->addArgument(Ty, arg.getLoc()));
       }
 
@@ -205,8 +165,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
     Block &clonedBlock = std::get<1>(zippedBlocks);
     // Clone and remap the operations within this block.
     for (Operation &op : sourceBlock) {
-      clonedBlock.push_back(
-          clone(&op, mapper, cloneOptions, opMap, batchSizes));
+      clonedBlock.push_back(clone(&op, mapper, cloneOptions, opMap));
     }
   }
 
@@ -226,8 +185,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
       clone.setOperands(operands);
 
       for (auto regions : llvm::zip(source.getRegions(), clone.getRegions()))
-        cloneInto(&std::get<0>(regions), &std::get<1>(regions), mapper, opMap,
-                  batchSizes);
+        cloneInto(&std::get<0>(regions), &std::get<1>(regions), mapper, opMap);
     }
   }
 }
@@ -241,14 +199,13 @@ FunctionOpInterface CloneFunctionWithReturns(
     const std::vector<bool> &returnPrimals,
     const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
     Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
-    mlir::Type additionalArg, llvm::ArrayRef<int64_t> batchSizes) {
+    mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
       F.getFunctionType().cast<mlir::FunctionType>(), mode, width,
-      additionalArg, returnPrimals, returnShadows, RetActivity, ArgActivity,
-      batchSizes);
+      additionalArg, returnPrimals, returnShadows, RetActivity, ArgActivity);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -271,8 +228,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
-  cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap,
-            batchSizes);
+  cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
 
   {
     auto &blk = NewF.getFunctionBody().front();
@@ -296,12 +252,12 @@ FunctionOpInterface CloneFunctionWithReturns(
         ptrInputs.map(oval, dval);
       }
     }
+    auto retloc = blk.getTerminator()->getLoc();
     for (auto &&[Ty, activity] :
          llvm::zip(F.getFunctionType().cast<mlir::FunctionType>().getResults(),
                    RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
-        auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
-        blk.addArgument(getShadowType(Ty, width), location);
+        blk.addArgument(getShadowType(Ty, width), retloc);
       }
     }
   }

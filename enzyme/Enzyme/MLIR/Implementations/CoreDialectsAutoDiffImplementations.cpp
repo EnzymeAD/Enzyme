@@ -381,16 +381,19 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // table.
   SmallVector<Value> reps;
   size_t idx = 0;
-  for (Value r : op->getResults()) {
+  for (OpResult r : op->getResults()) {
     // TODO only if used
     reps.push_back(replacement->getResult(idx));
     idx++;
     if (!gutils->isConstantValue(r)) {
+      assert(resultPositionsToShadow.count(r.getResultNumber()));
       auto inverted = gutils->invertedPointers.lookupOrNull(r);
       assert(inverted);
       gutils->invertedPointers.map(r, replacement->getResult(idx));
       inverted.replaceAllUsesWith(replacement->getResult(idx));
       gutils->erase(inverted.getDefiningOp());
+      idx++;
+    } else if (resultPositionsToShadow.count(r.getResultNumber())) {
       idx++;
     }
   }
@@ -409,6 +412,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // Replace all uses of original results
   gutils->replaceOrigOpWith(op, reps);
   gutils->erase(newOp);
+  gutils->originalToNewFnOps[op] = replacement;
 
   return success();
 }

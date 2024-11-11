@@ -31,15 +31,10 @@
 #include <deque>
 
 #include <llvm/Config/llvm-config.h>
-#if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 #undef private
-#else
-#include "SCEV/ScalarEvolution.h"
-#include "SCEV/ScalarEvolutionExpander.h"
-#endif
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/IR/Constants.h"
@@ -239,7 +234,8 @@ public:
     // No Additional use activity info
     None = 0,
 
-    // Only consider loads of memory
+    // Recursively consider loads to identify a potential active load.
+    // Intermediate stores into local allocations will be looked through.
     OnlyLoads = 1,
 
     // Only consider active stores into

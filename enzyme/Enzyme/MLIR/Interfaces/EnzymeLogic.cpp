@@ -22,8 +22,8 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
-                      const std::vector<bool> &returnPrimals,
-                      const std::vector<bool> &returnShadows) {
+                      const ArrayRef<bool> returnPrimals,
+                      const ArrayRef<bool> returnShadows) {
   auto inst = oBB->getTerminator();
 
   mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
@@ -57,7 +57,7 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
             ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
         auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
             nBuilder, ret.getLoc());
-        retargs.push_back(gutils->invertPointerM(toret, nBuilder));
+        retargs.push_back(toret);
       }
     }
   }
@@ -100,8 +100,10 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   for (auto act : RetActivity) {
     returnShadows.push_back(act != DIFFE_TYPE::CONSTANT);
   }
+  SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
+  SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
   auto gutils = MDiffeGradientUtils::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
       /*omp*/ false);
   ForwardCachedFunctions[tup] = gutils->newFunc;
@@ -166,7 +168,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       valid &= res.succeeded();
     }
 
-    createTerminator(gutils, &oBB, returnPrimals, returnShadows);
+    createTerminator(gutils, &oBB, returnPrimalsP, returnShadowsP);
   }
 
   // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)

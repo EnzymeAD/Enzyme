@@ -60,6 +60,7 @@ extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
                                          llvm::Intrinsic::ID *ID = nullptr) {
+  llvm::StringRef ogstr = str;
   if (startsWith(str, "__") && endsWith(str, "_finite")) {
     str = str.substr(2, str.size() - 2 - 7);
   } else if (startsWith(str, "__fd_") && endsWith(str, "_1")) {
@@ -72,7 +73,8 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
       *ID = LIBM_FUNCTIONS.find(str.str())->second;
     return true;
   }
-  if (endsWith(str, "f") || endsWith(str, "l")) {
+  if (endsWith(str, "f") || endsWith(str, "l") ||
+      (startsWith(ogstr, "__nv_") && endsWith(str, "d"))) {
     if (LIBM_FUNCTIONS.find(str.substr(0, str.size() - 1).str()) !=
         LIBM_FUNCTIONS.end()) {
       if (ID)

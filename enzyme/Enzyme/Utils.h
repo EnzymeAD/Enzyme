@@ -96,6 +96,7 @@ extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
+extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
 extern LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                           const void *, LLVMValueRef,
                                           LLVMBuilderRef);
@@ -691,6 +692,9 @@ std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 #endif
 
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
@@ -1160,7 +1164,7 @@ static inline llvm::StringRef getFuncName(llvm::Function *called) {
     return called->getName();
 }
 
-template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
+static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_math"))
@@ -1174,11 +1178,35 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
   return "";
 }
 
-template <typename T>
+static inline bool hasNoCache(llvm::Value *op) {
+  using namespace llvm;
+  if (auto CB = dyn_cast<CallBase>(op)) {
+    if (auto called = getFunctionFromCall(CB)) {
+      if (called->hasFnAttribute("enzyme_nocache"))
+        return true;
+    }
+  }
+  if (auto I = dyn_cast<Instruction>(op))
+    if (hasMetadata(I, "enzyme_nocache"))
+      return true;
+
+  if (EnzymeJuliaAddrLoad) {
+    if (auto PT = dyn_cast<PointerType>(op->getType())) {
+      if (PT->getAddressSpace() == 11 || PT->getAddressSpace() == 13) {
+        if (isa<CastInst>(op) || isa<GetElementPtrInst>(op))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
-static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
+static inline std::optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #else
-static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
+static inline llvm::Optional<size_t>
+getAllocationIndexFromCall(const llvm::CallBase *op)
 #endif
 {
   auto AttrList =
@@ -1351,6 +1379,9 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName == "julia.pointer_from_objref") {
       return true;
     }
+    if (funcName == "julia.gc_loaded") {
+      return true;
+    }
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
@@ -1407,6 +1438,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       }
       if (funcName == "julia.pointer_from_objref") {
         V = Call->getArgOperand(0);
+        continue;
+      }
+      if (funcName == "julia.gc_loaded") {
+        V = Call->getArgOperand(1);
         continue;
       }
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
@@ -1484,6 +1519,37 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
 }
 static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
   return getBaseObject(const_cast<llvm::Value *>(V));
+}
+
+static inline llvm::SetVector<llvm::Value *>
+getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
+  llvm::SmallPtrSet<llvm::Value *, 1> seen;
+  llvm::SetVector<llvm::Value *> results;
+  llvm::SmallVector<llvm::Value *, 1> todo = {V};
+
+  while (todo.size()) {
+    auto obj = todo.back();
+    todo.pop_back();
+    if (seen.contains(obj))
+      continue;
+    seen.insert(obj);
+
+    if (auto PN = llvm::dyn_cast<llvm::PHINode>(obj)) {
+      for (auto &x : PN->incoming_values()) {
+        todo.push_back(x);
+      }
+      continue;
+    }
+
+    auto cur = getBaseObject(obj, offsetAllowed);
+    if (cur != obj) {
+      todo.push_back(cur);
+      continue;
+    }
+
+    results.insert(obj);
+  }
+  return results;
 }
 
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
@@ -1682,6 +1748,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::exp:
   case Intrinsic::cos:
   case Intrinsic::sin:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::tanh:
+  case Intrinsic::cosh:
+  case Intrinsic::sinh:
+#endif
   case Intrinsic::copysign:
   case Intrinsic::fabs:
     return true;
@@ -1962,6 +2033,16 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
 #pragma GCC diagnostic pop
 #endif
 
+static inline llvm::Function *
+getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
+                        llvm::ArrayRef<llvm::Type *> Tys = {}) {
+#if LLVM_VERSION_MAJOR >= 20
+  return llvm::Intrinsic::getOrInsertDeclaration(M, id, Tys);
+#else
+  return llvm::Intrinsic::getDeclaration(M, id, Tys);
+#endif
+}
+
 static inline llvm::Type *getSubType(llvm::Type *T) { return T; }
 
 template <typename Arg1, typename... Args>
@@ -2001,14 +2082,24 @@ static inline bool isSpecialPtr(llvm::Type *Ty) {
   return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(
+    llvm::GEPOperator *gep, const llvm::DataLayout &DL, unsigned BitWidth,
+    llvm::SmallMapVector<llvm::Value *, llvm::APInt, 4> &VariableOffsets,
+    llvm::APInt &ConstantOffset);
+#else
 bool collectOffset(llvm::GEPOperator *gep, const llvm::DataLayout &DL,
                    unsigned BitWidth,
                    llvm::MapVector<llvm::Value *, llvm::APInt> &VariableOffsets,
                    llvm::APInt &ConstantOffset);
+#endif
 
 llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     llvm::Intrinsic::ID ID, llvm::Type *RetTy,
                                     llvm::ArrayRef<llvm::Value *> Args,
                                     llvm::Instruction *FMFSource = nullptr,
                                     const llvm::Twine &Name = "");
+
+bool isNVLoad(const llvm::Value *V);
+
 #endif // ENZYME_UTILS_H

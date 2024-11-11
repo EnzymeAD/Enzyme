@@ -72,9 +72,9 @@ static cl::opt<ActionType>
                                  "Generate call derivative")));
 
 void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
-                 StringRef FT, StringRef cconv, Init *func,
+                 StringRef FT, StringRef cconv, const Init *func,
                  StringRef origName) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(func)) {
+  if (auto resultRoot = dyn_cast<DagInit>(func)) {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
     if (opName == "SameFunc" || Def->isSubClassOf("SameFunc")) {
@@ -141,9 +141,9 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
   }
   assert(0 && "Unhandled function");
 }
-void getIntrinsic(raw_ostream &os, StringRef intrName, ListInit *typeInit,
+void getIntrinsic(raw_ostream &os, StringRef intrName, const ListInit *typeInit,
                   const Twine &argStr, StringRef origName) {
-  os << "Intrinsic::getDeclaration(mod, Intrinsic::" << intrName
+  os << "getIntrinsicDeclaration(mod, Intrinsic::" << intrName
      << ", std::vector<Type*>({";
   bool first = true;
   for (auto intrType : *typeInit) {
@@ -168,9 +168,10 @@ raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
   return os << "}";
 }
 
-void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
-                     const Twine &prefix) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+void initializeNames(const Twine &curIndent, raw_ostream &os,
+                     const Init *resultTree, const Twine &prefix,
+                     ActionType intrinsic) {
+  if (auto resultRoot = dyn_cast<DagInit>(resultTree)) {
     for (size_t i = 0; i < resultRoot->arg_size(); i++) {
       auto arg = resultRoot->getArg(i);
       auto name = resultRoot->getArgName(i);
@@ -179,14 +180,18 @@ void initializeNames(const Twine &curIndent, raw_ostream &os, Init *resultTree,
       }
       if (name) {
         auto namev = name->getAsUnquotedString();
-        os << curIndent << "llvm::Value *" << prefix << "_" + namev
-           << " = nullptr;\n";
+        if (intrinsic == MLIRDerivatives)
+          os << curIndent << "mlir::Value " << prefix << "_" + namev
+             << " = nullptr;\n";
+        else
+          os << curIndent << "llvm::Value *" << prefix << "_" + namev
+             << " = nullptr;\n";
       }
-      initializeNames(curIndent, os, arg, prefix);
+      initializeNames(curIndent, os, arg, prefix, intrinsic);
     }
-  } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
+  } else if (auto lst = dyn_cast<ListInit>(resultTree)) {
     for (auto elem : *lst)
-      initializeNames(curIndent, os, elem, prefix);
+      initializeNames(curIndent, os, elem, prefix, intrinsic);
   }
 }
 
@@ -196,7 +201,7 @@ struct VariableSetting {
   StringMap<std::vector<int>> extractions;
 
   std::tuple<std::string, bool, std::vector<int>>
-  lookup(StringRef name, Record *pattern, Init *resultRoot) {
+  lookup(StringRef name, const Record *pattern, const Init *resultRoot) {
     auto ord = nameToOrdinal.find(name);
     if (ord == nameToOrdinal.end())
       PrintFatalError(pattern->getLoc(), Twine("unknown named operand '") +
@@ -219,14 +224,14 @@ struct VariableSetting {
 
 #define INDENT "  "
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            Record *pattern, Init *resultTree, StringRef builder,
+            const Record *pattern, const Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
             ArrayRef<unsigned> retidx, StringRef origName, bool newFromOriginal,
             ActionType intrinsic);
 
 SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
-                                 const Twine &argName, Record *pattern,
-                                 DagInit *resultRoot, StringRef builder,
+                                 const Twine &argName, const Record *pattern,
+                                 const DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
                                  bool newFromOriginal, ActionType intrinsic) {
@@ -300,11 +305,11 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
 
 // Returns whether value generated is a vector value or not.
 bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
-            Record *pattern, Init *resultTree, StringRef builder,
+            const Record *pattern, const Init *resultTree, StringRef builder,
             VariableSetting &nameToOrdinal, bool lookup,
             ArrayRef<unsigned> retidx, StringRef origName, bool newFromOriginal,
             ActionType intrinsic) {
-  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+  if (auto resultRoot = dyn_cast<DagInit>(resultTree)) {
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
     if (Def->isSubClassOf("Inst")) {
@@ -892,8 +897,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       }
 
-      std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-          [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+      std::function<void(const DagInit *, ArrayRef<unsigned>)> insert =
+          [&](const DagInit *ptree, ArrayRef<unsigned> prev) {
             unsigned i = 0;
             for (auto tree : ptree->getArgs()) {
               SmallVector<unsigned, 2> next(prev.begin(), prev.end());
@@ -963,7 +968,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       insert(npattern, {});
 
-      initializeNames(curIndent + INDENT, os, insts, "local");
+      initializeNames(curIndent + INDENT, os, insts, "local", intrinsic);
 
       ArrayRef<unsigned> nretidx{};
 
@@ -1142,9 +1147,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 }
 
 void handleUse(
-    DagInit *root, DagInit *resultTree, std::string &foundPrimalUse,
+    const DagInit *root, const DagInit *resultTree, std::string &foundPrimalUse,
     std::string &foundShadowUse, bool &foundDiffRet, std::string precondition,
-    DagInit *tree,
+    const DagInit *tree,
     StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition) {
   auto opName = resultTree->getOperator()->getAsString();
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
@@ -1275,14 +1280,14 @@ void handleUse(
 }
 
 void printDiffUse(
-    raw_ostream &os, Twine prefix, ListInit *argOps, StringRef origName,
-    ActionType intrinsic, DagInit *tree,
+    raw_ostream &os, Twine prefix, const ListInit *argOps, StringRef origName,
+    ActionType intrinsic, const DagInit *tree,
     StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition) {
   os << prefix << "  // Rule " << *tree << "\n";
 
   for (auto argOpEn : enumerate(*argOps)) {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
       if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
@@ -1295,7 +1300,7 @@ void printDiffUse(
     std::string foundShadowUse = "";
     bool foundDiffRet = false;
 
-    DagInit *resultTree = cast<DagInit>(argOpEn.value());
+    auto resultTree = cast<DagInit>(argOpEn.value());
 
     if (intrinsic != MLIRDerivatives) {
       os << prefix
@@ -1405,10 +1410,9 @@ void printDiffUse(
   }
 }
 
-static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
-                            ActionType intrinsic, StringRef origName,
-                            ListInit *argOps) {
-
+static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
+                            const DagInit *tree, ActionType intrinsic,
+                            StringRef origName, const ListInit *argOps) {
   auto opName = pattern->getValueAsString("opName");
   auto dialect = pattern->getValueAsString("dialect");
   os << "struct " << opName << "RevDerivative : \n";
@@ -1421,8 +1425,8 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
   os << "         SmallVector<bool> toret(op->getNumOperands(), false);\n";
   StringMap<std::tuple<std::string, std::string, bool>> varNameToCondition;
 
-  std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+  std::function<void(const DagInit *, ArrayRef<unsigned>)> insert =
+      [&](const DagInit *ptree, ArrayRef<unsigned> prev) {
         for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
           auto tree = treeEn.value();
           auto name = ptree->getArgNameStr(treeEn.index());
@@ -1483,11 +1487,11 @@ static void emitMLIRReverse(raw_ostream &os, Record *pattern, DagInit *tree,
   os << "        mlir::Value dif = nullptr;\n";
 }
 
-static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
+static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
                                       StringRef origName) {
   VariableSetting nameToOrdinal;
-  std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-      [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+  std::function<void(const DagInit *, ArrayRef<unsigned>)> insert =
+      [&](const DagInit *ptree, ArrayRef<unsigned> prev) {
         unsigned i = 0;
         for (auto tree : ptree->getArgs()) {
           SmallVector<unsigned, 2> next(prev.begin(), prev.end());
@@ -1522,15 +1526,15 @@ static VariableSetting parseVariables(DagInit *tree, ActionType intrinsic,
   return nameToOrdinal;
 }
 
-static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
-                              ActionType intrinsic, StringRef origName,
-                              ListInit *argOps) {
+static void emitReverseCommon(raw_ostream &os, const Record *pattern,
+                              const DagInit *tree, ActionType intrinsic,
+                              StringRef origName, const ListInit *argOps) {
   auto nameToOrdinal = parseVariables(tree, intrinsic, origName);
 
   bool seen = false;
   for (auto argOpEn : enumerate(*argOps)) {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
       if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
@@ -1565,7 +1569,7 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
          << ".getOperand(" << argIdx << ")->getType()) ) {\n";
     }
-    DagInit *resultTree = cast<DagInit>(argOpEn.value());
+    auto resultTree = cast<DagInit>(argOpEn.value());
     if (hasDiffeRet(resultTree)) {
       if (intrinsic == MLIRDerivatives) {
         os << "          dif = gutils->diffe(" << origName << ", builder);\n";
@@ -1599,9 +1603,9 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
     os << "            }\n";
   }
 
-  std::function<void(size_t, ArrayRef<unsigned>, Init *)> revres =
-      [&](size_t argIdx, ArrayRef<unsigned> idx, Init *ival) {
-        if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+  std::function<void(size_t, ArrayRef<unsigned>, const Init *)> revres =
+      [&](size_t argIdx, ArrayRef<unsigned> idx, const Init *ival) {
+        if (auto resultTree = dyn_cast<DagInit>(ival)) {
           auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
           if (Def->isSubClassOf("MultiReturn")) {
             unsigned i = 0;
@@ -1667,7 +1671,7 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
             os << curIndent << INDENT << "toadd = out;\n";
           }
           os << curIndent << "}\n";
-        } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+        } else if (auto lst = dyn_cast<ListInit>(ival)) {
           unsigned i = 0;
           for (auto elem : *lst) {
             SmallVector<unsigned, 1> next(idx.begin(), idx.end());
@@ -1681,7 +1685,7 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
 
   for (auto argOpEn : enumerate(*argOps)) {
     size_t argIdx = argOpEn.index();
-    if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+    if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
       auto opName = resultRoot->getOperator()->getAsString();
       auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
       if (opName == "InactiveArgSpec" || Def->isSubClassOf("InactiveArgSpec")) {
@@ -1698,7 +1702,8 @@ static void emitReverseCommon(raw_ostream &os, Record *pattern, DagInit *tree,
          << ".getOperand(" << argIdx << ")) && !isa<PointerType>(" << origName
          << ".getOperand(" << argIdx << ")->getType()) ) {\n";
 
-    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local");
+    initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                    intrinsic);
     if (intrinsic == MLIRDerivatives)
       os << curIndent << INDENT << "mlir::Value toadd = nullptr;\n";
     else
@@ -1746,14 +1751,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (Record *pattern : patterns) {
-    DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+  for (const Record *pattern : patterns) {
+    auto tree = pattern->getValueAsDag("PatternToMatch");
 
-    DagInit *duals = pattern->getValueAsDag("ArgDuals");
+    auto duals = pattern->getValueAsDag("ArgDuals");
     assert(duals);
 
     // Emit RewritePattern for Pattern.
-    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+    auto argOps = pattern->getValueAsListInit("ArgDerivatives");
 
     if (tree->getNumArgs() != argOps->size()) {
       PrintFatalError(pattern->getLoc(),
@@ -2029,7 +2034,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
         const char *curIndent = "        ";
 
-        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
@@ -2054,11 +2059,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
              << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
         }
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
-        std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
-            [&](ArrayRef<unsigned> idx, Init *ival) {
-              if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
+        std::function<void(ArrayRef<unsigned>, const Init *)> fwdres =
+            [&](ArrayRef<unsigned> idx, const Init *ival) {
+              if (auto resultTree = dyn_cast<DagInit>(ival)) {
                 auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
                 if (Def->isSubClassOf("MultiReturn")) {
                   unsigned i = 0;
@@ -2116,7 +2121,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
                   os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
                 }
                 os << curIndent << INDENT << "}\n";
-              } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+              } else if (auto lst = dyn_cast<ListInit>(ival)) {
                 unsigned i = 0;
                 for (auto r : *lst) {
                   SmallVector<unsigned, 2> next(idx.begin(), idx.end());
@@ -2177,7 +2182,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
         const char *curIndent = "        ";
 
-        if (DagInit *resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
           auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
@@ -2205,11 +2210,11 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << curIndent << INDENT
            << "Value *arg_diff_tmp = UndefValue::get(res->getType());\n";
 
-        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(),
-                        "local");
-        std::function<void(ArrayRef<unsigned>, Init *)> fwdres =
-            [&](ArrayRef<unsigned> idx, Init *ival) {
-              if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+        initializeNames(Twine(curIndent) + INDENT, os, argOpEn.value(), "local",
+                        intrinsic);
+        std::function<void(ArrayRef<unsigned>, const Init *)> fwdres =
+            [&](ArrayRef<unsigned> idx, const Init *ival) {
+              if (auto resultTree = dyn_cast<DagInit>(ival)) {
                 auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
                 if (Def->isSubClassOf("MultiReturn")) {
                   unsigned i = 0;
@@ -2259,7 +2264,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
                 os << "}, {}, arg_diff_tmp, gutils->getWidth() != 1);\n";
                 os << curIndent << INDENT << "}\n";
-              } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+              } else if (auto lst = dyn_cast<ListInit>(ival)) {
                 unsigned i = 0;
                 for (auto r : *lst) {
                   SmallVector<unsigned, 2> next(idx.begin(), idx.end());
@@ -2471,10 +2476,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    return true;\n  }\n";
       os << "};\n";
 
-      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+      auto tree = pattern->getValueAsDag("PatternToMatch");
 
       if (tree->getOperator()->getAsString() != "Unimplemented") {
-        ListInit *argOps = pattern->getValueAsListInit("reverse");
+        auto argOps = pattern->getValueAsListInit("reverse");
         auto origName = "op";
         emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
         emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
@@ -2495,7 +2500,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
-    for (Record *pattern : patterns) {
+    for (const Record *pattern : patterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2503,13 +2508,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
     }
-    for (Record *pattern : actpatterns) {
+    for (const Record *pattern : actpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "Activity>(*context);\n";
     }
-    for (Record *pattern : cfpatterns) {
+    for (const Record *pattern : cfpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2517,7 +2522,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  registerAutoDiffUsingControlFlowInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : mempatterns) {
+    for (const Record *pattern : mempatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
@@ -2527,31 +2532,31 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       for (auto storedarg : pattern->getValueAsListOfInts("storedargs"))
         os << ", " << storedarg;
       os << ">(*context);\n";
-      DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+      auto tree = pattern->getValueAsDag("PatternToMatch");
       if (tree->getOperator()->getAsString() != "Unimplemented") {
         os << "  " << dialect << "::" << opName << "::attachInterface<"
            << opName << "RevDerivative>(*context);\n";
       }
     }
-    for (Record *pattern : brpatterns) {
+    for (const Record *pattern : brpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingBranchInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : regtpatterns) {
+    for (const Record *pattern : regtpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingRegionTerminatorInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : retpatterns) {
+    for (const Record *pattern : retpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingReturnInterface<" << dialect
          << "::" << opName << ">(*context);\n";
     }
-    for (Record *pattern : allocpatterns) {
+    for (const Record *pattern : allocpatterns) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  registerAutoDiffUsingAllocationInterface<" << dialect
@@ -2587,11 +2592,11 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
   const auto &patterns = recordKeeper.getAllDerivedDefinitions(patternNames);
 
-  for (Record *pattern : patterns) {
-    DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+  for (const Record *pattern : patterns) {
+    auto tree = pattern->getValueAsDag("PatternToMatch");
 
     // Emit RewritePattern for Pattern.
-    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+    auto argOps = pattern->getValueAsListInit("ArgDerivatives");
 
     if (tree->getNumArgs() != argOps->size()) {
       PrintFatalError(pattern->getLoc(),
@@ -2709,8 +2714,8 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     StringMap<std::tuple<StringTy, StringTy, bool>> varNameToCondition;
 
-    std::function<void(DagInit *, ArrayRef<unsigned>)> insert =
-        [&](DagInit *ptree, ArrayRef<unsigned> prev) {
+    std::function<void(const DagInit *, ArrayRef<unsigned>)> insert =
+        [&](const DagInit *ptree, ArrayRef<unsigned> prev) {
           for (auto treeEn : llvm::enumerate(ptree->getArgs())) {
             auto tree = treeEn.value();
             auto name = ptree->getArgNameStr(treeEn.index());
@@ -2745,7 +2750,12 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
 
 void emitMLIRDerivatives(RecordKeeper &records, raw_ostream &os);
 
-static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
+#if LLVM_VERSION_MAJOR >= 20
+static bool EnzymeTableGenMain(raw_ostream &os, const RecordKeeper &records)
+#else
+static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records)
+#endif
+{
   switch (action) {
   case MLIRDerivatives:
   case CallDerivatives:

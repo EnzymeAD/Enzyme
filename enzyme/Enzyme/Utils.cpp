@@ -45,6 +45,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm-c/Core.h"
 
 #include "LibraryFuncs.h"
@@ -179,7 +185,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   Value *hasOne = B.CreateICmpNE(
       B.CreateAnd(size, ConstantInt::get(size->getType(), 1, false)),
       ConstantInt::get(size->getType(), 0, false));
-  auto popCnt = Intrinsic::getDeclaration(&M, Intrinsic::ctpop, {types[1]});
+  auto popCnt = getIntrinsicDeclaration(&M, Intrinsic::ctpop, {types[1]});
 
   B.CreateCondBr(
       B.CreateAnd(B.CreateICmpULT(B.CreateCall(popCnt, {size}),
@@ -190,7 +196,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   B.SetInsertPoint(grow);
 
   auto lz =
-      B.CreateCall(Intrinsic::getDeclaration(&M, Intrinsic::ctlz, {types[1]}),
+      B.CreateCall(getIntrinsicDeclaration(&M, Intrinsic::ctlz, {types[1]}),
                    {size, ConstantInt::getTrue(M.getContext())});
   Value *next =
       B.CreateShl(tsize, B.CreateSub(ConstantInt::get(types[1], 64, false), lz,
@@ -203,7 +209,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      ConstantInt::get(next->getType(), 0),
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
-  if (!custom) {
+  auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+
+  if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
 
@@ -227,7 +236,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                       ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[1]->getType(),
                    margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memcpy, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memcpy, tys);
     B.CreateCall(memsetF, margs);
     if (SubZero) {
       ZeroInit = false;
@@ -250,7 +259,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *margs[] = {B.CreateInBoundsGEP(B.getInt8Ty(), gVal, prevSize),
                       B.getInt8(0), zeroSize, B.getFalse()};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
@@ -411,7 +420,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Type *tys[] = {args[0]->getType(), args[2]->getType()};
 
     *ZeroMem = Builder.CreateCall(
-        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), args);
+        getIntrinsicDeclaration(&M, Intrinsic::memset, tys), args);
   }
   return res;
 }
@@ -2322,6 +2331,10 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
+      return false;
+
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
       return false;
 
@@ -2485,6 +2498,10 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
+      return false;
+
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
@@ -2581,7 +2598,11 @@ AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
     }
     if (auto CI = dyn_cast<GetElementPtrInst>(ptr)) {
       auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
       MapVector<Value *, APInt> VariableOffsets;
+#endif
       auto width = sizeof(size_t) * 8;
       APInt Offset(width, 0);
       bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2628,7 +2649,11 @@ findAllUsersOf(Value *AI) {
       }
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+        SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
         MapVector<Value *, APInt> VariableOffsets;
+#endif
         auto width = sizeof(size_t) * 8;
         APInt Offset(width, 0);
         bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2953,9 +2978,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",  "scal",  "axpy",  "gemv",  "gemm",  "spmv",  "syrk",
-      "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy",
-      "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs", "getri"};
+      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk", "nrm2",
+      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv", "syr2k",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv",
+  };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -3461,9 +3487,16 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
+                   SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+                   APInt &ConstantOffset)
+#else
 bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
-                   APInt &ConstantOffset) {
+                   APInt &ConstantOffset)
+#endif
+{
 #if LLVM_VERSION_MAJOR >= 13
   return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
@@ -3723,6 +3756,69 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
   }
 }
 
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *md, DerivativeMode Mode, bool const_src) {
+  std::vector<std::pair<ConcreteType, size_t>> parsed;
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    ConcreteType base(
+        llvm::cast<llvm::MDString>(md->getOperand(i))->getString(),
+        md->getContext());
+    auto size = llvm::cast<llvm::ConstantInt>(
+                    llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                        ->getValue())
+                    ->getSExtValue();
+    parsed.emplace_back(base, size);
+  }
+
+  std::vector<std::tuple<llvm::Type *, size_t, size_t>> toIterate;
+  size_t idx = 0;
+  while (idx < parsed.size()) {
+
+    auto dt = parsed[idx].first;
+    size_t start = parsed[idx].second;
+    size_t end = 0x0fffffff;
+    for (idx = idx + 1; idx < parsed.size(); ++idx) {
+      bool Legal = true;
+      auto tmp = dt;
+      auto next = parsed[idx].first;
+      tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+      // Prevent fusion of {Anything, Float} since anything is an int rule
+      // but float requires zeroing.
+      if ((dt == BaseType::Anything &&
+           (next != BaseType::Anything && next.isKnown())) ||
+          (next == BaseType::Anything &&
+           (dt != BaseType::Anything && dt.isKnown())))
+        Legal = false;
+      if (!Legal) {
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
+          // if both are floats (of any type), forward mode is the same.
+          //   + [potentially zero if const, otherwise copy]
+          // if both are int/pointer (of any type), also the same
+          //   + copy
+          // if known non-constant, also the same
+          //   + copy
+          if ((parsed[idx].first.isFloat() == nullptr) ==
+              (parsed[idx - 1].first.isFloat() == nullptr)) {
+            Legal = true;
+          }
+          if (const_src) {
+            Legal = true;
+          }
+        }
+        if (!Legal) {
+          end = parsed[idx].second;
+          break;
+        }
+      } else
+        dt = tmp;
+    }
+    assert(dt.isKnown());
+    toIterate.emplace_back(dt.isFloat(), start, end - start);
+  }
+  return toIterate;
+}
+
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
@@ -3732,3 +3828,23 @@ void dumpBlock(llvm::BasicBlock *blk) { llvm::errs() << *blk << "\n"; }
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
 
 void dumpTypeResults(TypeResults &TR) { TR.dump(); }
+
+bool isNVLoad(const llvm::Value *V) {
+  auto II = dyn_cast<IntrinsicInst>(V);
+  if (!II)
+    return false;
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
+  case Intrinsic::nvvm_ldg_global_i:
+  case Intrinsic::nvvm_ldg_global_p:
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+    return true;
+  default:
+    return false;
+  }
+  return false;
+}

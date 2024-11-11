@@ -54,12 +54,10 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
 
-#if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
-#endif
 
 using namespace llvm;
 
@@ -389,6 +387,10 @@ void EnzymeRegisterDiffUseCallHandler(char *Name,
   };
 }
 
+uint8_t EnzymeGradientUtilsGetRuntimeActivity(GradientUtils *gutils) {
+  return gutils->runtimeActivity;
+}
+
 uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
   return gutils->getWidth();
 }
@@ -588,9 +590,10 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
-    CDerivativeMode mode, uint8_t freeMemory, unsigned width,
-    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented) {
+    CDerivativeMode mode, uint8_t freeMemory, uint8_t runtimeActivity,
+    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented) {
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
@@ -603,16 +606,18 @@ LLVMValueRef EnzymeCreateForwardDiff(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
-      unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      overwritten_args, eunwrap(augmented)));
+      eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory,
+      runtimeActivity, width, unwrap(additionalArg),
+      eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
+      eunwrap(augmented)));
 }
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
-    uint8_t dretUsed, CDerivativeMode mode, unsigned width, uint8_t freeMemory,
-    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity,
+    unsigned width, uint8_t freeMemory, LLVMTypeRef additionalArg,
+    uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t *_overwritten_args, size_t overwritten_args_size,
     EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
@@ -626,21 +631,21 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
   return wrap(eunwrap(Logic).CreatePrimalAndGradient(
       RequestContext(cast_or_null<Instruction>(unwrap(request_req)),
                      unwrap(request_ip)),
-      (ReverseCacheKey){
-          .todiff = cast<Function>(unwrap(todiff)),
-          .retType = (DIFFE_TYPE)retType,
-          .constant_args = nconstant_args,
-          .overwritten_args = overwritten_args,
-          .returnUsed = (bool)returnValue,
-          .shadowReturnUsed = (bool)dretUsed,
-          .mode = (DerivativeMode)mode,
-          .width = width,
-          .freeMemory = (bool)freeMemory,
-          .AtomicAdd = (bool)AtomicAdd,
-          .additionalType = unwrap(additionalArg),
-          .forceAnonymousTape = (bool)forceAnonymousTape,
-          .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      },
+      (ReverseCacheKey){.todiff = cast<Function>(unwrap(todiff)),
+                        .retType = (DIFFE_TYPE)retType,
+                        .constant_args = nconstant_args,
+                        .overwritten_args = overwritten_args,
+                        .returnUsed = (bool)returnValue,
+                        .shadowReturnUsed = (bool)dretUsed,
+                        .mode = (DerivativeMode)mode,
+                        .width = width,
+                        .freeMemory = (bool)freeMemory,
+                        .AtomicAdd = (bool)AtomicAdd,
+                        .additionalType = unwrap(additionalArg),
+                        .forceAnonymousTape = (bool)forceAnonymousTape,
+                        .typeInfo =
+                            eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
+                        .runtimeActivity = (bool)runtimeActivity},
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
@@ -648,8 +653,8 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnUsed,
     uint8_t shadowReturnUsed, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, uint8_t forceAnonymousTape, unsigned width,
-    uint8_t AtomicAdd) {
+    size_t overwritten_args_size, uint8_t forceAnonymousTape,
+    uint8_t runtimeActivity, unsigned width, uint8_t AtomicAdd) {
 
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
@@ -665,7 +670,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
-      forceAnonymousTape, width, AtomicAdd));
+      forceAnonymousTape, runtimeActivity, width, AtomicAdd));
 }
 
 LLVMValueRef EnzymeCreateBatch(EnzymeLogicRef Logic, LLVMValueRef request_req,
@@ -964,8 +969,6 @@ void EnzymeDumpModuleRef(LLVMModuleRef M) {
   llvm::errs() << *unwrap(M) << "\n";
 }
 
-#if LLVM_VERSION_MAJOR >= 15
-
 static bool runAttributorOnFunctions(InformationCache &InfoCache,
                                      SetVector<Function *> &Functions,
                                      AnalysisGetter &AG,
@@ -1023,11 +1026,6 @@ extern "C++" char MyAttributorLegacyPass::ID = 0;
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(new MyAttributorLegacyPass());
 }
-#else
-void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createAttributorLegacyPass());
-}
-#endif
 
 LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   auto M = cast<MDNode>(unwrap(MD));
@@ -1089,12 +1087,7 @@ void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
   size_t argremsz = 0;
   size_t nexti = 0;
   SmallVector<Value *, 1> vals;
-#if LLVM_VERSION_MAJOR >= 14
-  for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-#else
-  for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
-#endif
-  {
+  for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
     if (argremsz < num_argrem) {
       if (i == argrem[argremsz]) {
         argremsz++;
@@ -1188,13 +1181,8 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   if (!keepReturn) {
     for (auto &B : *NewF) {
@@ -1288,7 +1276,11 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
                          : cast<GEPOperator>(cast<ConstantExpr>(uw));
   auto &DL = B.GetInsertBlock()->getParent()->getParent()->getDataLayout();
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   APInt Offset(width, 0);
   bool success = collectOffset(gep, DL, width, VariableOffsets, Offset);
   (void)success;
@@ -1405,13 +1397,8 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   {
     IRBuilder<> EB(&*NewF->getEntryBlock().begin());
@@ -1441,12 +1428,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
                                        AttributeList::ReturnIndex, attr);
 
     SmallVector<Value *, 1> vals;
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t j = 0, end = CI->arg_size(); j < end; j++)
-#else
-    for (size_t j = 0, end = CI->getNumArgOperands(); j < end; j++)
-#endif
-    {
+    for (size_t j = 0, end = CI->arg_size(); j < end; j++) {
 
       auto T = CI->getArgOperand(j)->getType();
       if (auto AT = dyn_cast<ArrayType>(T)) {
@@ -1695,13 +1677,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
-#if LLVM_VERSION_MAJOR >= 13
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
-#else
-  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
-                    nullptr);
-#endif
 
   SmallVector<CallInst *, 1> callers;
   for (auto U : F->users()) {
@@ -1747,11 +1724,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       }
       return offset;
     } else if (auto VT = dyn_cast<VectorType>(T)) {
-#if LLVM_VERSION_MAJOR >= 12
       size_t count = VT->getElementCount().getKnownMinValue();
-#else
-      size_t count = VT->getNumElements();
-#endif
       for (size_t i = 0; i < count; i++) {
         offset = recur(B, B.CreateExtractElement(V, i), offset);
       }
@@ -1912,12 +1885,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
     SmallVector<Value *, 1> sret_vals;
     SmallVector<Value *, 1> sretv_vals;
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0, end = CI->arg_size(); i < end; i++)
-#else
-    for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
-#endif
-    {
+    for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
       if (rroots.count(i) || rroots_v.count(i)) {
         continue;
       }
@@ -2051,11 +2019,13 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     }
 
     for (auto ptr : sret_vals) {
-      auto gep =
-          ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
-      auto ld = B.CreateLoad(Types[sretCount], gep);
-      auto SI = B.CreateStore(ld, ptr);
-      PostCacheStore(SI, B);
+      if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
+        auto gep =
+            ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
+        auto ld = B.CreateLoad(Types[sretCount], gep);
+        auto SI = B.CreateStore(ld, ptr);
+        PostCacheStore(SI, B);
+      }
       sretCount++;
     }
     for (auto ptr_v : sretv_vals) {
@@ -2064,9 +2034,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
                       : sret;
         auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
-        auto ld = B.CreateLoad(Types[sretCount], gep);
-        auto SI = B.CreateStore(ld, ptr);
-        PostCacheStore(SI, B);
+        if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
+          auto ld = B.CreateLoad(Types[sretCount], gep);
+          auto SI = B.CreateStore(ld, ptr);
+          PostCacheStore(SI, B);
+        }
       }
       sretCount += AT->getNumElements();
     }

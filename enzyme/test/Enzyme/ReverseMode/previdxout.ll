@@ -12,12 +12,12 @@ declare i8* @malloc(i64)
 
 declare double @__enzyme_autodiff(i8*, double, i64)
 
-declare void @printf(i8*, double)
+declare void @printf(i8*, ...)
 
 define i64 @main() {
 bb:
   %i = tail call double @__enzyme_autodiff(i8* bitcast (double (double, i64)* @f to i8*), double 2.000000e+00, i64 2)
-  call void @printf(i8* nonnull dereferenceable(1) getelementptr inbounds ([8 x i8], [8 x i8]* @a0, i64 0, i64 0), double %i)
+  call void (i8*, ...) @printf(i8* nonnull dereferenceable(1) getelementptr inbounds ([8 x i8], [8 x i8]* @a0, i64 0, i64 0), double %i)
   ret i64 0
 }
 

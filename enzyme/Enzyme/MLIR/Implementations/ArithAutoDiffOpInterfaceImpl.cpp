@@ -32,10 +32,9 @@ struct ArithConstantOpBatchInterface
     : public BatchOpInterface::ExternalModel<ArithConstantOpBatchInterface,
                                              arith::ConstantOp> {
 
-  mlir::Operation *createBatch(Operation *src, IRMapping &mapper,
-                               Operation::CloneOptions options,
-                               std::map<Operation *, Operation *> &opMap,
-                               ArrayRef<int64_t> batchSizes) const {
+  mlir::LogicalResult createBatch(Operation *src, OpBuilder &builder,
+                                  IRMapping &mapper,
+                                  ArrayRef<int64_t> batchSizes) const {
 
     SmallVector<Type> resultTypes(src->getResultTypes().begin(),
                                   src->getResultTypes().end());
@@ -54,7 +53,9 @@ struct ArithConstantOpBatchInterface
     auto cop = mlir::Operation::create(
         src->getLoc(), src->getName(), resultTypes, {}, std::move(attrs),
         OpaqueProperties(nullptr), mlir::BlockRange(), 0);
-    return cop;
+    builder.insert(cop);
+    mapper.map(src->getResult(0), cop->getResult(0));
+    return success();
   }
 };
 
