@@ -243,8 +243,6 @@ public:
 
   virtual Value *getLLValue(IRBuilder<> &builder,
                             const ValueToValueMapTy *VMap = nullptr) {
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Generating new instruction for op: " << op << "\n";
     Module *M = builder.GetInsertBlock()->getModule();
 
     if (op == "if") {
@@ -974,6 +972,9 @@ struct PTCandidate {
 
       SetVector<Instruction *> instsToChange;
       for (auto node : change.nodes) {
+        if (!node || !node->value) {
+          continue;
+        }
         assert(isa<Instruction>(node->value));
         auto *I = cast<Instruction>(node->value);
         if (VMap) {
@@ -2648,10 +2649,12 @@ public:
     //   llvm::errs() << "Parsed Herbie output: "
     //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
-    Instruction *insertBefore = dyn_cast<Instruction>(oldOutput);
-    IRBuilder<> builder(insertBefore);
-    builder.setFastMathFlags(insertBefore->getFastMathFlags());
+    IRBuilder<> builder(cast<Instruction>(oldOutput)->getParent(),
+                        ++BasicBlock::iterator(cast<Instruction>(oldOutput)));
+    builder.setFastMathFlags(cast<Instruction>(oldOutput)->getFastMathFlags());
 
+    // auto *F = cast<Instruction>(oldOutput)->getParent()->getParent();
+    // llvm::errs() << "Before: " << *F << "\n";
     Value *newOutput = parsedNode->getLLValue(builder);
     assert(newOutput && "Failed to get value from parsed node");
 
@@ -2665,7 +2668,10 @@ public:
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       I->eraseFromParent();
       component->operations.remove(I); // Avoid a second removal
+      cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
     }
+
+    // llvm::errs() << "After: " << *F << "\n";
 
     component->outputs_rewritten++;
   }
@@ -3181,6 +3187,7 @@ bool improveViaHerbie(
   }
 
   std::vector<std::unordered_set<std::string>> seenExprs(AOs.size());
+
   bool success = false;
 
   for (size_t baseArgsIndex = 0; baseArgsIndex < BaseArgsList.size();
@@ -3217,17 +3224,24 @@ bool improveViaHerbie(
       json::Object *obj = parsed->getAsObject();
       json::Array &tests = *obj->getArray("tests");
 
-      assert(tests.size() == AOs.size() &&
-             "improveViaHerbie: Size mismatch between number of tests and AOs");
-
-      for (size_t i = 0; i < tests.size(); ++i) {
-        auto &test = *tests[i].getAsObject();
+      for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
+        auto &test = *tests[testIndex].getAsObject();
 
         StringRef bestExpr = test.getString("output").getValue();
+        StringRef ID = test.getString("name").getValue();
 
         if (bestExpr == "#f") {
           continue;
         }
+
+        int index = std::stoi(ID.str());
+        if (index >= AOs.size()) {
+          llvm::errs() << "Invalid AO index: " << index << "\n";
+          continue;
+        }
+
+        ApplicableOutput &AO = AOs[index];
+        auto &seenExprSet = seenExprs[index];
 
         double bits = test.getNumber("bits").getValue();
         json::Array &costAccuracy = *test.getArray("cost-accuracy");
@@ -3238,13 +3252,11 @@ bool improveViaHerbie(
         double initialAccuracy =
             1.0 - initial[1].getAsNumber().getValue() / bits;
 
-        ApplicableOutput &AO = AOs[i];
-
         AO.initialHerbieCost = initialCost;
         AO.initialHerbieAccuracy = initialAccuracy;
 
-        if (seenExprs[i].count(bestExpr.str()) == 0) {
-          seenExprs[i].insert(bestExpr.str());
+        if (seenExprSet.count(bestExpr.str()) == 0) {
+          seenExprSet.insert(bestExpr.str());
 
           json::Array &best = *costAccuracy[1].getAsArray();
           double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
@@ -3265,10 +3277,10 @@ bool improveViaHerbie(
           json::Array &entry = *alternatives[j].getAsArray();
           StringRef expr = entry[2].getAsString().getValue();
 
-          if (seenExprs[i].count(expr.str()) != 0) {
+          if (seenExprSet.count(expr.str()) != 0) {
             continue;
           }
-          seenExprs[i].insert(expr.str());
+          seenExprSet.insert(expr.str());
 
           double cost = entry[0].getAsNumber().getValue() / initialCostVal;
           double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
@@ -3377,17 +3389,24 @@ bool improveViaHerbie(
     json::Object *obj = parsed->getAsObject();
     json::Array &tests = *obj->getArray("tests");
 
-    assert(tests.size() == AOs.size() &&
-           "improveViaHerbie: Size mismatch between number of tests and AOs");
-
-    for (size_t i = 0; i < tests.size(); ++i) {
-      auto &test = *tests[i].getAsObject();
+    for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
+      auto &test = *tests[testIndex].getAsObject();
 
       StringRef bestExpr = test.getString("output").getValue();
 
       if (bestExpr == "#f") {
         continue;
       }
+
+      StringRef ID = test.getString("name").getValue();
+      int index = std::stoi(ID.str());
+      if (index >= AOs.size()) {
+        llvm::errs() << "Invalid AO index: " << index << "\n";
+        continue;
+      }
+
+      ApplicableOutput &AO = AOs[index];
+      auto &seenExprSet = seenExprs[index];
 
       double bits = test.getNumber("bits").getValue();
       json::Array &costAccuracy = *test.getArray("cost-accuracy");
@@ -3397,13 +3416,11 @@ bool improveViaHerbie(
       double initialCost = 1.0;
       double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
 
-      ApplicableOutput &AO = AOs[i];
-
       AO.initialHerbieCost = initialCost;
       AO.initialHerbieAccuracy = initialAccuracy;
 
-      if (seenExprs[i].count(bestExpr.str()) == 0) {
-        seenExprs[i].insert(bestExpr.str());
+      if (seenExprSet.count(bestExpr.str()) == 0) {
+        seenExprSet.insert(bestExpr.str());
 
         json::Array &best = *costAccuracy[1].getAsArray();
         double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
@@ -3423,10 +3440,10 @@ bool improveViaHerbie(
         json::Array &entry = *alternatives[j].getAsArray();
         StringRef expr = entry[2].getAsString().getValue();
 
-        if (seenExprs[i].count(expr.str()) != 0) {
+        if (seenExprSet.count(expr.str()) != 0) {
           continue;
         }
-        seenExprs[i].insert(expr.str());
+        seenExprSet.insert(expr.str());
 
         double cost = entry[0].getAsNumber().getValue() / initialCostVal;
         double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
@@ -4187,27 +4204,28 @@ B2:
         continue;
       }
 
-      if (!FPOptLogPath.empty()) {
-        auto node = valueToNodeMap[&I];
-        ValueInfo valueInfo;
-        auto blockIt = std::find_if(
-            I.getFunction()->begin(), I.getFunction()->end(),
-            [&](const auto &block) { return &block == I.getParent(); });
-        assert(blockIt != I.getFunction()->end() && "Block not found");
-        size_t blockIdx = std::distance(I.getFunction()->begin(), blockIt);
-        auto instIt =
-            std::find_if(I.getParent()->begin(), I.getParent()->end(),
-                         [&](const auto &curr) { return &curr == &I; });
-        assert(instIt != I.getParent()->end() && "Instruction not found");
-        size_t instIdx = std::distance(I.getParent()->begin(), instIt);
+      // if (!FPOptLogPath.empty()) {
+      //   auto node = valueToNodeMap[&I];
+      //   ValueInfo valueInfo;
+      //   auto blockIt = std::find_if(
+      //       I.getFunction()->begin(), I.getFunction()->end(),
+      //       [&](const auto &block) { return &block == I.getParent(); });
+      //   assert(blockIt != I.getFunction()->end() && "Block not found");
+      //   size_t blockIdx = std::distance(I.getFunction()->begin(), blockIt);
+      //   auto instIt =
+      //       std::find_if(I.getParent()->begin(), I.getParent()->end(),
+      //                    [&](const auto &curr) { return &curr == &I; });
+      //   assert(instIt != I.getParent()->end() && "Instruction not found");
+      //   size_t instIdx = std::distance(I.getParent()->begin(), instIt);
 
-        bool found = extractValueFromLog(FPOptLogPath, functionName, blockIdx,
-                                         instIdx, valueInfo);
-        if (!found) {
-          llvm::errs() << "Instruction " << I << " has no execution logged!\n";
-          continue;
-        }
-      }
+      //   bool found = extractValueFromLog(FPOptLogPath, functionName,
+      //   blockIdx,
+      //                                    instIdx, valueInfo);
+      //   if (!found) {
+      //     llvm::errs() << "Instruction " << I << " has no execution
+      //     logged!\n"; continue;
+      //   }
+      // }
 
       if (EnzymePrintFPOpt)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
@@ -4447,6 +4465,7 @@ B2:
 
       std::vector<std::string> herbieInputs;
       std::vector<ApplicableOutput> newAOs;
+      int outputCounter = 0;
 
       assert(component.outputs.size() > 0 && "No outputs found for component");
       for (auto &output : component.outputs) {
@@ -4482,6 +4501,9 @@ B2:
           properties += " :pre " + precondition;
         }
 
+        ApplicableOutput AO(component, output, expr, grad, executions, TTI);
+        properties += " :name \"" + std::to_string(outputCounter++) + "\"";
+
         std::string argStr;
         for (const auto &arg : args) {
           if (!argStr.empty())
@@ -4495,8 +4517,7 @@ B2:
           llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
         herbieInputs.push_back(herbieInput);
-        ApplicableOutput AO(component, output, expr, grad, executions, TTI);
-        newAOs.push_back(std::move(AO));
+        newAOs.push_back(AO);
       }
 
       if (!herbieInputs.empty()) {
@@ -4507,8 +4528,7 @@ B2:
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
 
-        AOs.insert(AOs.end(), std::make_move_iterator(newAOs.begin()),
-                   std::make_move_iterator(newAOs.end()));
+        AOs.insert(AOs.end(), newAOs.begin(), newAOs.end());
       }
     }
 
