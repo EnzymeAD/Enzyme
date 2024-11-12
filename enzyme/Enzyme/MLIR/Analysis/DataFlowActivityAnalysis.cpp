@@ -455,6 +455,11 @@ public:
       return success();
     }
 
+    // TODO: differential dependency interface
+    // FCmp cannot propagate active data
+    if (isa<LLVM::FCmpOp>(op))
+      return success();
+
     transfer(op, operands, results);
     return success();
   }
@@ -971,6 +976,13 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
         return false;
       }
     } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+      // If a call takes no pointer arguments, it can only propagate activity
+      // through its results.
+      if (llvm::none_of(callOp.getArgOperands(), [](Value operand) {
+            return isa<LLVM::LLVMPointerType, MemRefType>(operand.getType());
+          })) {
+        return llvm::none_of(op->getResults(), isActiveData);
+      }
       // TODO: Should traverse bottom-up for performance (or cache
       // intermediate results)
       auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
@@ -993,14 +1005,6 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
   };
 
   errs() << FlatSymbolRefAttr::get(callee) << ":\n";
-  for (BlockArgument arg : callee.getArguments()) {
-    if (Attribute tagAttr =
-            callee.getArgAttr(arg.getArgNumber(), "enzyme.tag")) {
-      errs() << "  " << tagAttr << ": "
-             << (isConstantValue(arg) ? "Constant" : "Active") << "\n";
-    }
-  }
-
   if (annotate) {
     MLIRContext *ctx = callee.getContext();
     traverseCallGraph(callee, symbolTable, [&](FunctionOpInterface func) {
@@ -1028,42 +1032,50 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
         }
         op->setAttr("enzyme.icv", BoolAttr::get(ctx, icv));
       });
+      for (BlockArgument arg : func.getArguments()) {
+        if (Attribute tagAttr =
+                func.getArgAttr(arg.getArgNumber(), "enzyme.tag")) {
+          errs() << "  " << tagAttr << ": "
+                 << (isConstantValue(arg) ? "Constant" : "Active") << "\n";
+        }
+      }
+      func.walk([&](Operation *op) {
+        if (op->hasAttr("tag")) {
+          errs() << "  " << op->getAttr("tag") << ": ";
+          for (OpResult opResult : op->getResults()) {
+            errs() << (isConstantValue(opResult) ? "Constant" : "Active")
+                   << "\n";
+          }
+        }
+        if (verbose) {
+          // Annotate each op's results with its value activity states
+          for (OpResult result : op->getResults()) {
+            auto forwardValueActivity =
+                solver.lookupState<ForwardValueActivity>(result);
+            if (forwardValueActivity) {
+              std::string dest, key{"fva"};
+              llvm::raw_string_ostream os(dest);
+              if (op->getNumResults() != 1)
+                key += result.getResultNumber();
+              forwardValueActivity->getValue().print(os);
+              op->setAttr(key, StringAttr::get(op->getContext(), dest));
+            }
+
+            auto backwardValueActivity =
+                solver.lookupState<BackwardValueActivity>(result);
+            if (backwardValueActivity) {
+              std::string dest, key{"bva"};
+              llvm::raw_string_ostream os(dest);
+              if (op->getNumResults() != 1)
+                key += result.getResultNumber();
+              backwardValueActivity->getValue().print(os);
+              op->setAttr(key, StringAttr::get(op->getContext(), dest));
+            }
+          }
+        }
+      });
     });
   }
-  callee.walk([&](Operation *op) {
-    if (op->hasAttr("tag")) {
-      errs() << "  " << op->getAttr("tag") << ": ";
-      for (OpResult opResult : op->getResults()) {
-        errs() << (isConstantValue(opResult) ? "Constant" : "Active") << "\n";
-      }
-    }
-    if (verbose) {
-      // Annotate each op's results with its value activity states
-      for (OpResult result : op->getResults()) {
-        auto forwardValueActivity =
-            solver.lookupState<ForwardValueActivity>(result);
-        if (forwardValueActivity) {
-          std::string dest, key{"fva"};
-          llvm::raw_string_ostream os(dest);
-          if (op->getNumResults() != 1)
-            key += result.getResultNumber();
-          forwardValueActivity->getValue().print(os);
-          op->setAttr(key, StringAttr::get(op->getContext(), dest));
-        }
-
-        auto backwardValueActivity =
-            solver.lookupState<BackwardValueActivity>(result);
-        if (backwardValueActivity) {
-          std::string dest, key{"bva"};
-          llvm::raw_string_ostream os(dest);
-          if (op->getNumResults() != 1)
-            key += result.getResultNumber();
-          backwardValueActivity->getValue().print(os);
-          op->setAttr(key, StringAttr::get(op->getContext(), dest));
-        }
-      }
-    }
-  });
 
   if (verbose) {
     // Annotate function attributes
@@ -1101,7 +1113,8 @@ void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
     bool print, bool verbose, bool annotate) {
   SymbolTableCollection symbolTable;
-  DataFlowSolver solver;
+  DataFlowConfig config;
+  DataFlowSolver solver(config);
 
   solver.load<enzyme::PointsToPointerAnalysis>();
   solver.load<enzyme::AliasAnalysis>(callee.getContext());
