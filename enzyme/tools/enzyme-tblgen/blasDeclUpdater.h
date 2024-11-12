@@ -1,7 +1,10 @@
+#ifndef ENZYME_TBLGEN_BLAS_DECL_UPDATER_H
+#define ENZYME_TBLGEN_BLAS_DECL_UPDATER_H
+
 #include "datastructures.h"
 
-void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
-                              raw_ostream &os) {
+inline void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
+                                     raw_ostream &os) {
   os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
   os << "  if (!F->empty())\n";
   os << "    return;\n";
@@ -15,7 +18,7 @@ void emit_attributeBLASCaller(ArrayRef<TGPattern> blasPatterns,
   os << "}                                                                \n";
 }
 
-void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
+inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
   os << "llvm::Constant* attribute_" << name
@@ -196,7 +199,7 @@ void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
   os << "}\n";
 }
 
-void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
+inline void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
@@ -283,3 +286,5 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   os << "  return changed;\n";
   os << "}\n";
 }
+
+#endif // ENZYME_TBLGEN_BLAS_DECL_UPDATER_H
