@@ -2104,4 +2104,16 @@ bool isNVLoad(const llvm::Value *V);
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured);
 
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::LoopInfo &LI, llvm::Value *op0,
+                             llvm::Value *op1, bool offsetAllowed = false);
+
 #endif // ENZYME_UTILS_H

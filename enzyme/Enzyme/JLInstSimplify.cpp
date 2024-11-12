@@ -59,88 +59,6 @@ using namespace llvm;
 #define DEBUG_TYPE "jl-inst-simplify"
 namespace {
 
-// Return true if guaranteed not to alias
-// Return false if guaranteed to alias [with possible offset depending on flag].
-// Return {} if no information is given.
-#if LLVM_VERSION_MAJOR >= 16
-std::optional<bool>
-#else
-llvm::Optional<bool>
-#endif
-arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::LoopInfo &LI, llvm::Value *op0,
-                             llvm::Value *op1, bool offsetAllowed = false) {
-  auto lhs = getBaseObject(op0, offsetAllowed);
-  auto rhs = getBaseObject(op1, offsetAllowed);
-
-  if (lhs == rhs) {
-    return false;
-  }
-  if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
-    return {};
-
-  bool noalias_lhs = isNoAlias(lhs);
-  bool noalias_rhs = isNoAlias(rhs);
-
-  bool noalias[2] = {noalias_lhs, noalias_rhs};
-
-  for (int i = 0; i < 2; i++) {
-    Value *start = (i == 0) ? lhs : rhs;
-    Value *end = (i == 0) ? rhs : lhs;
-    if (noalias[i]) {
-      if (noalias[1 - i]) {
-        return true;
-      }
-      if (isa<Argument>(end)) {
-        return true;
-      }
-      if (auto endi = dyn_cast<Instruction>(end)) {
-        if (notCapturedBefore(start, endi, 0)) {
-          return true;
-        }
-      }
-    }
-    if (auto ld = dyn_cast<LoadInst>(start)) {
-      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
-      if (isAllocationCall(base, TLI)) {
-        if (isa<Argument>(end))
-          return true;
-        if (auto endi = dyn_cast<Instruction>(end))
-          if (isNoAlias(end) || (notCapturedBefore(start, endi, 1))) {
-            Instruction *starti = dyn_cast<Instruction>(start);
-            if (!starti) {
-              if (!isa<Argument>(start))
-                continue;
-              starti =
-                  &cast<Argument>(start)->getParent()->getEntryBlock().front();
-            }
-
-            bool overwritten = false;
-            allInstructionsBetween(
-                LI, starti, endi, [&](Instruction *I) -> bool {
-                  if (!I->mayWriteToMemory())
-                    return /*earlyBreak*/ false;
-
-                  if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                           /*maybeReader*/ ld,
-                                           /*maybeWriter*/ I)) {
-                    overwritten = true;
-                    return /*earlyBreak*/ true;
-                  }
-                  return /*earlyBreak*/ false;
-                });
-
-            if (!overwritten) {
-              return true;
-            }
-          }
-      }
-    }
-  }
-
-  return {};
-}
-
 bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
                     llvm::AAResults &AA, llvm::LoopInfo &LI) {
   bool changed = false;
@@ -198,7 +116,7 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
           changed = true;
           continue;
         }
-    }
+      }
     }
 
   return changed;
