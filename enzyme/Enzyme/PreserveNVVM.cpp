@@ -34,8 +34,10 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include "llvm/Support/TimeProfiler.h"
 
@@ -53,6 +55,10 @@ using namespace llvm;
 #undef DEBUG_TYPE
 #endif
 #define DEBUG_TYPE "preserve-nvvm"
+
+llvm::cl::opt<bool>
+    ForceNVVM("force-nvvm", cl::init(false), cl::Hidden,
+              cl::desc("Replace LLVM intrinsics with NVVM ones"));
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -307,6 +313,48 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
     llvm_unreachable(handlername);
   }
   globalsToErase.push_back(&g);
+}
+
+void replaceWithNVIntrinsic(IntrinsicInst &I, Function *NVIntrinsic) {
+  BasicBlock::iterator ii(I);
+  IRBuilder<> Builder(&I);
+  Builder.setFastMathFlags(I.getFastMathFlags());
+
+  CallInst *CI = Builder.CreateCall(NVIntrinsic, I.getArgOperand(0));
+  ReplaceInstWithValue(ii, CI);
+}
+
+bool ReplaceWithNVVM(Module &M) {
+  SmallVector<IntrinsicInst *> instructionsToRemove;
+  for (auto &F : M) {
+    for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+      if (!isa<IntrinsicInst>(*I))
+        continue;
+
+      auto &II = cast<IntrinsicInst>(*I);
+      switch (II.getIntrinsicID()) {
+      case Intrinsic::sin:
+      case Intrinsic::cos:
+        instructionsToRemove.push_back(&II);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  for (auto *II : instructionsToRemove) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::sin:
+      replaceWithNVIntrinsic(*II, M.getFunction("__nv_sin"));
+      break;
+    case Intrinsic::cos:
+      replaceWithNVIntrinsic(*II, M.getFunction("__nv_cos"));
+      break;
+    }
+  }
+
+  return !instructionsToRemove.empty();
 }
 
 bool preserveNVVM(bool Begin, Module &M) {
@@ -885,6 +933,10 @@ bool preserveNVVM(bool Begin, Module &M) {
       F.setLinkage((Function::LinkageTypes)val);
     }
   }
+
+  if (ForceNVVM)
+    changed |= ReplaceWithNVVM(M);
+
   return changed;
 }
 
