@@ -2307,7 +2307,11 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   if (loadPtr && storePtr)
     if (auto alias =
             arePointersGuaranteedNoAlias(TLI, AA, LI, loadPtr, storePtr, true))
+#if LLVM_VERSION_MAJOR >= 16
+      if (alias.value())
+#else
       if (alias.getValue())
+#endif
         return false;
 
   if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,

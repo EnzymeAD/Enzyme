@@ -108,10 +108,14 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         if (auto alias = arePointersGuaranteedNoAlias(
                 TLI, AA, LI, I.getOperand(0), I.getOperand(1), false)) {
 
-          auto repval =
-              ICmpInst::isTrueWhenEqual(pred)
-                  ? ConstantInt::get(I.getType(), 1 - alias.getValue())
-                  : ConstantInt::get(I.getType(), alias.getValue());
+#if LLVM_VERSION_MAJOR >= 16
+          bool val = alias.value();
+#else
+          bool val = alias.getValue();
+#endif
+          auto repval = ICmpInst::isTrueWhenEqual(pred)
+                            ? ConstantInt::get(I.getType(), 1 - val)
+                            : ConstantInt::get(I.getType(), val);
           I.replaceAllUsesWith(repval);
           changed = true;
           continue;
