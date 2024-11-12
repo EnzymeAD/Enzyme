@@ -49,6 +49,7 @@
 #include "llvm-c/Types.h"
 
 #include "JLInstSimplify.h"
+#include "LibraryFuncs.h"
 #include "Utils.h"
 
 using namespace llvm;
@@ -57,80 +58,6 @@ using namespace llvm;
 #endif
 #define DEBUG_TYPE "jl-inst-simplify"
 namespace {
-
-bool notCapturedBefore(llvm::Value *V, Instruction *inst) {
-  Instruction *VI = dyn_cast<Instruction>(V);
-  if (!VI)
-    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
-  else
-    VI = VI->getNextNode();
-  SmallPtrSet<BasicBlock *, 1> regionBetween;
-  {
-    SmallVector<BasicBlock *, 1> todo;
-    todo.push_back(VI->getParent());
-    while (todo.size()) {
-      auto cur = todo.pop_back_val();
-      if (regionBetween.count(cur))
-        continue;
-      regionBetween.insert(cur);
-      if (cur == inst->getParent())
-        continue;
-      for (auto BB : successors(cur))
-        todo.push_back(BB);
-    }
-  }
-  SmallVector<Value *, 1> todo = {V};
-  SmallPtrSet<Value *, 1> seen;
-  while (todo.size()) {
-    auto cur = todo.pop_back_val();
-    if (seen.count(cur))
-      continue;
-    for (auto U : cur->users()) {
-      auto UI = dyn_cast<Instruction>(U);
-      if (!regionBetween.count(UI->getParent()))
-        continue;
-      if (UI->getParent() == VI->getParent()) {
-        if (UI->comesBefore(VI))
-          continue;
-      }
-      if (UI->getParent() == inst->getParent())
-        if (inst->comesBefore(UI))
-          continue;
-
-      if (isPointerArithmeticInst(UI, /*includephi*/ true,
-                                  /*includebin*/ true)) {
-        todo.push_back(UI);
-        continue;
-      }
-
-      if (auto CI = dyn_cast<CallBase>(UI)) {
-#if LLVM_VERSION_MAJOR >= 14
-        for (size_t i = 0, size = CI->arg_size(); i < size; i++)
-#else
-        for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
-#endif
-        {
-          if (cur == CI->getArgOperand(i)) {
-            if (isNoCapture(CI, i))
-              continue;
-            return false;
-          }
-        }
-        return true;
-      }
-
-      if (isa<CmpInst>(UI)) {
-        continue;
-      }
-      if (isa<LoadInst>(UI)) {
-        todo.push_back(UI);
-        continue;
-      }
-      return false;
-    }
-  }
-  return true;
-}
 
 bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
                     llvm::AAResults &AA, llvm::LoopInfo &LI) {
@@ -178,108 +105,24 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
       }
 
       if (legal) {
-        auto lhs = getBaseObject(I.getOperand(0), /*offsetAllowed*/ false);
-        auto rhs = getBaseObject(I.getOperand(1), /*offsetAllowed*/ false);
-        if (lhs == rhs) {
+        if (auto alias = arePointersGuaranteedNoAlias(
+                TLI, AA, LI, I.getOperand(0), I.getOperand(1), false)) {
+
+#if LLVM_VERSION_MAJOR >= 16
+          bool val = alias.value();
+#else
+          bool val = alias.getValue();
+#endif
           auto repval = ICmpInst::isTrueWhenEqual(pred)
-                            ? ConstantInt::get(I.getType(), 1)
-                            : ConstantInt::get(I.getType(), 0);
+                            ? ConstantInt::get(I.getType(), 1 - val)
+                            : ConstantInt::get(I.getType(), val);
           I.replaceAllUsesWith(repval);
           changed = true;
           continue;
-        }
-        if ((isNoAlias(lhs) && (isNoAlias(rhs) || isa<Argument>(rhs))) ||
-            (isNoAlias(rhs) && isa<Argument>(lhs))) {
-          auto repval = ICmpInst::isTrueWhenEqual(pred)
-                            ? ConstantInt::get(I.getType(), 0)
-                            : ConstantInt::get(I.getType(), 1);
-          I.replaceAllUsesWith(repval);
-          changed = true;
-          continue;
-        }
-
-        {
-          bool noalias_from_capture = false;
-          for (int i = 0; i < 2; i++) {
-            Value *start = (i == 0) ? lhs : rhs;
-            Value *end = (i == 0) ? rhs : lhs;
-            if (isNoAlias(start)) {
-              if (auto endi = dyn_cast<Instruction>(end)) {
-                if (notCapturedBefore(start, endi)) {
-                  noalias_from_capture = true;
-                  break;
-                }
-              }
-            }
-          }
-          if (noalias_from_capture) {
-            auto repval = ICmpInst::isTrueWhenEqual(pred)
-                              ? ConstantInt::get(I.getType(), 0)
-                              : ConstantInt::get(I.getType(), 1);
-            I.replaceAllUsesWith(repval);
-            changed = true;
-            continue;
-          }
-        }
-
-        auto llhs = dyn_cast<LoadInst>(lhs);
-        auto lrhs = dyn_cast<LoadInst>(rhs);
-        if (llhs && lrhs && isa<PointerType>(llhs->getType()) &&
-            isa<PointerType>(lrhs->getType())) {
-          auto lhsv =
-              getBaseObject(llhs->getOperand(0), /*offsetAllowed*/ false);
-          auto rhsv =
-              getBaseObject(lrhs->getOperand(0), /*offsetAllowed*/ false);
-          if ((isNoAlias(lhsv) && (isNoAlias(rhsv) || isa<Argument>(rhsv) ||
-                                   notCapturedBefore(lhsv, &I))) ||
-              (isNoAlias(rhsv) &&
-               (isa<Argument>(lhsv) || notCapturedBefore(rhsv, &I)))) {
-            bool legal = false;
-            for (int i = 0; i < 2; i++) {
-              Value *start = (i == 0) ? lhsv : rhsv;
-              Instruction *starti = dyn_cast<Instruction>(start);
-              if (!starti) {
-                if (!isa<Argument>(start))
-                  continue;
-                starti = &cast<Argument>(start)
-                              ->getParent()
-                              ->getEntryBlock()
-                              .front();
-              }
-
-              bool overwritten = false;
-              allInstructionsBetween(
-                  LI, starti, &I, [&](Instruction *I) -> bool {
-                    if (!I->mayWriteToMemory())
-                      return /*earlyBreak*/ false;
-
-                    for (auto LI : {llhs, lrhs})
-                      if (writesToMemoryReadBy(nullptr, AA, TLI,
-                                               /*maybeReader*/ LI,
-                                               /*maybeWriter*/ I)) {
-                        overwritten = true;
-                        return /*earlyBreak*/ true;
-                      }
-                    return /*earlyBreak*/ false;
-                  });
-              if (!overwritten) {
-                legal = true;
-                break;
-              }
-            }
-
-            if (legal && lhsv != rhsv) {
-              auto repval = ICmpInst::isTrueWhenEqual(pred)
-                                ? ConstantInt::get(I.getType(), 0)
-                                : ConstantInt::get(I.getType(), 1);
-              I.replaceAllUsesWith(repval);
-              changed = true;
-              continue;
-            }
-          }
         }
       }
     }
+
   return changed;
 }
 
