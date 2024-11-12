@@ -101,6 +101,10 @@ using namespace llvm;
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
                                  cl::desc("Run the Enzyme pass"));
 
+llvm::cl::opt<bool> EnzymeDumpModule(
+    "enzyme-dump-module", cl::init(false), cl::Hidden,
+    cl::desc("Print out the module to differentiate and exit"));
+
 llvm::cl::opt<bool>
     EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
@@ -2945,6 +2949,11 @@ public:
   }
 
   bool run(Module &M) {
+    if (EnzymeDumpModule) {
+      M.print(llvm::outs(), nullptr);
+      return false;
+    }
+
     Logic.clear();
 
     for (Function &F : make_early_inc_range(M)) {
