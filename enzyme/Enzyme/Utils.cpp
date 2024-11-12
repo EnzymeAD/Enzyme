@@ -3850,57 +3850,82 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
         todo.push_back(BB);
     }
   }
-  SmallVector<std::pair<Value *, size_t>, 1> todo = {
-      std::make_pair(V, checkLoadCaptures)};
-  std::set<std::pair<Value *, size_t>> seen;
+  SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
+  for (auto U : V->users()) {
+    todo.emplace_back(cast<Instruction>(U), checkLoadCaptures, V);
+  }
+  std::set<std::tuple<Value *, size_t, Value *>> seen;
   while (todo.size()) {
     auto pair = todo.pop_back_val();
     if (seen.count(pair))
       continue;
-    auto cur = pair.first;
-    for (auto U : cur->users()) {
-      auto UI = dyn_cast<Instruction>(U);
-      if (!regionBetween.count(UI->getParent()))
+    auto UI = std::get<0>(pair);
+    auto level = std::get<1>(pair);
+    auto prev = std::get<2>(pair);
+    if (!regionBetween.count(UI->getParent()))
+      continue;
+    if (UI->getParent() == VI->getParent()) {
+      if (UI->comesBefore(VI))
         continue;
-      if (UI->getParent() == VI->getParent()) {
-        if (UI->comesBefore(VI))
-          continue;
-      }
-      if (UI->getParent() == inst->getParent())
-        if (inst->comesBefore(UI))
-          continue;
-
-      if (isPointerArithmeticInst(UI, /*includephi*/ true,
-                                  /*includebin*/ true)) {
-        todo.emplace_back(UI, pair.second);
-        continue;
-      }
-
-      if (auto CI = dyn_cast<CallBase>(UI)) {
-#if LLVM_VERSION_MAJOR >= 14
-        for (size_t i = 0, size = CI->arg_size(); i < size; i++)
-#else
-        for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
-#endif
-        {
-          if (cur == CI->getArgOperand(i)) {
-            if (isNoCapture(CI, i))
-              continue;
-            return false;
-          }
-        }
-        return true;
-      }
-
-      if (isa<CmpInst>(UI)) {
-        continue;
-      }
-      if (isa<LoadInst>(UI) && pair.second) {
-        todo.emplace_back(UI, pair.second - 1);
-        continue;
-      }
-      return false;
     }
+    if (UI->getParent() == inst->getParent())
+      if (inst->comesBefore(UI))
+        continue;
+
+    if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                /*includebin*/ true)) {
+      for (auto U2 : UI->users()) {
+        auto UI2 = cast<Instruction>(U2);
+        todo.emplace_back(UI2, level, UI);
+      }
+      continue;
+    }
+
+    if (isa<MemSetInst>(UI))
+      continue;
+
+    if (isa<MemTransferInst>(UI)) {
+      if (level == 0)
+        continue;
+      if (UI->getOperand(1) != prev)
+        continue;
+    }
+
+    if (auto CI = dyn_cast<CallBase>(UI)) {
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+      for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+      {
+        if (prev == CI->getArgOperand(i)) {
+          if (isNoCapture(CI, i) && level == 0)
+            continue;
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (isa<CmpInst>(UI)) {
+      continue;
+    }
+    if (isa<LoadInst>(UI)) {
+      if (level) {
+        for (auto U2 : UI->users()) {
+          auto UI2 = cast<Instruction>(U2);
+          todo.emplace_back(UI2, level - 1, UI);
+        }
+      }
+      continue;
+    }
+    // storing into it.
+    if (auto SI = dyn_cast<StoreInst>(UI)) {
+      if (SI->getValueOperand() != prev) {
+        continue;
+      }
+    }
+    return false;
   }
   return true;
 }
