@@ -2210,6 +2210,9 @@ InstructionCost getInstructionCompCost(const Instruction *I,
     llvm_unreachable(msg.c_str());
   }
 
+  llvm::errs()
+      << "IMPORTANT: Custom cost model not provided, using default cost!\n";
+
   unsigned Opcode = I->getOpcode();
   switch (Opcode) {
   case Instruction::FNeg: {
@@ -4453,6 +4456,8 @@ B2:
 
         // TODO: For now just skip if grad is 0
         if (!FPOptLogPath.empty() && grad == 0.) {
+          llvm::errs() << "Skipping algebraic rewriting for " << *output
+                       << " since gradient is 0\n";
           continue;
         }
 

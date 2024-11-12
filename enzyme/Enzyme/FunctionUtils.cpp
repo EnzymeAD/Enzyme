@@ -1429,6 +1429,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             continue;
           }
           auto *after = cast<Instruction>(pair.second);
+          after->setMetadata("enzyme_active",
+                             MDNode::get(after->getContext(), None));
           after->setMetadata(
               "enzyme_preprocess_origin",
               MDTuple::get(after->getContext(),
