@@ -811,11 +811,24 @@ namespace {
 // TODO: the alias summary attribute is sufficent to get the correct behaviour
 // here, but it would be nice if these were not hardcoded.
 void annotateHardcoded(FunctionOpInterface func) {
+  MLIRContext *ctx = func.getContext();
+  SmallVector<Attribute> aliasSummary = {StringAttr::get(ctx, "<undefined>")};
+  SmallVector<Attribute> unaryMathActivitySummary = {ArrayAttr::get(
+      ctx, {enzyme::ArgumentOriginAttr::get(FlatSymbolRefAttr::get(func), 0)})};
   if (func.getName() == "lgamma") {
-    MLIRContext *ctx = func.getContext();
-    SmallVector<Attribute> arr = {StringAttr::get(ctx, "<undefined>")};
     func->setAttr(enzyme::EnzymeDialect::getAliasSummaryAttrName(),
-                  ArrayAttr::get(ctx, arr));
+                  ArrayAttr::get(ctx, aliasSummary));
+  }
+  if (func.getName() == "__nv_cos" || func.getName() == "__nv_sin" ||
+      func.getName() == "__nv_atan" || func.getName() == "__nv_sqrt" ||
+      func.getName() == "__nv_fabs") {
+    func->setAttr(enzyme::EnzymeDialect::getPointerSummaryAttrName(),
+                  ArrayAttr::get(ctx, {}));
+    func->setAttr(enzyme::EnzymeDialect::getAliasSummaryAttrName(),
+                  ArrayAttr::get(ctx, aliasSummary));
+    func->setAttr(enzyme::EnzymeDialect::getSparseActivityAnnotationAttrName(),
+                  ArrayAttr::get(ctx, unaryMathActivitySummary));
+    func->setAttr("enzyme.visited", UnitAttr::get(ctx));
   }
 }
 
@@ -912,6 +925,7 @@ void topDownActivityAnalysis(
         if (!(valueSource && valueSink)) {
           llvm::errs() << "[activity] missing attributes for op: " << *op
                        << "\n";
+          llvm::errs() << "    at loc: " << op->getLoc() << "\n";
         }
         assert(valueSource && valueSink && "missing attributes for op");
         bool activeSource =
@@ -1127,12 +1141,18 @@ void enzyme::runActivityAnnotations(
          << "\n";
     }
 
+    // TODO(jacob): I don't know if the forwardOnly flag ends up being useful.
+    // Would be worth re-testing without it.
     auto joinActiveDataState =
         [&](Value value,
-            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out,
+            bool forwardOnly = false) {
           auto *sources = solver.getOrCreateState<ForwardOriginsLattice>(value);
-          auto *sinks = solver.getOrCreateState<BackwardOriginsLattice>(value);
           (void)out.first.join(*sources);
+          if (forwardOnly)
+            return;
+
+          auto *sinks = solver.getOrCreateState<BackwardOriginsLattice>(value);
           (void)out.second.meet(*sinks);
         };
 
@@ -1149,13 +1169,14 @@ void enzyme::runActivityAnnotations(
 
     auto joinActiveValueState =
         [&](Value value,
-            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out) {
+            std::pair<ForwardOriginsLattice, BackwardOriginsLattice> &out,
+            bool forwardOnly = false) {
           if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
             auto *aliasClasses =
                 solver.getOrCreateState<AliasClassLattice>(value);
             joinActivePointerState(aliasClasses->getAliasClassesObject(), out);
           } else {
-            joinActiveDataState(value, out);
+            joinActiveDataState(value, out, forwardOnly);
           }
         };
 
@@ -1199,6 +1220,7 @@ void enzyme::runActivityAnnotations(
         // We need a special case because stores of active pointers don't fit
         // the definition but are active instructions
         if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
+          joinActiveDataState(storeOp.getValue(), opAttributes);
           auto *storedClass =
               solver.getOrCreateState<AliasClassLattice>(storeOp.getValue());
           joinActivePointerState(storedClass->getAliasClassesObject(),
@@ -1208,17 +1230,18 @@ void enzyme::runActivityAnnotations(
           auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
           if (callable->hasAttr(
                   EnzymeDialect::getDenseActivityAnnotationAttrName())) {
-            for (Value operand : callOp.getArgOperands())
-              joinActiveValueState(operand, opAttributes);
+            for (Value operand : callOp.getArgOperands()) {
+              // Only consider sinks of pointer operands
+              bool forwardOnly =
+                  !isa<LLVM::LLVMPointerType, MemRefType>(operand.getType());
+              joinActiveValueState(operand, opAttributes, forwardOnly);
+            }
           }
-          // We need to
-          // determine if the body of the function contains active instructions
+          // We need to determine if the body of the function contains active
+          // instructions
         }
 
-        // Default: the op is active iff any of its operands or results are
-        // active data.
-        for (Value operand : op->getOperands())
-          joinActiveDataState(operand, opAttributes);
+        // Default: the op is active iff any of its results are active data.
         for (OpResult result : op->getResults())
           joinActiveDataState(result, opAttributes);
       }
