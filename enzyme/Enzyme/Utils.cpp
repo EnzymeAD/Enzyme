@@ -92,6 +92,11 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
                    cl::desc("Use fast math on derivative compuation"));
+
+llvm::cl::opt<bool> EnzymeForceMalloc(
+    "enzyme-force-malloc", cl::init(false), cl::Hidden,
+    cl::desc("Use malloc instead of realloc in the exponential allocation"));
+
 llvm::cl::opt<bool>
     EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
                      cl::desc("Use additional checks to ensure correct "
@@ -210,7 +215,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
   auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
-  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+  bool forceMalloc =
+      EnzymeForceMalloc || Arch == Triple::nvptx || Arch == Triple::nvptx64;
 
   if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
