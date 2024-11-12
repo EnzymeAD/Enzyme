@@ -2098,4 +2098,10 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
 
 bool isNVLoad(const llvm::Value *V);
 
+//! Check if value if b captured after definition before executing inst.
+//! If checkLoadCaptured != 0, also consider catpures of any loads of the value
+//! as a capture (for the number of loads set).
+bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
+                       size_t checkLoadCaptured);
+
 #endif // ENZYME_UTILS_H

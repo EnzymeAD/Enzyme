@@ -3810,3 +3810,80 @@ bool isNVLoad(const llvm::Value *V) {
   }
   return false;
 }
+
+bool notCapturedBefore(llvm::Value *V, Instruction *inst,
+                       size_t checkLoadCaptures) {
+  Instruction *VI = dyn_cast<Instruction>(V);
+  if (!VI)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
+  else
+    VI = VI->getNextNode();
+  SmallPtrSet<BasicBlock *, 1> regionBetween;
+  {
+    SmallVector<BasicBlock *, 1> todo;
+    todo.push_back(VI->getParent());
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      if (regionBetween.count(cur))
+        continue;
+      regionBetween.insert(cur);
+      if (cur == inst->getParent())
+        continue;
+      for (auto BB : successors(cur))
+        todo.push_back(BB);
+    }
+  }
+  SmallVector<std::pair<Value *, size_t>, 1> todo = {
+      std::make_pair(V, checkLoadCaptures)};
+  std::set<std::pair<Value *, size_t>> seen;
+  while (todo.size()) {
+    auto pair = todo.pop_back_val();
+    if (seen.count(pair))
+      continue;
+    auto cur = pair.first;
+    for (auto U : cur->users()) {
+      auto UI = dyn_cast<Instruction>(U);
+      if (!regionBetween.count(UI->getParent()))
+        continue;
+      if (UI->getParent() == VI->getParent()) {
+        if (UI->comesBefore(VI))
+          continue;
+      }
+      if (UI->getParent() == inst->getParent())
+        if (inst->comesBefore(UI))
+          continue;
+
+      if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                  /*includebin*/ true)) {
+        todo.emplace_back(UI, pair.second);
+        continue;
+      }
+
+      if (auto CI = dyn_cast<CallBase>(UI)) {
+#if LLVM_VERSION_MAJOR >= 14
+        for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+        for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+        {
+          if (cur == CI->getArgOperand(i)) {
+            if (isNoCapture(CI, i))
+              continue;
+            return false;
+          }
+        }
+        return true;
+      }
+
+      if (isa<CmpInst>(UI)) {
+        continue;
+      }
+      if (isa<LoadInst>(UI) && pair.second) {
+        todo.emplace_back(UI, pair.second - 1);
+        continue;
+      }
+      return false;
+    }
+  }
+  return true;
+}
