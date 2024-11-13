@@ -208,9 +208,9 @@ void gmm_objective_restrict(size_t d, size_t k, size_t n,
                             double const *__restrict icf,
                             double const *__restrict x, Wishart wishart,
                             double *__restrict err) {
-    size_t ix, ik;
+    int64_t ix, ik;
     const double CONSTANT = -n * d * 0.5 * log(2 * PI);
-    size_t icf_sz = d * (d + 1) / 2;
+    int64_t icf_sz = d * (d + 1) / 2;
 
     double* Qdiags = (double*)malloc(d * k * sizeof(double));
     double* sum_qs = (double*)malloc(k * sizeof(double));
@@ -284,19 +284,18 @@ extern "C" {
  ==================================================================== */
 // This throws error on n<1
 void arr_max_b(size_t n, const double *x, double *xb, double arr_maxb) {
-    size_t i;
     double m = x[0];
     double mb = 0.0;
     int branch;
     double arr_max;
-    for (i = 1; i < n; ++i)
+    for (int64_t i = 1; i < n; ++i)
         if (m < x[i]) {
             m = x[i];
             pushControl1b(1);
         } else
             pushControl1b(0);
     mb = arr_maxb;
-    for (i = n-1; i > 0; --i) {
+    for (int64_t i = (int64_t)n-1; i > 0; --i) {
         popControl1b(&branch);
         if (branch != 0) {
             xb[i] = xb[i] + mb;
@@ -327,12 +326,11 @@ double arr_max_nodiff(size_t n, const double *x) {
 */
 // sum of component squares
 void sqnorm_b(size_t n, const double *x, double *xb, double sqnormb) {
-    size_t i;
     double res = x[0]*x[0];
     double resb = 0.0;
     double sqnorm;
     resb = sqnormb;
-    for (i = n-1; i > 0; --i)
+    for (int64_t i = (int64_t)n-1; i > 0; --i)
         xb[i] = xb[i] + 2*x[i]*resb;
     xb[0] = xb[0] + 2*x[0]*resb;
 }
@@ -355,8 +353,7 @@ double sqnorm_nodiff(size_t n, const double *x) {
 // out = a - b
 void subtract_b(size_t d, const double *x, const double *y, double *yb, double *
         out, double *outb) {
-    size_t id;
-    for (id = d-1; id > -1; --id) {
+    for (int64_t id = (int64_t)d-1; id > -1; --id) {
         yb[id] = yb[id] - outb[id];
         outb[id] = 0.0;
     }
@@ -376,7 +373,6 @@ void subtract_nodiff(size_t d, const double *x, const double *y, double *out) {
    Plus diff mem management of: x:in
 */
 void log_sum_exp_b(size_t n, const double *x, double *xb, double log_sum_expb) {
-    size_t i;
     double mx;
     double mxb;
     double tempb;
@@ -384,11 +380,11 @@ void log_sum_exp_b(size_t n, const double *x, double *xb, double log_sum_expb) {
     mx = arr_max_nodiff(n, x);
     double semx = 0.0;
     double semxb = 0.0;
-    for (i = 0; i < n; ++i)
+    for (int64_t i = 0; i < n; ++i)
         semx = semx + exp(x[i] - mx);
     semxb = log_sum_expb/semx;
     mxb = log_sum_expb;
-    for (i = n-1; i > -1; --i) {
+    for (int64_t i = (int64_t)n-1; i > -1; --i) {
         tempb = exp(x[i]-mx)*semxb;
         xb[i] = xb[i] + tempb;
         mxb = mxb - tempb;
@@ -432,7 +428,7 @@ double log_gamma_distrib_nodiff(double a, double p) {
 void log_wishart_prior_b(size_t p, size_t k, Wishart wishart, const double *sum_qs,
         double *sum_qsb, const double *Qdiags, double *Qdiagsb, const double *
         icf, double *icfb, double log_wishart_priorb) {
-    size_t ik;
+    int64_t ik;
     size_t n = p + wishart.m + 1;
     size_t icf_sz = p*(p+1)/2;
     double C;
@@ -454,7 +450,7 @@ void log_wishart_prior_b(size_t p, size_t k, Wishart wishart, const double *sum_
         sum_qsb[ik] = 0.0;
     for (ik = 0; ik < k * icf_sz; ik++) /* TFIX */
         icfb[ik] = 0.0;
-    for (ik = k-1; ik > -1; --ik) {
+    for (ik = (int64_t)k-1; ik > -1; --ik) {
         double frobenius;
         double frobeniusb;
         double result1;
@@ -511,15 +507,15 @@ double log_wishart_prior_nodiff(size_t p, size_t k, Wishart wishart, const doubl
 */
 void preprocess_qs_b(size_t d, size_t k, const double *icf, double *icfb, double *
         sum_qs, double *sum_qsb, double *Qdiags, double *Qdiagsb) {
-    size_t ik, id;
+    int64_t ik, id;
     size_t icf_sz = d*(d+1)/2;
     for (ik = 0; ik < k; ++ik)
         for (id = 0; id < d; ++id) {
             double q = icf[ik*icf_sz + id];
             pushReal8(q);
         }
-    for (ik = k-1; ik > -1; --ik) {
-        for (id = d-1; id > -1; --id) {
+    for (ik = (int64_t)k-1; ik > -1; --ik) {
+        for (id = (int64_t)d-1; id > -1; --id) {
             double q;
             double qb = 0.0;
             popReal8(&q);
@@ -534,11 +530,10 @@ void preprocess_qs_b(size_t d, size_t k, const double *icf, double *icfb, double
 
 void preprocess_qs_nodiff(size_t d, size_t k, const double *icf, double *sum_qs,
         double *Qdiags) {
-    size_t ik, id;
     size_t icf_sz = d*(d+1)/2;
-    for (ik = 0; ik < k; ++ik) {
+    for (size_t ik = 0; ik < k; ++ik) {
         sum_qs[ik] = 0.;
-        for (id = 0; id < d; ++id) {
+        for (size_t id = 0; id < d; ++id) {
             double q = icf[ik*icf_sz + id];
             sum_qs[ik] = sum_qs[ik] + q;
             Qdiags[ik*d + id] = exp(q);
@@ -556,7 +551,7 @@ void Qtimesx_b(size_t d, const double *Qdiag, double *Qdiagb, const double *ltri
         double *ltrib, const double *x, double *xb, double *out, double *outb)
 {
     // strictly lower triangular part
-    size_t i, j;
+    int64_t i, j;
     int adFrom;
     size_t Lparamsidx = 0;
     for (i = 0; i < d; ++i) {
@@ -565,15 +560,15 @@ void Qtimesx_b(size_t d, const double *Qdiag, double *Qdiagb, const double *ltri
             Lparamsidx++;
         pushInteger4(adFrom);
     }
-    for (i = d-1; i > -1; --i) {
+    for (i = (int64_t)d-1; i > -1; --i) {
         popInteger4(&adFrom);
-        for (j = d-1; j > adFrom-1; --j) {
+        for (j = (int64_t)d-1; j > adFrom-1; --j) {
             --Lparamsidx;
             ltrib[Lparamsidx] = ltrib[Lparamsidx] + x[i]*outb[j];
             xb[i] = xb[i] + ltri[Lparamsidx]*outb[j];
         }
     }
-    for (i = d-1; i > -1; --i) {
+    for (i = (int64_t)d-1; i > -1; --i) {
         Qdiagb[i] = Qdiagb[i] + x[i]*outb[i];
         xb[i] = xb[i] + Qdiag[i]*outb[i];
         outb[i] = 0.0;
@@ -606,7 +601,7 @@ void gmm_objective_b(size_t d, size_t k, size_t n, const double *alphas, double 
         alphasb, const double *means, double *meansb, const double *icf,
         double *icfb, const double *x, Wishart wishart, double *err, double *
         errb) {
-    size_t ix, ik;
+    int64_t ix, ik;
     /* TFIX */
     const double CONSTANT = -n*d*0.5*log(2*PI);
     size_t icf_sz = d*(d+1)/2;
@@ -670,10 +665,10 @@ void gmm_objective_b(size_t d, size_t k, size_t n, const double *alphas, double 
     log_sum_exp_b(k, alphas, alphasb, lse_alphasb);
     for (ii1 = 0; ii1 < d * k; ii1++) /* TFIX */
         meansb[ii1] = 0.0;
-    for (ix = n-1; ix > -1; --ix) {
+    for (ix = (int64_t)n-1; ix > -1; --ix) {
         result1b = slseb;
         log_sum_exp_b(k, &(main_term[0]), &(main_termb[0]), result1b);
-        for (ik = k-1; ik > -1; --ik) {
+        for (ik = (int64_t)k-1; ik > -1; --ik) {
             popReal8(&(main_term[ik]));
             alphasb[ik] = alphasb[ik] + main_termb[ik];
             sum_qsb[ik] = sum_qsb[ik] + main_termb[ik];
