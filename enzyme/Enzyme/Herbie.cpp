@@ -3801,7 +3801,7 @@ bool accuracyDPSolver(
         if (currCompCost - otherCompCost >
                 std::fabs(FPOptCostDominanceThreshold *
                           otherCompCost.getValue().getValue()) &&
-            currAccCost - otherAccCost >
+            currAccCost - otherAccCost >=
                 std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
           // if (EnzymePrintFPOpt)
           //   llvm::errs() << "AO candidate with computation cost: "
@@ -3901,7 +3901,7 @@ bool accuracyDPSolver(
         if (currCompCost - otherCompCost >
                 std::fabs(FPOptCostDominanceThreshold *
                           otherCompCost.getValue().getValue()) &&
-            currAccCost - otherAccCost >
+            currAccCost - otherAccCost >=
                 std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
           // if (EnzymePrintFPOpt)
           //   llvm::errs() << "ACC candidate with computation cost: "
