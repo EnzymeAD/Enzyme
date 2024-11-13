@@ -105,7 +105,7 @@ double log_sum_exp(size_t n, double const* x)
 __attribute__((const))
 double log_gamma_distrib(double a, double p)
 {
-    size_t j;
+    int64_t j;
     double out = 0.25 * p * (p - 1) * log(PI);
 
     for (j = 1; j <= p; j++)
@@ -209,7 +209,7 @@ void gmm_objective_restrict(size_t d, size_t k, size_t n,
                             double const *__restrict x, Wishart wishart,
                             double *__restrict err) {
     int64_t ix, ik;
-    const double CONSTANT = -n * d * 0.5 * log(2 * PI);
+    const double CONSTANT = -(double)n * d * 0.5 * log(2 * PI);
     int64_t icf_sz = d * (d + 1) / 2;
 
     double* Qdiags = (double*)malloc(d * k * sizeof(double));
@@ -603,7 +603,7 @@ void gmm_objective_b(size_t d, size_t k, size_t n, const double *alphas, double 
         errb) {
     int64_t ix, ik;
     /* TFIX */
-    const double CONSTANT = -n*d*0.5*log(2*PI);
+    const double CONSTANT = -(double)n*d*0.5*log(2*PI);
     size_t icf_sz = d*(d+1)/2;
     double *Qdiags;
     double *Qdiagsb;
@@ -883,7 +883,7 @@ void gmm_objective(size_t d, size_t k, size_t n,
     Wishart wishart,
     T* err)
 {
-    const double CONSTANT = -n * d * 0.5 * log(2 * PI);
+    const double CONSTANT = -(double)n * d * 0.5 * log(2 * PI);
     size_t icf_sz = d * (d + 1) / 2;
 
     vector<T> Qdiags(d * k);
@@ -979,7 +979,7 @@ void gmm_objective_split_other(size_t d, size_t k, size_t n,
     Wishart wishart,
     T* err)
 {
-    const double CONSTANT = -n * d * 0.5 * log(2 * PI);
+    const double CONSTANT = -(double)n * d * 0.5 * log(2 * PI);
 
     T lse_alphas = logsumexp(k, alphas);
 

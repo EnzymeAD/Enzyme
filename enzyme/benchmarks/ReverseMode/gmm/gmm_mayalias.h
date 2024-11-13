@@ -2,7 +2,7 @@ void gmm_objective(size_t d, size_t k, size_t n, double const *alphas,
                    double const *means, double const *icf, double const *x,
                    Wishart wishart, double *err) {
   size_t ix, ik;
-  const double CONSTANT = -n * d * 0.5 * log(2 * PI);
+  const double CONSTANT = -(double)n * d * 0.5 * log(2 * PI);
   size_t icf_sz = d * (d + 1) / 2;
 
   double *Qdiags = (double *)malloc(d * k * sizeof(double));
