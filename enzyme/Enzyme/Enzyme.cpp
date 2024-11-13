@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
 #include <memory>
+#include <string>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -117,6 +118,22 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
     cl::desc(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
+
+llvm::cl::opt<bool> FPOptExtraMemOpt(
+    "fpopt-extra-memopt", cl::init(false), cl::Hidden,
+    cl::desc("Whether to enable aggressive memory opts beforehand"));
+
+llvm::cl::opt<bool> FPOptExtraReAssocOpt(
+    "fpopt-extra-reassoc", cl::init(false), cl::Hidden,
+    cl::desc("Whether to enable expression reassociation"));
+
+llvm::cl::opt<bool> FPOptExtraIfConversion(
+    "fpopt-extra-ifconv", cl::init(false), cl::Hidden,
+    cl::desc("Enable Phi node folding"));
+
+llvm::cl::opt<bool> EnzymeExtraCSE(
+    "enzyme-extra-cse", cl::init(false), cl::Hidden,
+    cl::desc("Rerun CSE before FPOpt"));
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -2901,31 +2918,22 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,     &AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
+          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
+          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
+          &AADereferenceable::ID, &AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,          &AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
       AttributorConfig aconfig(CGUpdater);
