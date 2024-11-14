@@ -23,9 +23,11 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include "llvm/IR/PassManager.h"
 #include <llvm/Config/llvm-config.h>
 #include <memory>
 #include <string>
+#include <utility>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -124,8 +126,8 @@ llvm::cl::opt<bool>
                      cl::desc("Run some memory optimizations to aid the "
                               "flood-fill algo before running FPOpt"));
 
-llvm::cl::opt<bool> FPOptExtraReAssocOpt(
-    "fpopt-extra-reassoc", cl::init(false), cl::Hidden,
+llvm::cl::opt<bool> FPOptExtraPreReassoc(
+    "fpopt-extra-pre-reassoc", cl::init(false), cl::Hidden,
     cl::desc("Run LLVM -reassiociate before running FPOpt"));
 
 llvm::cl::opt<bool> FPOptExtraIfConversion(
@@ -3288,7 +3290,11 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #ifdef ENZYME_ENABLE_FPOPT
 #include "Herbie.h"
+#include "llvm/Transforms/Scalar/Reassociate.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/SimplifyCFGOptions.h"
 #endif
+
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -3405,31 +3411,50 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 
 #ifdef ENZYME_ENABLE_FPOPT
     // All of these ablations are designed to be run at -O0
-
+    FunctionPassManager herbieFPM;
     if (FPOptExtraMemOpt) {
+      llvm::dbgs() << "Running mem2reg" << "\n";
+      herbieFPM.addPass(llvm::PromotePass());
     }
 
-    if (FPOptExtraReAssocOpt) {
+    // check if we need to queue reassociations
+    if (FPOptExtraPreReassoc) {
+      herbieFPM.addPass(llvm::ReassociatePass());
     }
 
     if (FPOptExtraIfConversion) {
+      llvm::SimplifyCFGOptions o;
+      o.ConvertSwitchToLookupTable = true;
+      o.ConvertSwitchRangeToICmp = true;
+      o.NeedCanonicalLoop = false;
+      o.SinkCommonInsts = true;
+      o.HoistCommonInsts = true;
+      o.ForwardSwitchCondToPhi = false;
+      o.FoldTwoEntryPHINode = true; // Important for PHI->select
+      o.SimplifyCondBranch = true;  // Important for if-conversion
+      herbieFPM.addPass(llvm::SimplifyCFGPass(o));
     }
 
     if (FPOptExtraPreCSE) {
       // easy cases
-      MPM.addPass(llvm::EarlyCSEPass(true));
+      herbieFPM.addPass(llvm::EarlyCSEPass(true));
       // 'harder'/edge cases
-      MPM.addPass(llvm::GVNPass());
+      herbieFPM.addPass(llvm::GVNPass());
     }
+
+    if (FPOptExtraPreReassoc || FPOptExtraIfConversion || FPOptExtraPreCSE)
+      MPM.addPass(createModuleToFunctionPassAdaptor(std::move(herbieFPM)));
 
     if (EnzymeEnableFPOpt)
       MPM.addPass(FPOptNewPM());
 
+    FunctionPassManager herbieFPM2;
     if (FPOptExtraPostCSE) {
       // easy cases
-      MPM.addPass(llvm::EarlyCSEPass(true));
+      herbieFPM2.addPass(llvm::EarlyCSEPass(true));
       // 'harder'/edge cases
-      MPM.addPass(llvm::GVNPass());
+      herbieFPM2.addPass(llvm::GVNPass());
+      MPM.addPass(createModuleToFunctionPassAdaptor(std::move(herbieFPM2)));
     }
 #endif
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
@@ -3751,3 +3776,4 @@ extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", registerEnzyme};
 }
+
