@@ -119,21 +119,27 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
 
-llvm::cl::opt<bool> FPOptExtraMemOpt(
-    "fpopt-extra-memopt", cl::init(false), cl::Hidden,
-    cl::desc("Whether to enable aggressive memory opts beforehand"));
+llvm::cl::opt<bool>
+    FPOptExtraMemOpt("fpopt-extra-memopt", cl::init(false), cl::Hidden,
+                     cl::desc("Run some memory optimizations to aid the "
+                              "flood-fill algo before running FPOpt"));
 
 llvm::cl::opt<bool> FPOptExtraReAssocOpt(
     "fpopt-extra-reassoc", cl::init(false), cl::Hidden,
-    cl::desc("Whether to enable expression reassociation"));
+    cl::desc("Run LLVM -reassiociate before running FPOpt"));
 
 llvm::cl::opt<bool> FPOptExtraIfConversion(
     "fpopt-extra-ifconv", cl::init(false), cl::Hidden,
-    cl::desc("Enable Phi node folding"));
+    cl::desc("Push speculative phi node folding to increase number of select "
+             "instructions for graph capture"));
 
-llvm::cl::opt<bool> EnzymeExtraCSE(
-    "enzyme-extra-cse", cl::init(false), cl::Hidden,
-    cl::desc("Rerun CSE before FPOpt"));
+llvm::cl::opt<bool> FPOptExtraPreCSE("fpopt-extra-pre-cse", cl::init(false),
+                                     cl::Hidden,
+                                     cl::desc("Run CSE before FPOpt"));
+
+llvm::cl::opt<bool> FPOptExtraPostCSE("fpopt-extra-pre-cse", cl::init(false),
+                                      cl::Hidden,
+                                      cl::desc("Run CSE after FPOpt"));
 
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -3396,9 +3402,35 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     OptimizerPM.addPass(llvm::SROAPass());
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+
 #ifdef ENZYME_ENABLE_FPOPT
+    // All of these ablations are designed to be run at -O0
+
+    if (FPOptExtraMemOpt) {
+    }
+
+    if (FPOptExtraReAssocOpt) {
+    }
+
+    if (FPOptExtraIfConversion) {
+    }
+
+    if (FPOptExtraPreCSE) {
+      // easy cases
+      MPM.addPass(llvm::EarlyCSEPass(true));
+      // 'harder'/edge cases
+      MPM.addPass(llvm::GVNPass());
+    }
+
     if (EnzymeEnableFPOpt)
       MPM.addPass(FPOptNewPM());
+
+    if (FPOptExtraPostCSE) {
+      // easy cases
+      MPM.addPass(llvm::EarlyCSEPass(true));
+      // 'harder'/edge cases
+      MPM.addPass(llvm::GVNPass());
+    }
 #endif
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
