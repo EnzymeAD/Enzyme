@@ -139,7 +139,7 @@ llvm::cl::opt<bool> FPOptExtraPreCSE("fpopt-extra-pre-cse", cl::init(false),
                                      cl::Hidden,
                                      cl::desc("Run CSE before FPOpt"));
 
-llvm::cl::opt<bool> FPOptExtraPostCSE("fpopt-extra-pre-cse", cl::init(false),
+llvm::cl::opt<bool> FPOptExtraPostCSE("fpopt-extra-post-cse", cl::init(false),
                                       cl::Hidden,
                                       cl::desc("Run CSE after FPOpt"));
 
