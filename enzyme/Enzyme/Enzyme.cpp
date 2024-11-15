@@ -101,6 +101,10 @@ using namespace llvm;
 #endif
 #define DEBUG_TYPE "lower-enzyme-intrinsic"
 
+llvm::cl::opt<bool>
+    EnzymeDisablePreOpt("enzyme-disable-preopt", cl::init(true), cl::Hidden,
+                        cl::desc("Do not run any pre-processing passes"));
+
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
                                  cl::desc("Run the Enzyme pass"));
 
@@ -3395,8 +3399,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     if (!EnzymeEnable)
       return;
 
-    if (Level != OptimizationLevel::O0)
-      prePass(MPM, Level);
+    if (EnzymeDisablePreOpt) {
+      if (Level != OptimizationLevel::O0)
+        prePass(MPM, Level);
+    }
+
     MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
@@ -3776,4 +3783,3 @@ extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", registerEnzyme};
 }
-
