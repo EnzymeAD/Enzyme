@@ -3419,14 +3419,27 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #ifdef ENZYME_ENABLE_FPOPT
     // All of these ablations are designed to be run at -O0
     FunctionPassManager herbieFPM;
+
+
+    if (FPOptExtraPreCSE) {
+      // easy cases
+      herbieFPM.addPass(llvm::EarlyCSEPass(true));
+      // 'harder'/edge cases
+      herbieFPM.addPass(llvm::GVNPass());
+    }
+
     if (FPOptExtraMemOpt) {
       // llvm::dbgs() << "Running mem2reg" << "\n";
       herbieFPM.addPass(llvm::PromotePass());
+      herbieFPM.addPass(llvm::GVNPass())  ;
+      herbieFPM.addPass(llvm::SROAPass());
     }
 
     // check if we need to queue reassociations
     if (FPOptExtraPreReassoc) {
       herbieFPM.addPass(llvm::ReassociatePass());
+      herbieFPM.addPass(llvm::InstCombinePass());
+      herbieFPM.addPass(llvm::AggressiveInstCombinePass());
     }
 
     if (FPOptExtraIfConversion) {
@@ -3442,12 +3455,6 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       herbieFPM.addPass(llvm::SimplifyCFGPass(o));
     }
 
-    if (FPOptExtraPreCSE) {
-      // easy cases
-      herbieFPM.addPass(llvm::EarlyCSEPass(true));
-      // 'harder'/edge cases
-      herbieFPM.addPass(llvm::GVNPass());
-    }
 
     if (FPOptExtraMemOpt || FPOptExtraPreReassoc || FPOptExtraIfConversion ||
         FPOptExtraPreCSE)
