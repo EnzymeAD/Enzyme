@@ -353,12 +353,16 @@ int main(int argc, char **argv) {
   }
   double inp = -2.1;
 
-  for (size_t iters = max(1, N >> 5); iters <= N; iters *= 2) {
+  size_t iters = max(1, N >> 0);
+  for (size_t i = 0; i < 5; i++) {
     printf("iters=%zu\n", iters);
+#if CPP
     adept_sincos(inp, iters);
     tapenade_sincos(inp, iters);
     enzyme_sincos(inp, iters);
+#else
     enzyme_rust_sincos(inp, iters);
     enzyme_unsafe_rust_sincos(inp, iters);
+#endif
   }
 }

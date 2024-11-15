@@ -9,12 +9,12 @@ fn bitreversal_perm<T>(data: &mut [T]) {
     for i in (1..data.len()).step_by(2) {
         if j > i {
             //dbg!(&i, &j);
-            //data.swap(j-1, i-1);
-            //data.swap(j, i);
-            unsafe {
-                data.swap_unchecked(j - 1, i - 1);
-                data.swap_unchecked(j, i);
-            }
+            data.swap(j-1, i-1);
+            data.swap(j, i);
+            //unsafe {
+            //    data.swap_unchecked(j - 1, i - 1);
+            //    data.swap_unchecked(j, i);
+            //}
         }
 
         let mut m = len;
