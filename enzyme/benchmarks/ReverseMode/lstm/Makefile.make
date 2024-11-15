@@ -9,10 +9,10 @@ clean:
 	cargo +enzyme clean
 
 $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a: src/lib.rs Cargo.toml
-	RUSTFLAGS="-Z mutable-noalias=no" cargo +enzyme rustc --release --lib --crate-type=staticlib 
+	RUSTFLAGS="-Z mutable-noalias=yes" cargo +enzyme rustc --release --lib --crate-type=staticlib 
 
 lstm.o: lstm.cpp $(dir)/benchmarks/ReverseMode/lstm/target/release/liblstm.a
 	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@
 
 results.json: lstm.o
-	./$^
+	numactl -C 1 ./$^

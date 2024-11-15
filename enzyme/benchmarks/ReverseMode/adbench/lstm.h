@@ -474,17 +474,14 @@ int main(const int argc, const char* argv[]) {
     {
        struct timeval start, end;
        gettimeofday(&start, NULL);
-       calculate_mayalias_primal(input);
+       double res = calculate_mayalias_primal(input);
        gettimeofday(&end, NULL);
        printf("C++ mayalias primal %0.6f\n", tdiff(&start, &end));
        json enzyme;
        enzyme["name"] = "C++ mayalias primal";
        enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
-            i++) {
-         printf("%f ", result.gradient[i]);
-         enzyme["result"].push_back(result.gradient[i]);
-       }
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
        test_suite["tools"].push_back(enzyme);
 
        printf("\n");
@@ -507,17 +504,14 @@ int main(const int argc, const char* argv[]) {
     {
        struct timeval start, end;
        gettimeofday(&start, NULL);
-       calculate_restrict_primal(input);
+       double res = calculate_restrict_primal(input);
        gettimeofday(&end, NULL);
        printf("C++ restrict primal %0.6f\n", tdiff(&start, &end));
        json enzyme;
        enzyme["name"] = "C++ restrict primal";
        enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
-            i++) {
-         printf("%f ", result.gradient[i]);
-         enzyme["result"].push_back(result.gradient[i]);
-       }
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
        test_suite["tools"].push_back(enzyme);
 
        printf("\n");
@@ -540,17 +534,14 @@ int main(const int argc, const char* argv[]) {
     {
        struct timeval start, end;
        gettimeofday(&start, NULL);
-       calculate_unsafe_primal(input);
+       double res =calculate_unsafe_primal(input);
        gettimeofday(&end, NULL);
        printf("Enzyme (unsafe Rust) primal %0.6f\n", tdiff(&start, &end));
        json enzyme;
        enzyme["name"] = "Enzyme (unsafe Rust) primal";
        enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
-            i++) {
-         printf("%f ", result.gradient[i]);
-         enzyme["result"].push_back(result.gradient[i]);
-       }
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
        test_suite["tools"].push_back(enzyme);
 
        printf("\n");
@@ -573,17 +564,14 @@ int main(const int argc, const char* argv[]) {
     {
        struct timeval start, end;
        gettimeofday(&start, NULL);
-       calculate_safe_primal(input);
+       double res = calculate_safe_primal(input);
        gettimeofday(&end, NULL);
        printf("Enzyme (safe Rust) primal %0.6f\n", tdiff(&start, &end));
        json enzyme;
        enzyme["name"] = "Enzyme (safe Rust) primal";
        enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
-            i++) {
-         printf("%f ", result.gradient[i]);
-         enzyme["result"].push_back(result.gradient[i]);
-       }
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
        test_suite["tools"].push_back(enzyme);
 
        printf("\n");

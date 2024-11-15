@@ -15,4 +15,4 @@ gmm.o: gmm.cpp $(dir)/benchmarks/ReverseMode/gmm/target/release/libgmmrs.a
 	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@
 
 results.json: gmm.o
-	./$^
+	numactl -C 1 ./$^
