@@ -3407,14 +3407,14 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
-#if LLVM_VERSION_MAJOR >= 16
-    OptimizerPM.addPass(llvm::GVNPass());
-    OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
-#else
-    OptimizerPM.addPass(llvm::GVNPass());
-    OptimizerPM.addPass(llvm::SROAPass());
-#endif
-    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+// #if LLVM_VERSION_MAJOR >= 16
+//     OptimizerPM.addPass(llvm::GVNPass());
+//     OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+// #else
+//     OptimizerPM.addPass(llvm::GVNPass());
+//     OptimizerPM.addPass(llvm::SROAPass());
+// #endif
+    // MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
 
 #ifdef ENZYME_ENABLE_FPOPT
     // All of these ablations are designed to be run at -O0
