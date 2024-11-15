@@ -102,7 +102,7 @@ using namespace llvm;
 #define DEBUG_TYPE "lower-enzyme-intrinsic"
 
 llvm::cl::opt<bool>
-    EnzymeDisablePreOpt("enzyme-disable-preopt", cl::init(true), cl::Hidden,
+    EnzymeDisablePreOpt("enzyme-disable-preopt", cl::init(false), cl::Hidden,
                         cl::desc("Do not run any pre-processing passes"));
 
 llvm::cl::opt<bool> EnzymeEnable("enzyme-enable", cl::init(true), cl::Hidden,
@@ -3420,7 +3420,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // All of these ablations are designed to be run at -O0
     FunctionPassManager herbieFPM;
     if (FPOptExtraMemOpt) {
-      llvm::dbgs() << "Running mem2reg" << "\n";
+      // llvm::dbgs() << "Running mem2reg" << "\n";
       herbieFPM.addPass(llvm::PromotePass());
     }
 
@@ -3449,7 +3449,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       herbieFPM.addPass(llvm::GVNPass());
     }
 
-    if (FPOptExtraPreReassoc || FPOptExtraIfConversion || FPOptExtraPreCSE)
+    if ( FPOptExtraMemOpt|| FPOptExtraPreReassoc || FPOptExtraIfConversion || FPOptExtraPreCSE)
       MPM.addPass(createModuleToFunctionPassAdaptor(std::move(herbieFPM)));
 
     if (EnzymeEnableFPOpt)
