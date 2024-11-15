@@ -3449,7 +3449,8 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       herbieFPM.addPass(llvm::GVNPass());
     }
 
-    if ( FPOptExtraMemOpt|| FPOptExtraPreReassoc || FPOptExtraIfConversion || FPOptExtraPreCSE)
+    if (FPOptExtraMemOpt || FPOptExtraPreReassoc || FPOptExtraIfConversion ||
+        FPOptExtraPreCSE)
       MPM.addPass(createModuleToFunctionPassAdaptor(std::move(herbieFPM)));
 
     if (EnzymeEnableFPOpt)
