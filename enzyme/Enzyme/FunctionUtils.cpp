@@ -127,7 +127,7 @@
 using namespace llvm;
 
 extern "C" {
-cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
+cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(false), cl::Hidden,
                            cl::desc("Run enzyme preprocessing optimizations"));
 
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
