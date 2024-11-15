@@ -15,13 +15,13 @@ ode.o: ode.cpp $(dir)/benchmarks/ReverseMode/ode-real/target/release/libode.a
 	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@
 
 results.json: ode.o
-	./$^ 1000 | tee $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
-	./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 | tee $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@
+	numactl -C 1 ./$^ 1000 >> $@

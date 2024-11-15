@@ -15,4 +15,4 @@ ba.o: ba.cpp $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a
 	clang++ $(LOADCLANG) $(BENCH) -O3 -fno-math-errno $^ $(BENCHLINK) -lm -o $@
 
 results.json: ba.o
-	./$^
+	numactl -C 1 ./$^
