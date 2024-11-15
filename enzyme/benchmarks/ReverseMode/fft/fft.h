@@ -27,7 +27,7 @@ inline void swap(double *a, double *b) {
   *b = temp;
 }
 
-static void recursiveApply(double *data, size_t N, int iSign) {
+static void recursiveApply(double *__restrict data, size_t N, int iSign) {
   if (N == 1)
     return;
   recursiveApply(data, N / 2, iSign);
@@ -39,17 +39,20 @@ static void recursiveApply(double *data, size_t N, int iSign) {
   double wr = 1.0;
   double wi = 0.0;
 
-  for (size_t ii = 0; ii < N / 2; ii++) {
-    size_t i = 2 * ii;
+  for (size_t i = 0; i < N; i += 2) {
     size_t iN = i + N;
+    double *__restrict ay = &data[i + 1];
+    double *__restrict ax = &data[i];
+    double *__restrict by = &data[iN + 1];
+    double *__restrict bx = &data[iN];
 
-    double tempr = data[iN] * wr - data[iN + 1] * wi;
-    double tempi = data[iN] * wi + data[iN + 1] * wr;
+    double tempr = *bx * wr - *by * wi;
+    double tempi = *bx * wi + *by * wr;
 
-    data[iN] = data[i] - tempr;
-    data[iN + 1] = data[i + 1] - tempi;
-    data[i] += tempr;
-    data[i + 1] += tempi;
+    *bx = *ax - tempr;
+    *by = *ay - tempi;
+    *ax += tempr;
+    *ay += tempi;
 
     wtemp = wr;
     wr = wr * (wpr + 1.) - wi * wpi;
