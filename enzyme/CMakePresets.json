@@ -84,19 +84,19 @@
         {
             "name": "x64-linux-clang-debug",
             "displayName": "Clang x64 Linux Debug",
-            "description": "Builds the project using Clang on Linux in Debug mode.",
+            "description": "Builds the project using Clang on Linux in Debug configuration.",
             "configurePreset": "x64-linux-clang-debug"
         },
         {
             "name": "x64-linux-clang-release",
             "displayName": "Clang x64 Linux Release",
-            "description": "Builds the project using Clang on Linux in Release mode.",
+            "description": "Builds the project using Clang on Linux in Release configuration.",
             "configurePreset": "x64-linux-clang-release"
         },
         {
             "name": "x64-linux-clang-release-with-debug-info",
             "displayName": "Clang x64 Linux Release with Debug Info",
-            "description": "Builds the project using Clang on Linux in Release mode with debug info.",
+            "description": "Builds the project using Clang on Linux in Release configuration with debug info.",
             "configurePreset": "x64-linux-clang-release-with-debug-info"
         }
     ]
