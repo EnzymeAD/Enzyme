@@ -1696,8 +1696,22 @@ void clearFunctionAttributes(Function *f) {
     if (Arg.hasAttribute(Attribute::StructRet))
       Arg.removeAttr(Attribute::StructRet);
   }
-  if (f->hasFnAttribute(Attribute::OptimizeNone))
-    f->removeFnAttr(Attribute::OptimizeNone);
+
+  Attribute::AttrKind fnattrs[] = {
+#if LLVM_VERSION_MAJOR >= 16
+    Attribute::Memory,
+#endif
+    Attribute::ReadOnly,
+    Attribute::ReadNone,
+    Attribute::WriteOnly,
+    Attribute::WillReturn,
+    Attribute::OptimizeNone
+  };
+  for (auto attr : fnattrs) {
+    if (f->hasFnAttribute(attr)) {
+      f->removeFnAttr(attr);
+    }
+  }
 
   if (f->getAttributes().getRetDereferenceableBytes()) {
     f->removeRetAttr(Attribute::Dereferenceable);

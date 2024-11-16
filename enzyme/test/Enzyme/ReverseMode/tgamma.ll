@@ -34,10 +34,10 @@ declare double @tgamma(double)
 
 ; CHECK: define internal fastcc { double } @diffea5(double %arg, double %differeturn)
 ; CHECK-NEXT: bb:
-; CHECK-NEXT:   %i8 = call double @tgamma(double %arg) #1
+; CHECK-NEXT:   %i8 = call double @tgamma(double %arg) 
 ; CHECK-NEXT:   %0 = fmul fast double %differeturn, %arg
 ; CHECK-NEXT:   %1 = fmul fast double %i8, %differeturn
-; CHECK-NEXT:   %2 = call fast double @digamma(double %arg) #0
+; CHECK-NEXT:   %2 = call fast double @digamma(double %arg) 
 ; CHECK-NEXT:   %3 = fmul fast double %2, %0
 ; CHECK-NEXT:   %4 = fadd fast double %1, %3
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0

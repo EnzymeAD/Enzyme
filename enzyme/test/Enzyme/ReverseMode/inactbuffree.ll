@@ -42,7 +42,7 @@ declare double @__enzyme_autodiff(i8*, double, i64)
 
 ; CHECK: define internal { double } @diffesquare(double %x, i64 %i, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call double* @alloc() #3
+; CHECK-NEXT:   %call = tail call double* @alloc()
 ; CHECK-NEXT:   store double 3.000000e+00, double* %call
 ; CHECK-NEXT:   %arrayidx2 = getelementptr inbounds double, double* %call, i64 %i
 ; CHECK-NEXT:   %ld = load double, double* %arrayidx2
