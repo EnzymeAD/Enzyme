@@ -579,14 +579,18 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   call->setDebugLoc(loc);
 }
 
-Type *BlasInfo::fpType(LLVMContext &ctx) const {
+Type *BlasInfo::fpType(LLVMContext &ctx, bool to_scalar) const {
   if (floatType == "d" || floatType == "D") {
     return Type::getDoubleTy(ctx);
   } else if (floatType == "s" || floatType == "S") {
     return Type::getFloatTy(ctx);
   } else if (floatType == "c" || floatType == "C") {
+    if (to_scalar)
+      return Type::getFloatTy(ctx);
     return VectorType::get(Type::getFloatTy(ctx), 2, false);
   } else if (floatType == "z" || floatType == "Z") {
+    if (to_scalar)
+      return Type::getDoubleTy(ctx);
     return VectorType::get(Type::getDoubleTy(ctx), 2, false);
   } else {
     assert(false && "Unreachable");

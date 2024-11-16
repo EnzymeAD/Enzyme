@@ -16,7 +16,7 @@ inline void emit_BLASTypes(raw_ostream &os) {
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
   os << "TypeTree ttFloat;\n"
-     << "llvm::Type *floatType = blas.fpType(call.getContext()); \n"
+     << "llvm::Type *floatType = blas.fpType(call.getContext(), true); \n"
      << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
      << "  ttFloat.insert({-1,0},floatType);\n"

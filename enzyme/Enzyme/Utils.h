@@ -678,7 +678,7 @@ struct BlasInfo {
   std::string function;
   bool is64;
 
-  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::Type *fpType(llvm::LLVMContext &ctx, bool to_scalar = false) const;
   llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
