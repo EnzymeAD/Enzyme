@@ -929,8 +929,25 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
-  Function *F = cast<Function>(fn.getCallee());
-  attributeKnownFunctions(*F);
+  Value *callVal = fn.getCallee();
+  Function *called = nullptr;
+  while (!called) {
+    if (auto castinst = dyn_cast<ConstantExpr>(callVal))
+      if (castinst->isCast()) {
+        callVal = castinst->getOperand(0);
+        continue;
+      }
+    if (auto fn = dyn_cast<Function>(callVal)) {
+      called = fn;
+      break;
+    }
+    if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
+      callVal = alias->getAliasee();
+      continue;
+    }
+    break;
+  }
+  attributeKnownFunctions(*called);
 
   B.CreateCall(fn, args, bundles);
 }
