@@ -80,8 +80,7 @@ def PlaceholderOp : Enzyme_Op<"placeholder",
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
-  let results = (outs Variadic<AnyType>:$outputs);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width);  let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)

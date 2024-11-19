@@ -139,7 +139,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
     bool freeMemory = true;
-    size_t width = 1;
+    size_t width = CI.getWidth();
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
