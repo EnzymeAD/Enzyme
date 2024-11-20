@@ -24,6 +24,7 @@ include "mlir/IR/AttrTypeBase.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
+include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 
@@ -121,8 +122,9 @@ def PopOp : Enzyme_Op<"pop"> {
   let results = (outs AnyType:$output);
 }
 
-def InitOp : Enzyme_Op<"init"> {
-  let summary = "Creat enzyme.gradient and enzyme.cache";
+def InitOp : Enzyme_Op<"init",
+    [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
+  let summary = "Create enzyme.gradient and enzyme.cache";
   let arguments = (ins );
   let results = (outs AnyType);
 }
@@ -147,14 +149,18 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def SetOp : Enzyme_Op<"set"> {
+def SetOp : Enzyme_Op<"set",
+    [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
   let summary = "Store the current value of the gradient";
   let arguments = (ins Arg<AnyType, "the reference to store to",
                            [MemWrite]>:$gradient, AnyType : $value);
   let results = (outs );
 }
 
-def GetOp : Enzyme_Op<"get"> {
+def GetOp : Enzyme_Op<"get",
+    [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
   let summary = "Load current value of gradient";
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
