@@ -190,6 +190,8 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   assert(!isConstantValue(val));
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
+    getShadowType(val.getType()).dump(); // vector<2xf64>
+    toset.getType().dump(); // f64
     assert(getShadowType(val.getType()) == toset.getType());
     auto found = invertedPointers.lookupOrNull(val);
     assert(found != nullptr);

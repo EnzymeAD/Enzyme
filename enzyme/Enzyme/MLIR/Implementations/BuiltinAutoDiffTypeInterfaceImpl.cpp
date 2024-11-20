@@ -45,8 +45,11 @@ public:
   }
 
   Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+    if (width > 1) {
+      return VectorType::get({width}, self);
+    } else {
+      return self;
+    }
   }
 
   bool isMutable(Type self) const { return false; }
