@@ -32,5 +32,4 @@
 
 // #include "Dialect/EnzymeTypes.h.inc"
 
-
 #endif // ENZYMEOPS_H
