@@ -23,7 +23,7 @@ jobs:
       matrix:
         llvm: ["16", "17", "18"]
         build: ["Release"] #, "Debug" "RelWithDebInfo"
-        os: [openstack22]
+        os: [] # [openstack22]
     timeout-minutes: 120 
     steps:
     - name: add llvm 
