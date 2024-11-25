@@ -34,7 +34,7 @@ static mlir::TensorType applyBatchSizes(mlir::Type Ty,
   if (!T) {
     return RankedTensorType::get(batchSizes, Ty);
   }
-  
+
   SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
   shape.append(T.getShape().begin(), T.getShape().end());
   auto T2 = T.clone(shape);
