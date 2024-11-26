@@ -148,6 +148,10 @@ static cl::opt<unsigned>
 static cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
                      cl::desc("Max precision for MPFR gold value computation"));
+static cl::opt<unsigned>
+    FPOptWidenRange("fpopt-widen-range", cl::init(1), cl::Hidden,
+                    cl::desc("Ablation study only: widen the range of input "
+                             "hypercube by this factor"));
 static cl::opt<bool> FPOptEarlyPrune(
     "fpopt-early-prune", cl::init(false), cl::Hidden,
     cl::desc("Prune dominated candidates in expression transformation phases"));
@@ -3563,6 +3567,23 @@ bool extractValueFromLog(const std::string &logPath,
           R"(Operand\[\d+\] = \[([\d\.eE+-]+), ([\d\.eE+-]+)\])");
       while (getline(file, line)) {
         if (std::regex_search(line, newEntryPattern)) {
+          // Ablation study only: widen the range by `FPOptWidenRange` times
+          if (FPOptWidenRange != 1) {
+            double center = (data.minRes + data.maxRes) / 2.0;
+            double half_range = (data.maxRes - data.minRes) / 2.0;
+            double new_half_range = half_range * FPOptWidenRange;
+            data.minRes = center - new_half_range;
+            data.maxRes = center + new_half_range;
+
+            for (size_t i = 0; i < data.lower.size(); ++i) {
+              double op_center = (data.lower[i] + data.upper[i]) / 2.0;
+              double op_half_range = (data.upper[i] - data.lower[i]) / 2.0;
+              double op_new_half_range = op_half_range * FPOptWidenRange;
+              data.lower[i] = op_center - op_new_half_range;
+              data.upper[i] = op_center + op_new_half_range;
+            }
+          }
+
           // All operands have been extracted
           return true;
         }
