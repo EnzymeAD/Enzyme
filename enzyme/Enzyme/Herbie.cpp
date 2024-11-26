@@ -3732,150 +3732,247 @@ bool accuracyDPSolver(
   CostMap prunedCostToAccuracyMap;
   SolutionMap prunedCostToSolutionMap;
 
-  int AOCounter = 0;
+  std::string cacheFilePath = FPOptCachePath + "/table.json";
 
-  for (auto &AO : AOs) {
-    // It is possible to apply zero candidate for an AO.
-    // When no candidate is applied, the resulting accuracy cost
-    // and solution steps remain the same.
-    newCostToAccuracyMap = costToAccuracyMap;
-    newCostToSolutionMap = costToSolutionMap;
+  if (llvm::sys::fs::exists(cacheFilePath)) {
+    llvm::errs() << "Cache file found. Loading DP tables from cache.\n";
 
-    for (const auto &pair : costToAccuracyMap) {
-      InstructionCost currCompCost = pair.first;
-      double currAccCost = pair.second;
-
-      for (auto &candidate : enumerate(AO.candidates)) {
-        size_t i = candidate.index();
-        auto candCompCost = AO.getCompCostDelta(i);
-        auto candAccCost = AO.getAccCostDelta(i);
-
-        // Don't ever try to apply a strictly useless candidate
-        if (candCompCost >= 0 && candAccCost >= 0.) {
-          continue;
-        }
-
-        InstructionCost newCompCost = currCompCost + candCompCost;
-        double newAccCost = currAccCost + candAccCost;
-
-        // if (EnzymePrintFPOpt)
-        //   llvm::errs() << "AO candidate " << i
-        //                << " has accuracy cost: " << candAccCost
-        //                << " and computation cost: " << candCompCost << "\n";
-
-        if (newCostToAccuracyMap.find(newCompCost) ==
-                newCostToAccuracyMap.end() ||
-            newCostToAccuracyMap[newCompCost] > newAccCost) {
-          newCostToAccuracyMap[newCompCost] = newAccCost;
-          newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
-          newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
-          // if (EnzymePrintFPOpt)
-          //   llvm::errs() << "Updating accuracy map (AO candidate " << i
-          //                << "): computation cost " << newCompCost
-          //                << " -> accuracy cost " << newAccCost << "\n";
-        }
-      }
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> fileOrErr =
+        llvm::MemoryBuffer::getFile(cacheFilePath);
+    if (std::error_code ec = fileOrErr.getError()) {
+      llvm::errs() << "Error reading cache file: " << ec.message() << "\n";
+      return changed;
+    }
+    llvm::StringRef buffer = fileOrErr.get()->getBuffer();
+    llvm::Expected<llvm::json::Value> jsonOrErr = llvm::json::parse(buffer);
+    if (!jsonOrErr) {
+      llvm::errs() << "Error parsing JSON from cache file: "
+                   << llvm::toString(jsonOrErr.takeError()) << "\n";
+      return changed;
     }
 
-    // TODO: Do not prune AO parts of the DP table since AOs influence ACCs
-    if (!FPOptEarlyPrune) {
-      costToAccuracyMap = newCostToAccuracyMap;
-      costToSolutionMap = newCostToSolutionMap;
+    llvm::json::Object *jsonObj = jsonOrErr->getAsObject();
+    if (!jsonObj) {
+      llvm::errs() << "Invalid JSON format in cache file.\n";
+      return changed;
+    }
+
+    if (llvm::json::Object *costAccMap =
+            jsonObj->getObject("costToAccuracyMap")) {
+      for (auto &pair : *costAccMap) {
+        InstructionCost compCost(std::stoll(pair.first.str()));
+        double accCost = pair.second.getAsNumber().getValue();
+        costToAccuracyMap[compCost] = accCost;
+      }
+    } else {
+      llvm_unreachable("Invalid costToAccuracyMap in cache file.");
+    }
+
+    if (llvm::json::Object *costSolMap =
+            jsonObj->getObject("costToSolutionMap")) {
+      for (auto &pair : *costSolMap) {
+        InstructionCost compCost(std::stoll(pair.first.str()));
+        SmallVector<SolutionStep> solutionSteps;
+
+        llvm::json::Array *stepsArray = pair.second.getAsArray();
+        if (!stepsArray) {
+          llvm::errs() << "Invalid steps array in cache file.\n";
+          return changed;
+        }
+
+        for (llvm::json::Value &stepVal : *stepsArray) {
+          llvm::json::Object *stepObj = stepVal.getAsObject();
+          if (!stepObj) {
+            llvm_unreachable("Invalid step object in cache file.");
+          }
+
+          StringRef itemType = stepObj->getString("itemType").getValue();
+          size_t candidateIndex =
+              stepObj->getInteger("candidateIndex").getValue();
+          size_t itemIndex = stepObj->getInteger("itemIndex").getValue();
+
+          if (itemType == "AO") {
+            if (itemIndex >= AOs.size()) {
+              llvm_unreachable("Invalid ApplicableOutput index in cache file.");
+            }
+            solutionSteps.emplace_back(&AOs[itemIndex], candidateIndex);
+          } else if (itemType == "ACC") {
+            if (itemIndex >= ACCs.size()) {
+              llvm_unreachable("Invalid ApplicableFPCC index in cache file.");
+            }
+            solutionSteps.emplace_back(&ACCs[itemIndex], candidateIndex);
+          } else {
+            llvm_unreachable("Invalid itemType in cache file.");
+          }
+        }
+
+        costToSolutionMap[compCost] = solutionSteps;
+      }
+    } else {
+      llvm::errs() << "costToSolutionMap not found in cache file.\n";
+      return changed;
+    }
+
+    llvm::errs() << "Loaded DP tables from cache.\n";
+
+  } else {
+    llvm::errs() << "Cache file not found. Proceeding to solve DP.\n";
+
+    std::unordered_map<ApplicableOutput *, size_t> aoPtrToIndex;
+    for (size_t i = 0; i < AOs.size(); ++i) {
+      aoPtrToIndex[&AOs[i]] = i;
+    }
+    std::unordered_map<ApplicableFPCC *, size_t> accPtrToIndex;
+    for (size_t i = 0; i < ACCs.size(); ++i) {
+      accPtrToIndex[&ACCs[i]] = i;
+    }
+
+    int AOCounter = 0;
+
+    for (auto &AO : AOs) {
+      // It is possible to apply zero candidate for an AO.
+      // When no candidate is applied, the resulting accuracy cost
+      // and solution steps remain the same.
+      newCostToAccuracyMap = costToAccuracyMap;
+      newCostToSolutionMap = costToSolutionMap;
+
+      for (const auto &pair : costToAccuracyMap) {
+        InstructionCost currCompCost = pair.first;
+        double currAccCost = pair.second;
+
+        for (auto &candidate : enumerate(AO.candidates)) {
+          size_t i = candidate.index();
+          auto candCompCost = AO.getCompCostDelta(i);
+          auto candAccCost = AO.getAccCostDelta(i);
+
+          // Don't ever try to apply a strictly useless candidate
+          if (candCompCost >= 0 && candAccCost >= 0.) {
+            continue;
+          }
+
+          InstructionCost newCompCost = currCompCost + candCompCost;
+          double newAccCost = currAccCost + candAccCost;
+
+          // if (EnzymePrintFPOpt)
+          //   llvm::errs() << "AO candidate " << i
+          //                << " has accuracy cost: " << candAccCost
+          //                << " and computation cost: " << candCompCost <<
+          //                "\n";
+
+          if (newCostToAccuracyMap.find(newCompCost) ==
+                  newCostToAccuracyMap.end() ||
+              newCostToAccuracyMap[newCompCost] > newAccCost) {
+            newCostToAccuracyMap[newCompCost] = newAccCost;
+            newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
+            newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
+            // if (EnzymePrintFPOpt)
+            //   llvm::errs() << "Updating accuracy map (AO candidate " << i
+            //                << "): computation cost " << newCompCost
+            //                << " -> accuracy cost " << newAccCost << "\n";
+          }
+        }
+      }
+
+      // TODO: Do not prune AO parts of the DP table since AOs influence ACCs
+      if (!FPOptEarlyPrune) {
+        costToAccuracyMap = newCostToAccuracyMap;
+        costToSolutionMap = newCostToSolutionMap;
+
+        llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
+                     << AOs.size() << " AOs #####\n";
+        llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                     << "\n";
+        continue;
+      }
+
+      for (const auto &l : newCostToAccuracyMap) {
+        InstructionCost currCompCost = l.first;
+        double currAccCost = l.second;
+
+        bool dominated = false;
+        for (const auto &r : newCostToAccuracyMap) {
+          InstructionCost otherCompCost = r.first;
+          double otherAccCost = r.second;
+
+          if (currCompCost - otherCompCost >
+                  std::fabs(FPOptCostDominanceThreshold *
+                            otherCompCost.getValue().getValue()) &&
+              currAccCost - otherAccCost >=
+                  std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
+            // if (EnzymePrintFPOpt)
+            //   llvm::errs() << "AO candidate with computation cost: "
+            //                << currCompCost
+            //                << " and accuracy cost: " << currAccCost
+            //                << " is dominated by candidate with computation
+            //                cost:"
+            //                << otherCompCost
+            //                << " and accuracy cost: " << otherAccCost << "\n";
+            dominated = true;
+            break;
+          }
+        }
+
+        if (!dominated) {
+          prunedCostToAccuracyMap[currCompCost] = currAccCost;
+          prunedCostToSolutionMap[currCompCost] =
+              newCostToSolutionMap[currCompCost];
+        }
+      }
+
+      costToAccuracyMap = prunedCostToAccuracyMap;
+      costToSolutionMap = prunedCostToSolutionMap;
+      prunedCostToAccuracyMap.clear();
+      prunedCostToSolutionMap.clear();
 
       llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
                    << AOs.size() << " AOs #####\n";
       llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
                    << "\n";
-      continue;
     }
 
-    for (const auto &l : newCostToAccuracyMap) {
-      InstructionCost currCompCost = l.first;
-      double currAccCost = l.second;
+    int ACCCounter = 0;
 
-      bool dominated = false;
-      for (const auto &r : newCostToAccuracyMap) {
-        InstructionCost otherCompCost = r.first;
-        double otherAccCost = r.second;
+    for (auto &ACC : ACCs) {
+      // It is possible to apply zero candidate for an ACC.
+      // When no candidate is applied, the resulting accuracy cost
+      // and solution steps remain the same.
+      newCostToAccuracyMap = costToAccuracyMap;
+      newCostToSolutionMap = costToSolutionMap;
 
-        if (currCompCost - otherCompCost >
-                std::fabs(FPOptCostDominanceThreshold *
-                          otherCompCost.getValue().getValue()) &&
-            currAccCost - otherAccCost >=
-                std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
+      for (const auto &pair : costToAccuracyMap) {
+        InstructionCost currCompCost = pair.first;
+        double currAccCost = pair.second;
+
+        for (auto &candidate : enumerate(ACC.candidates)) {
+          size_t i = candidate.index();
+          auto candCompCost =
+              ACC.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
+          auto candAccCost =
+              ACC.getAdjustedAccCostDelta(i, costToSolutionMap[currCompCost],
+                                          valueToNodeMap, symbolToValueMap);
+
+          // Don't ever try to apply a strictly useless candidate
+          if (candCompCost >= 0 && candAccCost >= 0.) {
+            continue;
+          }
+
+          InstructionCost newCompCost = currCompCost + candCompCost;
+          double newAccCost = currAccCost + candAccCost;
+
           // if (EnzymePrintFPOpt)
-          //   llvm::errs() << "AO candidate with computation cost: "
-          //                << currCompCost
-          //                << " and accuracy cost: " << currAccCost
-          //                << " is dominated by candidate with computation
-          //                cost:"
-          //                << otherCompCost
-          //                << " and accuracy cost: " << otherAccCost << "\n";
-          dominated = true;
-          break;
-        }
-      }
+          //   llvm::errs() << "ACC candidate " << i << " ("
+          //                << candidate.value().desc
+          //                << ") has accuracy cost: " << candAccCost
+          //                << " and computation cost: " << candCompCost <<
+          //                "\n";
 
-      if (!dominated) {
-        prunedCostToAccuracyMap[currCompCost] = currAccCost;
-        prunedCostToSolutionMap[currCompCost] =
-            newCostToSolutionMap[currCompCost];
-      }
-    }
-
-    costToAccuracyMap = prunedCostToAccuracyMap;
-    costToSolutionMap = prunedCostToSolutionMap;
-    prunedCostToAccuracyMap.clear();
-    prunedCostToSolutionMap.clear();
-
-    llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
-                 << AOs.size() << " AOs #####\n";
-    llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
-                 << "\n";
-  }
-
-  int ACCCounter = 0;
-
-  for (auto &ACC : ACCs) {
-    // It is possible to apply zero candidate for an ACC.
-    // When no candidate is applied, the resulting accuracy cost
-    // and solution steps remain the same.
-    newCostToAccuracyMap = costToAccuracyMap;
-    newCostToSolutionMap = costToSolutionMap;
-
-    for (const auto &pair : costToAccuracyMap) {
-      InstructionCost currCompCost = pair.first;
-      double currAccCost = pair.second;
-
-      for (auto &candidate : enumerate(ACC.candidates)) {
-        size_t i = candidate.index();
-        auto candCompCost =
-            ACC.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
-        auto candAccCost =
-            ACC.getAdjustedAccCostDelta(i, costToSolutionMap[currCompCost],
-                                        valueToNodeMap, symbolToValueMap);
-
-        // Don't ever try to apply a strictly useless candidate
-        if (candCompCost >= 0 && candAccCost >= 0.) {
-          continue;
-        }
-
-        InstructionCost newCompCost = currCompCost + candCompCost;
-        double newAccCost = currAccCost + candAccCost;
-
-        // if (EnzymePrintFPOpt)
-        //   llvm::errs() << "ACC candidate " << i << " ("
-        //                << candidate.value().desc
-        //                << ") has accuracy cost: " << candAccCost
-        //                << " and computation cost: " << candCompCost << "\n";
-
-        if (newCostToAccuracyMap.find(newCompCost) ==
-                newCostToAccuracyMap.end() ||
-            newCostToAccuracyMap[newCompCost] > newAccCost) {
-          newCostToAccuracyMap[newCompCost] = newAccCost;
-          newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
-          newCostToSolutionMap[newCompCost].emplace_back(&ACC, i);
-          if (EnzymePrintFPOpt) {
+          if (newCostToAccuracyMap.find(newCompCost) ==
+                  newCostToAccuracyMap.end() ||
+              newCostToAccuracyMap[newCompCost] > newAccCost) {
+            newCostToAccuracyMap[newCompCost] = newAccCost;
+            newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
+            newCostToSolutionMap[newCompCost].emplace_back(&ACC, i);
+            // if (EnzymePrintFPOpt) {
             // llvm::errs() << "ACC candidate " << i << " ("
             //              << candidate.value().desc
             //              << ") added; has accuracy cost: " << candAccCost
@@ -3884,54 +3981,103 @@ bool accuracyDPSolver(
             // llvm::errs() << "Updating accuracy map (ACC candidate " << i
             //              << "): computation cost " << newCompCost
             //              << " -> accuracy cost " << newAccCost << "\n";
+            // }
           }
         }
       }
-    }
 
-    for (const auto &l : newCostToAccuracyMap) {
-      InstructionCost currCompCost = l.first;
-      double currAccCost = l.second;
+      for (const auto &l : newCostToAccuracyMap) {
+        InstructionCost currCompCost = l.first;
+        double currAccCost = l.second;
 
-      bool dominated = false;
-      for (const auto &r : newCostToAccuracyMap) {
-        InstructionCost otherCompCost = r.first;
-        double otherAccCost = r.second;
+        bool dominated = false;
+        for (const auto &r : newCostToAccuracyMap) {
+          InstructionCost otherCompCost = r.first;
+          double otherAccCost = r.second;
 
-        if (currCompCost - otherCompCost >
-                std::fabs(FPOptCostDominanceThreshold *
-                          otherCompCost.getValue().getValue()) &&
-            currAccCost - otherAccCost >=
-                std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
-          // if (EnzymePrintFPOpt)
-          //   llvm::errs() << "ACC candidate with computation cost: "
-          //                << currCompCost
-          //                << " and accuracy cost: " << currAccCost
-          //                << " is dominated by candidate with computation
-          //                cost:"
-          //                << otherCompCost
-          //                << " and accuracy cost: " << otherAccCost << "\n";
-          dominated = true;
-          break;
+          if (currCompCost - otherCompCost >
+                  std::fabs(FPOptCostDominanceThreshold *
+                            otherCompCost.getValue().getValue()) &&
+              currAccCost - otherAccCost >=
+                  std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
+            // if (EnzymePrintFPOpt)
+            //   llvm::errs() << "ACC candidate with computation cost: "
+            //                << currCompCost
+            //                << " and accuracy cost: " << currAccCost
+            //                << " is dominated by candidate with computation
+            //                cost:"
+            //                << otherCompCost
+            //                << " and accuracy cost: " << otherAccCost << "\n";
+            dominated = true;
+            break;
+          }
+        }
+
+        if (!dominated) {
+          prunedCostToAccuracyMap[currCompCost] = currAccCost;
+          prunedCostToSolutionMap[currCompCost] =
+              newCostToSolutionMap[currCompCost];
         }
       }
 
-      if (!dominated) {
-        prunedCostToAccuracyMap[currCompCost] = currAccCost;
-        prunedCostToSolutionMap[currCompCost] =
-            newCostToSolutionMap[currCompCost];
-      }
+      costToAccuracyMap = prunedCostToAccuracyMap;
+      costToSolutionMap = prunedCostToSolutionMap;
+      prunedCostToAccuracyMap.clear();
+      prunedCostToSolutionMap.clear();
+
+      llvm::errs() << "##### Finished processing " << ++ACCCounter << " of "
+                   << ACCs.size() << " ACCs #####\n";
+      llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                   << "\n";
     }
 
-    costToAccuracyMap = prunedCostToAccuracyMap;
-    costToSolutionMap = prunedCostToSolutionMap;
-    prunedCostToAccuracyMap.clear();
-    prunedCostToSolutionMap.clear();
+    json::Object jsonObj;
 
-    llvm::errs() << "##### Finished processing " << ++ACCCounter << " of "
-                 << ACCs.size() << " ACCs #####\n";
-    llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
-                 << "\n";
+    json::Object costAccMap;
+    for (const auto &pair : costToAccuracyMap) {
+      costAccMap[std::to_string(pair.first.getValue().getValue())] =
+          pair.second;
+    }
+    jsonObj["costToAccuracyMap"] = std::move(costAccMap);
+
+    json::Object costSolMap;
+    for (const auto &pair : costToSolutionMap) {
+      json::Array stepsArray;
+      for (const auto &step : pair.second) {
+        json::Object stepObj;
+        stepObj["candidateIndex"] = static_cast<int64_t>(step.candidateIndex);
+
+        std::visit(
+            [&](auto *item) {
+              using T = std::decay_t<decltype(*item)>;
+              if constexpr (std::is_same_v<T, ApplicableOutput>) {
+                stepObj["itemType"] = "AO";
+                size_t index = aoPtrToIndex[item];
+                stepObj["itemIndex"] = static_cast<int64_t>(index);
+              } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+                stepObj["itemType"] = "ACC";
+                size_t index = accPtrToIndex[item];
+                stepObj["itemIndex"] = static_cast<int64_t>(index);
+              }
+            },
+            step.item);
+        stepsArray.push_back(std::move(stepObj));
+      }
+      costSolMap[std::to_string(pair.first.getValue().getValue())] =
+          std::move(stepsArray);
+    }
+    jsonObj["costToSolutionMap"] = std::move(costSolMap);
+
+    std::error_code EC;
+    llvm::raw_fd_ostream cacheFile(cacheFilePath, EC, llvm::sys::fs::OF_Text);
+    if (EC) {
+      llvm::errs() << "Error writing cache file: " << EC.message() << "\n";
+    } else {
+      cacheFile << llvm::formatv("{0:2}", llvm::json::Value(std::move(jsonObj)))
+                << "\n";
+      cacheFile.close();
+      llvm::errs() << "DP tables cached to file.\n";
+    }
   }
 
   if (EnzymePrintFPOpt) {
@@ -3965,7 +4111,6 @@ bool accuracyDPSolver(
       llvm::errs() << "*** End of DP Table ***\n\n";
     }
     llvm::errs() << "*** Critical Computation Costs ***\n";
-    // Just print all computation costs in the DP table
     for (const auto &pair : costToAccuracyMap) {
       llvm::errs() << pair.first << ",";
     }
