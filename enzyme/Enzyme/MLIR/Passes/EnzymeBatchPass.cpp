@@ -30,7 +30,11 @@ namespace {
 
 static mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                         llvm::ArrayRef<int64_t> batchSizes) {
-  auto T = cast<TensorType>(Ty);
+  auto T = dyn_cast<TensorType>(Ty);
+  if (!T) {
+    return RankedTensorType::get(batchSizes, Ty);
+  }
+
   SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
   shape.append(T.getShape().begin(), T.getShape().end());
   auto T2 = T.clone(shape);
