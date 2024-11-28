@@ -3280,6 +3280,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             auto replacement = NB.CreateAlloca(
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
+            for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                            "enzymejl_allocart"})
+              if (auto M = I.getMetadata(MD))
+                replacement->setMetadata(MD, M);
             auto Alignment =
                 cast<ConstantInt>(
                     cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
@@ -3524,6 +3528,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
+                  for (auto MD : {"enzyme_active", "enzyme_inactive",
+                                  "enzyme_type", "enzymejl_allocart"})
+                    if (auto M = I.getMetadata(MD))
+                      replacement->setMetadata(MD, M);
                   replacement->takeName(anti);
                   auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
                                                          MD->getOperand(0))

@@ -508,7 +508,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
                     {ConstantAsMetadata::get(ConstantInt::get(
                         IntegerType::get(AI->getContext(), 64), align))}));
 
-    for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type"})
+    for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                    "enzymejl_allocart"})
       if (auto M = AI->getMetadata(MD))
         CI->setMetadata(MD, M);
 
