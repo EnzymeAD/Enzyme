@@ -1822,7 +1822,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    if (gutils->width != 1) {\n"
          << "     auto newop = gutils->getNewFromOriginal(op0);\n"
          << "     for (auto res : newop->getResults()) {\n"
-         << "       res.setType(mlir::RankedTensorType::get({gutils->width}, res.getType()));\n"
+         << "       res.setType(mlir::RankedTensorType::get({gutils->width}, "
+            "res.getType()));\n"
          << "     }\n"
          << "    }\n";
       origName = "op";
