@@ -9325,7 +9325,16 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   }
   if (allocationfn == "julia.gc_alloc_obj" ||
       allocationfn == "jl_gc_alloc_typed" ||
-      allocationfn == "ijl_gc_alloc_typed")
+      allocationfn == "ijl_gc_alloc_typed" ||
+      allocationfn == "jl_alloc_array_1d" ||
+      allocationfn == "ijl_alloc_array_1d" ||
+      allocationfn == "jl_alloc_array_2d" ||
+      allocationfn == "ijl_alloc_array_2d" ||
+      allocationfn == "jl_alloc_array_3d" ||
+      allocationfn == "ijl_alloc_array_3d" || allocationfn == "jl_new_array" ||
+      allocationfn == "ijl_new_array" ||
+      allocationfn == "jl_alloc_genericmemory" ||
+      allocationfn == "ijl_alloc_genericmemory")
     return nullptr;
 
   if (allocationfn == "enzyme_allocator") {

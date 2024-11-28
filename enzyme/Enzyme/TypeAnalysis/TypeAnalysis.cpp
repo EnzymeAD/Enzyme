@@ -5243,6 +5243,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "julia.except_enter" || funcName == "ijl_excstack_state" ||
+        funcName == "jl_excstack_state") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
+        funcName == "jl_inactive_inout" ||
+        funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice") {
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getOperand(0)), &call);
+      if (direction & UP)
+        updateAnalysis(call.getOperand(0), getAnalysis(&call), &call);
+      return;
+    }
+
     if (isAllocationFunction(funcName, TLI)) {
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
