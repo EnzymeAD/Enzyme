@@ -103,7 +103,7 @@ def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
 
 }
 
-def SelectIfComplex : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
+def SelectIfComplex : Operation</*primal*/1, /*shadow*/0, /*custom*/0> {
 
 }
 
