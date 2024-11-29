@@ -488,46 +488,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << "})";
       return true;
-    } else if (opName == "ConjIfComplex" ||
-               Def->isSubClassOf("ConjIfComplex")) {
-      if (resultRoot->getNumArgs() != 1)
-        PrintFatalError(pattern->getLoc(),
-                        "only three op ConjIfComplex supported");
-
-      os << "({\n";
-      os << curIndent << INDENT << "// Computing ConjIfComplex\n";
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value imVal";
-      else
-        os << curIndent << INDENT << "llvm::Value *imVal";
-
-      os << curIndent << INDENT << "if (!gutils->isConstantValue(";
-
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        os << ord;
-        assert(!ext.size());
-        os << ord;
-        os << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
-        os << ";\n";
-      }
-
-      os << " (isa<ComplexType>(imVal.getType()) || "
-            "(isa<TensorType>(imVal.getType()) && "
-            "isa<ComplexType>(cast<TensorType>(imVal.getType()).getElementType("
-            ")))) ? ";
-      os << builder << ".create<"
-         << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
-         << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
-         << ">(op.getLoc(), imVal.getType(), imVal) : imVal;\n";
-      os << curIndent << "})";
-      return true;
     } else if (opName == "SelectIfComplex" ||
                Def->isSubClassOf("SelectIfComplex")) {
       if (resultRoot->getNumArgs() != 3)
