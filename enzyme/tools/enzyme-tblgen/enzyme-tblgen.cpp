@@ -528,6 +528,71 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
          << ">(op.getLoc(), imVal.getType(), imVal) : imVal;\n";
       os << curIndent << "})";
       return true;
+    } else if (opName == "SelectIfComplex" ||
+               Def->isSubClassOf("SelectIfComplex")) {
+      if (resultRoot->getNumArgs() != 3)
+        PrintFatalError(pattern->getLoc(),
+                        "only three op SelectIfComplex supported");
+
+      os << "({\n";
+      os << curIndent << INDENT << "// Computing SelectIfComplex\n";
+      if (intrinsic == MLIRDerivatives)
+        os << curIndent << INDENT << "mlir::Value imVal = ";
+      else
+        os << curIndent << INDENT << "llvm::Value *imVal = ";
+
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
+        os << ord << ";\n";
+      } else {
+        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
+               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
+               origName, newFromOriginal, intrinsic);
+        os << ";\n";
+      }
+
+      os << curIndent << INDENT
+         << "if (isa<ComplexType>(imVal.getType()) || "
+            "(isa<TensorType>(imVal.getType()) && "
+            "isa<ComplexType>(cast<TensorType>(imVal.getType()).getElementType("
+            ")))) {\n";
+
+      os << curIndent << INDENT << INDENT << "imVal = ";
+      if (isa<UnsetInit>(resultRoot->getArg(1)) && resultRoot->getArgName(1)) {
+        auto name = resultRoot->getArgName(1)->getAsUnquotedString();
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
+        assert(!ext.size());
+        os << ord << ";\n";
+      } else {
+        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
+               resultRoot->getArg(1), builder, nameToOrdinal, lookup, retidx,
+               origName, newFromOriginal, intrinsic);
+        os << ";\n";
+      }
+
+      os << curIndent << INDENT << "} else {\n";
+
+      os << curIndent << INDENT << INDENT << "imVal = ";
+      if (isa<UnsetInit>(resultRoot->getArg(2)) && resultRoot->getArgName(2)) {
+        auto name = resultRoot->getArgName(2)->getAsUnquotedString();
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
+        assert(!ext.size());
+        os << ord << ";\n";
+      } else {
+        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
+               resultRoot->getArg(2), builder, nameToOrdinal, lookup, retidx,
+               origName, newFromOriginal, intrinsic);
+        os << ";\n";
+      }
+
+      os << curIndent << INDENT << "}\n";
+      os << curIndent << INDENT << "imVal;";
+      os << curIndent << INDENT << "})\n";
+      return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)

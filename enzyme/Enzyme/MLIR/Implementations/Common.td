@@ -103,6 +103,10 @@ def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
 
 }
 
+def SelectIfComplex : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
+
+}
+
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
   string dialect = dialect_;
