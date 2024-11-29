@@ -103,16 +103,15 @@ def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
 
 }
 
+def SelectIfComplex : Operation</*primal*/1, /*shadow*/0, /*custom*/0> {
+
+}
+
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
   string dialect = dialect_;
   string opName = op_;
   string type = type_;
-}
-
-class ConjIfComplex<string dialect_, string op_> : Operation</*primal*/1, /*shadow*/0> {
-  string dialect = dialect_;
-  string opName = op_;
 }
 
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
