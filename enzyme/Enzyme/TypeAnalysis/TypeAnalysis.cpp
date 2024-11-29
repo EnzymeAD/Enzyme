@@ -162,6 +162,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"erf", Intrinsic::not_intrinsic},
     {"erfi", Intrinsic::not_intrinsic},
     {"erfc", Intrinsic::not_intrinsic},
+    {"erfinv", Intrinsic::not_intrinsic},
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
