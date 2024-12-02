@@ -1819,13 +1819,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "  LogicalResult createForwardModeTangent(Operation *op0, "
             "OpBuilder &builder, MGradientUtils *gutils) const {\n";
       os << "    auto op = cast<" << dialect << "::" << opName << ">(op0);\n";
-      os << "    if (gutils->width != 1) {\n"
-         << "     auto newop = gutils->getNewFromOriginal(op0);\n"
-         << "     for (auto res : newop->getResults()) {\n"
-         << "       res.setType(mlir::RankedTensorType::get({gutils->width}, "
-            "res.getType()));\n"
-         << "     }\n"
-         << "    }\n";
       origName = "op";
       break;
     }
