@@ -148,7 +148,7 @@ static cl::opt<unsigned>
 static cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
                      cl::desc("Max precision for MPFR gold value computation"));
-static cl::opt<unsigned>
+static cl::opt<double>
     FPOptWidenRange("fpopt-widen-range", cl::init(1), cl::Hidden,
                     cl::desc("Ablation study only: widen the range of input "
                              "hypercube by this factor"));
