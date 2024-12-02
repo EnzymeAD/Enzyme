@@ -27,11 +27,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
   for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
            FTy.getResults(), returnPrimals, returnShadows, ReturnActivity)) {
     if (returnPrimal) {
-      if (width != 1) {
-        RetTypes.push_back(mlir::RankedTensorType::get({width}, Ty));
-      } else {
-        RetTypes.push_back(Ty);
-      }
+      RetTypes.push_back(Ty);
     }
     if (returnShadow) {
       assert(activity != DIFFE_TYPE::CONSTANT);
@@ -43,11 +39,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
   SmallVector<mlir::Type, 4> ArgTypes;
 
   for (auto &&[ITy, act] : llvm::zip(FTy.getInputs(), ArgActivity)) {
-    if (width != 1) {
-      ArgTypes.push_back(mlir::RankedTensorType::get({width}, ITy));
-    } else {
-      ArgTypes.push_back(ITy);
-    }
+    ArgTypes.push_back(ITy);
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(getShadowType(ITy, width));
     } else if (act == DIFFE_TYPE::OUT_DIFF) {
@@ -240,11 +232,6 @@ FunctionOpInterface CloneFunctionWithReturns(
 
   {
     auto &blk = NewF.getFunctionBody().front();
-    if (width != 1) {
-      for (auto &arg : blk.getArguments()) {
-        arg.setType(mlir::RankedTensorType::get({width}, arg.getType()));
-      }
-    }
     assert(F.getFunctionBody().front().getNumArguments() == ArgActivity.size());
     for (ssize_t i = ArgActivity.size() - 1; i >= 0; i--) {
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
@@ -258,9 +245,9 @@ FunctionOpInterface CloneFunctionWithReturns(
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == ArgActivity.size() - 1)
-          dval = blk.addArgument(val.getType(), val.getLoc());
+          dval = blk.addArgument(getShadowType(val.getType(), width), val.getLoc());
         else
-          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
+          dval = blk.insertArgument(blk.args_begin() + i + 1, getShadowType(val.getType(), width),
                                     val.getLoc());
         ptrInputs.map(oval, dval);
       }

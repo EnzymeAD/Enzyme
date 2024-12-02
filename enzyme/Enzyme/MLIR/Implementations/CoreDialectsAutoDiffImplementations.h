@@ -260,6 +260,7 @@ void registerCFDialectAutoDiffInterface(DialectRegistry &registry);
 void registerLinalgDialectAutoDiffInterface(DialectRegistry &registry);
 void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
 void registerFuncDialectAutoDiffInterface(DialectRegistry &registry);
+void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
