@@ -275,8 +275,18 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         os << ord;
       }
       if (!vecValue && !startsWith(ord, "local")) {
-        if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives))
+        if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives)) {
           os << ")";
+          if (intrinsic == MLIRDerivatives) {
+            os << ";\n";
+            os << "if (gutils->width != 1) {\n"
+              << " " << argName << "_" << (idx - 1) << " = builder.create<tensor::SplatOp>(\n"
+              << "   op.getLoc(),\n"
+              << "   mlir::RankedTensorType::get({gutils->width}, " << argName << "_" << (idx - 1) << ".getType()),\n"
+              << "   " << argName << "_" << (idx - 1) << ");\n"
+                << "}";
+          }
+        }
 
         if (lookup && intrinsic != MLIRDerivatives)
           os << ", " << builder << ")";
