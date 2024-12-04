@@ -7160,6 +7160,25 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                     return OrigDT->dominates(A, B);
                                   });
                 for (auto a : InsertedInstructions) {
+                  if (isa<PHINode>(a)) {
+                    std::string str;
+                    raw_string_ostream ss(str);
+                    ss << "oldFunc: " << *oldFunc << "\n";
+                    ss << "newFunc: " << *newFunc << "\n";
+                    ss << "li: " << *li << "\n";
+                    ss << "start0: " << *start0 << "\n";
+                    ss << "Inserted a phi node (" << *a
+                       << ") during unwrap of SCEV: " << *ar1->getStart()
+                       << "\n";
+                    if (CustomErrorHandler) {
+                      CustomErrorHandler(str.c_str(), wrap(li),
+                                         ErrorType::InternalError, nullptr,
+                                         nullptr, nullptr);
+                    } else {
+                      EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
+                                  ss.str());
+                    }
+                  }
                   assert(!isa<PHINode>(a));
                   auto uw = cast<Instruction>(
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
