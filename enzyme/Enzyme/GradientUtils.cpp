@@ -7160,28 +7160,32 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                     return OrigDT->dominates(A, B);
                                   });
                 for (auto a : InsertedInstructions) {
-                  if (isa<PHINode>(a) &&
-                      cast<PHINode>(a)->getNumIncomingValues() != 1) {
-                    std::string str;
-                    raw_string_ostream ss(str);
-                    ss << "oldFunc: " << *oldFunc << "\n";
-                    ss << "newFunc: " << *newFunc << "\n";
-                    ss << "li: " << *li << "\n";
-                    ss << "start0: " << *start0 << "\n";
-                    ss << "Inserted a phi node (" << *a
-                       << ") during unwrap of SCEV: " << *ar1->getStart()
-                       << "\n";
-                    if (CustomErrorHandler) {
-                      CustomErrorHandler(str.c_str(), wrap(li),
-                                         ErrorType::InternalError, nullptr,
-                                         nullptr, nullptr);
+                  Value *aV = a;
+                  if (auto PN = dyn_cast<PHINode>(a)) {
+                    if (PN->getNumIncomingValues() == 1) {
+                      aV = PN->getIncomingValue(0);
                     } else {
-                      EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
-                                  ss.str());
+                      std::string str;
+                      raw_string_ostream ss(str);
+                      ss << "oldFunc: " << *oldFunc << "\n";
+                      ss << "newFunc: " << *newFunc << "\n";
+                      ss << "li: " << *li << "\n";
+                      ss << "start0: " << *start0 << "\n";
+                      ss << "Inserted a phi node (" << *a
+                         << ") during unwrap of SCEV: " << *ar1->getStart()
+                         << "\n";
+                      if (CustomErrorHandler) {
+                        CustomErrorHandler(str.c_str(), wrap(li),
+                                           ErrorType::InternalError, nullptr,
+                                           nullptr, nullptr);
+                      } else {
+                        EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
+                                    ss.str());
+                      }
                     }
                   }
                   auto uwV =
-                      unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
+                      unwrapM(aV, v, available, UnwrapMode::AttemptSingleUnwrap,
                               /*scope*/ nullptr, /*cache*/ false);
                   auto uw = dyn_cast<Instruction>(uwV);
                   assert(uwV->getType() == a->getType());
