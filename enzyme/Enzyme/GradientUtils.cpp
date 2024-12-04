@@ -7184,9 +7184,11 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       }
                     }
                   }
-                  auto uwV =
-                      unwrapM(aV, v, available, UnwrapMode::AttemptSingleUnwrap,
-                              /*scope*/ nullptr, /*cache*/ false);
+                  auto uwV = (aV == a)
+                                 ? unwrapM(aV, v, available,
+                                           UnwrapMode::AttemptSingleUnwrap,
+                                           /*scope*/ nullptr, /*cache*/ false)
+                                 : aV;
                   auto uw = dyn_cast<Instruction>(uwV);
                   assert(uwV->getType() == a->getType());
 #ifndef NDEBUG
