@@ -7137,7 +7137,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 {
                   SCEVExpander OrigExp(
                       *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
-                      "enzyme");
+                      "enzyme", /*PreserveLCSSA = */false);
 
                   OrigExp.setInsertPoint(
                       isOriginal(l1.header)->getTerminator());
