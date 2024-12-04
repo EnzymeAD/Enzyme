@@ -691,6 +691,15 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $x),
+                  ["erfinv","erfinvf","erfinfvl", "__nv_erfinv","__nv_erfinvf","__nv_erfinfvl", ],
+                  [
+                    (FMul (FMul (ConstantFP<"0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei)), (DiffeRet))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def ToStruct2 : SubRoutine<(Op (Op $re, $im):$z),
                     (RetMultiReturnRet $re, $im)
                   >;
