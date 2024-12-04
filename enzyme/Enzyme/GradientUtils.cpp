@@ -7180,21 +7180,25 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                   ss.str());
                     }
                   }
-                  auto uw = cast<Instruction>(
+                  auto uwV =
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
-                              /*scope*/ nullptr, /*cache*/ false));
-                  assert(uw->getType() == a->getType());
+                              /*scope*/ nullptr, /*cache*/ false);
+                  auto uw = dyn_cast<Instruction>(uwV);
+                  assert(uwV->getType() == a->getType());
 #ifndef NDEBUG
-                  for (size_t i = 0; i < uw->getNumOperands(); i++) {
-                    auto op = uw->getOperand(i);
-                    if (auto arg = dyn_cast<Argument>(op))
-                      assert(arg->getParent() == newFunc);
-                    else if (auto inst = dyn_cast<Instruction>(op))
-                      assert(inst->getParent()->getParent() == newFunc);
+                  if (uw) {
+                    for (size_t i = 0; i < uw->getNumOperands(); i++) {
+                      auto op = uw->getOperand(i);
+                      if (auto arg = dyn_cast<Argument>(op))
+                        assert(arg->getParent() == newFunc);
+                      else if (auto inst = dyn_cast<Instruction>(op))
+                        assert(inst->getParent()->getParent() == newFunc);
+                    }
                   }
 #endif
-                  available[a] = uw;
-                  unwrappedLoads.erase(cast<Instruction>(uw));
+                  available[a] = uwV;
+                  if (uw)
+                    unwrappedLoads.erase(uw);
                 }
 
                 start =
