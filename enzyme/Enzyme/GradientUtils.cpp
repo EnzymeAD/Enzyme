@@ -7160,7 +7160,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                     return OrigDT->dominates(A, B);
                                   });
                 for (auto a : InsertedInstructions) {
-                  if (isa<PHINode>(a)) {
+                  if (isa<PHINode>(a) &&
+                      cast<PHINode>(a)->getNumIncomingValues() != 1) {
                     std::string str;
                     raw_string_ostream ss(str);
                     ss << "oldFunc: " << *oldFunc << "\n";
@@ -7179,7 +7180,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                   ss.str());
                     }
                   }
-                  assert(!isa<PHINode>(a));
                   auto uw = cast<Instruction>(
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
                               /*scope*/ nullptr, /*cache*/ false));
