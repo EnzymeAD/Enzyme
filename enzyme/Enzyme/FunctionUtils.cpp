@@ -1418,6 +1418,30 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
   }
+  if (mode == DerivativeMode::ForwardModeError ||
+      mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeGradient) {
+    if (getLogFunction(F->getParent(), "enzymeLogError") ||
+        getLogFunction(F->getParent(), "enzymeLogValue") ||
+        getLogFunction(F->getParent(), "enzymeLogGrad")) {
+      for (const auto &pair : VMap) {
+        if (auto *before = dyn_cast<Instruction>(pair.first)) {
+          if (!before->getType()->isFloatingPointTy()) {
+            continue;
+          }
+          auto *after = cast<Instruction>(pair.second);
+          after->setMetadata("enzyme_active",
+                             MDNode::get(after->getContext(), None));
+          after->setMetadata(
+              "enzyme_preprocess_origin",
+              MDTuple::get(after->getContext(),
+                           {ConstantAsMetadata::get(ConstantInt::get(
+                               Type::getInt64Ty(after->getContext()),
+                               reinterpret_cast<std::uintptr_t>(before)))}));
+        }
+      }
+    }
+  }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -1800,7 +1824,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -1836,7 +1861,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
