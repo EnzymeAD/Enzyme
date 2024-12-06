@@ -16,7 +16,8 @@ def DifferentiatePass : Pass<"enzyme"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect"
+    "cf::ControlFlowDialect",
+    "tensor::TensorDialect",
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
