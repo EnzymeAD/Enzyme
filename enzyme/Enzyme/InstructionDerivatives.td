@@ -666,6 +666,17 @@ def : CallPattern<(Op $n, $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $n, $x),
+                  ["cmplx_jn","cmplx_yn"],
+                  [
+                    (InactiveArg),
+					// Reverse mode needs to return the conjugate
+                    (CFMul (DiffeRet), (Conj (CFMul (ConstantCFP<"0.5", "0"> $x), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $x)))))
+                  ],
+                  (CFMul (DiffeRet), (CFMul (ConstantCFP<"0.5", "0"> $x), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $x))))
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x),
                   ["erf","erff","erfl"],
                   [
