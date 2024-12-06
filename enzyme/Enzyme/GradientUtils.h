@@ -79,6 +79,13 @@ extern llvm::StringMap<std::function<llvm::Value *(
     shadowHandlers;
 
 class DiffeGradientUtils;
+
+/// This is the main entry point to register a custom derivative for language frontends.
+/// It is more general, and therefore recommended over trying to register 
+/// custom-derivatives in the llvm-ir module. Examples on why it is more general include custom-derivatives
+/// for non-default activity cases (e.g. a function call where a pointer or a float scalar is marked as const).
+/// It also allows using Enzyme and LLVM analysis, e.g. activity analysis, differential use analysis, alias analysis.
+/// To get a better low-level understanding, the documentation in CApi.cpp can be read.
 extern llvm::StringMap<std::pair<
     std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&, llvm::Value *&)>,
