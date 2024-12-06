@@ -17,7 +17,6 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -37,10 +36,3 @@ void mlir::enzyme::registerMathDialectAutoDiffInterface(
     registerInterfaces(context);
   });
 }
-
-// void mlir::enzyme::registerTensorDialectAutoDiffInterface(
-//     DialectRegistry &registry) {
-//   registry.addExtension(+[](MLIRContext *context, tensor::TensorDialect *) {
-//     registerInterfaces(context);
-//   });
-// }
