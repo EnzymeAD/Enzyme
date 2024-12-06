@@ -192,4 +192,20 @@ def GenericAdjointOp : Enzyme_Op<"genericAdjoint", [AttrSizedOperandSegments]> {
   
 }
 
+def BroadcastOp : Enzyme_Op<"broadcast"> {
+  let description = [{
+  Broadcast the operand by adding an extra dimension the frond with a size equal to the width attribute.
+  For scalar operands, a one-dimensional ranked tensor is created.
+
+  NOTE: Only works for scalars and *ranked* tensors for now.
+  }];
+
+  let arguments = (ins AnyType:$input, I64Attr:$width);
+  let results = (outs AnyRankedTensor:$output);
+
+  let builders = [
+    OpBuilder<(ins "Value":$input, "int64_t":$width)>
+  ];
+}
+
 #endif // ENZYME_OPS
