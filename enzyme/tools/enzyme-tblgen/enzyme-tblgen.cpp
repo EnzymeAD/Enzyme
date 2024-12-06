@@ -695,7 +695,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
          << rvalue->getValue()
          << "\"), (llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
          << ivalue->getValue() << "\")});\n";
-      os << curIndent << INDENT << "} else assert(0 && \"unhandled cfp\");\n";
+      os << curIndent << INDENT << "} else {\n";
+      os << curIndent << INDENT << "  llvm::errs() << *ty << \"\\n\";\n";
+      os << curIndent << INDENT << "  assert(0 && \"unhandled cfp\");\n";
+      os << curIndent << INDENT << "}\n";
       os << curIndent << INDENT << "ret;\n";
       os << curIndent << "})\n";
       return false;
