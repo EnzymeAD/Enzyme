@@ -144,6 +144,11 @@ def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                     (FAdd $re1, $re2),
                     (FAdd $im1, $im2)
                   )>;
+def CFSub : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+                  (ArrayRet
+                    (FSub $re1, $re2),
+                    (FSub $im1, $im2)
+                  )>;
 
 def CFMul_splat : SubRoutine<(Op $re1, $im1, $re2, $im2),
                   (ArrayRet
