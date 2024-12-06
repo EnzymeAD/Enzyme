@@ -92,7 +92,9 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << curIndent << "auto " << callval
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
       os << Def->getValueInit("name")->getAsString();
-      os << ", " << FT << ", called->getAttributes()).getCallee();\n";
+      os << ", " << FT
+         << ", called->getAttributes().removeFnAttribute(called->getContext(), "
+            "\"enzymejl_needs_restoration\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -118,7 +120,9 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << curIndent << "auto " << callval
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
       os << Def->getValueInit("name")->getAsString();
-      os << ", " << FT << ", called->getAttributes()).getCallee();\n";
+      os << ", " << FT
+         << ", called->getAttributes().removeFnAttribute(called->getContext(), "
+            "\"enzymejl_needs_restoration\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -133,7 +137,9 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << curIndent << "auto " << callval
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
       os << Def->getValueInit("name")->getAsString();
-      os << ", " << FT << ", called->getAttributes()).getCallee();\n";
+      os << ", " << FT
+         << ", called->getAttributes().removeFnAttribute(called->getContext(), "
+            "\"enzymejl_needs_restoration\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
