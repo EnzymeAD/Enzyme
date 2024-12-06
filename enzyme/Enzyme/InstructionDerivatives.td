@@ -144,6 +144,11 @@ def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                     (FAdd $re1, $re2),
                     (FAdd $im1, $im2)
                   )>;
+def CFSub : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+                  (ArrayRet
+                    (FSub $re1, $re2),
+                    (FSub $im1, $im2)
+                  )>;
 
 def CFMul_splat : SubRoutine<(Op $re1, $im1, $re2, $im2),
                   (ArrayRet
@@ -663,6 +668,17 @@ def : CallPattern<(Op $n, $x),
                     (FMul (DiffeRet), (FMul (ConstantFP<"0.5"> $x), (FSub (Call<(SameFunc), [ReadNone,NoUnwind]> (ISub $n, (ConstantInt<1> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (IAdd $n, (ConstantInt<1> $n)), $x))))
                   ],
                   (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $n, $x),
+                  ["cmplx_jn","cmplx_yn"],
+                  [
+                    (InactiveArg),
+					// Reverse mode needs to return the conjugate
+                    (CFMul (DiffeRet), (Conj (CFMul (ConstantCFP<"0.5", "0"> $x), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $x)))))
+                  ],
+                  (CFMul (Shadow $x), (CFMul (ConstantCFP<"0.5", "0"> $x), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $x)))),
                   [ReadNone, NoUnwind]
                   >;
 
