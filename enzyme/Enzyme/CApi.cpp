@@ -341,11 +341,8 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
 }
 
 
-/// This Function will only handle ReverseMode AD (either split or combined).
-/// As a high-level example, assume we want to register a custom derivative for `pow(x, y)`.
-/// We pass the mangled name of pow as first argument.
-/// The IRBuilder B, the shadow argument, and gutils should all be available in the frontend. 
-/// The last three arguments ...
+/// This is the entry point to register reverse-mode custom derivatives programmatically.
+/// A more detailed documentation is available in GradientUtils.h
 void EnzymeRegisterCallHandler(char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
                                CustomFunctionReverse RevHandle) {
@@ -369,7 +366,8 @@ void EnzymeRegisterCallHandler(char *Name,
   };
 }
 
-/// This Function will only handle ForwardMode AD.
+/// This is the entry point to register forward-mode custom derivatives programmatically.
+/// A more detailed documentation is available in GradientUtils.h
 void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
   auto &pair = customFwdCallHandlers[Name];
   pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
