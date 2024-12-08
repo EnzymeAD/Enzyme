@@ -104,6 +104,9 @@ llvm::cl::opt<bool> EnzymeRuntimeError(
     cl::desc("Emit Runtime errors instead of compile time ones"));
 }
 
+
+__attribute__((weak)) void enzyme_fp_check(double) {}
+
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
                 bool isTape) {
   if (CustomZero) {
@@ -3085,6 +3088,15 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
   if (EnzymeSanitizeDerivatives)
     return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
                                             wrap(&BuilderM), wrap(mask)));
+
+  if (((Value*)toset)->getType()->Type::isDoubleTy()) {
+    std::string fp_check_fnname = "enzyme_fp_check";
+    Module &M = *BuilderM.GetInsertBlock()->getParent()->getParent();
+    if (M.getFunction(fp_check_fnname)){
+      Function *F = cast<Function>(M.getFunction(fp_check_fnname));
+      BuilderM.CreateCall(F, toset);
+    }
+  }
   return toset;
 }
 
