@@ -36,7 +36,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
-        ref: 'eaa7b385368fa7e3dad9b95411d04be55e71494e'
+        ref: '4a7dbede6badd27ce2ad07984134d5d25a2bbada'
         path: 'llvm-project'
 
     - name: Get MLIR commit hash
