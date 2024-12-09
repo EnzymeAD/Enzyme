@@ -1840,14 +1840,25 @@ public:
           }
           unsigned size = nextStart - start;
           if (!dt.isKnown()) {
-
-            std::string str;
-            raw_string_ostream ss(str);
-            ss << "Cannot deduce type of extract " << EVI << vd.str()
-               << " start: " << start << " size: " << size
-               << " extractSize: " << storeSize;
-            EmitNoTypeError(str, EVI, gutils, Builder2);
-            break;
+            bool found = false;
+            if (looseTypeAnalysis) {
+              if (EVI.getType()->isFPOrFPVectorTy()) {
+                dt = ConcreteType(EVI.getType()->getScalarType());
+                found = true;
+              } else if (EVI.getType()->isIntOrIntVectorTy() ||
+                         EVI.getType()->isPointerTy()) {
+                dt = BaseType::Integer;
+                found = true;
+              }
+            }
+            if (!found) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce type of extract " << EVI << vd.str()
+                 << " start: " << start << " size: " << size
+                 << " extractSize: " << storeSize;
+              EmitNoTypeError(str, EVI, gutils, Builder2);
+            }
           }
           if (auto FT = dt.isFloat())
             ((DiffeGradientUtils *)gutils)
