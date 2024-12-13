@@ -969,7 +969,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     UpHypothesis->ConstantInstructions.insert(I);
     assert(directions & UP);
-    if (UpHypothesis->isInstructionInactiveFromOrigin(TR, I, false)) {
+    
+    if (Value *invalidOrigin = UpHypothesis->isInstructionPossibleActiveFromOrigin(TR, I, false)) {
+      if (EnzymeEnableRecursiveHypotheses) {
+        ReEvaluateInstIfInactiveValue[invalidOrigin].insert(I);
+      }
+    } else {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction from origin "
                         "instruction "
@@ -979,15 +984,6 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       if (DownHypothesis)
         insertConstantsFrom(TR, *DownHypothesis);
       return true;
-    } else if (directions == 3) {
-      if (isa<LoadInst>(I) || isa<StoreInst>(I) || isa<BinaryOperator>(I)) {
-        for (auto &op : I->operands()) {
-          if (!UpHypothesis->isConstantValue(TR, op) &&
-              EnzymeEnableRecursiveHypotheses) {
-            ReEvaluateInstIfInactiveValue[op].insert(I);
-          }
-        }
-      }
     }
   }
 
@@ -1776,12 +1772,20 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (auto inst = dyn_cast<Instruction>(Val)) {
         if (!inst->mayReadFromMemory() && !isa<AllocaInst>(Val)) {
           if (directions == UP && !isa<PHINode>(inst)) {
-            if (isInstructionInactiveFromOrigin(TR, inst, true)) {
+            if (Value *invalidOrigin = isInstructionPossibleActiveFromOrigin(TR, inst, true)) {
+              if (EnzymeEnableRecursiveHypotheses) {
+                ReEvaluateValIfInactiveValue[invalidOrigin].insert(Val);
+              }
+            } else {
               InsertConstantValue(TR, Val);
               return true;
             }
           } else {
-            if (UpHypothesis->isInstructionInactiveFromOrigin(TR, inst, true)) {
+            if (auto invalidOrigin = UpHypothesis->isInstructionPossibleActiveFromOrigin(TR, inst, true)) {
+              if (EnzymeEnableRecursiveHypotheses) {
+                ReEvaluateValIfInactiveValue[invalidOrigin].insert(Val);
+              }
+            } else {
               InsertConstantValue(TR, Val);
               insertConstantsFrom(TR, *UpHypothesis);
               return true;
@@ -1818,14 +1822,17 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
-      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI, true)) {
-        Hypothesis->DeducingPointers.insert(Val);
-        if (EnzymePrintActivity)
-          llvm::errs() << " constant instruction hypothesis: " << *VI << "\n";
-      } else {
+      if (auto invalidOrigin = UpHypothesis->isInstructionPossibleActiveFromOrigin(TR, VI, true)) {
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateInstIfInactiveValue[invalidOrigin].insert(Val);
+        }
         if (EnzymePrintActivity)
           llvm::errs() << " cannot show constant instruction hypothesis: "
                        << *VI << "\n";
+      } else {
+        Hypothesis->DeducingPointers.insert(Val);
+        if (EnzymePrintActivity)
+          llvm::errs() << " constant instruction hypothesis: " << *VI << "\n";
       }
     }
 
@@ -2152,9 +2159,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (DeducingPointers.size() == 0)
         UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
       assert(directions & UP);
-      bool ActiveUp =
-          !isa<Argument>(Val) &&
-          !UpHypothesis->isInstructionInactiveFromOrigin(TR, Val, true);
+
+      bool ActiveUp = !isa<Argument>(Val);
+      if (auto invalidOrigin = UpHypothesis->isInstructionPossibleActiveFromOrigin(TR, Val, true)) {
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[invalidOrigin].insert(Val);
+        }
+      }
 
       // Case b) can occur if:
       //    1) this memory is used as part of an active return
@@ -2260,34 +2271,24 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       UpHypothesis =
           std::unique_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     if (directions == UP && !isa<PHINode>(Val)) {
-      if (isInstructionInactiveFromOrigin(TR, Val, true)) {
+      if (auto invalidOrigin = isInstructionPossibleActiveFromOrigin(TR, Val, true)) {
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[invalidOrigin].insert(Val);
+        }
+      } else {
         InsertConstantValue(TR, Val);
         return true;
-      } else if (auto I = dyn_cast<Instruction>(Val)) {
-        if (directions == 3) {
-          for (auto &op : I->operands()) {
-            if (!UpHypothesis->isConstantValue(TR, op) &&
-                EnzymeEnableRecursiveHypotheses) {
-              ReEvaluateValueIfInactiveValue[op].insert(I);
-            }
-          }
-        }
       }
     } else {
       UpHypothesis->ConstantValues.insert(Val);
-      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, Val, true)) {
+      if (auto invalidOrigin = UpHypothesis->isInstructionPossibleActiveFromOrigin(TR, Val, true)) {
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[invalidOrigin].insert(Val);
+        }
+      } else {
         insertConstantsFrom(TR, *UpHypothesis);
         InsertConstantValue(TR, Val);
         return true;
-      } else if (auto I = dyn_cast<Instruction>(Val)) {
-        if (directions == 3) {
-          for (auto &op : I->operands()) {
-            if (!UpHypothesis->isConstantValue(TR, op) &&
-                EnzymeEnableRecursiveHypotheses) {
-              ReEvaluateValueIfInactiveValue[op].insert(I);
-            }
-          }
-        }
       }
     }
   }
@@ -2332,7 +2333,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 }
 
 /// Is the instruction guaranteed to be inactive because of its operands
-bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
+Value ActivityAnalyzer::isInstructionPossibleActiveFromOrigin(TypeResults const &TR,
                                                        llvm::Value *val,
                                                        bool considerValue) {
   // Must be an analyzer only searching up
@@ -2345,7 +2346,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     llvm::errs() << "unknown pointer source: " << *val << "\n";
     assert(0 && "unknown pointer source");
     llvm_unreachable("unknown pointer source");
-    return false;
+    return nullptr;
   }
 
   Instruction *inst = cast<Instruction>(val);
@@ -2359,7 +2360,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         if (EnzymePrintActivity)
           llvm::errs() << " constant instruction from known cpuid instruction "
                        << *inst << "\n";
-        return true;
+        return nullptr;
       }
     }
   }
@@ -2367,19 +2368,24 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   if (auto SI = dyn_cast<StoreInst>(inst)) {
     // if either src or dst is inactive, there cannot be a transfer of active
     // values and thus the store is inactive
-    if (isConstantValue(TR, SI->getValueOperand()) ||
-        isConstantValue(TR, SI->getPointerOperand())) {
-      if (EnzymePrintActivity)
-        llvm::errs() << " constant instruction as store operand is inactive "
+    for (auto V : {SI->getValueOperand(), SI->getPointerOperand()}) {
+      if (isConstantValue(TR, V)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " constant instruction as store operand (" << *V << ") is inactive "
                      << *inst << "\n";
-      return true;
+        return nullptr;
+      }
     }
+    // TODO to be more precise for the recompute analysis we should return both operands as 
+    // either would allow the analysis to be strengthened
+    return SI->getValueOperand();
   }
 
   if (!considerValue) {
     if (auto IEI = dyn_cast<InsertElementInst>(inst)) {
-      if ((!TR.anyFloat(IEI->getOperand(0)) ||
-           isConstantValue(TR, IEI->getOperand(0))) &&
+      for (auto V : {IEI->getOperand(0), IEI->getOperand(1)}) {
+      if ((!TR.anyFloat(V) ||
+           isConstantValue(TR, V)) &&
           (!TR.anyFloat(IEI->getOperand(1)) ||
            isConstantValue(TR, IEI->getOperand(1)))) {
         if (EnzymePrintActivity)

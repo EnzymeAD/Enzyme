@@ -169,9 +169,13 @@ private:
   void insertConstantsFrom(TypeResults const &TR,
                            ActivityAnalyzer &Hypothesis) {
     for (auto I : Hypothesis.ConstantInstructions) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " inserting constant instruction " << *I << " " << " due to hypothesis\n";
       InsertConstantInstruction(TR, I);
     }
     for (auto V : Hypothesis.ConstantValues) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " inserting constant value " << *V << " " << " due to hypothesis\n";
       InsertConstantValue(TR, V);
     }
   }
@@ -223,10 +227,11 @@ private:
   /// Is the use of value val as an argument of call CI known to be inactive
   bool isFunctionArgumentConstant(llvm::CallInst *CI, llvm::Value *val);
 
-  /// Is the instruction guaranteed to be inactive because of its operands.
+  /// Is the instruction guaranteed to be inactive because of its operands, return
+  /// null. Otherwise return the value which causes this assumption to break.
   /// \p considerValue specifies that we ask whether the returned value, rather
   /// than the instruction itself is active.
-  bool isInstructionInactiveFromOrigin(TypeResults const &TR, llvm::Value *val,
+  Value* isInstructionPossibleActiveFromOrigin(TypeResults const &TR, llvm::Value *val,
                                        bool considerValue);
 
 public:
