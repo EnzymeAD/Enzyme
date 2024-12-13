@@ -157,6 +157,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
+    if (dCI.getNumResults() != CI.getNumResults()) {
+      CI.emitError() << "Incorrect number of results for enzyme operation: "
+                     << *CI << " expected " << *dCI;
+      return failure();
+    }
     CI.replaceAllUsesWith(dCI);
     CI->erase();
     return success();
