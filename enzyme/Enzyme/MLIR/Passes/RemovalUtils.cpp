@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Interfaces/AutoDiffOpInterface.h"
 #include "RemovalUtils.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 
 mlir::Type mlir::enzyme::CacheInfo::batchType() {
   return mlir::enzyme::CacheInfo::batchType(mlir::ShapedType::kDynamic);
