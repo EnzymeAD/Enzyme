@@ -180,4 +180,22 @@ def BatchOpInterface : OpInterface<"BatchOpInterface"> {
   ];
 }
 
+def EnzymeOpsRemoverOpInterface : OpInterface<"EnzymeOpsRemoverOpInterface"> {
+  let description = [{
+    An operation with nested operations which can move inner enzyme operations outside of itself.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+      Pushes the inner enzyme operations outside of self.
+    }],
+    /*retTy=*/"::mlir::LogicalResult",
+    /*methodName=*/"removeEnzymeOps",
+    /*args=*/(ins)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES

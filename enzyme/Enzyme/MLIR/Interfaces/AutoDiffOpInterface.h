@@ -26,6 +26,7 @@ namespace enzyme {
 
 class MGradientUtils;
 class MGradientUtilsReverse;
+class RemovalUtils;
 
 }; // namespace enzyme
 }; // namespace mlir
