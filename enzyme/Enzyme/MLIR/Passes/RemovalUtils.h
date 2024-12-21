@@ -35,9 +35,9 @@ struct CacheInfo {
   }
 
   Value pushedValue() { return pushOp.getValue(); }
-
-  Type batchType(int64_t dim);
-  Type batchType(); // unknown size
+  Type cachedType() {
+    return initOp.getResult().getType().cast<enzyme::CacheType>().getType();
+  }
 };
 
 LogicalResult removeOpsWithinBlock(Block *block);
