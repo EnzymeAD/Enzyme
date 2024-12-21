@@ -306,7 +306,7 @@ struct ForOpEnzymeOpsRemover
 
       auto newType =
           info.cachedType().cast<AutoDiffTypeInterface>().getShadowType(
-              numIters.value());
+              numIters.value_or(ShapedType::kDynamic));
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPoint(info.initOp);
