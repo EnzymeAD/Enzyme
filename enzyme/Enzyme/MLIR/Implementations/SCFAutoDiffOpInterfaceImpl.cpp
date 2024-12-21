@@ -36,7 +36,7 @@ namespace {
 #include "Implementations/SCFDerivatives.inc"
 
 // TODO: support non constant number of iteration by using unknown dimensions
-static std::optional<int64_t> getNumberOfIterations(scf::ForOp forOp) {
+static std::optional<int64_t> getConstantNumberOfIterations(scf::ForOp forOp) {
   auto lb = forOp.getLowerBound();
   auto ub = forOp.getUpperBound();
   auto step = forOp.getStep();
@@ -53,6 +53,14 @@ static std::optional<int64_t> getNumberOfIterations(scf::ForOp forOp) {
           stepI = stepAttr.getInt();
 
   return (ubI - lbI) / stepI;
+}
+
+static Value getNumberOfIterations(OpBuilder &builder, scf::ForOp forOp) {
+  Value lb = forOp.getLowerBound(), ub = forOp.getUpperBound(),
+        step = forOp.getStep();
+  Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+  Value nSteps = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+  return nSteps;
 }
 
 struct ForOpEnzymeOpsRemover
@@ -132,7 +140,7 @@ struct ForOpEnzymeOpsRemover
       }
     }
 
-    auto numIters = getNumberOfIterations(forOp);
+    auto numIters = getConstantNumberOfIterations(forOp);
     Value inductionVariable; // [0, N[ counter
 
     if (matchPattern(forOp.getLowerBound(), m_Zero()) &&
@@ -186,16 +194,25 @@ struct ForOpEnzymeOpsRemover
       }
 
       auto newType =
-          info.batchType(numIters.value_or(mlir::ShapedType::kDynamic));
-      ValueRange operands =
-          numIters.has_value()
-              ? ValueRange{}
-              : ValueRange{builder
-                               .create<arith::ConstantOp>(
-                                   forOp->getLoc(), builder.getIndexAttr(10))
-                               .getResult()};
-      auto initValue = builder.create<tensor::EmptyOp>(info.initOp->getLoc(),
-                                                       newType, operands);
+          info.cachedType()
+              .cast<AutoDiffTypeInterface>()
+              .getShadowType(numIters.value_or(mlir::ShapedType::kDynamic))
+              .cast<ShapedType>();
+
+      SmallVector<Value> dynamicDims;
+
+      for (auto it : llvm::enumerate(newType.getShape())) {
+        if (ShapedType::isDynamic(it.value())) {
+          if (it.index() == 0)
+            dynamicDims.push_back(getNumberOfIterations(builder, forOp));
+          else
+            return failure(); // TODO: find dynamic dims within the body.
+        }
+      }
+
+      Value initValue = builder.create<tensor::EmptyOp>(info.initOp->getLoc(),
+                                                        newType, dynamicDims);
+
       // cast<AutoDiffTypeInterface>(newType).createNullValue(
       // builder, info.initOp->getLoc());
 
@@ -241,9 +258,11 @@ struct ForOpEnzymeOpsRemover
       builder.setInsertionPoint(otherForOp);
       SmallVector<Value> operands(otherForOp.getInitArgs().begin(),
                                   otherForOp.getInitArgs().end());
-      operands.push_back(builder.create<arith::ConstantOp>(
-          otherForOp->getLoc(),
-          builder.getIndexAttr(numIters.value_or(1) - 1)));
+      operands.push_back(numIters.has_value()
+                             ? builder.create<arith::ConstantOp>(
+                                   otherForOp->getLoc(),
+                                   builder.getIndexAttr(numIters.value() - 1))
+                             : getNumberOfIterations(builder, forOp));
 
       Block *otherBody = otherForOp.getBody();
       Value otherInductionVariable =
@@ -285,7 +304,9 @@ struct ForOpEnzymeOpsRemover
 
       Value cache = info.initOp.getResult();
 
-      auto newType = info.batchType(numIters.value());
+      auto newType =
+          info.cachedType().cast<AutoDiffTypeInterface>().getShadowType(
+              numIters.value());
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(builder);
         builder.setInsertionPoint(info.initOp);

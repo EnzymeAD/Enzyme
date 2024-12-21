@@ -57,7 +57,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       }],
       /*retTy=*/"::mlir::Type",
       /*methodName=*/"getShadowType",
-      /*args=*/(ins "unsigned":$width)
+      /*args=*/(ins "int64_t":$width)
     >,
     InterfaceMethod<
       /*desc=*/[{
