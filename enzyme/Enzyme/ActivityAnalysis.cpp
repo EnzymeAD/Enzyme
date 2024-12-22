@@ -2797,8 +2797,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           if (isa<AllocaInst>(TmpOrig) || isAllocationCall(TmpOrig, TLI)) {
             done.insert(
                 std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+            // If we are capturing a variable v, we need to check any loads or
+            // stores into that variable, even if we are checking only for
+            // stores.
+            auto UA2 = UA;
+            if (UA == UseActivity::OnlyStores ||
+                UA == UseActivity::OnlyNonPointerStores ||
+                UA == UseActivity::AllStores)
+              UA2 = UseActivity::None;
             for (const auto a : TmpOrig->users()) {
-              todo.push_back(std::make_tuple(a, TmpOrig, UA));
+              todo.push_back(std::make_tuple(a, TmpOrig, UA2));
             }
             AllocaSet.insert(TmpOrig);
             if (EnzymePrintActivity)
