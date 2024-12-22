@@ -196,18 +196,18 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // BroadcastOp
 //===----------------------------------------------------------------------===//
 
-void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input, int64_t width) {
-  auto widthAttr = builder.getI64IntegerAttr(width);
+void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input, llvm::SmallVector<int64_t> shape) {
+  auto shapeAttr = builder.getDenseI64ArrayAttr(shape);
   RankedTensorType output;
   // TODO: support things other than scalars and ranked tensors, maybe reuse getShadowType here?
   if (auto tensorType = input.getType().dyn_cast<TensorType>()) {
-      auto shape = tensorType.getShape();
+      auto originalShape = tensorType.getShape();
       SmallVector<int64_t, 4> newShape;
-      newShape.push_back(width);
       newShape.append(shape.begin(), shape.end());
+      newShape.append(originalShape.begin(), originalShape.end());
       output = RankedTensorType::get(newShape, tensorType.getElementType());
   } else {
-    output = RankedTensorType::get({width}, input.getType());
+    output = RankedTensorType::get(shape, input.getType());
   }
-  build(builder, result, output, input, widthAttr);
+  build(builder, result, output, input, shapeAttr);
 }
