@@ -204,7 +204,7 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   let results = (outs AnyRankedTensor:$output);
 
   let builders = [
-    OpBuilder<(ins "Value":$input, "llvm::SmallVector<int64_t>":$shape)>
+    OpBuilder<(ins "Value":$input, "ArrayRef<int64_t>":$shape)>
   ];
 }
 
