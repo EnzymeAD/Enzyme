@@ -3236,6 +3236,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           CI->setCallingConv(call.getCallingConv());
           CI->setTailCallKind(call.getTailCallKind());
           CI->setDebugLoc(dbgLoc);
+
+          if (funcName == "julia.gc_alloc_obj" ||
+              funcName == "jl_gc_alloc_typed" ||
+              funcName == "ijl_gc_alloc_typed") {
+            if (EnzymeShadowAllocRewrite)
+              EnzymeShadowAllocRewrite(wrap(CI), gutils);
+          }
           return CI;
         };
 
