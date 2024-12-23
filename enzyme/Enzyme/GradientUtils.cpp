@@ -3838,6 +3838,13 @@ bool GradientUtils::legalRecompute(const Value *val,
       }
     }
 
+    auto found = fictiousPHIs.find(const_cast<llvm::PHINode *>(phi));
+    if (found != fictiousPHIs.end()) {
+      auto orig = found->second;
+      if (isa<AtomicRMWInst>(orig))
+        return false;
+    }
+
     if (phi->getNumIncomingValues() == 0) {
       llvm::errs() << *oldFunc << "\n";
       llvm::errs() << *newFunc << "\n";
