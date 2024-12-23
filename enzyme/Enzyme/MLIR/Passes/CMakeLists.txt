@@ -31,6 +31,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   MLIRFuncDialect
   MLIRFuncTransforms
   MLIRGPUDialect
+  MLIRTensorDialect
   MLIRIR
   MLIRLLVMDialect
   MLIRMathDialect
