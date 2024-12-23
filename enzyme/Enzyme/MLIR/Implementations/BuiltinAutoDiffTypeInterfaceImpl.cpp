@@ -25,6 +25,14 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
+
+static mlir::Type batchType(mlir::Type type, int64_t width) {
+  if (width > 1 || ShapedType::isDynamic(width)) {
+    return RankedTensorType::get({width}, type);
+  }
+  return type;
+}
+
 class FloatTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<FloatTypeInterface,
                                                   FloatType> {
@@ -44,9 +52,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -105,9 +112,8 @@ public:
     return added;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -138,9 +144,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -172,9 +177,8 @@ public:
     return builder.create<complex::ConjOp>(loc, a)->getResult(0);
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
