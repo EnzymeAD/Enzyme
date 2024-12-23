@@ -1554,6 +1554,26 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             ReEvaluateValueIfInactiveValue[II->getOperand(0)].insert(TmpOrig);
           }
         }
+      } else if (auto RMW = dyn_cast<AtomicRMWInst>(TmpOrig)) {
+        if (directions == UP) {
+          if (isConstantValue(TR, RMW->getPointerOperand())) {
+            InsertConstantValue(TR, Val);
+            return true;
+          }
+        } else {
+          if (UpHypothesis->isConstantValue(TR, RMW->getPointerOperand())) {
+            InsertConstantValue(TR, Val);
+            insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          }
+        }
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[RMW->getPointerOperand()].insert(Val);
+          if (TmpOrig != Val) {
+            ReEvaluateValueIfInactiveValue[RMW->getPointerOperand()].insert(
+                TmpOrig);
+          }
+        }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (isInactiveCall(*op) || op->hasFnAttr("enzyme_inactive_val") ||
             op->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
@@ -1940,7 +1960,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
-        if (isa<LoadInst>(I) || isNVLoad(I)) {
+        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I)) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
