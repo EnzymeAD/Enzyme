@@ -280,11 +280,12 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
           if (intrinsic == MLIRDerivatives) {
             os << ";\n";
             os << "if (gutils->width != 1) {\n"
-              << " " << argName << "_" << (idx - 1) << " = builder.create<enzyme::BroadcastOp>(\n"
-              << "   op.getLoc(),\n"
-              << "   " << argName << "_" << (idx - 1) << ",\n"
-              << "   llvm::SmallVector<int64_t>({gutils->width}));\n"
-                << "}";
+               << " " << argName << "_" << (idx - 1)
+               << " = builder.create<enzyme::BroadcastOp>(\n"
+               << "   op.getLoc(),\n"
+               << "   " << argName << "_" << (idx - 1) << ",\n"
+               << "   llvm::SmallVector<int64_t>({gutils->width}));\n"
+               << "}";
           }
         }
 
