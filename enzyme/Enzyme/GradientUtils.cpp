@@ -3822,6 +3822,9 @@ bool GradientUtils::legalRecompute(const Value *val,
     }
   }
 
+  if (isa<AtomicRMWInst>(val))
+    return false;
+
   if (auto phi = dyn_cast<PHINode>(val)) {
     if (auto uiv = hasUninverted(val)) {
       if (auto dli = dyn_cast_or_null<LoadInst>(uiv)) {
