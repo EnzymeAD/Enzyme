@@ -102,6 +102,10 @@ llvm::cl::opt<bool> EnzymeMemmoveWarning(
 llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
+
+llvm::cl::opt<bool> EnzymeNonPower2Cache(
+    "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
+    cl::desc("Disable caching of integers which are not a power of 2"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
