@@ -506,6 +506,67 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << "})";
       return true;
+    } else if (opName == "StaticIf" || Def->isSubClassOf("StaticIf")) {
+      if (resultRoot->getNumArgs() != 2)
+        PrintFatalError(pattern->getLoc(), "only two op StaticIf supported");
+
+      os << "({\n";
+      os << curIndent << INDENT << "// Computing " << opName << "\n";
+      if (intrinsic == MLIRDerivatives)
+        os << curIndent << INDENT << "mlir::Value imVal;";
+      else
+        os << curIndent << INDENT << "llvm::Value *imVal;";
+
+      os << "\n" << curIndent << INDENT << "bool condition = ";
+
+      auto condition = dyn_cast<StringInit>(Def->getValueInit("condition"));
+      if (!condition)
+        PrintFatalError(pattern->getLoc(),
+                        Twine("string 'condition' not defined in ") +
+                            resultTree->getAsString());
+      bool complexExpr = condition->getValue().contains(';');
+      if (complexExpr)
+        os << "({\n";
+      os << condition->getValue();
+      if (complexExpr)
+        os << "\n" << curIndent << INDENT << "})";
+
+      os << ";\n"
+         << curIndent << INDENT << "if (condition) {\n"
+         << curIndent << INDENT << INDENT << "imVal = ";
+      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
+        assert(!ext.size());
+        os << ord << ";\n";
+      } else {
+        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
+               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
+               origName, newFromOriginal, intrinsic);
+        os << ";\n";
+      }
+
+      os << curIndent << INDENT << "} else {\n";
+
+      os << curIndent << INDENT << INDENT << "imVal = ";
+      if (isa<UnsetInit>(resultRoot->getArg(1)) && resultRoot->getArgName(1)) {
+        auto name = resultRoot->getArgName(1)->getAsUnquotedString();
+        auto [ord, isVec, ext] =
+            nameToOrdinal.lookup(name, pattern, resultRoot);
+        assert(!ext.size());
+        os << ord << ";\n";
+      } else {
+        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
+               resultRoot->getArg(1), builder, nameToOrdinal, lookup, retidx,
+               origName, newFromOriginal, intrinsic);
+        os << ";\n";
+      }
+
+      os << curIndent << INDENT << "}\n";
+      os << curIndent << INDENT << "imVal;\n";
+      os << curIndent << INDENT << "})";
+      return true;
     } else if (opName == "SelectIfComplex" ||
                Def->isSubClassOf("SelectIfComplex")) {
       if (resultRoot->getNumArgs() != 3)

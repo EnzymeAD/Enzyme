@@ -86,8 +86,12 @@ def DiffeRet : DiffeRetIndex<[-1]>;
 def Shadow : Operation</*primal*/0, /*shadow*/1> {
 }
 
-class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow>{
+class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_primal, uses_shadow> {
   string value = val;
+}
+
+class StaticIf<bit uses_primal, bit uses_shadow, string condition_> : Operation<uses_primal, uses_shadow> {
+  string condition = condition_;
 }
 
 class Inst<string mnemonic, string dialect_, string postop_="">  : Operation</*primal*/1, /*shadow*/0> {
