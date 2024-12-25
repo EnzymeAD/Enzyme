@@ -108,7 +108,7 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     return invertedPointers.lookupOrNull(v);
 
   if (isConstantValue(v)) {
-    if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
+    if (auto iface = getShadowType(v.getType()).dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
       if (auto op = v.getDefiningOp())
         Builder2.setInsertionPoint(getNewFromOriginal(op));
