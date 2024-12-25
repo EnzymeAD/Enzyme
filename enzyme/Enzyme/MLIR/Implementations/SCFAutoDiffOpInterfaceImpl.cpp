@@ -236,9 +236,31 @@ struct ForOpEnzymeOpsRemover
         builder.setInsertionPoint(info.pushOp);
 
         // TODO: if type is tensor, use insert_slice instead
-        auto newCacheValue = builder.create<tensor::InsertOp>(
-            info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
-            inductionVariable);
+        Value newCacheValue;
+        if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
+          auto shape = TT.getShape();
+
+          SmallVector<int64_t> offsets(shape.size() + 1, 0);
+          offsets[0] = ShapedType::kDynamic;
+
+          SmallVector<int64_t> sizes;
+          sizes.reserve(shape.size() + 1);
+          sizes.push_back(1);
+          sizes.append(shape.begin(), shape.end());
+
+          SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+          newCacheValue = builder.create<tensor::InsertSliceOp>(
+              info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+              ValueRange(inductionVariable), ValueRange(), ValueRange(),
+              builder.getDenseI64ArrayAttr(offsets),
+              builder.getDenseI64ArrayAttr(sizes),
+              builder.getDenseI64ArrayAttr(strides));
+        } else {
+          newCacheValue = builder.create<tensor::InsertOp>(
+              info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+              inductionVariable);
+        }
 
         term->insertOperands(term->getNumOperands(), ValueRange(newCacheValue));
       }
@@ -347,12 +369,39 @@ struct ForOpEnzymeOpsRemover
 
         Block *popBody = otherForOp.getBody();
         builder.setInsertionPoint(info.popOp);
-        auto popValue =
-            builder
-                .create<tensor::ExtractOp>(
-                    info.popOp->getLoc(), popNewValue,
-                    popBody->getArgument(popBody->getNumArguments() - 1))
-                .getResult();
+
+        Value newInductionVariable =
+            popBody->getArgument(popBody->getNumArguments() - 1);
+
+        Value popValue;
+        if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
+          auto shape = TT.getShape();
+          SmallVector<int64_t> offsets(shape.size() + 1, 0);
+          offsets[0] = ShapedType::kDynamic;
+
+          SmallVector<int64_t> sizes;
+          sizes.reserve(shape.size() + 1);
+          sizes.push_back(1);
+          sizes.append(shape.begin(), shape.end());
+
+          SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+          popValue =
+              builder
+                  .create<tensor::ExtractSliceOp>(
+                      info.popOp->getLoc(), TT, popNewValue,
+                      ValueRange(newInductionVariable), ValueRange(),
+                      ValueRange(), builder.getDenseI64ArrayAttr(offsets),
+                      builder.getDenseI64ArrayAttr(sizes),
+                      builder.getDenseI64ArrayAttr(strides))
+                  .getResult();
+        } else {
+          popValue =
+              builder
+                  .create<tensor::ExtractOp>(info.popOp->getLoc(), popNewValue,
+                                             newInductionVariable)
+                  .getResult();
+        }
 
         info.popOp.getResult().replaceAllUsesWith(popValue);
         info.popOp->erase();
