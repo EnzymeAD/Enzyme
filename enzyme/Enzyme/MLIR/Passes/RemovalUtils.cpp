@@ -8,6 +8,41 @@
 
 #include "RemovalUtils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include <cassert>
+
+mlir::enzyme::CacheInfo
+mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other) {
+  assert(other.pushOp->getBlock() == pushOp->getBlock());
+  assert(other.popOp->getBlock() == popOp->getBlock());
+
+  enzyme::InitOp newInitOp;
+  if (other.initOp->isBeforeInBlock(initOp)) {
+    newInitOp = other.initOp;
+    initOp.getResult().replaceAllUsesWith(newInitOp.getResult());
+    initOp->erase();
+  } else {
+    newInitOp = initOp;
+    other.initOp.getResult().replaceAllUsesWith(newInitOp.getResult());
+    other.initOp->erase();
+  }
+
+  enzyme::PushOp newPushOp = pushOp;
+  other.pushOp->erase();
+
+  enzyme::PopOp newPopOp;
+  if (other.popOp->isBeforeInBlock(popOp)) {
+    newPopOp = other.popOp;
+    popOp.getResult().replaceAllUsesWith(newPopOp.getResult());
+    popOp->erase();
+  } else {
+    newPopOp = popOp;
+    other.popOp.getResult().replaceAllUsesWith(newPopOp.getResult());
+    other.popOp->erase();
+  }
+
+  CacheInfo newInfo{newInitOp};
+  return newInfo;
+}
 
 mlir::LogicalResult mlir::enzyme::removeOpsWithinBlock(mlir::Block *block) {
   bool valid = true;
