@@ -27,6 +27,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/IntegerSet.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
@@ -199,17 +200,9 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
                         ArrayRef<int64_t> shape) {
   auto shapeAttr = builder.getDenseI64ArrayAttr(shape);
-  RankedTensorType output;
-  // TODO: support things other than scalars and ranked tensors, maybe reuse
-  // getShadowType here?
-  if (auto tensorType = input.getType().dyn_cast<TensorType>()) {
-    auto originalShape = tensorType.getShape();
-    SmallVector<int64_t, 4> newShape;
-    newShape.append(shape.begin(), shape.end());
-    newShape.append(originalShape.begin(), originalShape.end());
-    output = RankedTensorType::get(newShape, tensorType.getElementType());
-  } else {
-    output = RankedTensorType::get(shape, input.getType());
+  auto resultTy = input.getType();
+  for (auto s : llvm::reverse(shape)) {
+    resultTy = resultTy.cast<AutoDiffTypeInterface>().getShadowType(s);
   }
-  build(builder, result, output, input, shapeAttr);
+  build(builder, result, resultTy, input, shapeAttr);
 }
