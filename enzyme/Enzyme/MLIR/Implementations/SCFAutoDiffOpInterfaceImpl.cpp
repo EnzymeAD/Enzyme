@@ -77,7 +77,7 @@ struct ForOpEnzymeOpsRemover
     // Gradients whose values need to be passed as iteration variables.
     llvm::SmallDenseSet<Value> updatedGradients;
 
-    llvm::SmallVector<CacheInfo> caches;
+    llvm::MapVector<Value, CacheInfo> cachesMap;
 
     Block *body = forOp.getBody();
 
@@ -89,10 +89,21 @@ struct ForOpEnzymeOpsRemover
 
       if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
         CacheInfo info(pushOp.getCache());
-        caches.push_back(info);
+
+        Value pushedValue = info.pushedValue();
+        if (cachesMap.contains(pushedValue)) {
+          info = info.merge(cachesMap.lookup(pushedValue));
+        }
+        cachesMap[pushedValue] = info;
 
         otherForOp = cast<scf::ForOp>(info.popOp->getParentOp());
       }
+    }
+
+    SmallVector<CacheInfo> caches;
+    caches.reserve(cachesMap.size());
+    for (auto &&[_, info] : cachesMap) {
+      caches.push_back(info);
     }
 
     // nothing to do

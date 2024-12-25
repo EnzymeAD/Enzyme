@@ -18,9 +18,14 @@ namespace enzyme {
 /// push and pop.
 struct CacheInfo {
   enzyme::InitOp initOp;
-  enzyme::PushOp pushOp = {};
-  enzyme::PopOp popOp = {};
+  enzyme::PushOp pushOp;
+  enzyme::PopOp popOp;
 
+  CacheInfo() {
+    initOp = nullptr;
+    pushOp = nullptr;
+    popOp = nullptr;
+  }
   CacheInfo(Value cache) {
     initOp = cache.getDefiningOp<enzyme::InitOp>();
     unsigned nusers = 0;
@@ -38,6 +43,9 @@ struct CacheInfo {
   Type cachedType() {
     return initOp.getResult().getType().cast<enzyme::CacheType>().getType();
   }
+
+  // Pushed values must be the same
+  CacheInfo merge(CacheInfo other);
 };
 
 LogicalResult removeOpsWithinBlock(Block *block);
