@@ -16,8 +16,6 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
-#include <iostream>
-#include <ostream>
 
 using namespace mlir;
 using namespace mlir::enzyme;
