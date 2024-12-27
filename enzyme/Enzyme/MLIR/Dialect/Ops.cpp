@@ -27,6 +27,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/IntegerSet.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
@@ -190,4 +191,18 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
            << getFn() << "' does not reference a valid global funcOp";
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// BroadcastOp
+//===----------------------------------------------------------------------===//
+
+void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
+                        ArrayRef<int64_t> shape) {
+  auto shapeAttr = builder.getDenseI64ArrayAttr(shape);
+  auto resultTy = input.getType();
+  for (auto s : llvm::reverse(shape)) {
+    resultTy = resultTy.cast<AutoDiffTypeInterface>().getShadowType(s);
+  }
+  build(builder, result, resultTy, input, shapeAttr);
 }

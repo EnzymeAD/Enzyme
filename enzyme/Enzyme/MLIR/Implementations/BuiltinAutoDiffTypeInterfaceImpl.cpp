@@ -45,8 +45,11 @@ public:
   }
 
   Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+    if (width > 1) {
+      return RankedTensorType::get({width}, self);
+    } else {
+      return self;
+    }
   }
 
   bool isMutable(Type self) const { return false; }
@@ -106,7 +109,14 @@ public:
   }
 
   Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
+    if (width != 1) {
+      auto tenType = self.cast<TensorType>();
+      auto shape = tenType.getShape();
+      SmallVector<int64_t, 4> newShape;
+      newShape.push_back(width);
+      newShape.append(shape.begin(), shape.end());
+      return RankedTensorType::get(newShape, tenType.getElementType());
+    }
     return self;
   }
 
