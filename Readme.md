@@ -39,6 +39,10 @@ brew install enzyme
 ```
 spack install enzyme
 ```
+[Nix](https://nixos.org/)
+```
+nix-shell -p enzyme
+```
 
 To get involved or if you have questions, please join our [mailing list](https://groups.google.com/d/forum/enzyme-dev).
 
