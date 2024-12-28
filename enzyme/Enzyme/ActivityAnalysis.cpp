@@ -579,6 +579,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "jl_reshape_array" || Name == "ijl_reshape_array")
     return val != CI->getArgOperand(1);
 
+  // Only the 0-th arg impacts activity
+  if (Name == "jl_genericmemory_copy_slice" ||
+      Name == "ijl_genericmemory_copy_slice")
+    return val != CI->getArgOperand(0);
+
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
@@ -657,6 +662,13 @@ static inline void propagateArgumentInformation(
     for (size_t i = 1; i < CI.arg_size(); i++) {
       propagateFromOperand(CI.getOperand(i));
     }
+    return;
+  }
+
+  // Only the 0-th arg impacts activity
+  if (Name == "jl_genericmemory_copy_slice" ||
+      Name == "ijl_genericmemory_copy_slice") {
+    propagateFromOperand(CI.getArgOperand(1));
     return;
   }
 
@@ -1599,6 +1611,29 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
+        }
+
+        if (funcName == "jl_genericmemory_copy_slice" ||
+            funcName == "ijl_genericmemory_copy_slice") {
+          if (directions == UP) {
+            if (isConstantValue(TR, op->getArgOperand(0))) {
+              InsertConstantValue(TR, Val);
+              return true;
+            }
+          } else {
+            if (UpHypothesis->isConstantValue(TR, op->getArgOperand(0))) {
+              InsertConstantValue(TR, Val);
+              insertConstantsFrom(TR, *UpHypothesis);
+              return true;
+            }
+          }
+          if (EnzymeEnableRecursiveHypotheses) {
+            ReEvaluateValueIfInactiveValue[op->getArgOperand(0)].insert(Val);
+            if (TmpOrig != Val) {
+              ReEvaluateValueIfInactiveValue[op->getArgOperand(0)].insert(
+                  TmpOrig);
+            }
+          }
         }
 
         // If requesting empty unknown functions to be considered inactive,
