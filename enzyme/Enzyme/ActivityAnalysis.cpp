@@ -2728,6 +2728,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             if (AllocaSet.count(TmpOrig)) {
               continue;
             }
+            // We are literally storing our value into ourselves [or relevant
+            // derived pointer]
+            if (TmpOrig == val) {
+              continue;
+            }
             if (isa<AllocaInst>(TmpOrig)) {
               newAllocaSet.insert(TmpOrig);
               continue;
