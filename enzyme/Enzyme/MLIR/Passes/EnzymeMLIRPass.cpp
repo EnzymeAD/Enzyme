@@ -33,9 +33,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    mlir::PassManager pm(nf->getContext());
-    std::string error_message;
-    //llvm::raw_string_ostream error_stream(error_message);
+    mlir::OpPassManager pm;
     mlir::LogicalResult result =
         mlir::parsePassPipeline(postpasses, pm);
     if (!mlir::failed(result)) {
