@@ -31,6 +31,21 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   void runOnOperation() override;
 
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    mlir::PassManager pm(nf->getContext());
+    std::string error_message;
+    //llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result =
+        mlir::parsePassPipeline(postpasses, pm);
+    if (!mlir::failed(result)) {
+      pm.getDependentDialects(registry);
+    }
+
+    registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
+                    mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect>();
+  }
+
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
                                               DerivativeMode mode) {
     std::vector<DIFFE_TYPE> retTypes;
@@ -150,7 +165,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+        /*augmented*/ nullptr, postpasses);
     if (!newFunc)
       return failure();
 
@@ -276,7 +291,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
                                 returnShadows, mode, freeMemory, width,
                                 /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr);
+                                /*augmented*/ nullptr, postpasses);
     if (!newFunc)
       return failure();
 

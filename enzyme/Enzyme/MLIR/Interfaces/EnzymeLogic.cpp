@@ -78,7 +78,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented) {
+    std::vector<bool> volatile_args, void *augmented, llvm::StringRef postpasses) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -105,7 +105,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
-      /*omp*/ false);
+      /*omp*/ false, postpasses);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
   insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(
@@ -195,10 +195,20 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   if (!valid)
     return nullptr;
 
-  // if (PostOpt)
-  //  PPC.optimizeIntermediate(nf);
-  // if (EnzymePrint) {
-  //  llvm::errs() << nf << "\n";
-  //}
+  if (postpasses != "") {
+    mlir::PassManager pm(nf->getContext());
+    std::string error_message;
+    //llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result =
+        mlir::parsePassPipeline(postpasses, pm);
+    if (mlir::failed(result)) {
+      return nullptr;
+    }
+
+    if (!mlir::succeeded(pm.run(nf))) {
+      return nullptr;
+    }
+  }
+
   return nf;
 }

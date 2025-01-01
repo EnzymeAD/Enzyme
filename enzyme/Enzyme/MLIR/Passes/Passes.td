@@ -19,6 +19,15 @@ def DifferentiatePass : Pass<"enzyme"> {
     "cf::ControlFlowDialect",
     "tensor::TensorDialect",
   ];
+  let options = [
+    Option<
+      /*C++ variable name=*/"postopt",
+      /*CLI argument=*/"postopt",
+      /*type=*/"std::string",
+      /*default=*/"",
+      /*description=*/"Optimization passes to apply to generated derivative functions"
+    >,
+  ],
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
