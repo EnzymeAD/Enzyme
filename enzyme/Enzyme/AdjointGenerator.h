@@ -1380,31 +1380,33 @@ public:
           ss << "Cannot deduce adding type (cast) of " << I;
           EmitNoTypeError(str, I, gutils, Builder2);
         }
-        assert(FT);
 
-        auto rule = [&](Value *dif) {
-          if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
-              I.getOpcode() == CastInst::CastOps::FPExt) {
-            return Builder2.CreateFPCast(dif, op0->getType());
-          } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
-            return Builder2.CreateBitCast(dif, op0->getType());
-          } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
-            // TODO CHECK THIS
-            return Builder2.CreateZExt(dif, op0->getType());
-          } else {
-            std::string s;
-            llvm::raw_string_ostream ss(s);
-            ss << *I.getParent()->getParent() << "\n";
-            ss << "cannot handle above cast " << I << "\n";
-            EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
-            return (llvm::Value *)UndefValue::get(op0->getType());
-          }
-        };
+        if (FT) {
 
-        Value *dif = diffe(&I, Builder2);
-        Value *diff = applyChainRule(op0->getType(), Builder2, rule, dif);
+          auto rule = [&](Value *dif) {
+            if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
+                I.getOpcode() == CastInst::CastOps::FPExt) {
+              return Builder2.CreateFPCast(dif, op0->getType());
+            } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
+              return Builder2.CreateBitCast(dif, op0->getType());
+            } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
+              // TODO CHECK THIS
+              return Builder2.CreateZExt(dif, op0->getType());
+            } else {
+              std::string s;
+              llvm::raw_string_ostream ss(s);
+              ss << *I.getParent()->getParent() << "\n";
+              ss << "cannot handle above cast " << I << "\n";
+              EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
+              return (llvm::Value *)UndefValue::get(op0->getType());
+            }
+          };
 
-        addToDiffe(orig_op0, diff, Builder2, FT);
+          Value *dif = diffe(&I, Builder2);
+          Value *diff = applyChainRule(op0->getType(), Builder2, rule, dif);
+
+          addToDiffe(orig_op0, diff, Builder2, FT);
+        }
       }
 
       Type *diffTy = gutils->getShadowType(I.getType());
