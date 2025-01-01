@@ -27,7 +27,7 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"",
       /*description=*/"Optimization passes to apply to generated derivative functions"
     >,
-  ],
+  ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
