@@ -21,8 +21,8 @@ def DifferentiatePass : Pass<"enzyme"> {
   ];
   let options = [
     Option<
-      /*C++ variable name=*/"postopt",
-      /*CLI argument=*/"postopt",
+      /*C++ variable name=*/"postpasses",
+      /*CLI argument=*/"postpasses",
       /*type=*/"std::string",
       /*default=*/"",
       /*description=*/"Optimization passes to apply to generated derivative functions"
