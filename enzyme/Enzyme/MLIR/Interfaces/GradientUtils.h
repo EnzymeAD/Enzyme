@@ -59,7 +59,8 @@ public:
                  ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses);
+                 DerivativeMode mode, unsigned width, bool omp,
+                 llvm::StringRef postpasses);
   void erase(Operation *op) { op->erase(); }
   void replaceOrigOpWith(Operation *op, ValueRange vals) {
     for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
@@ -114,7 +115,8 @@ public:
                       ArrayRef<DIFFE_TYPE> RetActivity,
                       ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses)
+                      DerivativeMode mode, unsigned width, bool omp,
+                      llvm::StringRef postpasses)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        returnPrimals, returnShadows, constantvalues_,
                        activevals_, RetActivity, ArgActivity, origToNew_,
@@ -164,7 +166,8 @@ public:
     return new MDiffeGradientUtils(
         Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
         returnShadows, constant_values, nonconstant_values, RetActivity,
-        ArgActivity, originalToNew, originalToNewOps, mode, width, omp, postpasses);
+        ArgActivity, originalToNew, originalToNewOps, mode, width, omp,
+        postpasses);
   }
 };
 

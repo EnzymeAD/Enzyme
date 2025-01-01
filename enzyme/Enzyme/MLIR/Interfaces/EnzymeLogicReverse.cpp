@@ -260,9 +260,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   if (postpasses != "") {
     mlir::PassManager pm(nf->getContext());
     std::string error_message;
-    //llvm::raw_string_ostream error_stream(error_message);
-    mlir::LogicalResult result =
-        mlir::parsePassPipeline(postpasses, pm);
+    // llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
     if (mlir::failed(result)) {
       return nullptr;
     }

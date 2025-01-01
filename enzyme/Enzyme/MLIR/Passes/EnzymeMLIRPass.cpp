@@ -32,17 +32,16 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   void runOnOperation() override;
 
-
   void getDependentDialects(DialectRegistry &registry) const override {
     mlir::OpPassManager pm;
-    mlir::LogicalResult result =
-        mlir::parsePassPipeline(postpasses, pm);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
     if (!mlir::failed(result)) {
       pm.getDependentDialects(registry);
     }
 
-    registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
-                    mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect>();
+    registry
+        .insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
+                mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,

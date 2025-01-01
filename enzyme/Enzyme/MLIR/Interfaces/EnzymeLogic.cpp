@@ -81,7 +81,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented, llvm::StringRef postpasses) {
+    std::vector<bool> volatile_args, void *augmented,
+    llvm::StringRef postpasses) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -201,9 +202,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   if (postpasses != "") {
     mlir::PassManager pm(nf->getContext());
     std::string error_message;
-    //llvm::raw_string_ostream error_stream(error_message);
-    mlir::LogicalResult result =
-        mlir::parsePassPipeline(postpasses, pm);
+    // llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
     if (mlir::failed(result)) {
       return nullptr;
     }

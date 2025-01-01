@@ -36,7 +36,8 @@ public:
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                         IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
-                        DerivativeMode mode_, unsigned width, llvm::StringRef postpasses);
+                        DerivativeMode mode_, unsigned width,
+                        llvm::StringRef postpasses);
 
   IRMapping mapReverseModeBlocks;
 
@@ -64,12 +65,14 @@ public:
 
   void createReverseModeBlocks(Region &oldFunc, Region &newFunc);
 
-  static MGradientUtilsReverse *CreateFromClone(
-      MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
-      FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
-      llvm::ArrayRef<DIFFE_TYPE> retType,
-      llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg, llvm::StringRef postpasses);
+  static MGradientUtilsReverse *
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
+                  FunctionOpInterface todiff, MTypeAnalysis &TA,
+                  MFnTypeInfo &oldTypeInfo, const ArrayRef<bool> returnPrimals,
+                  const ArrayRef<bool> returnShadows,
+                  llvm::ArrayRef<DIFFE_TYPE> retType,
+                  llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                  mlir::Type additionalArg, llvm::StringRef postpasses);
 };
 
 } // namespace enzyme

@@ -73,8 +73,7 @@ public:
         fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, mode,
         freeMemory, width,
         /* addedType */ nullptr, type_args, volatile_args,
-        /* augmented */ nullptr,
-        gutils->postpasses);
+        /* augmented */ nullptr, gutils->postpasses);
 
     SmallVector<Value> fwdArguments;
 
