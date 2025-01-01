@@ -196,14 +196,17 @@ public:
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented);
+                    void *augmented, llvm::StringRef postpasses);
 
-  FunctionOpInterface CreateReverseDiff(
-      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
-      DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-      MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented);
+  FunctionOpInterface
+  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+                    std::vector<bool> returnPrimals,
+                    std::vector<bool> returnShadows, DerivativeMode mode,
+                    bool freeMemory, size_t width, mlir::Type addedType,
+                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
+                    void *augmented, llvm::StringRef postpasses);
+
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);

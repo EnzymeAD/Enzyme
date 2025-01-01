@@ -18,7 +18,7 @@ module {
   }
 }
 
-// CHECK:   func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: tensor<2xf64>) -> tensor<2xf64> {
+// CHECK:   func.func private @fwddiffe2square(%[[arg0:.+]]: f64, %[[arg1:.+]]: tensor<2xf64>) -> tensor<2xf64> {
 // CHECK-DAG:     %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<2xf64>
 // CHECK-DAG:     %[[cst_0:.+]] = arith.constant 1.000000e+01 : f64
 // CHECK-DAG:     %[[c0:.+]] = arith.constant 0 : index

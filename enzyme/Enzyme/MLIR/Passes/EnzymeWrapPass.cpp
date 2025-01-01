@@ -121,13 +121,13 @@ struct DifferentiateWrapperPass
                                         returnPrimal, mode, freeMemory, width,
                                         /*addedType*/ nullptr, type_args,
                                         volatile_args,
-                                        /*augmented*/ nullptr);
+                                        /*augmented*/ nullptr, "");
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr);
+          /*augmented*/ nullptr, "");
     }
     if (!newFunc) {
       signalPassFailure();
