@@ -90,7 +90,7 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++",
-                "CMAKE_CXX_FLAGS": "-Wall -Wextra -pedantic -pedantic-errors -fno-rtti -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch -Wno-comment",
+                "CMAKE_CXX_FLAGS": "-Wall -fno-rtti -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch -Wno-comment",
                 "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -ggdb -fno-omit-frame-pointer",
                 "CMAKE_CXX_FLAGS_RELEASE": "-O2",
                 "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -ggdb"
@@ -116,6 +116,47 @@
             "name": "x64-linux-gcc-release-with-debug-info",
             "displayName": "GCC x64 Linux Release with Debug Info",
             "inherits": "x64-linux-gcc",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        },
+        {
+            "name": "x64-linux-intel",
+            "description": "Base preset for Linux development using Intel oneAPI compilers.",
+            "hidden": true,
+            "inherits": [
+                "config-base-x64",
+                "config-base-linux"
+            ],
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "icx",
+                "CMAKE_CXX_COMPILER": "icpx",
+                "CMAKE_CXX_FLAGS": "-Wall -fno-rtti -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch -Wno-comment",
+                "CMAKE_CXX_FLAGS_DEBUG": "-O0 -g -ggdb -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS_RELEASE": "-O2",
+                "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g -ggdb"
+            }
+        },
+        {
+            "name": "x64-linux-intel-debug",
+            "displayName": "Intel x64 Linux Debug",
+            "inherits": "x64-linux-intel",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "x64-linux-intel-release",
+            "displayName": "Intel x64 Linux Release",
+            "inherits": "x64-linux-intel",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "x64-linux-intel-release-with-debug-info",
+            "displayName": "Intel x64 Linux Release with Debug Info",
+            "inherits": "x64-linux-intel",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
@@ -157,6 +198,24 @@
             "displayName": "GCC x64 Linux Release with Debug Info",
             "description": "Builds the project using GCC on Linux in Release configuration with debug info.",
             "configurePreset": "x64-linux-gcc-release-with-debug-info"
+        },
+        {
+            "name": "x64-linux-intel-debug",
+            "displayName": "Intel x64 Linux Debug",
+            "description": "Builds the project using Intel oneAPI compilers on Linux in Debug configuration.",
+            "configurePreset": "x64-linux-intel-debug"
+        },
+        {
+            "name": "x64-linux-intel-release",
+            "displayName": "Intel x64 Linux Release",
+            "description": "Builds the project using Intel oneAPI compilers on Linux in Release configuration.",
+            "configurePreset": "x64-linux-intel-release"
+        },
+        {
+            "name": "x64-linux-intel-release-with-debug-info",
+            "displayName": "Intel x64 Linux Release with Debug Info",
+            "description": "Builds the project using Intel oneAPI compilers on Linux in Release configuration with debug info.",
+            "configurePreset": "x64-linux-intel-release-with-debug-info"
         }
     ]
 }
