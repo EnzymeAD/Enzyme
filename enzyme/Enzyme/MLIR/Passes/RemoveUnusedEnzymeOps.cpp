@@ -12,13 +12,16 @@
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
+#include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #include "mlir/Rewrite/PatternApplicator.h"
@@ -287,17 +290,29 @@ struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
   }
 };
 
+static void applyPatterns(Operation *op) {
+  RewritePatternSet patterns(op->getContext());
+  patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
+                  InitSimplify>(op->getContext());
+
+  GreedyRewriteConfig config;
+  (void)applyPatternsAndFoldGreedily(op, std::move(patterns), config);
+}
+
 struct RemoveUnusedEnzymeOpsPass
     : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
+    auto op = getOperation();
 
-    RewritePatternSet patterns(&getContext());
-    patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                    InitSimplify>(&getContext());
+    applyPatterns(op);
 
-    GreedyRewriteConfig config;
-    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
-                                       config);
+    op->walk([&](FunctionOpInterface func) {
+      func->walk([&](enzyme::EnzymeOpsRemoverOpInterface iface) {
+        iface.removeEnzymeOps();
+      });
+    });
+
+    applyPatterns(op);
   }
 };
 

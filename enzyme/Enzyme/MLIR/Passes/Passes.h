@@ -89,6 +89,10 @@ namespace LLVM {
 class LLVMDialect;
 } // end namespace LLVM
 
+namespace tensor {
+class TensorDialect;
+} // end namespace tensor
+
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
 
