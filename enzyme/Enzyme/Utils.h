@@ -91,6 +91,7 @@ enum class ErrorType {
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
+extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
@@ -1194,6 +1195,10 @@ static inline bool hasNoCache(llvm::Value *op) {
       }
     }
   }
+  if (auto IT = dyn_cast<IntegerType>(op->getType()))
+    if (!isPowerOf2_64(IT->getBitWidth()) && !EnzymeNonPower2Cache)
+      return true;
+
   return false;
 }
 

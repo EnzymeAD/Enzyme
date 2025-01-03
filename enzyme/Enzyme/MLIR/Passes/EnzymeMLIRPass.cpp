@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Pass/PassManager.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -30,6 +31,18 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   MEnzymeLogic Logic;
 
   void runOnOperation() override;
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    mlir::OpPassManager pm;
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
+    if (!mlir::failed(result)) {
+      pm.getDependentDialects(registry);
+    }
+
+    registry
+        .insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
+                mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect>();
+  }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
                                               DerivativeMode mode) {
@@ -150,7 +163,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+        /*augmented*/ nullptr, postpasses);
     if (!newFunc)
       return failure();
 
@@ -276,7 +289,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
                                 returnShadows, mode, freeMemory, width,
                                 /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr);
+                                /*augmented*/ nullptr, postpasses);
     if (!newFunc)
       return failure();
 

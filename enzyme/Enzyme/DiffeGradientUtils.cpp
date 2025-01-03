@@ -1179,9 +1179,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         // the pointers and conditionally execute.
         if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
             runtimeActivity && !merge) {
-          Value *shadow = Builder2.CreateICmpNE(
-              lookupM(getNewFromOriginal(origptr), Builder2),
-              lookupM(invertPointerM(origptr, Builder2), Builder2));
+          Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
+          Value *shadow_val =
+              lookupM(invertPointerM(origptr, Builder2), Builder2);
+          if (getWidth() != 1) {
+            shadow_val = extractMeta(Builder2, shadow_val, 0);
+          }
+          Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
 
           BasicBlock *current = Builder2.GetInsertBlock();
           BasicBlock *conditional =

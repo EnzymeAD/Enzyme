@@ -15,6 +15,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #include "Dialect/Dialect.h"
 
@@ -79,6 +80,10 @@ class FuncDialect;
 namespace affine {
 class AffineDialect;
 } // end namespace affine
+
+namespace tensor {
+class TensorDialect;
+} // end namespace tensor
 
 namespace LLVM {
 class LLVMDialect;
