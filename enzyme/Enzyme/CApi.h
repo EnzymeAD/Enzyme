@@ -216,8 +216,9 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
-    uint8_t dretUsed, CDerivativeMode mode, unsigned width, uint8_t freeMemory,
-    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity,
+    unsigned width, uint8_t freeMemory, LLVMTypeRef additionalArg,
+    uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t *_overwritten_args, size_t overwritten_args_size,
     EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd);
 
