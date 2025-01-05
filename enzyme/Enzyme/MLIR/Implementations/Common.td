@@ -90,7 +90,13 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
   string value = val;
 }
 
-class StaticIf<bit uses_primal, bit uses_shadow, string condition_> : Operation<uses_primal, uses_shadow> {
+// Class for a dag operator that generates either a or b
+// It can then be used with a two or three arguments.
+// The two arguments version is (StaticSelect a, b)
+// The three arguments version accepts a name as a first argument
+// which is then available in the condition as a `Value` under the
+// variable `imVal`.
+class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*/0, /*usesCustom*/1> {
   string condition = condition_;
 }
 
@@ -103,13 +109,14 @@ class Inst<string mnemonic, string dialect_, string postop_="">  : Operation</*p
 def Op {
 }
 
-def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
+def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 
-}
-
-def SelectIfComplex : Operation</*primal*/1, /*shadow*/0, /*custom*/0> {
-
-}
+def SelectIfComplex : StaticSelect<[{
+  auto ty = imVal.getType();
+  ty.isa<ComplexType>() ||
+    ty.isa<TensorType>() &&
+    ty.cast<TensorType>().getElementType().isa<ComplexType>();
+}]>;
 
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;

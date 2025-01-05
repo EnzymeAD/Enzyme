@@ -436,86 +436,34 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ".Min";
 #endif
       return false;
-    } else if (opName == "SelectIfActive" ||
-               Def->isSubClassOf("SelectIfActive")) {
-      if (resultRoot->getNumArgs() != 3)
+    } else if (opName == "StaticSelect" || Def->isSubClassOf("StaticSelect")) {
+      auto numArgs = resultRoot->getNumArgs();
+      if (numArgs != 2 && numArgs != 3)
         PrintFatalError(pattern->getLoc(),
-                        "only three op SelectIfActive supported");
-
-      os << "({\n";
-      os << curIndent << INDENT << "// Computing SelectIfActive\n";
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value imVal = nullptr;\n";
-      else
-        os << curIndent << INDENT << "llvm::Value *imVal = nullptr;\n";
-
-      os << curIndent << INDENT << "if (!gutils->isConstantValue(";
-
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!isVec);
-        // This assumes that activity of inner extractions are the same as
-        // outer. assert(!ext.size());
-        os << ord;
-      } else
-        assert("Requires name for arg");
-
-      os << ")) {\n";
-
-      for (size_t i = 1; i < 3; i++) {
-        os << curIndent << INDENT << INDENT << "imVal = ";
-        bool vector;
-        if (isa<UnsetInit>(resultRoot->getArg(i)) &&
-            resultRoot->getArgName(i)) {
-          auto name = resultRoot->getArgName(i)->getAsUnquotedString();
-          auto [ord, isVec, ext] =
-              nameToOrdinal.lookup(name, pattern, resultRoot);
-          vector = isVec;
-          assert(!ext.size());
-          os << ord;
-        } else
-          vector = handle(curIndent + INDENT + INDENT,
-                          argPattern + "_sia_" + Twine(i), os, pattern,
-                          resultRoot->getArg(i), builder, nameToOrdinal, lookup,
-                          retidx, origName, newFromOriginal, intrinsic);
-        os << ";\n";
-
-        if (!vector && intrinsic != MLIRDerivatives) {
-          os << curIndent << INDENT << INDENT
-             << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
-                "UndefValue::get(gutils->getShadowType(imVal"
-             << "->getType()));\n";
-          os << curIndent << INDENT << INDENT
-             << "if (gutils->getWidth() != 1)\n";
-          os << curIndent << INDENT << INDENT << INDENT
-             << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
-          os << curIndent << INDENT << INDENT << INDENT << INDENT
-             << "vec_imVal = " << builder
-             << ".CreateInsertValue(vec_imVal, imVal, "
-                "std::vector<unsigned>({(unsigned)i}));\n";
-          os << curIndent << INDENT << INDENT << "imVal = vec_imVal;\n";
-        }
-        if (i == 1)
-          os << curIndent << INDENT << "} else {\n";
-        else
-          os << curIndent << INDENT << "}\n";
-      }
-
-      os << curIndent << INDENT << "imVal;\n";
-      os << curIndent << "})";
-      return true;
-    } else if (opName == "StaticIf" || Def->isSubClassOf("StaticIf")) {
-      if (resultRoot->getNumArgs() != 2)
-        PrintFatalError(pattern->getLoc(), "only two op StaticIf supported");
+                        "only two/three op StaticSelect supported");
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing " << opName << "\n";
       if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value imVal;";
+        os << curIndent << INDENT << "mlir::Value imVal = nullptr;";
       else
-        os << curIndent << INDENT << "llvm::Value *imVal;";
+        os << curIndent << INDENT << "llvm::Value *imVal = nullptr;";
+
+      int index = numArgs == 3;
+
+      // First one is a name, set imVal to it
+      if (numArgs == 3) {
+        os << curIndent << INDENT << "imVal = ";
+        if (isa<UnsetInit>(resultRoot->getArg(0)) &&
+            resultRoot->getArgName(0)) {
+          auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+          auto [ord, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultRoot);
+          assert(!isVec);
+          os << ord << ";\n";
+        } else
+          assert("Requires name for arg");
+      }
 
       os << "\n" << curIndent << INDENT << "bool condition = ";
 
@@ -534,103 +482,41 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ";\n"
          << curIndent << INDENT << "if (condition) {\n"
          << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+      if (isa<UnsetInit>(resultRoot->getArg(index)) &&
+          resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(index)->getAsUnquotedString();
         auto [ord, isVec, ext] =
             nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!ext.size());
         os << ord << ";\n";
       } else {
         handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
+               resultRoot->getArg(index), builder, nameToOrdinal, lookup,
+               retidx, origName, newFromOriginal, intrinsic);
         os << ";\n";
       }
 
       os << curIndent << INDENT << "} else {\n";
 
       os << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(1)) && resultRoot->getArgName(1)) {
-        auto name = resultRoot->getArgName(1)->getAsUnquotedString();
+      if (isa<UnsetInit>(resultRoot->getArg(index + 1)) &&
+          resultRoot->getArgName(1)) {
+        auto name = resultRoot->getArgName(index + 1)->getAsUnquotedString();
         auto [ord, isVec, ext] =
             nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!ext.size());
         os << ord << ";\n";
       } else {
         handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(1), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
+               resultRoot->getArg(index + 1), builder, nameToOrdinal, lookup,
+               retidx, origName, newFromOriginal, intrinsic);
         os << ";\n";
       }
 
       os << curIndent << INDENT << "}\n";
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << INDENT << "})";
-      return true;
-    } else if (opName == "SelectIfComplex" ||
-               Def->isSubClassOf("SelectIfComplex")) {
-      if (resultRoot->getNumArgs() != 3)
-        PrintFatalError(pattern->getLoc(),
-                        "only three op SelectIfComplex supported");
 
-      os << "({\n";
-      os << curIndent << INDENT << "// Computing SelectIfComplex\n";
-      if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value imVal = ";
-      else
-        os << curIndent << INDENT << "llvm::Value *imVal = ";
-
-      if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        os << ord << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(0), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
-        os << ";\n";
-      }
-
-      os << curIndent << INDENT
-         << "if (isa<ComplexType>(imVal.getType()) || "
-            "(isa<TensorType>(imVal.getType()) && "
-            "isa<ComplexType>(cast<TensorType>(imVal.getType()).getElementType("
-            ")))) {\n";
-
-      os << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(1)) && resultRoot->getArgName(1)) {
-        auto name = resultRoot->getArgName(1)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!ext.size());
-        os << ord << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(1), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
-        os << ";\n";
-      }
-
-      os << curIndent << INDENT << "} else {\n";
-
-      os << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(2)) && resultRoot->getArgName(2)) {
-        auto name = resultRoot->getArgName(2)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!ext.size());
-        os << ord << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(2), builder, nameToOrdinal, lookup, retidx,
-               origName, newFromOriginal, intrinsic);
-        os << ";\n";
-      }
-
-      os << curIndent << INDENT << "}\n";
-      os << curIndent << INDENT << "imVal;";
-      os << curIndent << INDENT << "})\n";
       return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
