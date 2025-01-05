@@ -25,6 +25,22 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
+
+static mlir::Type batchType(mlir::Type type, int64_t width) {
+  if (width == 1)
+    return type;
+
+  if (auto TT = dyn_cast<mlir::TensorType>(type)) {
+    SmallVector<int64_t> shape;
+    shape.reserve(TT.getShape().size() + 1);
+    shape.push_back(width);
+    shape.append(TT.getShape().begin(), TT.getShape().end());
+    return TT.clone(shape);
+  }
+
+  return RankedTensorType::get({width}, type);
+}
+
 class FloatTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<FloatTypeInterface,
                                                   FloatType> {
@@ -44,12 +60,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    if (width > 1) {
-      return RankedTensorType::get({width}, self);
-    } else {
-      return self;
-    }
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -108,16 +120,8 @@ public:
     return added;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    if (width != 1) {
-      auto tenType = self.cast<TensorType>();
-      auto shape = tenType.getShape();
-      SmallVector<int64_t, 4> newShape;
-      newShape.push_back(width);
-      newShape.append(shape.begin(), shape.end());
-      return RankedTensorType::get(newShape, tenType.getElementType());
-    }
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -148,9 +152,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -182,9 +185,8 @@ public:
     return builder.create<complex::ConjOp>(loc, a)->getResult(0);
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
