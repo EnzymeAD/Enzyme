@@ -436,8 +436,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ".Min";
 #endif
       return false;
-    } else if (opName == "StaticSelect" || Def->isSubClassOf("StaticSelect")) {
+    } else if (Def->isSubClassOf("StaticSelect")) {
       auto numArgs = resultRoot->getNumArgs();
+
       if (numArgs != 2 && numArgs != 3)
         PrintFatalError(pattern->getLoc(),
                         "only two/three op StaticSelect supported");
