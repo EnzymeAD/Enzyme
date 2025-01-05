@@ -30,7 +30,7 @@ static mlir::Type batchType(mlir::Type type, int64_t width) {
   if (width > 1 || ShapedType::isDynamic(width)) {
     if (auto TT = dyn_cast<mlir::TensorType>(type)) {
       SmallVector<int64_t> shape;
-      shape.reserve(TT.getShape().size());
+      shape.reserve(TT.getShape().size() + 1);
       shape.push_back(width);
       shape.append(TT.getShape().begin(), TT.getShape().end());
       return TT.clone(shape);
