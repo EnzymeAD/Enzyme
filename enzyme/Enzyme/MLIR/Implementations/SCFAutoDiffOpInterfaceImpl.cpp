@@ -152,7 +152,7 @@ struct ForOpEnzymeOpsRemover
     }
 
     auto numIters = getConstantNumberOfIterations(forOp);
-    Value inductionVariable; // [0, N[ counter
+    Value inductionVariable; // [0,..., N - 1] counter
 
     if (matchPattern(forOp.getLowerBound(), m_Zero()) &&
         matchPattern(forOp.getStep(), m_One())) {
