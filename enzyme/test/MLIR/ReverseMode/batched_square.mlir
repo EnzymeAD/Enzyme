@@ -13,7 +13,7 @@ module {
 }
 
 // CHECK:  func.func @dsquare(%arg0: f64, %arg1: tensor<2xf64>) -> tensor<2xf64> {
-// CHECK-NEXT:    %0 = call @diffesquare(%arg0, %arg1) : (f64, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %0 = call @diffe2square(%arg0, %arg1) : (f64, tensor<2xf64>) -> tensor<2xf64>
 // CHECK-NEXT:    return %0 : tensor<2xf64>
 // CHECK-NEXT:  }
 
