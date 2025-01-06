@@ -2121,4 +2121,8 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::LoopInfo &LI, llvm::Value *op0,
                              llvm::Value *op1, bool offsetAllowed = false);
 
+llvm::SmallVector<std::pair<llvm::Value *, size_t>, 1>
+getAllLoadedValuesFrom(llvm::Value *ptr0, size_t offset, size_t valSz,
+                       bool &legal);
+
 #endif // ENZYME_UTILS_H

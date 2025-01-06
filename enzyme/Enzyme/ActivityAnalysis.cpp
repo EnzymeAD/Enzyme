@@ -2697,8 +2697,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     }
 
     if (EnzymePrintActivity)
-      llvm::errs() << "      considering use of " << *val << " - " << *a
-                   << "\n";
+      llvm::errs() << "      considering use(" << to_string(UA) << ") of "
+                   << *val << " - " << *a << "\n";
 
     // Only ignore stores to the operand, not storing the operand
     // somewhere
