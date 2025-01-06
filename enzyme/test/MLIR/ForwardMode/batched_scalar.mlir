@@ -21,6 +21,6 @@ module {
 // CHECK-NEXT:     %[[s1:.+]] = "enzyme.broadcast"(%[[arg0]]) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
 // CHECK-NEXT:     %[[i1:.+]] = arith.mulf %[[arg1]], %[[s1]] : tensor<2xf64>
 // CHECK-NEXT:     %[[i2:.+]] = arith.addf %[[i0]], %[[i1]] : tensor<2xf64>
-// CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg0]], %[[arg0]] : tensor<2xf64>
+// CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg0]], %[[arg0]] 
 // CHECK-NEXT:     return %[[i2]] : tensor<2xf64>
 // CHECK-NEXT:   }

@@ -26,7 +26,6 @@ mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other) {
     other.initOp->erase();
   }
 
-  enzyme::PushOp newPushOp = pushOp;
   other.pushOp->erase();
 
   enzyme::PopOp newPopOp;
