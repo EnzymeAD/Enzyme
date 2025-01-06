@@ -13,6 +13,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     SimplifyMath.cpp
     AddToOpToIndexAndLoad.cpp
     AddToOpToSplit.cpp
+    RemovalUtils.cpp
     RemoveUnusedEnzymeOps.cpp
     SimplifyMemrefCache.cpp
     Utils.cpp
