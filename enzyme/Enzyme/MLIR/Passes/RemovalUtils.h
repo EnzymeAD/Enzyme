@@ -41,7 +41,7 @@ struct CacheInfo {
 
   Value pushedValue() { return pushOp.getValue(); }
   Type cachedType() {
-    return initOp.getResult().getType().cast<enzyme::CacheType>().getType();
+    return cast<enzyme::CacheType>(initOp.getResult().getType()).getType();
   }
 
   // Pushed values must be the same

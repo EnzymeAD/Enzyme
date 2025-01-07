@@ -277,16 +277,17 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       if (!vecValue && !startsWith(ord, "local")) {
         if (newFromOriginal && (!lookup || intrinsic != MLIRDerivatives)) {
           os << ")";
-          if (intrinsic == MLIRDerivatives) {
-            os << ";\n";
-            os << "if (gutils->width != 1) {\n"
-               << " " << argName << "_" << (idx - 1)
-               << " = builder.create<enzyme::BroadcastOp>(\n"
-               << "   op.getLoc(),\n"
-               << "   " << argName << "_" << (idx - 1) << ",\n"
-               << "   llvm::SmallVector<int64_t>({gutils->width}));\n"
-               << "}";
-          }
+        }
+        if (intrinsic == MLIRDerivatives) {
+          os << ";\n";
+          os << curIndent << "if (gutils->width != 1) {\n"
+             << curIndent << " " << argName << "_" << (idx - 1)
+             << " = builder.create<enzyme::BroadcastOp>(\n"
+             << curIndent << "   op.getLoc(),\n"
+             << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
+             << curIndent
+             << "   llvm::SmallVector<int64_t>({gutils->width}));\n"
+             << curIndent << "}";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)

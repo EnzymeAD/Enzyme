@@ -18,6 +18,7 @@ def DifferentiatePass : Pass<"enzyme"> {
     "complex::ComplexDialect",
     "cf::ControlFlowDialect",
     "tensor::TensorDialect",
+    "enzyme::EnzymeDialect",
   ];
   let options = [
     Option<

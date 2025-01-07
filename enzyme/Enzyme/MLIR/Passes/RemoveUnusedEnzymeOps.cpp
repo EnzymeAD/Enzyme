@@ -306,11 +306,17 @@ struct RemoveUnusedEnzymeOpsPass
 
     applyPatterns(op);
 
+    bool failed = false;
     op->walk([&](FunctionOpInterface func) {
       func->walk([&](enzyme::EnzymeOpsRemoverOpInterface iface) {
-        iface.removeEnzymeOps();
+        auto result = iface.removeEnzymeOps();
+        if (!result.succeeded())
+          failed = true;
       });
     });
+
+    if (failed)
+      return signalPassFailure();
 
     applyPatterns(op);
   }

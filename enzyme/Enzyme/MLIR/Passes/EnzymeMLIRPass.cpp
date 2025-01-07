@@ -39,9 +39,9 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       pm.getDependentDialects(registry);
     }
 
-    registry
-        .insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
-                mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect>();
+    registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
+                    mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
+                    mlir::enzyme::EnzymeDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
