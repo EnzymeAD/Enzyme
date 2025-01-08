@@ -121,6 +121,7 @@ def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 
 class ComplexInst<string m> : Inst<m, "complex">;
 class ArithInst<string m> : Inst<m, "arith">;
+class LlvmInst<string m> : Inst<m, "LLVM">;
 class MathInst<string m> : Inst<m, "math">;
 
 def AddF : ArithInst<"AddFOp">;
@@ -132,6 +133,9 @@ def RemF : ArithInst<"RemFOp">;
 
 def CheckedMulF : ArithInst<"MulFOp">;
 def CheckedDivF : ArithInst<"DivFOp">;
+
+def LlvmCheckedMulF : LlvmInst<"FMulOp">;
+def LlvmExpF : LlvmInst<"ExpOp">;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
