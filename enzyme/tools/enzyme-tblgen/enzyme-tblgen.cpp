@@ -473,48 +473,63 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         PrintFatalError(pattern->getLoc(),
                         Twine("string 'condition' not defined in ") +
                             resultTree->getAsString());
-      bool complexExpr = condition->getValue().contains(';');
+      auto conditionStr = condition->getValue();
+
+      if (conditionStr.contains("imVal") && numArgs == 2)
+        PrintFatalError(pattern->getLoc(), "need a name as first argument");
+
+      bool complexExpr = conditionStr.contains(';');
       if (complexExpr)
         os << "({\n";
-      os << condition->getValue();
+      os << conditionStr;
       if (complexExpr)
         os << "\n" << curIndent << INDENT << "})";
 
-      os << ";\n"
-         << curIndent << INDENT << "if (condition) {\n"
-         << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(index)) &&
-          resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(index)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!ext.size());
-        os << ord << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(index), builder, nameToOrdinal, lookup,
-               retidx, origName, newFromOriginal, intrinsic);
+      os << ";\n" << curIndent << INDENT << "if (condition) {\n";
+
+      for (int i = index; i < numArgs; ++i) {
+        os << curIndent << INDENT << INDENT << "imVal = ";
+
+        bool vector;
+        if (isa<UnsetInit>(resultRoot->getArg(i)) &&
+            resultRoot->getArgName(0)) {
+          auto name = resultRoot->getArgName(i)->getAsUnquotedString();
+          auto [ord, isVec, ext] =
+              nameToOrdinal.lookup(name, pattern, resultRoot);
+          assert(!ext.size());
+          vector = isVec;
+          os << ord;
+        } else {
+          vector =
+              handle(curIndent + INDENT + INDENT, argPattern + "_cic", os,
+                     pattern, resultRoot->getArg(i), builder, nameToOrdinal,
+                     lookup, retidx, origName, newFromOriginal, intrinsic);
+        }
         os << ";\n";
+
+        if (!vector && intrinsic != MLIRDerivatives) {
+          os << curIndent << INDENT << INDENT
+             << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
+                "UndefValue::get(gutils->getShadowType(imVal"
+             << "->getType()));\n";
+          os << curIndent << INDENT << INDENT
+             << "if (gutils->getWidth() != 1)\n";
+          os << curIndent << INDENT << INDENT << INDENT
+             << "for (size_t i=0; i<gutils->getWidth(); i++)\n";
+          os << curIndent << INDENT << INDENT << INDENT << INDENT
+             << "vec_imVal = " << builder
+             << ".CreateInsertValue(vec_imVal, imVal, "
+                "std::vector<unsigned>({(unsigned)i}));\n";
+          os << curIndent << INDENT << INDENT << "imVal = vec_imVal;\n";
+        }
+
+        if (i == numArgs - 1) {
+          os << curIndent << INDENT << "}\n";
+        } else {
+          os << curIndent << INDENT << "} else {\n";
+        }
       }
 
-      os << curIndent << INDENT << "} else {\n";
-
-      os << curIndent << INDENT << INDENT << "imVal = ";
-      if (isa<UnsetInit>(resultRoot->getArg(index + 1)) &&
-          resultRoot->getArgName(1)) {
-        auto name = resultRoot->getArgName(index + 1)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
-            nameToOrdinal.lookup(name, pattern, resultRoot);
-        assert(!ext.size());
-        os << ord << ";\n";
-      } else {
-        handle(curIndent + INDENT + INDENT, argPattern + "_cic", os, pattern,
-               resultRoot->getArg(index + 1), builder, nameToOrdinal, lookup,
-               retidx, origName, newFromOriginal, intrinsic);
-        os << ";\n";
-      }
-
-      os << curIndent << INDENT << "}\n";
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << INDENT << "})";
 

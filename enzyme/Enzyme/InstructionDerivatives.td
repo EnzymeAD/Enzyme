@@ -19,14 +19,6 @@ class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*cu
 
 def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 
-def SelectIfComplex : StaticSelect<[{
-  auto ty = imVal.getType();
-  ty.isa<ComplexType>() ||
-    ty.isa<TensorType>() &&
-    ty.cast<TensorType>().getElementType().isa<ComplexType>();
-}]>;
-
-
 class Attribute<string name_> {
   string name = name_;
 }
