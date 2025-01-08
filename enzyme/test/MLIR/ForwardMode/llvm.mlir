@@ -13,6 +13,16 @@ module {
     %r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
     return %r : f64
   }
+
+  func.func @exp(%x: f32) -> f32 {
+    %0 = llvm.intr.exp(%x) : (f32) -> f32
+    return %0 : f32
+  }
+
+  func.func @dexp(%x: f32, %dx: f32) -> f32 {
+    %r = enzyme.fwddiff @exp(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f32, f32) -> f32
+    return %r : f32
+  }
 }
 
 // CHECK:   func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> f64 {
@@ -29,3 +39,10 @@ module {
 // CHECK-NEXT:     %[[i7:.+]] = llvm.load %[[i1]] : !llvm.ptr -> f64
 // CHECK-NEXT:     return %[[i6]] : f64
 // CHECK-NEXT:   }
+
+// CHECK:  func.func private @fwddiffeexp(%[[arg0:.+]]: f32, %[[arg1:.+]]: f32) -> f32 {
+// CHECK-NEXT:    %[[der:.+]] = llvm.intr.exp(%[[arg0]]) : (f32) -> f32
+// CHECK-NEXT:    %[[res:.+]] = llvm.fmul %[[arg1]], %[[der]] : f32
+// CHECK-NEXT:    %[[exp:.+]] = llvm.intr.exp(%[[arg0]]) : (f32) -> f32
+// CHECK-NEXT:    return %[[res]] : f32
+// CHECK-NEXT:  }
