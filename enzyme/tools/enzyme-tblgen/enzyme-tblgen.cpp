@@ -446,15 +446,14 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "({\n";
       os << curIndent << INDENT << "// Computing " << opName << "\n";
       if (intrinsic == MLIRDerivatives)
-        os << curIndent << INDENT << "mlir::Value imVal = nullptr;";
+        os << curIndent << INDENT << "mlir::Value imVal = ";
       else
-        os << curIndent << INDENT << "llvm::Value *imVal = nullptr;";
+        os << curIndent << INDENT << "llvm::Value *imVal = ";
 
       int index = numArgs == 3;
 
       // First one is a name, set imVal to it
       if (numArgs == 3) {
-        os << curIndent << INDENT << "imVal = ";
         if (isa<UnsetInit>(resultRoot->getArg(0)) &&
             resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
@@ -464,9 +463,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           os << ord << ";\n";
         } else
           assert("Requires name for arg");
+      } else {
+        os << "nullptr;\n";
       }
 
-      os << "\n" << curIndent << INDENT << "bool condition = ";
+      os << curIndent << INDENT << "bool condition = ";
 
       auto condition = dyn_cast<StringInit>(Def->getValueInit("condition"));
       if (!condition)
@@ -485,14 +486,20 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       if (complexExpr)
         os << "\n" << curIndent << INDENT << "})";
 
-      os << ";\n" << curIndent << INDENT << "if (condition) {\n";
+      os << ";\n";
 
-      for (int i = index; i < numArgs; ++i) {
+      os << curIndent << INDENT << "bool vectorized = false;\n";
+
+      os << curIndent << INDENT << "if (condition) {\n";
+
+      bool any_vector = false;
+      bool all_vector = true;
+      for (size_t i = index; i < numArgs; ++i) {
         os << curIndent << INDENT << INDENT << "imVal = ";
 
         bool vector;
         if (isa<UnsetInit>(resultRoot->getArg(i)) &&
-            resultRoot->getArgName(0)) {
+            resultRoot->getArgName(i)) {
           auto name = resultRoot->getArgName(i)->getAsUnquotedString();
           auto [ord, isVec, ext] =
               nameToOrdinal.lookup(name, pattern, resultRoot);
@@ -506,8 +513,23 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                      lookup, retidx, origName, newFromOriginal, intrinsic);
         }
         os << ";\n";
+        if (vector) {
+          any_vector = true;
+          os << curIndent << INDENT << INDENT << "vectorized = true;\n";
+        } else {
+          all_vector = false;
+        }
 
-        if (!vector && intrinsic != MLIRDerivatives) {
+        if (i == numArgs - 1) {
+          os << curIndent << INDENT << "}\n";
+        } else {
+          os << curIndent << INDENT << "} else {\n";
+        }
+      }
+
+      if (any_vector && !all_vector) {
+        os << curIndent << INDENT << "if (!vectorized) {\n";
+        if (intrinsic != MLIRDerivatives) {
           os << curIndent << INDENT << INDENT
              << "llvm::Value* vec_imVal = gutils->getWidth() == 1 ? imVal : "
                 "UndefValue::get(gutils->getShadowType(imVal"
@@ -521,19 +543,19 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
              << ".CreateInsertValue(vec_imVal, imVal, "
                 "std::vector<unsigned>({(unsigned)i}));\n";
           os << curIndent << INDENT << INDENT << "imVal = vec_imVal;\n";
-        }
-
-        if (i == numArgs - 1) {
-          os << curIndent << INDENT << "}\n";
         } else {
-          os << curIndent << INDENT << "} else {\n";
+          os << curIndent << INDENT << "if (gutils->width != 1)\n"
+             << curIndent << INDENT << INDENT
+             << "imVal = builder.create<enzyme::BroadcastOp>(imVal.getLoc(), "
+                "imVal, SmallVector<int64_t>({gutils->width}));\n";
         }
+        os << curIndent << INDENT << "}\n";
       }
 
       os << curIndent << INDENT << "imVal;\n";
       os << curIndent << INDENT << "})";
 
-      return true;
+      return any_vector;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)
@@ -1155,6 +1177,131 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
   PrintFatalError(pattern->getLoc(), Twine("unknown operation"));
 }
 
+std::string ReplaceAll(std::string str, const std::string &from,
+                       const std::string &to) {
+  size_t start_pos = 0;
+  while ((start_pos = str.find(from, start_pos)) != std::string::npos) {
+    str.replace(start_pos, from.length(), to);
+    start_pos +=
+        to.length(); // Handles case where 'to' is a substring of 'from'
+  }
+  return str;
+}
+
+void handleUse(
+    const DagInit *root, const DagInit *resultTree, std::string &foundPrimalUse,
+    std::string &foundShadowUse, bool &foundDiffRet, std::string precondition,
+    const DagInit *tree,
+    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition);
+
+void handleUseArgument(
+    StringRef name, const Init *arg, bool usesPrimal, bool usesShadow,
+    const DagInit *root, const DagInit *resultTree, std::string &foundPrimalUse,
+    std::string &foundShadowUse, bool &foundDiffRet, std::string precondition,
+    const DagInit *tree,
+    StringMap<std::tuple<std::string, std::string, bool>> &varNameToCondition) {
+
+  auto arg2 = dyn_cast<DagInit>(arg);
+
+  if (arg2) {
+    // Recursive use of shadow is unhandled
+    assert(!usesShadow);
+
+    std::string foundPrimalUse2 = "";
+    std::string foundShadowUse2 = "";
+
+    bool foundDiffRet2 = false;
+    // We set precondition to be false (aka "") if we do not need the
+    // primal, since we are now only recurring to set variables
+    // correctly.
+    if (name.size() || usesPrimal)
+      handleUse(root, arg2, name.size() ? foundPrimalUse2 : foundPrimalUse,
+                name.size() ? foundShadowUse2 : foundShadowUse,
+                name.size() ? foundDiffRet2 : foundDiffRet,
+                usesPrimal ? precondition : "", tree, varNameToCondition);
+
+    if (name.size()) {
+      if (foundPrimalUse2.size() &&
+          !(startsWith(foundPrimalUse, foundPrimalUse2) ||
+            endsWith(foundPrimalUse, foundPrimalUse2))) {
+        if (foundPrimalUse.size() == 0)
+          foundPrimalUse = foundPrimalUse2;
+        else
+          foundPrimalUse += " || " + foundPrimalUse2;
+      }
+      if (foundShadowUse2.size() &&
+          !(startsWith(foundShadowUse, foundShadowUse2) ||
+            endsWith(foundShadowUse, foundShadowUse2))) {
+        if (foundShadowUse.size() == 0)
+          foundShadowUse = foundShadowUse2;
+        else
+          foundShadowUse += " || " + foundShadowUse2;
+      }
+      foundDiffRet |= foundDiffRet2;
+
+      varNameToCondition[name] =
+          std::make_tuple(foundPrimalUse2, foundShadowUse2, foundDiffRet2);
+    }
+  } else {
+    assert(name.size());
+
+    if (name.size()) {
+      auto found = varNameToCondition.find(name);
+      if (found == varNameToCondition.end()) {
+        llvm::errs() << "tree scope: " << *tree << "\n";
+        llvm::errs() << "root scope: " << *root << "\n";
+        llvm::errs() << "could not find var name: " << name << "\n";
+      }
+      assert(found != varNameToCondition.end());
+    }
+
+    if (precondition.size()) {
+      auto [foundPrimalUse2, foundShadowUse2, foundDiffRet2] =
+          varNameToCondition[name];
+      if (precondition != "true") {
+        if (foundPrimalUse2.size()) {
+          foundPrimalUse2 =
+              "((" + foundPrimalUse2 + ")&&(" + precondition + ")";
+        }
+        if (foundShadowUse2.size()) {
+          foundShadowUse2 =
+              "((" + foundShadowUse2 + ")&&(" + precondition + ")";
+        }
+      }
+      if (usesPrimal) {
+        if (foundPrimalUse2.size() &&
+            !(startsWith(foundPrimalUse, foundPrimalUse2) ||
+              endsWith(foundPrimalUse, foundPrimalUse2))) {
+          if (foundPrimalUse.size() == 0)
+            foundPrimalUse = foundPrimalUse2;
+          else
+            foundPrimalUse += " || " + foundPrimalUse2;
+        }
+        if (foundShadowUse2.size() &&
+            !(startsWith(foundShadowUse, foundShadowUse2) ||
+              endsWith(foundShadowUse, foundShadowUse2))) {
+          if (foundShadowUse.size() == 0)
+            foundShadowUse = foundShadowUse2;
+          else
+            foundShadowUse += " || " + foundShadowUse2;
+        }
+        foundDiffRet |= foundDiffRet2;
+      }
+      if (usesShadow) {
+        if (foundPrimalUse2.size() &&
+            !(startsWith(foundShadowUse, foundPrimalUse2) ||
+              endsWith(foundShadowUse, foundPrimalUse2))) {
+          if (foundShadowUse.size() == 0)
+            foundShadowUse = foundPrimalUse2;
+          else
+            foundShadowUse += " || " + foundPrimalUse2;
+        }
+        assert(!foundDiffRet2);
+        assert(foundShadowUse2 == "");
+      }
+    }
+  }
+}
 void handleUse(
     const DagInit *root, const DagInit *resultTree, std::string &foundPrimalUse,
     std::string &foundShadowUse, bool &foundDiffRet, std::string precondition,
@@ -1178,133 +1325,57 @@ void handleUse(
   bool usesShadow = Def->getValueAsBit("usesShadow");
   bool usesCustom = Def->getValueAsBit("usesCustom");
 
-  (void)usesCustom;
-  assert(!usesCustom);
-
   if (Def->isSubClassOf("StaticSelect")) {
     auto numArgs = resultTree->getNumArgs();
 
-    for (int i = numArgs == 3; i < numArgs; ++i) {
-      std::string foundPrimalUse2 = "";
-      std::string foundShadowUse2 = "";
+    assert(numArgs == 2 || numArgs == 3);
+    auto condition = dyn_cast<StringInit>(Def->getValueInit("condition"));
+    assert(condition);
+    std::string conditionStr = condition->getValue().str();
 
-      bool foundDiffRet2 = false;
+    assert(!(StringRef(conditionStr).contains("imVal") && numArgs == 2));
+
+    // First one is a name, set imVal to it
+    if (numArgs == 3) {
+      if (isa<UnsetInit>(resultTree->getArg(0)) && resultTree->getArgName(0)) {
+        auto name = resultTree->getArgName(0)->getAsUnquotedString();
+        conditionStr = ReplaceAll(conditionStr, "imVal", name);
+      } else
+        assert("Requires name for arg");
+    }
+
+    bool complexExpr = StringRef(conditionStr).contains(';');
+    if (complexExpr) {
+      conditionStr = "({ " + conditionStr + " })";
+    }
+
+    for (size_t i = numArgs == 3; i < numArgs; ++i) {
+      std::string conditionStr2 =
+          (i == numArgs - 1) ? ("!(" + conditionStr + ")") : conditionStr;
+      std::string precondition2;
+      if (precondition == "true")
+        precondition2 = conditionStr2;
+      else
+        precondition2 = "((" + precondition + ")&&(" + conditionStr2 + ")";
 
       auto name = resultTree->getArgNameStr(i);
       auto arg = resultTree->getArg(i);
-      auto arg2 = dyn_cast<DagInit>(arg);
-      handleUse(root, arg2, name.size() ? foundPrimalUse2 : foundPrimalUse,
-                name.size() ? foundShadowUse2 : foundShadowUse,
-                name.size() ? foundDiffRet2 : foundDiffRet,
-                usesPrimal ? precondition : "", tree, varNameToCondition);
+      handleUseArgument(name, arg, true, false, root, resultTree,
+                        foundPrimalUse, foundShadowUse, foundDiffRet,
+                        precondition2, tree, varNameToCondition);
     }
 
     return;
   }
 
+  (void)usesCustom;
+  assert(!usesCustom);
+
   for (auto argEn : llvm::enumerate(resultTree->getArgs())) {
     auto name = resultTree->getArgNameStr(argEn.index());
-
-    auto arg2 = dyn_cast<DagInit>(argEn.value());
-
-    if (arg2) {
-      // Recursive use of shadow is unhandled
-      assert(!usesShadow);
-
-      std::string foundPrimalUse2 = "";
-      std::string foundShadowUse2 = "";
-
-      bool foundDiffRet2 = false;
-      // We set precondition to be false (aka "") if we do not need the
-      // primal, since we are now only recurring to set variables
-      // correctly.
-      if (name.size() || usesPrimal)
-        handleUse(root, arg2, name.size() ? foundPrimalUse2 : foundPrimalUse,
-                  name.size() ? foundShadowUse2 : foundShadowUse,
-                  name.size() ? foundDiffRet2 : foundDiffRet,
-                  usesPrimal ? precondition : "", tree, varNameToCondition);
-
-      if (name.size()) {
-        if (foundPrimalUse2.size() &&
-            !(startsWith(foundPrimalUse, foundPrimalUse2) ||
-              endsWith(foundPrimalUse, foundPrimalUse2))) {
-          if (foundPrimalUse.size() == 0)
-            foundPrimalUse = foundPrimalUse2;
-          else
-            foundPrimalUse += " || " + foundPrimalUse2;
-        }
-        if (foundShadowUse2.size() &&
-            !(startsWith(foundShadowUse, foundShadowUse2) ||
-              endsWith(foundShadowUse, foundShadowUse2))) {
-          if (foundShadowUse.size() == 0)
-            foundShadowUse = foundShadowUse2;
-          else
-            foundShadowUse += " || " + foundShadowUse2;
-        }
-        foundDiffRet |= foundDiffRet2;
-
-        varNameToCondition[name] =
-            std::make_tuple(foundPrimalUse2, foundShadowUse2, foundDiffRet2);
-      }
-    } else {
-      assert(name.size());
-
-      if (name.size()) {
-        auto found = varNameToCondition.find(name);
-        if (found == varNameToCondition.end()) {
-          llvm::errs() << "tree scope: " << *tree << "\n";
-          llvm::errs() << "root scope: " << *root << "\n";
-          llvm::errs() << "could not find var name: " << name << "\n";
-        }
-        assert(found != varNameToCondition.end());
-      }
-
-      if (precondition.size()) {
-        auto [foundPrimalUse2, foundShadowUse2, foundDiffRet2] =
-            varNameToCondition[name];
-        if (precondition != "true") {
-          if (foundPrimalUse2.size()) {
-            foundPrimalUse2 =
-                "((" + foundPrimalUse2 + ")&&(" + precondition + ")";
-          }
-          if (foundShadowUse2.size()) {
-            foundShadowUse2 =
-                "((" + foundShadowUse2 + ")&&(" + precondition + ")";
-          }
-        }
-        if (usesPrimal) {
-          if (foundPrimalUse2.size() &&
-              !(startsWith(foundPrimalUse, foundPrimalUse2) ||
-                endsWith(foundPrimalUse, foundPrimalUse2))) {
-            if (foundPrimalUse.size() == 0)
-              foundPrimalUse = foundPrimalUse2;
-            else
-              foundPrimalUse += " || " + foundPrimalUse2;
-          }
-          if (foundShadowUse2.size() &&
-              !(startsWith(foundShadowUse, foundShadowUse2) ||
-                endsWith(foundShadowUse, foundShadowUse2))) {
-            if (foundShadowUse.size() == 0)
-              foundShadowUse = foundShadowUse2;
-            else
-              foundShadowUse += " || " + foundShadowUse2;
-          }
-          foundDiffRet |= foundDiffRet2;
-        }
-        if (usesShadow) {
-          if (foundPrimalUse2.size() &&
-              !(startsWith(foundShadowUse, foundPrimalUse2) ||
-                endsWith(foundShadowUse, foundPrimalUse2))) {
-            if (foundShadowUse.size() == 0)
-              foundShadowUse = foundPrimalUse2;
-            else
-              foundShadowUse += " || " + foundPrimalUse2;
-          }
-          assert(!foundDiffRet2);
-          assert(foundShadowUse2 == "");
-        }
-      }
-    }
+    handleUseArgument(name, argEn.value(), usesPrimal, usesShadow, root,
+                      resultTree, foundPrimalUse, foundShadowUse, foundDiffRet,
+                      precondition, tree, varNameToCondition);
   }
 }
 
