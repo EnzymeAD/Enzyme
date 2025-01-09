@@ -1352,17 +1352,17 @@ void handleUse(
 
     bool complexExpr = StringRef(conditionStr).contains(';');
     if (complexExpr) {
-      conditionStr = "({ " + conditionStr + " })";
+      conditionStr = " ({ " + conditionStr + " }) ";
     }
 
     for (size_t i = numArgs == 3; i < numArgs; ++i) {
       std::string conditionStr2 =
-          (i == numArgs - 1) ? ("!(" + conditionStr + ")") : conditionStr;
+          (i == numArgs - 1) ? (" !( " + conditionStr + " ) ") : conditionStr;
       std::string precondition2;
       if (precondition == "true")
         precondition2 = conditionStr2;
       else
-        precondition2 = "((" + precondition + ")&&(" + conditionStr2 + ")";
+        precondition2 = "((" + precondition + ")&&(" + conditionStr2 + "))";
 
       auto name = resultTree->getArgNameStr(i);
       auto arg = resultTree->getArg(i);
