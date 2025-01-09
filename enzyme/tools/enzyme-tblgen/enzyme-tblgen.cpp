@@ -1264,11 +1264,11 @@ void handleUseArgument(
       if (precondition != "true") {
         if (foundPrimalUse2.size()) {
           foundPrimalUse2 =
-              "((" + foundPrimalUse2 + ")&&(" + precondition + ")";
+              "((" + foundPrimalUse2 + ")&&(" + precondition + "))";
         }
         if (foundShadowUse2.size()) {
           foundShadowUse2 =
-              "((" + foundShadowUse2 + ")&&(" + precondition + ")";
+              "((" + foundShadowUse2 + ")&&(" + precondition + "))";
         }
       }
       if (usesPrimal) {
