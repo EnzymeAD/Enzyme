@@ -1178,8 +1178,10 @@ void handleUse(
   bool usesShadow = Def->getValueAsBit("usesShadow");
   bool usesCustom = Def->getValueAsBit("usesCustom");
 
-  // This only concerns instances of StaticSelect for now
-  if (usesCustom) {
+  (void)usesCustom;
+  assert(!usesCustom);
+
+  if (Def->isSubClassOf("StaticSelect")) {
     auto numArgs = resultTree->getNumArgs();
 
     for (int i = numArgs == 3; i < numArgs; ++i) {

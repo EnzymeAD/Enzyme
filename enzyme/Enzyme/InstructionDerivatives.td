@@ -13,7 +13,7 @@ class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
 
-class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
+class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/0> {
   string condition = condition_;
 }
 

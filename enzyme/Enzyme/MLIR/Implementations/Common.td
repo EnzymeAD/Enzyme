@@ -96,7 +96,7 @@ class GlobalExpr<bit uses_primal, bit uses_shadow, string val> : Operation<uses_
 // The three arguments version accepts a name as a first argument
 // which is then available in the condition as a `Value` under the
 // variable `imVal`.
-class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*/0, /*usesCustom*/1> {
+class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*/0, /*usesCustom*/0> {
   string condition = condition_;
 }
 
