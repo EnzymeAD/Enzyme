@@ -13,6 +13,11 @@ class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
 
+class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/0> {
+  string condition = condition_;
+}
+
+def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 
 class Attribute<string name_> {
   string name = name_;
@@ -62,9 +67,6 @@ class Inst<string mnemonic>  : Operation</*primal*/1, /*shadow*/0> {
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
 def VectorSize : Operation</*primal*/0, /*shadow*/0> {
-}
-def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
-  
 }
 
 // Define ops to rewrite.
