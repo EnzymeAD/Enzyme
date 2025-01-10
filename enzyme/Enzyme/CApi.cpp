@@ -340,6 +340,9 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
     };
 }
 
+
+/// This is the entry point to register reverse-mode custom derivatives programmatically.
+/// A more detailed documentation is available in GradientUtils.h
 void EnzymeRegisterCallHandler(char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
                                CustomFunctionReverse RevHandle) {
@@ -363,6 +366,8 @@ void EnzymeRegisterCallHandler(char *Name,
   };
 }
 
+/// This is the entry point to register forward-mode custom derivatives programmatically.
+/// A more detailed documentation is available in GradientUtils.h
 void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
   auto &pair = customFwdCallHandlers[Name];
   pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,

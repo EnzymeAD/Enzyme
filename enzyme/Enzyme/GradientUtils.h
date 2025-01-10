@@ -79,6 +79,14 @@ extern llvm::StringMap<std::function<llvm::Value *(
     shadowHandlers;
 
 class DiffeGradientUtils;
+
+/// This is the entry point to register custom derivatives programmatically.
+/// It is more general than registering custom-derivatives in the llvm-ir module, at the cost of higher complexity.
+/// Examples on why it is more general include custom-derivatives for non-default activity cases 
+/// (e.g. a function call where a pointer or a float scalar is marked as const).
+/// It also allows using Enzyme and LLVM analysis, e.g. activity analysis, differential use analysis, alias analysis.
+///
+///
 extern llvm::StringMap<std::pair<
     std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&, llvm::Value *&)>,
@@ -86,6 +94,66 @@ extern llvm::StringMap<std::pair<
                        DiffeGradientUtils &, llvm::Value *)>>>
     customCallHandlers;
 
+/// The StringMap allows looking up a (forward-mode) custom rule based on the mangled name of the function.
+/// The first argument is the IRBuilder, the third argument are gradientutils, both of which should be already 
+/// available in the frontend. The second argument is the CallInst, this should be for a function call which will 
+/// compute the forward-mode derivative, while taking into consideration which input arguments are active or const.
+/// The function returns true, if the custom rule was applied, and false otherwise (e.g. because the combination of 
+/// activities is not yet supported). The last two arguments are ...
+///
+/// Example:
+/// define double @my_pow(double %x, double %y) {
+///  %call = call double @llvm.pow(double %x, double %y)
+///  ret double %call 
+/// }
+///
+/// The custom rule for this function could be:
+/// customCallHandlers["my_pow"] = [](llvm::IRBuilder<> &Builder, llvm::CallInst *CI, GradientUtils &gutils, llvm::Value *&dcall, llvm::Value *&normalReturn, llvm::Value *&shadowReturn) {
+///  auto x = CI->getArgOperand(0);
+///  auto y = CI->getArgOperand(1);
+///  auto xprime = gutils.getNewFromOriginal(x);
+///  auto yprime = gutils.getNewFromOriginal(y);
+///  bool is_x_active = !gutils.isConstantValue(x);
+///  bool is_y_active = !gutils.isConstantValue(y);
+///  normalreturn = Builder.CreateCall(Intrinsic::pow, {x, y});
+///  if (is_x_active) {
+///     auto ym1 = Builder.CreateFSub(y, ConstantFP::get(Type::getDoubleTy(CI->getContext()), 1.0));
+///     auto pow = Builder.CreateCall(Intrinsic::pow, {x, ym1});
+///     auto ypow = Builder.CreateFMul(y, pow);
+///     shadowReturn = Builder.CreateFMul(xprime, ypow);
+///
+///     // if y were inactive, this would be conceptually equivalent to generating
+///     // define internal double @fwddiffetester(double %x, double %"x'", double %y) #1 {
+///     //   %0 = fsub fast double %y, 1.000000e+00
+///     //   %1 = call fast double @llvm.pow.f64(double %x, double %0)
+///     //   %2 = fmul fast double %y, %1
+///     //   %3 = fmul fast double %"x'", %2
+///     //   ret double %3
+///     // }
+///  }
+///  if (is_y_active) {
+///     auto pow = Builder.CreateCall(Intrinsic::pow, {x, y});
+///     auto log = Builder.CreateCall(Intrinsic::log, {x});
+///     auto logpow = Builder.CreateFMul(pow, log);
+///     auto ylogpow = Builder.CreateFMul(yprime, logpow);
+///     if (is_x_active) {
+///       shadowReturn = Builder.CreateFAdd(ylogpow, shadowReturn);
+///     } else {
+///       shadowReturn = ylogpow;
+///     }
+///
+///     // if x was inactive, this would be conceptually equivalent to generating
+///     // define internal double @fwddiffetester.1(double %x, double %y, double %"y'") #1 {
+///     //   %0 = call fast double @llvm.pow.f64(double %x, double %y)
+///     //   %1 = call fast double @llvm.log.f64(double %x)
+///     //   %2 = fmul fast double %0, %1
+///     //   %3 = fmul fast double %"y'", %2
+///     //   ret double %3
+///     // }
+///  }
+///  // We covered all 2x2 combinations, so always return true
+///  return true;
+///  }
 extern llvm::StringMap<
     std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&)>>
