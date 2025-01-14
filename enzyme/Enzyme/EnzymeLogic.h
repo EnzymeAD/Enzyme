@@ -168,6 +168,12 @@ struct ReverseCacheKey {
   const FnTypeInfo typeInfo;
   bool runtimeActivity;
 
+  ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
+    return {todiff,      retType,          constant_args,  overwritten_args,
+            returnUsed,  shadowReturnUsed, mode,           width,
+            freeMemory,  AtomicAdd,        additionalType, forceAnonymousTape,
+            newTypeInfo, runtimeActivity};
+  }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
       return todiff == rhs.todiff &&

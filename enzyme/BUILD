@@ -235,10 +235,12 @@ td_library(
     srcs = [
         "Enzyme/MLIR/Dialect/Dialect.td",
     ],
+    includes = ["."],
     deps = [
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
         "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
+        "@llvm-project//mlir:MemorySlotInterfacesTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
@@ -604,6 +606,7 @@ cc_library(
         "@llvm-project//mlir:LinalgStructuredOpsIncGen",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemorySlotInterfaces",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:OpenMPDialect",

@@ -266,10 +266,14 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
 static inline bool isAllocationCall(const llvm::Value *TmpOrig,
                                     llvm::TargetLibraryInfo &TLI) {
-  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
-    return isAllocationFunction(getFuncNameFromCall(CI), TLI);
-  }
-  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallBase>(TmpOrig)) {
+    auto AttrList =
+        CI->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+    if (AttrList.hasAttribute("enzyme_allocation"))
+      return true;
+    if (auto Fn = getFunctionFromCall(CI))
+      if (Fn->hasFnAttribute("enzyme_allocation"))
+        return true;
     return isAllocationFunction(getFuncNameFromCall(CI), TLI);
   }
   return false;
@@ -277,10 +281,7 @@ static inline bool isAllocationCall(const llvm::Value *TmpOrig,
 
 static inline bool isDeallocationCall(const llvm::Value *TmpOrig,
                                       llvm::TargetLibraryInfo &TLI) {
-  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
-    return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
-  }
-  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallBase>(TmpOrig)) {
     return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
   }
   return false;

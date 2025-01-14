@@ -579,6 +579,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "jl_reshape_array" || Name == "ijl_reshape_array")
     return val != CI->getArgOperand(1);
 
+  // Only the 0-th arg impacts activity
+  if (Name == "jl_genericmemory_copy_slice" ||
+      Name == "ijl_genericmemory_copy_slice")
+    return val != CI->getArgOperand(0);
+
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
@@ -657,6 +662,13 @@ static inline void propagateArgumentInformation(
     for (size_t i = 1; i < CI.arg_size(); i++) {
       propagateFromOperand(CI.getOperand(i));
     }
+    return;
+  }
+
+  // Only the 0-th arg impacts activity
+  if (Name == "jl_genericmemory_copy_slice" ||
+      Name == "ijl_genericmemory_copy_slice") {
+    propagateFromOperand(CI.getArgOperand(0));
     return;
   }
 
@@ -980,12 +992,10 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         insertConstantsFrom(TR, *DownHypothesis);
       return true;
     } else if (directions == 3) {
-      if (isa<LoadInst>(I) || isa<StoreInst>(I) || isa<BinaryOperator>(I)) {
-        for (auto &op : I->operands()) {
-          if (!UpHypothesis->isConstantValue(TR, op) &&
-              EnzymeEnableRecursiveHypotheses) {
-            ReEvaluateInstIfInactiveValue[op].insert(I);
-          }
+      for (auto &op : I->operands()) {
+        if (!UpHypothesis->isConstantValue(TR, op) &&
+            EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateInstIfInactiveValue[op].insert(I);
         }
       }
     }
@@ -1557,6 +1567,26 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             ReEvaluateValueIfInactiveValue[II->getOperand(0)].insert(TmpOrig);
           }
         }
+      } else if (auto RMW = dyn_cast<AtomicRMWInst>(TmpOrig)) {
+        if (directions == UP) {
+          if (isConstantValue(TR, RMW->getPointerOperand())) {
+            InsertConstantValue(TR, Val);
+            return true;
+          }
+        } else {
+          if (UpHypothesis->isConstantValue(TR, RMW->getPointerOperand())) {
+            InsertConstantValue(TR, Val);
+            insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          }
+        }
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[RMW->getPointerOperand()].insert(Val);
+          if (TmpOrig != Val) {
+            ReEvaluateValueIfInactiveValue[RMW->getPointerOperand()].insert(
+                TmpOrig);
+          }
+        }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (isInactiveCall(*op) || op->hasFnAttr("enzyme_inactive_val") ||
             op->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
@@ -1786,6 +1816,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               InsertConstantValue(TR, Val);
               insertConstantsFrom(TR, *UpHypothesis);
               return true;
+            } else if (directions == 3) {
+              for (auto &op : inst->operands()) {
+                if (!UpHypothesis->isConstantValue(TR, op) &&
+                    EnzymeEnableRecursiveHypotheses) {
+                  ReEvaluateValueIfInactiveValue[op].insert(Val);
+                }
+              }
             }
           }
         }
@@ -1827,6 +1864,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (EnzymePrintActivity)
           llvm::errs() << " cannot show constant instruction hypothesis: "
                        << *VI << "\n";
+        if (directions == 3) {
+          for (auto &op : VI->operands()) {
+            if (!UpHypothesis->isConstantValue(TR, op) &&
+                EnzymeEnableRecursiveHypotheses) {
+              ReEvaluateValueIfInactiveValue[op].insert(Val);
+            }
+          }
+        }
       }
     }
 
@@ -1928,7 +1973,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
-        if (isa<LoadInst>(I) || isNVLoad(I)) {
+        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I)) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
@@ -2684,6 +2729,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             if (AllocaSet.count(TmpOrig)) {
               continue;
             }
+            // We are literally storing our value into ourselves [or relevant
+            // derived pointer]
+            if (TmpOrig == val) {
+              continue;
+            }
             if (isa<AllocaInst>(TmpOrig)) {
               newAllocaSet.insert(TmpOrig);
               continue;
@@ -2785,8 +2835,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           if (isa<AllocaInst>(TmpOrig) || isAllocationCall(TmpOrig, TLI)) {
             done.insert(
                 std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+            // If we are capturing a variable v, we need to check any loads or
+            // stores into that variable, even if we are checking only for
+            // stores.
+            auto UA2 = UA;
+            if (UA == UseActivity::OnlyStores ||
+                UA == UseActivity::OnlyNonPointerStores ||
+                UA == UseActivity::AllStores)
+              UA2 = UseActivity::None;
             for (const auto a : TmpOrig->users()) {
-              todo.push_back(std::make_tuple(a, TmpOrig, UA));
+              todo.push_back(std::make_tuple(a, TmpOrig, UA2));
             }
             AllocaSet.insert(TmpOrig);
             if (EnzymePrintActivity)

@@ -102,6 +102,10 @@ llvm::cl::opt<bool> EnzymeMemmoveWarning(
 llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
+
+llvm::cl::opt<bool> EnzymeNonPower2Cache(
+    "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
+    cl::desc("Disable caching of integers which are not a power of 2"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -579,14 +583,18 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   call->setDebugLoc(loc);
 }
 
-Type *BlasInfo::fpType(LLVMContext &ctx) const {
+Type *BlasInfo::fpType(LLVMContext &ctx, bool to_scalar) const {
   if (floatType == "d" || floatType == "D") {
     return Type::getDoubleTy(ctx);
   } else if (floatType == "s" || floatType == "S") {
     return Type::getFloatTy(ctx);
   } else if (floatType == "c" || floatType == "C") {
+    if (to_scalar)
+      return Type::getFloatTy(ctx);
     return VectorType::get(Type::getFloatTy(ctx), 2, false);
   } else if (floatType == "z" || floatType == "Z") {
+    if (to_scalar)
+      return Type::getDoubleTy(ctx);
     return VectorType::get(Type::getDoubleTy(ctx), 2, false);
   } else {
     assert(false && "Unreachable");
@@ -925,8 +933,25 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
-  Function *F = cast<Function>(fn.getCallee());
-  attributeKnownFunctions(*F);
+  Value *callVal = fn.getCallee();
+  Function *called = nullptr;
+  while (!called) {
+    if (auto castinst = dyn_cast<ConstantExpr>(callVal))
+      if (castinst->isCast()) {
+        callVal = castinst->getOperand(0);
+        continue;
+      }
+    if (auto fn = dyn_cast<Function>(callVal)) {
+      called = fn;
+      break;
+    }
+    if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
+      callVal = alias->getAliasee();
+      continue;
+    }
+    break;
+  }
+  attributeKnownFunctions(*called);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -2218,7 +2243,10 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   const SCEV *StoreBegin = SE.getCouldNotCompute();
   const SCEV *StoreEnd = SE.getCouldNotCompute();
 
+  Value *loadPtr = nullptr;
+  Value *storePtr = nullptr;
   if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
+    loadPtr = LI->getPointerOperand();
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
@@ -2236,6 +2264,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
+    storePtr = SI->getPointerOperand();
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2255,6 +2284,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
+    storePtr = MS->getArgOperand(0);
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2269,6 +2299,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
+    storePtr = MS->getArgOperand(0);
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2283,6 +2314,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
+    loadPtr = MS->getArgOperand(1);
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
@@ -2296,6 +2328,12 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       }
     }
   }
+
+  if (loadPtr && storePtr)
+    if (auto alias =
+            arePointersGuaranteedNoAlias(TLI, AA, LI, loadPtr, storePtr, true))
+      if (*alias)
+        return false;
 
   if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,
                                     maybeWriter, StoreBegin, StoreEnd, scope))
@@ -3847,4 +3885,188 @@ bool isNVLoad(const llvm::Value *V) {
     return false;
   }
   return false;
+}
+
+bool notCapturedBefore(llvm::Value *V, Instruction *inst,
+                       size_t checkLoadCaptures) {
+  Instruction *VI = dyn_cast<Instruction>(V);
+  if (!VI)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
+  else
+    VI = VI->getNextNode();
+  SmallPtrSet<BasicBlock *, 1> regionBetween;
+  {
+    SmallVector<BasicBlock *, 1> todo;
+    todo.push_back(VI->getParent());
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      if (regionBetween.count(cur))
+        continue;
+      regionBetween.insert(cur);
+      if (cur == inst->getParent())
+        continue;
+      for (auto BB : successors(cur))
+        todo.push_back(BB);
+    }
+  }
+  SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
+  for (auto U : V->users()) {
+    todo.emplace_back(cast<Instruction>(U), checkLoadCaptures, V);
+  }
+  std::set<std::tuple<Value *, size_t, Value *>> seen;
+  while (todo.size()) {
+    auto pair = todo.pop_back_val();
+    if (seen.count(pair))
+      continue;
+    auto UI = std::get<0>(pair);
+    auto level = std::get<1>(pair);
+    auto prev = std::get<2>(pair);
+    if (!regionBetween.count(UI->getParent()))
+      continue;
+    if (UI->getParent() == VI->getParent()) {
+      if (UI->comesBefore(VI))
+        continue;
+    }
+    if (UI->getParent() == inst->getParent())
+      if (inst->comesBefore(UI))
+        continue;
+
+    if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                /*includebin*/ true)) {
+      for (auto U2 : UI->users()) {
+        auto UI2 = cast<Instruction>(U2);
+        todo.emplace_back(UI2, level, UI);
+      }
+      continue;
+    }
+
+    if (isa<MemSetInst>(UI))
+      continue;
+
+    if (isa<MemTransferInst>(UI)) {
+      if (level == 0)
+        continue;
+      if (UI->getOperand(1) != prev)
+        continue;
+    }
+
+    if (auto CI = dyn_cast<CallBase>(UI)) {
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+      for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+      {
+        if (prev == CI->getArgOperand(i)) {
+          if (isNoCapture(CI, i) && level == 0)
+            continue;
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (isa<CmpInst>(UI)) {
+      continue;
+    }
+    if (isa<LoadInst>(UI)) {
+      if (level) {
+        for (auto U2 : UI->users()) {
+          auto UI2 = cast<Instruction>(U2);
+          todo.emplace_back(UI2, level - 1, UI);
+        }
+      }
+      continue;
+    }
+    // storing into it.
+    if (auto SI = dyn_cast<StoreInst>(UI)) {
+      if (SI->getValueOperand() != prev) {
+        continue;
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::LoopInfo &LI, llvm::Value *op0,
+                             llvm::Value *op1, bool offsetAllowed) {
+  auto lhs = getBaseObject(op0, offsetAllowed);
+  auto rhs = getBaseObject(op1, offsetAllowed);
+
+  if (lhs == rhs) {
+    return false;
+  }
+  if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
+    return {};
+
+  bool noalias_lhs = isNoAlias(lhs);
+  bool noalias_rhs = isNoAlias(rhs);
+
+  bool noalias[2] = {noalias_lhs, noalias_rhs};
+
+  for (int i = 0; i < 2; i++) {
+    Value *start = (i == 0) ? lhs : rhs;
+    Value *end = (i == 0) ? rhs : lhs;
+    if (noalias[i]) {
+      if (noalias[1 - i]) {
+        return true;
+      }
+      if (isa<Argument>(end)) {
+        return true;
+      }
+      if (auto endi = dyn_cast<Instruction>(end)) {
+        if (notCapturedBefore(start, endi, 0)) {
+          return true;
+        }
+      }
+    }
+    if (auto ld = dyn_cast<LoadInst>(start)) {
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
+      if (isAllocationCall(base, TLI)) {
+        if (isa<Argument>(end))
+          return true;
+        if (auto endi = dyn_cast<Instruction>(end))
+          if (isNoAlias(end) || (notCapturedBefore(start, endi, 1))) {
+            Instruction *starti = dyn_cast<Instruction>(start);
+            if (!starti) {
+              if (!isa<Argument>(start))
+                continue;
+              starti =
+                  &cast<Argument>(start)->getParent()->getEntryBlock().front();
+            }
+
+            bool overwritten = false;
+            allInstructionsBetween(
+                LI, starti, endi, [&](Instruction *I) -> bool {
+                  if (!I->mayWriteToMemory())
+                    return /*earlyBreak*/ false;
+
+                  if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                           /*maybeReader*/ ld,
+                                           /*maybeWriter*/ I)) {
+                    overwritten = true;
+                    return /*earlyBreak*/ true;
+                  }
+                  return /*earlyBreak*/ false;
+                });
+
+            if (!overwritten) {
+              return true;
+            }
+          }
+      }
+    }
+  }
+
+  return {};
 }

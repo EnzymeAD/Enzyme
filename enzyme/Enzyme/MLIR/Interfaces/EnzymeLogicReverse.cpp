@@ -11,6 +11,8 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
@@ -182,7 +184,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
+    llvm::StringRef postpasses) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -214,7 +217,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
-      retType, constants, addedType);
+      retType, constants, addedType, postpasses);
 
   ReverseCachedFunctions[tup] = gutils->newFunc;
 
@@ -253,6 +256,20 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   if (!res.succeeded())
     return nullptr;
+
+  if (postpasses != "") {
+    mlir::PassManager pm(nf->getContext());
+    std::string error_message;
+    // llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
+    if (mlir::failed(result)) {
+      return nullptr;
+    }
+
+    if (!mlir::succeeded(pm.run(nf))) {
+      return nullptr;
+    }
+  }
 
   return nf;
 }

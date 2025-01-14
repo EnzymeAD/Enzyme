@@ -93,6 +93,7 @@ enum class ErrorType {
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
+extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
 extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
@@ -682,7 +683,7 @@ struct BlasInfo {
   std::string function;
   bool is64;
 
-  llvm::Type *fpType(llvm::LLVMContext &ctx) const;
+  llvm::Type *fpType(llvm::LLVMContext &ctx, bool to_scalar = false) const;
   llvm::IntegerType *intType(llvm::LLVMContext &ctx) const;
 };
 
@@ -1198,6 +1199,10 @@ static inline bool hasNoCache(llvm::Value *op) {
       }
     }
   }
+  if (auto IT = dyn_cast<IntegerType>(op->getType()))
+    if (!isPowerOf2_64(IT->getBitWidth()) && !EnzymeNonPower2Cache)
+      return true;
+
   return false;
 }
 
@@ -2101,5 +2106,23 @@ llvm::CallInst *createIntrinsicCall(llvm::IRBuilderBase &B,
                                     const llvm::Twine &Name = "");
 
 bool isNVLoad(const llvm::Value *V);
+
+//! Check if value if b captured after definition before executing inst.
+//! If checkLoadCaptured != 0, also consider catpures of any loads of the value
+//! as a capture (for the number of loads set).
+bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
+                       size_t checkLoadCaptured);
+
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::LoopInfo &LI, llvm::Value *op0,
+                             llvm::Value *op1, bool offsetAllowed = false);
 
 #endif // ENZYME_UTILS_H

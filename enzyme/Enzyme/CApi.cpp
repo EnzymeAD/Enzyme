@@ -333,9 +333,11 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
     return unwrap(
         AHandle(wrap(&B), wrap(CI), Args.size(), refs.data(), gutils));
   };
-  shadowErasers[Name] = [=](IRBuilder<> &B, Value *ToFree) -> llvm::CallInst * {
-    return cast_or_null<CallInst>(unwrap(FHandle(wrap(&B), wrap(ToFree))));
-  };
+  if (FHandle)
+    shadowErasers[Name] = [=](IRBuilder<> &B,
+                              Value *ToFree) -> llvm::CallInst * {
+      return cast_or_null<CallInst>(unwrap(FHandle(wrap(&B), wrap(ToFree))));
+    };
 }
 
 void EnzymeRegisterCallHandler(char *Name,

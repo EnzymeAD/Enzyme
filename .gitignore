@@ -11,3 +11,5 @@ enzyme/benchmarks/ReverseMode/*/*.exe
 enzyme/benchmarks/ReverseMode/*/results.txt
 enzyme/benchmarks/ReverseMode/*/results.json
 .cache
+CMakeUserPresets.json
+/out

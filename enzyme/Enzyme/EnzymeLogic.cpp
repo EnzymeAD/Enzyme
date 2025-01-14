@@ -1696,8 +1696,22 @@ void clearFunctionAttributes(Function *f) {
     if (Arg.hasAttribute(Attribute::StructRet))
       Arg.removeAttr(Attribute::StructRet);
   }
-  if (f->hasFnAttribute(Attribute::OptimizeNone))
-    f->removeFnAttr(Attribute::OptimizeNone);
+
+  Attribute::AttrKind fnattrs[] = {
+#if LLVM_VERSION_MAJOR >= 16
+    Attribute::Memory,
+#endif
+    Attribute::ReadOnly,
+    Attribute::ReadNone,
+    Attribute::WriteOnly,
+    Attribute::WillReturn,
+    Attribute::OptimizeNone
+  };
+  for (auto attr : fnattrs) {
+    if (f->hasFnAttribute(attr)) {
+      f->removeFnAttr(attr);
+    }
+  }
 
   if (f->getAttributes().getRetDereferenceableBytes()) {
     f->removeRetAttr(Attribute::Dereferenceable);
@@ -3551,15 +3565,18 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
 }
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
-    RequestContext context, const ReverseCacheKey &&key, TypeAnalysis &TA,
+    RequestContext context, const ReverseCacheKey &&prevkey, TypeAnalysis &TA,
     const AugmentedReturn *augmenteddata, bool omp) {
 
-  TimeTraceScope timeScope("CreatePrimalAndGradient", key.todiff->getName());
+  TimeTraceScope timeScope("CreatePrimalAndGradient",
+                           prevkey.todiff->getName());
 
-  assert(key.mode == DerivativeMode::ReverseModeCombined ||
-         key.mode == DerivativeMode::ReverseModeGradient);
+  assert(prevkey.mode == DerivativeMode::ReverseModeCombined ||
+         prevkey.mode == DerivativeMode::ReverseModeGradient);
 
-  FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(key.typeInfo, key.todiff);
+  FnTypeInfo oldTypeInfo =
+      preventTypeAnalysisLoops(prevkey.typeInfo, prevkey.todiff);
+  auto key = prevkey.replaceTypeInfo(oldTypeInfo);
 
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());

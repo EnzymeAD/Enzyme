@@ -16,7 +16,18 @@ def DifferentiatePass : Pass<"enzyme"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect"
+    "cf::ControlFlowDialect",
+    "tensor::TensorDialect",
+    "enzyme::EnzymeDialect",
+  ];
+  let options = [
+    Option<
+      /*C++ variable name=*/"postpasses",
+      /*CLI argument=*/"postpasses",
+      /*type=*/"std::string",
+      /*default=*/"",
+      /*description=*/"Optimization passes to apply to generated derivative functions"
+    >,
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
@@ -173,6 +184,9 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
+  let dependentDialects = [
+    "tensor::TensorDialect"
+  ];
   let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
 }
 

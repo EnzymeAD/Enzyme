@@ -28,6 +28,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
@@ -67,6 +68,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::omp::OpenMPDialect>();
   registry.insert<mlir::math::MathDialect>();
   registry.insert<mlir::linalg::LinalgDialect>();
+  registry.insert<mlir::tensor::TensorDialect>();
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
@@ -77,6 +79,7 @@ int main(int argc, char **argv) {
 
   // Register the standard passes we want.
   mlir::registerCSEPass();
+  mlir::registerMem2RegPass();
   mlir::registerConvertAffineToStandardPass();
   mlir::registerSCCPPass();
   mlir::registerInlinerPass();
@@ -84,6 +87,7 @@ int main(int argc, char **argv) {
   mlir::registerSymbolDCEPass();
   mlir::registerLoopInvariantCodeMotionPass();
   mlir::registerConvertSCFToOpenMPPass();
+  mlir::registerSCFToControlFlowPass();
   mlir::affine::registerAffinePasses();
   mlir::registerReconcileUnrealizedCasts();
 

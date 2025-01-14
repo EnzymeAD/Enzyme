@@ -26,3 +26,9 @@ def : ReadOnlyIdentityOp<"LLVM", "PtrToIntOp", [0]>;
 def : ReadOnlyIdentityOp<"LLVM", "IntToPtrOp", [0]>;
 
 def : AllocationOp<"LLVM", "AllocaOp">;
+
+def : MLIRDerivative<"LLVM", "ExpOp", (Op $x),
+                    [
+                      (LlvmCheckedMulF (DiffeRet), (LlvmExpF $x))
+                    ]
+                  >;

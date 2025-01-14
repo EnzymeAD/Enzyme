@@ -245,9 +245,11 @@ FunctionOpInterface CloneFunctionWithReturns(
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == ArgActivity.size() - 1)
-          dval = blk.addArgument(val.getType(), val.getLoc());
+          dval = blk.addArgument(getShadowType(val.getType(), width),
+                                 val.getLoc());
         else
-          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
+          dval = blk.insertArgument(blk.args_begin() + i + 1,
+                                    getShadowType(val.getType(), width),
                                     val.getLoc());
         ptrInputs.map(oval, dval);
       }

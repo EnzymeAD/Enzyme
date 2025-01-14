@@ -29,7 +29,8 @@
 using namespace llvm;
 
 extern "C" {
-void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *) = nullptr;
+void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
+                                 LLVMValueRef, uint8_t) = nullptr;
 }
 
 void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
@@ -3014,6 +3015,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   bb, anti, getIndex(&call, CacheType::Shadow, BuilderZ));
           } else {
             bool zeroed = false;
+            uint64_t idx = 0;
+            Value *prev = nullptr;
+            ;
             auto rule = [&]() {
               Value *anti =
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
@@ -3058,8 +3062,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 if (funcName == "julia.gc_alloc_obj" ||
                     funcName == "jl_gc_alloc_typed" ||
                     funcName == "ijl_gc_alloc_typed") {
-                  if (EnzymeShadowAllocRewrite)
-                    EnzymeShadowAllocRewrite(wrap(anti), gutils);
+                  if (EnzymeShadowAllocRewrite) {
+                    bool used = unnecessaryInstructions.find(&call) ==
+                                unnecessaryInstructions.end();
+                    EnzymeShadowAllocRewrite(wrap(anti), gutils, wrap(&call),
+                                             idx, wrap(prev), used);
+                  }
                 }
               }
               if (Mode == DerivativeMode::ReverseModeCombined ||
@@ -3075,6 +3083,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   zeroed = true;
                 }
               }
+              idx++;
+              prev = anti;
               return anti;
             };
 
@@ -3224,6 +3234,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           args.push_back(gutils->getNewFromOriginal(arg));
         }
 
+        uint64_t idx = 0;
+        Value *prev = gutils->getNewFromOriginal(&call);
         auto rule = [&]() {
           SmallVector<ValueType, 2> BundleTypes(args.size(), ValueType::Primal);
 
@@ -3236,6 +3248,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           CI->setCallingConv(call.getCallingConv());
           CI->setTailCallKind(call.getTailCallKind());
           CI->setDebugLoc(dbgLoc);
+
+          if (funcName == "julia.gc_alloc_obj" ||
+              funcName == "jl_gc_alloc_typed" ||
+              funcName == "ijl_gc_alloc_typed") {
+            if (EnzymeShadowAllocRewrite) {
+              bool used = unnecessaryInstructions.find(&call) ==
+                          unnecessaryInstructions.end();
+              EnzymeShadowAllocRewrite(wrap(CI), gutils, wrap(&call), idx,
+                                       wrap(prev), used);
+            }
+          }
+          idx++;
+          prev = CI;
           return CI;
         };
 
@@ -3312,6 +3337,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 #endif
       Value *replacement = B.CreateAlloca(elTy, Size);
+      for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                      "enzymejl_allocart"})
+        if (auto M = call.getMetadata(MD))
+          cast<AllocaInst>(replacement)->setMetadata(MD, M);
       if (I)
         replacement->takeName(I);
       else

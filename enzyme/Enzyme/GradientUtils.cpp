@@ -3280,6 +3280,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             auto replacement = NB.CreateAlloca(
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
+            for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                            "enzymejl_allocart"})
+              if (auto M = I.getMetadata(MD))
+                replacement->setMetadata(MD, M);
             auto Alignment =
                 cast<ConstantInt>(
                     cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
@@ -3524,6 +3528,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
+                  for (auto MD : {"enzyme_active", "enzyme_inactive",
+                                  "enzyme_type", "enzymejl_allocart"})
+                    if (auto M = I.getMetadata(MD))
+                      replacement->setMetadata(MD, M);
                   replacement->takeName(anti);
                   auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
                                                          MD->getOperand(0))
@@ -3814,6 +3822,9 @@ bool GradientUtils::legalRecompute(const Value *val,
     }
   }
 
+  if (isa<AtomicRMWInst>(val))
+    return false;
+
   if (auto phi = dyn_cast<PHINode>(val)) {
     if (auto uiv = hasUninverted(val)) {
       if (auto dli = dyn_cast_or_null<LoadInst>(uiv)) {
@@ -3825,6 +3836,13 @@ bool GradientUtils::legalRecompute(const Value *val,
       if (phi->getNumIncomingValues() == 0) {
         return false;
       }
+    }
+
+    auto found = fictiousPHIs.find(const_cast<llvm::PHINode *>(phi));
+    if (found != fictiousPHIs.end()) {
+      auto orig = found->second;
+      if (isa<AtomicRMWInst>(orig))
+        return false;
     }
 
     if (phi->getNumIncomingValues() == 0) {
@@ -7129,7 +7147,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 {
                   SCEVExpander OrigExp(
                       *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
-                      "enzyme");
+                      "enzyme", /*PreserveLCSSA = */ false);
 
                   OrigExp.setInsertPoint(
                       isOriginal(l1.header)->getTerminator());
@@ -7152,22 +7170,45 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                     return OrigDT->dominates(A, B);
                                   });
                 for (auto a : InsertedInstructions) {
-                  assert(!isa<PHINode>(a));
-                  auto uw = cast<Instruction>(
+                  if (isa<PHINode>(a)) {
+                    std::string str;
+                    raw_string_ostream ss(str);
+                    ss << "oldFunc: " << *oldFunc << "\n";
+                    ss << "newFunc: " << *newFunc << "\n";
+                    ss << "li: " << *li << "\n";
+                    ss << "start0: " << *start0 << "\n";
+                    ss << "Inserted a phi node (" << *a
+                       << ") during unwrap of SCEV: " << *ar1->getStart()
+                       << "\n";
+                    if (CustomErrorHandler) {
+                      CustomErrorHandler(str.c_str(), wrap(li),
+                                         ErrorType::InternalError, nullptr,
+                                         nullptr, nullptr);
+                    } else {
+                      EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
+                                  ss.str());
+                    }
+                  }
+                  auto uwV =
                       unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
-                              /*scope*/ nullptr, /*cache*/ false));
-                  assert(uw->getType() == a->getType());
+                              /*scope*/ nullptr, /*cache*/ false);
+                  auto uw = dyn_cast<Instruction>(uwV);
+                  assert(uwV->getType() == a->getType());
 #ifndef NDEBUG
-                  for (size_t i = 0; i < uw->getNumOperands(); i++) {
-                    auto op = uw->getOperand(i);
-                    if (auto arg = dyn_cast<Argument>(op))
-                      assert(arg->getParent() == newFunc);
-                    else if (auto inst = dyn_cast<Instruction>(op))
-                      assert(inst->getParent()->getParent() == newFunc);
+                  if (uw) {
+                    for (size_t i = 0; i < uw->getNumOperands(); i++) {
+                      auto op = uw->getOperand(i);
+                      if (auto arg = dyn_cast<Argument>(op))
+                        assert(arg->getParent() == newFunc);
+                      else if (auto inst = dyn_cast<Instruction>(op))
+                        assert(inst->getParent()->getParent() == newFunc);
+                    }
+                    assert(uw->getParent()->getParent() == newFunc);
                   }
 #endif
-                  available[a] = uw;
-                  unwrappedLoads.erase(cast<Instruction>(uw));
+                  available[a] = uwV;
+                  if (uw)
+                    unwrappedLoads.erase(uw);
                 }
 
                 start =
@@ -9325,7 +9366,16 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   }
   if (allocationfn == "julia.gc_alloc_obj" ||
       allocationfn == "jl_gc_alloc_typed" ||
-      allocationfn == "ijl_gc_alloc_typed")
+      allocationfn == "ijl_gc_alloc_typed" ||
+      allocationfn == "jl_alloc_array_1d" ||
+      allocationfn == "ijl_alloc_array_1d" ||
+      allocationfn == "jl_alloc_array_2d" ||
+      allocationfn == "ijl_alloc_array_2d" ||
+      allocationfn == "jl_alloc_array_3d" ||
+      allocationfn == "ijl_alloc_array_3d" || allocationfn == "jl_new_array" ||
+      allocationfn == "ijl_new_array" ||
+      allocationfn == "jl_alloc_genericmemory" ||
+      allocationfn == "ijl_alloc_genericmemory")
     return nullptr;
 
   if (allocationfn == "enzyme_allocator") {
