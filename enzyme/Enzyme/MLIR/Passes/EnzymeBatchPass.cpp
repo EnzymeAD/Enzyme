@@ -28,6 +28,18 @@ using namespace enzyme;
 
 namespace {
 
+struct BatchCacheKey {
+  FunctionOpInterface function;
+  SmallVector<int64_t> batchSizes;
+  
+  // for use in std::map:
+  bool operator<(const BatchCacheKey &other) const {
+    if (const_cast<FunctionOpInterface &>(function).getName() != const_cast<FunctionOpInterface &>(other.function).getName())
+      return const_cast<FunctionOpInterface &>(function).getName() < const_cast<FunctionOpInterface &>(other.function).getName();
+    return batchSizes < other.batchSizes;
+  }
+};
+
 static mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                         llvm::ArrayRef<int64_t> batchSizes) {
   auto T = cast<TensorType>(Ty);
@@ -146,6 +158,9 @@ batchCloneFunction(FunctionOpInterface F, Twine name,
 struct BatchPass : public BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
+  // Cache mapping original function and batch sizes to batched function
+  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
+
   template <typename T>
   LogicalResult HandleBatch(SymbolTableCollection &symbolTable, T CI) {
     SmallVector<mlir::Value, 2> args;
@@ -153,11 +168,22 @@ struct BatchPass : public BatchPassBase<BatchPass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    FunctionOpInterface newFunc =
-        batchCloneFunction(fn, "batched_" + fn.getName(), CI.getBatchShape());
-
+    BatchCacheKey key{fn, SmallVector<int64_t>(CI.getBatchShape().begin(), 
+                                               CI.getBatchShape().end())};
+    
+    // Check if we already have a batched version
+    auto it = batchedFunctionCache.find(key);
+    FunctionOpInterface newFunc;
+    
+    if (it != batchedFunctionCache.end()) {
+      newFunc = it->second;
+    } else {
+      // Create new batched function and store in cache
+      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(), CI.getBatchShape());
     if (!newFunc)
       return failure();
+      batchedFunctionCache[key] = newFunc;
+    }
 
     OpBuilder builder(CI);
     auto dCI =
