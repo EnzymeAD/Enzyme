@@ -350,8 +350,8 @@ void EnzymeRegisterCallHandler(const char *Name,
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
     LLVMValueRef tapeR = wrap(tape);
-    uint8_t noMod =
-        FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR, data);
+    uint8_t noMod = FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR,
+                              &tapeR, data);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
     tape = unwrap(tapeR);
