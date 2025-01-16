@@ -198,10 +198,11 @@ typedef uint8_t (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
                                                   GradientUtils *,
                                                   LLVMValueRef *,
                                                   LLVMValueRef *,
-                                                  LLVMValueRef *);
+                                                  LLVMValueRef *,
+                                                  void *);
 
 typedef void (*CustomFunctionReverse)(LLVMBuilderRef, LLVMValueRef,
-                                      DiffeGradientUtils *, LLVMValueRef);
+                                      DiffeGradientUtils *, LLVMValueRef, void *);
 
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
@@ -221,6 +222,14 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t *_overwritten_args, size_t overwritten_args_size,
     EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd);
+
+void EnzymeRegisterCallHandler(const char *Name,
+                               CustomAugmentedFunctionForward FwdHandle,
+                               CustomFunctionReverse RevHandle,
+                               void *data);
+
+LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
+                                                LLVMValueRef val);
 
 #ifdef __cplusplus
 }
