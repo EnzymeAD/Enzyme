@@ -40,6 +40,12 @@ struct BatchCacheKey {
   }
 };
 
+static FunctionOpInterface
+batchCloneFunction(FunctionOpInterface F, Twine name,
+                   llvm::ArrayRef<int64_t> batchSizes,
+                   std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
+
 static mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                         llvm::ArrayRef<int64_t> batchSizes) {
   auto T = cast<TensorType>(Ty);
@@ -49,8 +55,58 @@ static mlir::TensorType applyBatchSizes(mlir::Type Ty,
   return T2;
 }
 
+static LogicalResult handleCallOp(func::CallOp callOp, OpBuilder &builder, 
+                                IRMapping &mapper,
+                                llvm::ArrayRef<int64_t> batchSizes,
+                                std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  // Get the called function
+  auto moduleOp = callOp->getParentOfType<ModuleOp>();
+  auto calledFunc = dyn_cast<FunctionOpInterface>(
+      moduleOp.lookupSymbol(callOp.getCallee()));
+  if (!calledFunc)
+    return failure();
+
+  // Create cache key for this function and batch size combination
+  BatchCacheKey key{calledFunc, SmallVector<int64_t>(batchSizes.begin(), 
+                                                     batchSizes.end())};
+  
+  // Look up or create batched version of the called function
+  FunctionOpInterface batchedFunc;
+  auto it = batchedFunctionCache.find(key);
+  if (it != batchedFunctionCache.end()) {
+    batchedFunc = it->second;
+  } else {
+    batchedFunc = batchCloneFunction(calledFunc, 
+                                    "batched_" + calledFunc.getName(), 
+                                    batchSizes,
+                                    batchedFunctionCache);
+    if (!batchedFunc)
+      return failure();
+    batchedFunctionCache[key] = batchedFunc;
+  }
+
+  // Create new call operation to the batched function
+  SmallVector<Value> newOperands;
+  for (auto operand : callOp->getOperands())
+    newOperands.push_back(mapper.lookup(operand));
+
+  auto newCall = builder.create<func::CallOp>(
+      callOp.getLoc(),
+      batchedFunc.getName(),
+      batchedFunc.getResultTypes(),
+      newOperands);
+
+  // Map the results
+  for (auto [oldResult, newResult] : 
+       llvm::zip(callOp.getResults(), newCall.getResults()))
+    mapper.map(oldResult, newResult);
+
+  return success();
+}
+
 static void batchCloneRegion(Region *src, Region *dest, IRMapping &mapper,
-                             llvm::ArrayRef<int64_t> batchSizes) {
+                             llvm::ArrayRef<int64_t> batchSizes,
+                             std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   // For each block in src, generate a corresponding block in the dest region.
   for (auto &blk : *src) {
     auto newBlk = new Block();
@@ -68,6 +124,13 @@ static void batchCloneRegion(Region *src, Region *dest, IRMapping &mapper,
   for (auto &&[blk, newBlk] : llvm::zip(*src, *dest)) {
     OpBuilder builder(&newBlk, newBlk.end());
     for (auto &src : blk) {
+
+      if (auto callOp = dyn_cast<func::CallOp>(&src)) {
+        if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes, 
+                                 batchedFunctionCache)))
+          continue;
+      }
+
 
       if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
         auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
@@ -101,7 +164,7 @@ static void batchCloneRegion(Region *src, Region *dest, IRMapping &mapper,
       // Clone the regions.
       for (auto &&[oldReg, newReg] :
            llvm::zip(src.getRegions(), newOp->getRegions())) {
-        batchCloneRegion(&oldReg, &newReg, mapper, batchSizes);
+        batchCloneRegion(&oldReg, &newReg, mapper, batchSizes, batchedFunctionCache);
       }
 
       // Remember the mapping of any results.
@@ -115,7 +178,8 @@ static void batchCloneRegion(Region *src, Region *dest, IRMapping &mapper,
 
 static FunctionOpInterface
 batchCloneFunction(FunctionOpInterface F, Twine name,
-                   llvm::ArrayRef<int64_t> batchSizes) {
+                   llvm::ArrayRef<int64_t> batchSizes,
+                   std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   assert(!F.getFunctionBody().empty());
 
   auto FTy = F.getFunctionType().cast<FunctionType>();
@@ -150,7 +214,7 @@ batchCloneFunction(FunctionOpInterface F, Twine name,
   auto &newReg = NewF.getFunctionBody();
 
   IRMapping mapper;
-  batchCloneRegion(&origReg, &newReg, mapper, batchSizes);
+  batchCloneRegion(&origReg, &newReg, mapper, batchSizes, batchedFunctionCache);
 
   return NewF;
 }
@@ -179,7 +243,9 @@ struct BatchPass : public BatchPassBase<BatchPass> {
       newFunc = it->second;
     } else {
       // Create new batched function and store in cache
-      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(), CI.getBatchShape());
+      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
+                                   CI.getBatchShape(),
+                                   batchedFunctionCache);
     if (!newFunc)
       return failure();
       batchedFunctionCache[key] = newFunc;
