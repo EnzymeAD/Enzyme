@@ -72,7 +72,7 @@ cl::opt<bool> EnzymeEnableFPOpt("enzyme-enable-fpopt", cl::init(false),
                                 cl::Hidden, cl::desc("Run the FPOpt pass"));
 cl::opt<bool> EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false),
                                cl::Hidden,
-                     cl::desc("Enable Enzyme to print FPOpt info"));
+                               cl::desc("Enable Enzyme to print FPOpt info"));
 static cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
