@@ -3231,8 +3231,8 @@ bool improveViaHerbie(
       for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
         auto &test = *tests[testIndex].getAsObject();
 
-        StringRef bestExpr = test.getString("output").getValue();
-        StringRef ID = test.getString("name").getValue();
+        StringRef bestExpr = test.getString("output").value();
+        StringRef ID = test.getString("name").value();
 
         if (bestExpr == "#f") {
           continue;
@@ -3247,14 +3247,13 @@ bool improveViaHerbie(
         ApplicableOutput &AO = AOs[index];
         auto &seenExprSet = seenExprs[index];
 
-        double bits = test.getNumber("bits").getValue();
+        double bits = test.getNumber("bits").value();
         json::Array &costAccuracy = *test.getArray("cost-accuracy");
 
         json::Array &initial = *costAccuracy[0].getAsArray();
-        double initialCostVal = initial[0].getAsNumber().getValue();
         double initialCost = 1.0;
-        double initialAccuracy =
-            1.0 - initial[1].getAsNumber().getValue() / bits;
+        double initialCostVal = initial[0].getAsNumber().value();
+        double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
 
         AO.initialHerbieCost = initialCost;
         AO.initialHerbieAccuracy = initialAccuracy;
@@ -3263,8 +3262,8 @@ bool improveViaHerbie(
           seenExprSet.insert(bestExpr.str());
 
           json::Array &best = *costAccuracy[1].getAsArray();
-          double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
-          double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+          double bestCost = best[0].getAsNumber().value() / initialCostVal;
+          double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
 
           RewriteCandidate bestCandidate(bestCost, bestAccuracy,
                                          bestExpr.str());
@@ -3279,15 +3278,15 @@ bool improveViaHerbie(
         // Handle alternatives
         for (size_t j = 0; j < alternatives.size(); ++j) {
           json::Array &entry = *alternatives[j].getAsArray();
-          StringRef expr = entry[2].getAsString().getValue();
+          StringRef expr = entry[2].getAsString().value();
 
           if (seenExprSet.count(expr.str()) != 0) {
             continue;
           }
           seenExprSet.insert(expr.str());
 
-          double cost = entry[0].getAsNumber().getValue() / initialCostVal;
-          double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
+          double cost = entry[0].getAsNumber().value() / initialCostVal;
+          double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
 
           RewriteCandidate candidate(cost, accuracy, expr.str());
           candidate.CompCost =
@@ -3346,8 +3345,8 @@ bool improveViaHerbie(
       llvm::errs() << "\n";
     }
 
-    llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/llvm::None,
-                              /*Redirects=*/llvm::None,
+    llvm::sys::ExecuteAndWait(Program, Args, /*Env=*/{},
+                              /*Redirects=*/{},
                               /*SecondsToWait=*/0, /*MemoryLimit=*/0, &ErrMsg,
                               &ExecutionFailed);
 
@@ -3396,13 +3395,13 @@ bool improveViaHerbie(
     for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
       auto &test = *tests[testIndex].getAsObject();
 
-      StringRef bestExpr = test.getString("output").getValue();
+      StringRef bestExpr = test.getString("output").value();
 
       if (bestExpr == "#f") {
         continue;
       }
 
-      StringRef ID = test.getString("name").getValue();
+      StringRef ID = test.getString("name").value();
       int index = std::stoi(ID.str());
       if (index >= AOs.size()) {
         llvm::errs() << "Invalid AO index: " << index << "\n";
@@ -3412,11 +3411,12 @@ bool improveViaHerbie(
       ApplicableOutput &AO = AOs[index];
       auto &seenExprSet = seenExprs[index];
 
-      double bits = test.getNumber("bits").getValue();
+      double bits = test.getNumber("bits").value();
       json::Array &costAccuracy = *test.getArray("cost-accuracy");
 
       json::Array &initial = *costAccuracy[0].getAsArray();
-      double initialCostVal = initial[0].getAsNumber().getValue();
+      double initialCostVal = initial[0].getAsNumber().value();
+      double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
       double initialCost = 1.0;
       double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
 
@@ -3427,8 +3427,8 @@ bool improveViaHerbie(
         seenExprSet.insert(bestExpr.str());
 
         json::Array &best = *costAccuracy[1].getAsArray();
-        double bestCost = best[0].getAsNumber().getValue() / initialCostVal;
-        double bestAccuracy = 1.0 - best[1].getAsNumber().getValue() / bits;
+        double bestCost = best[0].getAsNumber().value() / initialCostVal;
+        double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
 
         RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
         bestCandidate.CompCost = getCompCost(
@@ -3442,15 +3442,15 @@ bool improveViaHerbie(
       // Handle alternatives
       for (size_t j = 0; j < alternatives.size(); ++j) {
         json::Array &entry = *alternatives[j].getAsArray();
-        StringRef expr = entry[2].getAsString().getValue();
+        StringRef expr = entry[2].getAsString().value();
 
         if (seenExprSet.count(expr.str()) != 0) {
           continue;
         }
         seenExprSet.insert(expr.str());
 
-        double cost = entry[0].getAsNumber().getValue() / initialCostVal;
-        double accuracy = 1.0 - entry[1].getAsNumber().getValue() / bits;
+        double cost = entry[0].getAsNumber().value() / initialCostVal;
+        double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
 
         RewriteCandidate candidate(cost, accuracy, expr.str());
         candidate.CompCost =
@@ -3782,7 +3782,7 @@ bool accuracyDPSolver(
             jsonObj->getObject("costToAccuracyMap")) {
       for (auto &pair : *costAccMap) {
         InstructionCost compCost(std::stoll(pair.first.str()));
-        double accCost = pair.second.getAsNumber().getValue();
+        double accCost = pair.second.getAsNumber().value();
         costToAccuracyMap[compCost] = accCost;
       }
     } else {
@@ -3807,10 +3807,9 @@ bool accuracyDPSolver(
             llvm_unreachable("Invalid step object in cache file.");
           }
 
-          StringRef itemType = stepObj->getString("itemType").getValue();
-          size_t candidateIndex =
-              stepObj->getInteger("candidateIndex").getValue();
-          size_t itemIndex = stepObj->getInteger("itemIndex").getValue();
+          StringRef itemType = stepObj->getString("itemType").value();
+          size_t candidateIndex = stepObj->getInteger("candidateIndex").value();
+          size_t itemIndex = stepObj->getInteger("itemIndex").value();
 
           if (itemType == "AO") {
             if (itemIndex >= AOs.size()) {
@@ -3917,7 +3916,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue().getValue()) &&
+                            otherCompCost.getValue().value()) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4018,7 +4017,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue().getValue()) &&
+                            otherCompCost.getValue().value()) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4056,8 +4055,7 @@ bool accuracyDPSolver(
 
     json::Object costAccMap;
     for (const auto &pair : costToAccuracyMap) {
-      costAccMap[std::to_string(pair.first.getValue().getValue())] =
-          pair.second;
+      costAccMap[std::to_string(pair.first.getValue().value())] = pair.second;
     }
     jsonObj["costToAccuracyMap"] = std::move(costAccMap);
 
@@ -4084,7 +4082,7 @@ bool accuracyDPSolver(
             step.item);
         stepsArray.push_back(std::move(stepObj));
       }
-      costSolMap[std::to_string(pair.first.getValue().getValue())] =
+      costSolMap[std::to_string(pair.first.getValue().value())] =
           std::move(stepsArray);
     }
     jsonObj["costToSolutionMap"] = std::move(costSolMap);
