@@ -567,7 +567,8 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
 #ifdef ENZYME_ENABLE_HERBIE
 llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName);
 std::string getLogIdentifier(llvm::Instruction &I);
-void attachFPOptMetadata(llvm::Instruction *After, const llvm::Instruction *Before);
+void attachFPOptMetadata(llvm::Instruction *After,
+                         const llvm::Instruction *Before);
 #endif
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {

@@ -3704,7 +3704,8 @@ std::string getLogIdentifier(llvm::Instruction &I) {
 }
 
 #ifdef ENZYME_ENABLE_HERBIE
-void attachFPOptMetadata(llvm::Instruction *After, const llvm::Instruction *Before) {
+void attachFPOptMetadata(llvm::Instruction *After,
+                         const llvm::Instruction *Before) {
   if (EnzymePrintFPOpt)
     llvm::errs() << "(FPOpt Preprocessing) Attaching metadata to associate "
                  << *Before << " with " << *After << "\n";

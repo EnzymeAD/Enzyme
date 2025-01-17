@@ -968,17 +968,17 @@ Function *CreateMPIWrapper(Function *F) {
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
     Attribute::WillReturn,
-                                       Attribute::MustProgress,
+    Attribute::MustProgress,
 #if LLVM_VERSION_MAJOR < 16
-                                       Attribute::ReadOnly,
+    Attribute::ReadOnly,
 #endif
-                                       Attribute::Speculatable,
-                                       Attribute::NoUnwind,
-                                       Attribute::AlwaysInline,
-                                       Attribute::NoFree,
-                                       Attribute::NoSync,
+    Attribute::Speculatable,
+    Attribute::NoUnwind,
+    Attribute::AlwaysInline,
+    Attribute::NoFree,
+    Attribute::NoSync,
 #if LLVM_VERSION_MAJOR < 16
-                                       Attribute::InaccessibleMemOnly
+    Attribute::InaccessibleMemOnly
 #endif
   };
   for (auto attr : attrs) {
