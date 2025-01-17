@@ -3364,7 +3364,6 @@ bool improveViaHerbie(
       double initialCostVal = initial[0].getAsNumber().value();
       double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
       double initialCost = 1.0;
-      double initialAccuracy = 1.0 - initial[1].getAsNumber().getValue() / bits;
 
       AO.initialHerbieCost = initialCost;
       AO.initialHerbieAccuracy = initialAccuracy;

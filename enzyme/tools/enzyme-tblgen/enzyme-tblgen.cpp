@@ -2052,6 +2052,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     else
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
+#ifdef ENZYME_ENABLE_HERBIE
     if (intrinsic != MLIRDerivatives) {
       os << "    if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogValue\")) {\n"
@@ -2102,6 +2103,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << origName << ".getDebugLoc()));\n"
          << "    }\n";
     }
+#endif
 
     if (intrinsic == MLIRDerivatives) {
       os << "    if (gutils->isConstantInstruction(op))\n";
@@ -2398,6 +2400,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       os << "        assert(res);\n";
 
+#ifdef ENZYME_ENABLE_HERBIE
       // Insert logging function call (optional)
       os << "        if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogError\")) {\n"
@@ -2413,6 +2416,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
          << "        }\n";
+#endif
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";
@@ -2433,6 +2437,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
+#ifdef ENZYME_ENABLE_HERBIE
       os << "        if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogGrad\")) {\n"
          << "          std::string idStr = getLogIdentifier(" << origName
@@ -2447,6 +2452,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
          << "        }\n";
+#endif
 
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
