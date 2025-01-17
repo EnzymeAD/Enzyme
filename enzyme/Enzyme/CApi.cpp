@@ -340,7 +340,7 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
     };
 }
 
-void EnzymeRegisterCallHandler(char *Name,
+void EnzymeRegisterCallHandler(const char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
                                CustomFunctionReverse RevHandle) {
   auto &pair = customCallHandlers[Name];
