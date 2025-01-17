@@ -222,6 +222,13 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     uint8_t *_overwritten_args, size_t overwritten_args_size,
     EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd);
 
+void EnzymeRegisterCallHandler(const char *Name,
+                               CustomAugmentedFunctionForward FwdHandle,
+                               CustomFunctionReverse RevHandle);
+
+LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
+                                                LLVMValueRef val);
+
 #ifdef __cplusplus
 }
 #endif
