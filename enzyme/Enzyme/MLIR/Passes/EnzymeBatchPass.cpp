@@ -209,6 +209,10 @@ batchCloneFunction(FunctionOpInterface F, Twine name,
   SymbolTable table(parent);
   table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
+  
+  // Add the function to the cache BEFORE processing its body to support recursion.
+  BatchCacheKey key{F, SmallVector<int64_t>(batchSizes.begin(), batchSizes.end())};
+  batchedFunctionCache[key] = NewF;
 
   auto &origReg = F.getFunctionBody();
   auto &newReg = NewF.getFunctionBody();
@@ -246,9 +250,9 @@ struct BatchPass : public BatchPassBase<BatchPass> {
       newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
                                    CI.getBatchShape(),
                                    batchedFunctionCache);
-    if (!newFunc)
+      if (!newFunc) {
       return failure();
-      batchedFunctionCache[key] = newFunc;
+      }
     }
 
     OpBuilder builder(CI);
