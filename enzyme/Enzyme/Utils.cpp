@@ -55,6 +55,10 @@
 
 #include "LibraryFuncs.h"
 
+#ifdef ENZYME_ENABLE_HERBIE
+#include "Herbie.h"
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -3670,6 +3674,11 @@ llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName) {
 }
 
 std::string getLogIdentifier(llvm::Instruction &I) {
+  if (!I.hasMetadata("enzyme_preprocess_origin")) {
+    llvm::errs() << "FP Instruction without preprocess origin metadata: " << I
+                 << "\n";
+    llvm::errs() << "Consider setting `-enzyme-inline=0`.\n";
+  }
   assert(I.hasMetadata("enzyme_preprocess_origin"));
   auto *CMD = cast<ConstantAsMetadata>(
       I.getMetadata("enzyme_preprocess_origin")->getOperand(0));
@@ -3693,6 +3702,22 @@ std::string getLogIdentifier(llvm::Instruction &I) {
   return functionName.str() + ":" + std::to_string(blockIdx) + ":" +
          std::to_string(instIdx);
 }
+
+#ifdef ENZYME_ENABLE_HERBIE
+void attachFPOptMetadata(llvm::Instruction *After, const llvm::Instruction *Before) {
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "(FPOpt Preprocessing) Attaching metadata to associate "
+                 << *Before << " with " << *After << "\n";
+
+  After->setMetadata("enzyme_active", MDNode::get(After->getContext(), {}));
+  After->setMetadata(
+      "enzyme_preprocess_origin",
+      MDTuple::get(After->getContext(),
+                   {ConstantAsMetadata::get(ConstantInt::get(
+                       Type::getInt64Ty(After->getContext()),
+                       reinterpret_cast<std::uintptr_t>(Before)))}));
+}
+#endif
 
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,

@@ -114,6 +114,10 @@
 
 #include "CacheUtility.h"
 
+#ifdef ENZYME_ENABLE_HERBIE
+#include "Herbie.h"
+#endif
+
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -964,17 +968,17 @@ Function *CreateMPIWrapper(Function *F) {
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
     Attribute::WillReturn,
-    Attribute::MustProgress,
+                                       Attribute::MustProgress,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::ReadOnly,
+                                       Attribute::ReadOnly,
 #endif
-    Attribute::Speculatable,
-    Attribute::NoUnwind,
-    Attribute::AlwaysInline,
-    Attribute::NoFree,
-    Attribute::NoSync,
+                                       Attribute::Speculatable,
+                                       Attribute::NoUnwind,
+                                       Attribute::AlwaysInline,
+                                       Attribute::NoFree,
+                                       Attribute::NoSync,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::InaccessibleMemOnly
+                                       Attribute::InaccessibleMemOnly
 #endif
   };
   for (auto attr : attrs) {
@@ -1418,30 +1422,29 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
   }
-  if (mode == DerivativeMode::ForwardModeError ||
-      mode == DerivativeMode::ReverseModeCombined ||
-      mode == DerivativeMode::ReverseModeGradient) {
-    if (getLogFunction(F->getParent(), "enzymeLogError") ||
-        getLogFunction(F->getParent(), "enzymeLogValue") ||
-        getLogFunction(F->getParent(), "enzymeLogGrad")) {
-      for (const auto &pair : VMap) {
-        if (auto *before = dyn_cast<Instruction>(pair.first)) {
-          if (!before->getType()->isFloatingPointTy()) {
+#ifdef ENZYME_ENABLE_HERBIE
+  if (getLogFunction(F->getParent(), "enzymeLogError") ||
+      getLogFunction(F->getParent(), "enzymeLogValue") ||
+      getLogFunction(F->getParent(), "enzymeLogGrad")) {
+    for (const auto &pair : VMap) {
+      if (auto *before = dyn_cast<Instruction>(pair.first)) {
+        if (!before->getType()->isFloatingPointTy()) {
+          continue;
+        }
+        auto *after = cast<Instruction>(pair.second);
+        attachFPOptMetadata(after, before);
+      } else if (auto *beforeBB = dyn_cast<BasicBlock>(pair.first)) {
+        auto *afterBB = cast<BasicBlock>(pair.second);
+        for (const auto &[before, after] : zip(*beforeBB, *afterBB)) {
+          if (!before.getType()->isFloatingPointTy()) {
             continue;
           }
-          auto *after = cast<Instruction>(pair.second);
-          after->setMetadata("enzyme_active",
-                             MDNode::get(after->getContext(), None));
-          after->setMetadata(
-              "enzyme_preprocess_origin",
-              MDTuple::get(after->getContext(),
-                           {ConstantAsMetadata::get(ConstantInt::get(
-                               Type::getInt64Ty(after->getContext()),
-                               reinterpret_cast<std::uintptr_t>(before)))}));
+          attachFPOptMetadata(&after, &before);
         }
       }
     }
   }
+#endif
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
