@@ -203,6 +203,7 @@ const StringSet<> KnownInactiveFunctions = {
     "memcmp",
     "memchr",
     "gettimeofday",
+    "getrusage",
     "stat",
     "mkdir",
     "compress2",
