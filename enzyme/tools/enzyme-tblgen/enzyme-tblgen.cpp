@@ -1394,8 +1394,30 @@ static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
         for (auto tree : ptree->getArgs()) {
           SmallVector<unsigned, 2> next(prev.begin(), prev.end());
           next.push_back(i);
-          if (auto dg = dyn_cast<DagInit>(tree))
+          if (auto dg = dyn_cast<DagInit>(tree)) {
+            if (ptree->getArgNameStr(i).size()) {
+              auto opName = dg->getOperator()->getAsString();
+              auto Def = cast<DefInit>(dg->getOperator())->getDef();
+              if (opName == "Variadic" || Def->isSubClassOf("Variadic")) {
+                auto expr = Def->getValueAsString("getter");
+                std::string op;
+                if (intrinsic != MLIRDerivatives)
+                  op = (origName + "." + expr + "()").str();
+                else
+                  op = (origName + "->" + expr + "()").str();
+                std::vector<int> extractions;
+                if (prev.size() > 0) {
+                  for (unsigned i = 1; i < next.size(); i++) {
+                    extractions.push_back(next[i]);
+                  }
+                }
+                nameToOrdinal.insert(ptree->getArgNameStr(i), op, false,
+                                     extractions);
+                continue;
+              }
+            }
             insert(dg, next);
+          }
 
           if (ptree->getArgNameStr(i).size()) {
             std::string op;
@@ -1580,8 +1602,19 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
           auto name = ptree->getArgNameStr(treeEn.index());
           SmallVector<unsigned, 2> next(prev.begin(), prev.end());
           next.push_back(treeEn.index());
-          if (auto dg = dyn_cast<DagInit>(tree))
+          if (auto dg = dyn_cast<DagInit>(tree)) {
+            if (name.size()) {
+              auto opName = dg->getOperator()->getAsString();
+              auto Def = cast<DefInit>(dg->getOperator())->getDef();
+              if (opName == "Variadic" || Def->isSubClassOf("Variadic")) {
+                auto expr = Def->getValueAsString("getter");
+                varNameToCondition[name] = std::make_tuple(
+                    ("llvm::is_contained(op->getOperand(idx), op." + expr + "())").str(), "", false);
+                continue;
+              }
+            }
             insert(dg, next);
+          }
 
           if (name.size()) {
             varNameToCondition[name] = std::make_tuple(

@@ -55,6 +55,7 @@ public:
     unsigned width;
     mlir::Type additionalType;
     const MFnTypeInfo typeInfo;
+    bool omp;
 
     inline bool operator<(const MForwardCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -100,6 +101,12 @@ public:
         return true;
       if (rhs.typeInfo < typeInfo)
         return false;
+
+      if (omp < rhs.omp)
+        return true;
+      if (rhs.omp < omp)
+        return false;
+      
       // equal
       return false;
     }
@@ -117,6 +124,7 @@ public:
     mlir::Type additionalType;
     const MFnTypeInfo typeInfo;
     const std::vector<bool> volatileArgs;
+    bool omp;
 
     inline bool operator<(const MReverseCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -182,6 +190,11 @@ public:
       if (rhs.volatileArgs < volatileArgs)
         return false;
 
+      if (omp < rhs.omp)
+        return true;
+      if (rhs.omp < omp)
+        return false;
+
       // equal
       return false;
     }
@@ -196,7 +209,7 @@ public:
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, llvm::StringRef postpasses);
+                    void *augmented, bool omp, llvm::StringRef postpasses);
 
   FunctionOpInterface
   CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
@@ -205,7 +218,7 @@ public:
                     std::vector<bool> returnShadows, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, llvm::StringRef postpasses);
+                    void *augmented, bool omp, llvm::StringRef postpasses);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
