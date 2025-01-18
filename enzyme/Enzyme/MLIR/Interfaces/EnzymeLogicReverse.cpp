@@ -185,7 +185,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
-    llvm::StringRef postpasses) {
+    bool omp, llvm::StringRef postpasses) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -217,7 +217,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
-      retType, constants, addedType, postpasses);
+      retType, constants, addedType, omp, postpasses);
 
   ReverseCachedFunctions[tup] = gutils->newFunc;
 
