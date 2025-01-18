@@ -114,7 +114,7 @@
 
 #include "CacheUtility.h"
 
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
 #include "Herbie.h"
 #endif
 
@@ -1422,7 +1422,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
   }
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
   if (getLogFunction(F->getParent(), "enzymeLogError") ||
       getLogFunction(F->getParent(), "enzymeLogValue") ||
       getLogFunction(F->getParent(), "enzymeLogGrad")) {

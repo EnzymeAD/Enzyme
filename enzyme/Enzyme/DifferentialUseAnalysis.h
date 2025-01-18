@@ -123,6 +123,7 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
+#ifdef ENZYME_ENABLE_FPOPT
     if ((getLogFunction(gutils->oldFunc->getParent(), "enzymeLogValue") ||
          gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
@@ -132,6 +133,7 @@ inline bool is_value_needed_in_reverse(
             << " in reverse as forward mode error always needs result\n";
       return seen[idx] = true;
     }
+#endif
   }
 
   if (auto CI = dyn_cast<CallInst>(inst)) {

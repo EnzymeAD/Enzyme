@@ -51,9 +51,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
 # set(ENZYME_LINK_TARGETS)
-set(ENZYME_ENABLE_HERBIE 0 CACHE BOOL "Enable Herbie")
+set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable FPOpt")
 
-if(ENZYME_ENABLE_HERBIE)
+if(ENZYME_ENABLE_FPOPT)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/herbie-fp/herbie
@@ -66,7 +66,7 @@ if(ENZYME_ENABLE_HERBIE)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
     )
     list(APPEND ENZYME_SRC Herbie.cpp)
-    add_compile_definitions(ENZYME_ENABLE_HERBIE=1)
+    add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
     set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
 endif()
 

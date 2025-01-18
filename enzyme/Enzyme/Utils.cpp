@@ -55,7 +55,7 @@
 
 #include "LibraryFuncs.h"
 
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
 #include "Herbie.h"
 #endif
 
@@ -3703,7 +3703,7 @@ std::string getLogIdentifier(llvm::Instruction &I) {
          std::to_string(instIdx);
 }
 
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
 void attachFPOptMetadata(llvm::Instruction *After,
                          const llvm::Instruction *Before) {
   if (EnzymePrintFPOpt)

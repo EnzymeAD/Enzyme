@@ -3272,7 +3272,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
 #include "Herbie.h"
 #endif
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
@@ -3388,7 +3388,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     OptimizerPM.addPass(llvm::SROAPass());
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
     if (EnzymeEnableFPOpt)
       MPM.addPass(FPOptNewPM());
 #endif
@@ -3676,7 +3676,7 @@ void registerEnzyme(llvm::PassBuilder &PB) {
           MPM.addPass(EnzymeNewPM());
           return true;
         }
-#ifdef ENZYME_ENABLE_HERBIE
+#ifdef ENZYME_ENABLE_FPOPT
         if (Name == "fp-opt") {
           MPM.addPass(FPOptNewPM());
           return true;
