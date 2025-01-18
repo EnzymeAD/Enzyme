@@ -27,6 +27,9 @@ def AssertingInactiveArg : InactiveArgSpec {
   bit asserting = 1;
 }
 
+class Variadic<string getter_> {
+  string getter = getter_;
+}
 
 def Unimplemented {
 
