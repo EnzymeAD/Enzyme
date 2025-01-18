@@ -192,19 +192,18 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
-  MReverseCacheKey tup = {
-      fn,
-      retType,
-      constants,
-      returnPrimals,
-      returnShadows,
-      mode,
-      freeMemory,
-      static_cast<unsigned>(width),
-      addedType,
-      type_args,
-      volatile_args,
-  };
+  MReverseCacheKey tup = {fn,
+                          retType,
+                          constants,
+                          returnPrimals,
+                          returnShadows,
+                          mode,
+                          freeMemory,
+                          static_cast<unsigned>(width),
+                          addedType,
+                          type_args,
+                          volatile_args,
+                          omp};
 
   {
     auto cachedFn = ReverseCachedFunctions.find(tup);
