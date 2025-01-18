@@ -44,6 +44,7 @@ public:
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
   ArrayRef<DIFFE_TYPE> RetDiffeTypes;
 
+  SmallVector<mlir::Value, 1> getNewFromOriginal(ValueRange originst) const;
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
@@ -87,6 +88,16 @@ public:
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
     return iface.getShadowType(width);
+  }
+
+  static llvm::SmallVector<mlir::Value, 1>
+  reindex_arguments(llvm::ArrayRef<mlir::Value> vals,
+                    mlir::OperandRange range) {
+    llvm::SmallVector<mlir::Value, 1> results;
+    for (size_t i = 0; i < range.size(); i++) {
+      results.push_back(vals[range.getBeginOperandIndex() + i]);
+    }
+    return results;
   }
 };
 

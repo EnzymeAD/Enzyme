@@ -106,7 +106,7 @@ public:
         return true;
       if (rhs.omp < omp)
         return false;
-      
+
       // equal
       return false;
     }

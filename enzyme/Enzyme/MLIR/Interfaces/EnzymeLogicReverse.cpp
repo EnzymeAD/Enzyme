@@ -185,27 +185,25 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
-    bool omp,
-    llvm::StringRef postpasses) {
+    bool omp, llvm::StringRef postpasses) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
 
-  MReverseCacheKey tup = {
-      fn,
-      retType,
-      constants,
-      returnPrimals,
-      returnShadows,
-      mode,
-      freeMemory,
-      static_cast<unsigned>(width),
-      addedType,
-      type_args,
-      volatile_args,
-  };
+  MReverseCacheKey tup = {fn,
+                          retType,
+                          constants,
+                          returnPrimals,
+                          returnShadows,
+                          mode,
+                          freeMemory,
+                          static_cast<unsigned>(width),
+                          addedType,
+                          type_args,
+                          volatile_args,
+                          omp};
 
   {
     auto cachedFn = ReverseCachedFunctions.find(tup);

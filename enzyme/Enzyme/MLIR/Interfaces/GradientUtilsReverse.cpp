@@ -174,5 +174,6 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
   return new MGradientUtilsReverse(
       Logic, newFunc, todiff, TA, invertedPointers, returnPrimals,
       returnShadows, constant_values, nonconstant_values, retType,
-      constant_args, originalToNew, originalToNewOps, mode_, width, omp, postpasses);
+      constant_args, originalToNew, originalToNewOps, mode_, width, omp,
+      postpasses);
 }

@@ -205,8 +205,9 @@ struct VariableSetting {
   StringMap<std::string> nameToOrdinal;
   StringMap<bool> isVector;
   StringMap<std::vector<int>> extractions;
+  StringMap<bool> isVararg;
 
-  std::tuple<std::string, bool, std::vector<int>>
+  std::tuple<std::string, bool, std::vector<int>, bool>
   lookup(StringRef name, const Record *pattern, const Init *resultRoot) const {
     auto ord = nameToOrdinal.find(name);
     if (ord == nameToOrdinal.end())
@@ -218,13 +219,19 @@ struct VariableSetting {
 
     auto ext = extractions.find(name);
     assert(ext != extractions.end());
-    return std::make_tuple(ord->getValue(), iv->getValue(), ext->getValue());
+
+    auto va = isVararg.find(name);
+    assert(va != isVararg.end());
+    return std::make_tuple(ord->getValue(), iv->getValue(), ext->getValue(),
+                           va->getValue());
   }
 
-  void insert(StringRef name, StringRef value, bool vec, std::vector<int> ext) {
+  void insert(StringRef name, StringRef value, bool vec, std::vector<int> ext,
+              bool va) {
     nameToOrdinal[name] = value;
     isVector[name] = vec;
     extractions[name] = ext;
+    isVararg[name] = va;
   }
 };
 
@@ -249,7 +256,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     os << curIndent << "auto " << argName << "_" << idx << " = ";
     idx++;
     if (isa<UnsetInit>(args) && names) {
-      auto [ord, vecValue, ext] =
+      auto [ord, vecValue, ext, isva] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
       if (!vecValue && !startsWith(ord, "local")) {
 
@@ -268,9 +275,13 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       }
       if (lookup && !vecValue && !startsWith(ord, "local") &&
           intrinsic == MLIRDerivatives) {
-        auto start = ord.find('(') + 1;
-        auto end = ord.find(')');
-        os << "operands[" << ord.substr(start, end - start) << "]";
+        if (isva) {
+          os << "MGradientUtils::reindex_arguments(operands, " << ord << ")";
+        } else {
+          auto start = ord.find('(') + 1;
+          auto end = ord.find(')');
+          os << "operands[" << ord.substr(start, end - start) << "]";
+        }
       } else {
         os << ord;
       }
@@ -280,14 +291,24 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         }
         if (intrinsic == MLIRDerivatives) {
           os << ";\n";
-          os << curIndent << "if (gutils->width != 1) {\n"
-             << curIndent << " " << argName << "_" << (idx - 1)
-             << " = builder.create<enzyme::BroadcastOp>(\n"
-             << curIndent << "   op.getLoc(),\n"
-             << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
-             << curIndent
-             << "   llvm::SmallVector<int64_t>({gutils->width}));\n"
-             << curIndent << "}";
+          os << curIndent << "if (gutils->width != 1) {\n";
+          if (isva) {
+            os << curIndent << INDENT << "for (auto &val : " << argName << "_"
+               << (idx - 1) << ") {\n";
+            os << curIndent << INDENT << INDENT
+               << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), val, "
+                  "llvm::SmallVector<int64_t>({gutils->width}));\n";
+            os << curIndent << INDENT << "}\n";
+          } else {
+            os << curIndent << " " << argName << "_" << (idx - 1)
+               << " = builder.create<enzyme::BroadcastOp>(\n"
+               << curIndent << "   op.getLoc(),\n"
+               << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
+               << curIndent
+               << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
+          }
+
+          os << curIndent << "}";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)
@@ -313,7 +334,8 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     os << ";\n";
     if (names) {
       auto name = names->getAsUnquotedString();
-      nameToOrdinal.insert(name, "local_" + name, vectorValued.back(), {});
+      nameToOrdinal.insert(name, "local_" + name, vectorValued.back(), {},
+                           false);
       os << curIndent << "local_" << name << " = " << argName << "_"
          << (idx - 1) << ";\n";
     }
@@ -397,10 +419,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultRoot);
         assert(!isVec);
         assert(ext.size() == 0);
+        assert(!isva);
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -420,8 +443,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (isa<UnsetInit>(resultRoot->getArg(0)) && resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultRoot);
+        assert(!isva);
         assert(!isVec);
         assert(!ext.size());
         os << ord;
@@ -457,9 +481,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         if (isa<UnsetInit>(resultRoot->getArg(0)) &&
             resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord, isVec, ext] =
+          auto [ord, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultRoot);
           assert(!isVec);
+          assert(!isva);
           os << ord << ";\n";
         } else
           assert("Requires name for arg");
@@ -501,9 +526,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         if (isa<UnsetInit>(resultRoot->getArg(i)) &&
             resultRoot->getArgName(i)) {
           auto name = resultRoot->getArgName(i)->getAsUnquotedString();
-          auto [ord, isVec, ext] =
+          auto [ord, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultRoot);
           assert(!ext.size());
+          assert(!isva);
           vector = isVec;
           os << ord;
         } else {
@@ -575,10 +601,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           ord = "op->getResult(0)";
         } else {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord1, isVec, ext] =
+          auto [ord1, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
           assert(!ext.size());
+          assert(!isva);
           ord = ord1;
         }
         os << ord << ".getType(), ";
@@ -596,9 +623,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "ConstantFP::get(";
         if (resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord, isVec, ext] =
+          auto [ord, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
+          assert(!isva);
           if (ext.size())
             os << "gutils->extractMeta(";
           os << ord << "->getType()";
@@ -625,9 +653,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       std::vector<int> exto;
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+        assert(!isva);
         exto = std::move(ext);
         if (exto.size())
           os << "gutils->extractMeta(";
@@ -666,10 +695,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << curIndent << INDENT << "auto ty = ";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         assert(!ext.size());
+        assert(!isva);
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -725,10 +755,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
         if (resultRoot->getArgName(0)) {
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-          auto [ord, isVec, ext] =
+          auto [ord, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultTree);
           assert(!isVec);
           assert(!ext.size());
+          assert(!isva);
           os << ord;
         } else
           PrintFatalError(pattern->getLoc(),
@@ -767,10 +798,11 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << "UndefValue::get(";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
         assert(!ext.size());
+        assert(!isva);
         os << ord;
       } else
         PrintFatalError(pattern->getLoc(),
@@ -788,9 +820,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] =
+        auto [ord, isVec, ext, isva] =
             nameToOrdinal.lookup(name, pattern, resultTree);
         assert(!isVec);
+        assert(!isva);
 
         if (ext.size())
           os << "gutils->extractMeta(" << builder << ",";
@@ -991,7 +1024,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                   op = ("local_" + ptree->getArgNameStr(i)).str();
                 }
                 nnameToOrdinal.insert(ptree->getArgNameStr(i), op,
-                                      vectorValued[next[0]], {});
+                                      vectorValued[next[0]], {}, false);
               }
               i++;
             }
@@ -1343,8 +1376,10 @@ void handleUse(
     if (numArgs == 3) {
       if (isa<UnsetInit>(resultTree->getArg(0)) && resultTree->getArgName(0)) {
         auto name = resultTree->getArgName(0)->getAsUnquotedString();
-        auto [ord, isVec, ext] = nameToOrdinal.lookup(name, nullptr, nullptr);
+        auto [ord, isVec, ext, isva] =
+            nameToOrdinal.lookup(name, nullptr, nullptr);
         assert(!isVec);
+        assert(!isva);
         conditionStr = ReplaceAll(conditionStr, "imVal", ord);
       } else
         assert("Requires name for arg");
@@ -1400,11 +1435,7 @@ static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
               auto Def = cast<DefInit>(dg->getOperator())->getDef();
               if (opName == "Variadic" || Def->isSubClassOf("Variadic")) {
                 auto expr = Def->getValueAsString("getter");
-                std::string op;
-                if (intrinsic != MLIRDerivatives)
-                  op = (origName + "." + expr + "()").str();
-                else
-                  op = (origName + "->" + expr + "()").str();
+                std::string op = (origName + "." + expr + "()").str();
                 std::vector<int> extractions;
                 if (prev.size() > 0) {
                   for (unsigned i = 1; i < next.size(); i++) {
@@ -1412,7 +1443,7 @@ static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
                   }
                 }
                 nameToOrdinal.insert(ptree->getArgNameStr(i), op, false,
-                                     extractions);
+                                     extractions, true);
                 continue;
               }
             }
@@ -1432,7 +1463,7 @@ static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
               }
             }
             nameToOrdinal.insert(ptree->getArgNameStr(i), op, false,
-                                 extractions);
+                                 extractions, false);
           }
           i++;
         }
@@ -1442,7 +1473,8 @@ static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
 
   if (tree->getNameStr().size())
     nameToOrdinal.insert(tree->getNameStr(),
-                         (Twine("(&") + origName + ")").str(), false, {});
+                         (Twine("(&") + origName + ")").str(), false, {},
+                         false);
   return nameToOrdinal;
 }
 
@@ -1604,12 +1636,15 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
           next.push_back(treeEn.index());
           if (auto dg = dyn_cast<DagInit>(tree)) {
             if (name.size()) {
-              auto opName = dg->getOperator()->getAsString();
+              auto VopName = dg->getOperator()->getAsString();
               auto Def = cast<DefInit>(dg->getOperator())->getDef();
-              if (opName == "Variadic" || Def->isSubClassOf("Variadic")) {
+              if (VopName == "Variadic" || Def->isSubClassOf("Variadic")) {
                 auto expr = Def->getValueAsString("getter");
                 varNameToCondition[name] = std::make_tuple(
-                    ("llvm::is_contained(op->getOperand(idx), op." + expr + "())").str(), "", false);
+                    ("llvm::is_contained(cast<" + dialect + "::" + opName +
+                     ">(op)." + expr + "(), op->getOperand(idx))")
+                        .str(),
+                    "", false);
                 continue;
               }
             }

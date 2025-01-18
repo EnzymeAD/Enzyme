@@ -81,7 +81,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented,
+    std::vector<bool> volatile_args, void *augmented, bool omp,
     llvm::StringRef postpasses) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -95,7 +95,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       fn, RetActivity, ArgActivity,
       // std::map<Argument *, bool>(_uncacheable_args.begin(),
       //                           _uncacheable_args.end()),
-      returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args};
+      returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args,
+      omp};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;

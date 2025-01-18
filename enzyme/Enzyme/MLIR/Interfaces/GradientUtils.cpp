@@ -58,6 +58,15 @@ mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
   return originalToNewFn.lookupOrNull(originst);
 }
 
+SmallVector<mlir::Value, 1>
+mlir::enzyme::MGradientUtils::getNewFromOriginal(ValueRange originst) const {
+  SmallVector<mlir::Value, 1> results;
+  for (auto op : originst) {
+    results.push_back(getNewFromOriginal(op));
+  }
+  return results;
+}
+
 Block *
 mlir::enzyme::MGradientUtils::getNewFromOriginal(mlir::Block *originst) const {
   if (!originalToNewFn.contains(originst)) {
