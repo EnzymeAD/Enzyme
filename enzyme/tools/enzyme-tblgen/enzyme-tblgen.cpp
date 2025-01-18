@@ -1636,7 +1636,7 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
           next.push_back(treeEn.index());
           if (auto dg = dyn_cast<DagInit>(tree)) {
             if (name.size()) {
-              auto VopName = dg->getOperator()->getAsString();
+\              auto VopName = dg->getOperator()->getAsString();
               auto Def = cast<DefInit>(dg->getOperator())->getDef();
               if (VopName == "Variadic" || Def->isSubClassOf("Variadic")) {
                 auto expr = Def->getValueAsString("getter");
