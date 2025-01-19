@@ -41,12 +41,12 @@ static mlir::Type batchType(mlir::Type type, int64_t width) {
   return RankedTensorType::get({width}, type);
 }
 
-class FloatTypeInterface
-    : public AutoDiffTypeInterface::ExternalModel<FloatTypeInterface,
-                                                  FloatType> {
+template <typename ConcreteType>
+class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
+                               FloatTypeInterface<ConcreteType>, ConcreteType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    auto fltType = self.cast<FloatType>();
+    auto fltType = self.cast<ConcreteType>();
     return builder.create<arith::ConstantFloatOp>(
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
@@ -200,10 +200,10 @@ public:
 void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, BuiltinDialect *) {
-    BFloat16Type::attachInterface<FloatTypeInterface>(*context);
-    Float16Type::attachInterface<FloatTypeInterface>(*context);
-    Float32Type::attachInterface<FloatTypeInterface>(*context);
-    Float64Type::attachInterface<FloatTypeInterface>(*context);
+    BFloat16Type::attachInterface<FloatTypeInterface<BFloat16Type>>(*context);
+    Float16Type::attachInterface<FloatTypeInterface<Float16Type>>(*context);
+    Float32Type::attachInterface<FloatTypeInterface<Float32Type>>(*context);
+    Float64Type::attachInterface<FloatTypeInterface<Float64Type>>(*context);
     IntegerType::attachInterface<IntegerTypeInterface<IntegerType>>(*context);
     IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
     UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);
