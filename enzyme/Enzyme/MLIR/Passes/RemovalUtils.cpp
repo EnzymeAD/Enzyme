@@ -49,14 +49,14 @@ mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other,
 mlir::LogicalResult
 mlir::enzyme::removeOpsWithinBlock(mlir::Block *block,
                                    mlir::PatternRewriter &rewriter) {
-  bool valid = true;
+  bool matched = false;
 
   for (auto &it : *block) {
     mlir::Operation *op = &it;
     if (auto iface = dyn_cast<mlir::enzyme::EnzymeOpsRemoverOpInterface>(op)) {
-      valid &= iface.removeEnzymeOps(rewriter).succeeded();
+      matched |= iface.removeEnzymeOps(rewriter).succeeded();
     }
   }
 
-  return success(valid);
+  return success(matched);
 }

@@ -29,6 +29,7 @@
 
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cmath>
 
 using namespace mlir;
 using namespace enzyme;
@@ -307,7 +308,8 @@ static void applyPatterns(Operation *op) {
                   InitSimplify>(op->getContext());
 
   GreedyRewriteConfig config;
-  (void)applyPatternsAndFoldGreedily(op, std::move(patterns), config);
+  config.fold = true;
+  (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
 
 struct RemoveUnusedEnzymeOpsPass
@@ -324,8 +326,11 @@ struct RemoveUnusedEnzymeOpsPass
     // of the interface will erase operations which are not only nested in the
     // currently matched operation (for example, the for op where the pops are
     // located). As such, we use the greedy driver with the option to run only
-    // on the pre-existing operations. This prevents the driver from running
-    // indefinitely.
+    // on the pre-existing and new operations. This prevents the driver from
+    // running indefinitely.
+    //
+    // TODO: improve this driver for the case where the newly created ops need
+    // ....  to be applied the pattern as well.
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
     (void)applyPatternsGreedily(op, std::move(patterns), config);
