@@ -290,6 +290,17 @@ struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
   }
 };
 
+struct EnzymeOpsRemoverOpPattern
+    : public OpInterfaceRewritePattern<enzyme::EnzymeOpsRemoverOpInterface> {
+  using OpInterfaceRewritePattern<
+      enzyme::EnzymeOpsRemoverOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::EnzymeOpsRemoverOpInterface iface,
+                                PatternRewriter &rewriter) const final {
+    return iface.removeEnzymeOps(rewriter);
+  }
+};
+
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
@@ -306,17 +317,18 @@ struct RemoveUnusedEnzymeOpsPass
 
     applyPatterns(op);
 
-    bool failed = false;
-    op->walk([&](FunctionOpInterface func) {
-      func->walk([&](enzyme::EnzymeOpsRemoverOpInterface iface) {
-        auto result = iface.removeEnzymeOps();
-        if (!result.succeeded())
-          failed = true;
-      });
-    });
+    RewritePatternSet patterns(op->getContext());
+    patterns.insert<EnzymeOpsRemoverOpPattern>(op->getContext());
 
-    if (failed)
-      return signalPassFailure();
+    // Unfortunately, we cannot use the tree walk driver since implementations
+    // of the interface will erase operations which are not only nested in the
+    // currently matched operation (for example, the for op where the pops are
+    // located). As such, we use the greedy driver with the option to run only
+    // on the pre-existing operations. This prevents the driver from running
+    // indefinitely.
+    GreedyRewriteConfig config;
+    config.strictMode = GreedyRewriteStrictness::ExistingOps;
+    (void)applyPatternsGreedily(op, std::move(patterns), config);
 
     applyPatterns(op);
   }

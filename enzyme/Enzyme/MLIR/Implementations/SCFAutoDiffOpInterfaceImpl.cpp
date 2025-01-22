@@ -25,7 +25,6 @@
 #include "mlir/IR/Types.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <functional>
 
@@ -67,11 +66,12 @@ struct ForOpEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<ForOpEnzymeOpsRemover,
                                                         scf::ForOp> {
 
-  LogicalResult removeEnzymeOps(Operation *op) const {
+  LogicalResult removeEnzymeOps(Operation *op,
+                                PatternRewriter &rewriter) const {
     auto forOp = cast<scf::ForOp>(op);
     scf::ForOp otherForOp; // where caches pops are
 
-    if (removeOpsWithinBlock(forOp.getBody()).failed())
+    if (removeOpsWithinBlock(forOp.getBody(), rewriter).failed())
       return failure();
 
     // Gradients whose values need to be passed as iteration variables.
@@ -92,7 +92,7 @@ struct ForOpEnzymeOpsRemover
 
         Value pushedValue = info.pushedValue();
         if (cachesMap.contains(pushedValue)) {
-          info = info.merge(cachesMap.lookup(pushedValue));
+          info = info.merge(cachesMap.lookup(pushedValue), rewriter);
         }
         cachesMap[pushedValue] = info;
 
@@ -108,9 +108,9 @@ struct ForOpEnzymeOpsRemover
 
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
-      return success();
+      return failure();
 
-    OpBuilder builder(forOp);
+    OpBuilder &builder = rewriter;
     for (auto &it : *body) {
       Operation *op = &it;
 
@@ -123,8 +123,8 @@ struct ForOpEnzymeOpsRemover
           cast<enzyme::GradientType>(getOp.getResult().getType()).getBasetype(),
           getOp.getGradient());
 
-      getOp.getResult().replaceAllUsesWith(outerGet.getResult());
-      getOp->erase();
+      rewriter.replaceAllUsesWith(getOp.getResult(), outerGet.getResult());
+      rewriter.eraseOp(getOp);
     }
 
     auto term = body->getTerminator();
@@ -159,15 +159,15 @@ struct ForOpEnzymeOpsRemover
       inductionVariable = body->getArgument(0);
     }
 
-    for (auto info : caches) {
+    for (auto &info : caches) {
       Value cache = info.initOp.getResult();
 
       // push does not depend on a value inside the loop, we can hoist the
       // push/pop before the for loops.
-      if (info.pushedValue().getParentRegion() != forOp->getRegion(0)) {
+      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
         auto newPush = builder.create<enzyme::PushOp>(cache.getLoc(), cache,
                                                       info.pushedValue());
-        info.pushOp->erase();
+        rewriter.eraseOp(info.pushOp);
         info.pushOp = newPush;
 
         {
@@ -177,8 +177,8 @@ struct ForOpEnzymeOpsRemover
           auto popVal = info.popOp.getResult();
           auto newPop = builder.create<enzyme::PopOp>(cache.getLoc(),
                                                       popVal.getType(), cache);
-          popVal.replaceAllUsesWith(newPop.getResult());
-          info.popOp->erase();
+          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+          rewriter.eraseOp(info.popOp);
           info.popOp = newPop;
         }
 
@@ -273,6 +273,15 @@ struct ForOpEnzymeOpsRemover
 
     newFor.getRegion().takeBody(forOp.getRegion());
 
+    for (auto &&[res, newRes] :
+         llvm::zip(forOp->getResults(), newFor->getResults())) {
+      rewriter.replaceAllUsesWith(res, newRes);
+    }
+
+    rewriter.eraseOp(forOp);
+    forOp = newFor;
+    builder.setInsertionPointAfter(forOp);
+
     unsigned resultIdx = numInitArgs;
     for (auto grad : updatedGradients) {
       // set the updated gradient after the new for op.
@@ -282,7 +291,7 @@ struct ForOpEnzymeOpsRemover
       ++resultIdx;
     }
 
-    if (inductionVariable && caches.size()) {
+    if (inductionVariable && !caches.empty()) {
       if (isa<BlockArgument>(inductionVariable) &&
           cast<BlockArgument>(inductionVariable).getArgNumber() != 0)
         resultIdx++;
@@ -323,16 +332,16 @@ struct ForOpEnzymeOpsRemover
 
       for (auto &&[res, newRes] :
            llvm::zip(otherForOp->getResults(), newOtherForOp->getResults())) {
-        res.replaceAllUsesWith(newRes);
+        rewriter.replaceAllUsesWith(res, newRes);
       }
       newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
 
-      otherForOp->erase();
+      rewriter.eraseOp(otherForOp);
       otherForOp = newOtherForOp;
     }
 
-    for (auto info : caches) {
-      if (info.pushedValue().getParentRegion() != newFor->getRegion(0))
+    for (auto &info : caches) {
+      if (info.pushedValue().getParentRegion() != newFor.getRegion())
         continue;
 
       Value cache = info.initOp.getResult();
@@ -353,7 +362,7 @@ struct ForOpEnzymeOpsRemover
         builder.setInsertionPointAfter(newFor);
         auto newPush = builder.create<enzyme::PushOp>(
             cache.getLoc(), newInit.getResult(), newFor->getResult(resultIdx));
-        info.pushOp->erase();
+        rewriter.eraseOp(info.pushOp);
         newPush;
       });
 
@@ -403,12 +412,10 @@ struct ForOpEnzymeOpsRemover
                   .getResult();
         }
 
-        info.popOp.getResult().replaceAllUsesWith(popValue);
-        info.popOp->erase();
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
+        rewriter.eraseOp(info.popOp);
       }
     }
-
-    forOp->erase();
 
     return success();
   }
