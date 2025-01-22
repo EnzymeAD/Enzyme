@@ -75,7 +75,7 @@ struct ForOpEnzymeOpsRemover
       return failure();
 
     // Gradients whose values need to be passed as iteration variables.
-    llvm::SmallDenseSet<Value> updatedGradients;
+    llvm::SetVector<Value> updatedGradients;
 
     llvm::MapVector<Value, CacheInfo> cachesMap;
 

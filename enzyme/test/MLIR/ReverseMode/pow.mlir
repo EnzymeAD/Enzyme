@@ -32,12 +32,12 @@ module {
 // CHECK-NEXT:      %[[fwd:.+]] = arith.mulf %[[r_it]], %[[x]] : f64
 // CHECK-NEXT:      scf.yield %[[fwd]], %[[cache_new]] : f64, tensor<10xf64>
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %{{.+}} = scf.for %[[div:.+]] = %c0 to %c10 step %c1 iter_args(%[[dr_it:.+]] = %[[dr]], %[[rev_idx:.+]] = %c9, %[[dx0:.+]] = %[[zero]]) -> (f64, index, f64) {
+// CHECK-NEXT:    %{{.+}} = scf.for %[[div:.+]] = %c0 to %c10 step %c1 iter_args(%[[dr_it:.+]] = %[[dr]], %[[dx0:.+]] = %[[zero]], %[[rev_idx:.+]] = %c9) -> (f64, f64, index) {
 // CHECK-NEXT:      %[[r_cached:.+]] = tensor.extract %1#1[%[[rev_idx]]] : tensor<10xf64>
 // CHECK-NEXT:      %[[dr_next:.+]] = arith.mulf %[[dr_it]], %[[x]] : f64
 // CHECK-NEXT:      %[[dx_next:.+]] = arith.mulf %[[dr_it]], %[[r_cached]] : f64
 // CHECK-NEXT:      %[[dx1:.+]] = arith.addf %[[dx0]], %[[dx_next]]
 // CHECK-NEXT:      %[[new_rev_idx:.+]] = arith.subi %[[rev_idx]], %c1 : index
-// CHECK-NEXT:      scf.yield %[[dr_next]], %[[new_rev_idx]], %[[dx1]] : f64, index, f64
+// CHECK-NEXT:      scf.yield %[[dr_next]], %[[dx1]], %[[new_rev_idx]] : f64, f64, index
 // CHECK-NEXT:    }
-// CHECK-NEXT:    return %2#2 : f64
+// CHECK-NEXT:    return %2#1 : f64
