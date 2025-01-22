@@ -193,6 +193,9 @@ def EnzymeOpsRemoverOpInterface : OpInterface<"EnzymeOpsRemoverOpInterface"> {
 
       Modifications to IR must be notified through the provided
       PatternRewriter.
+
+      If no modifications are made, return failure.
+      If operations were successfully removed, return success.
     }],
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"removeEnzymeOps",
