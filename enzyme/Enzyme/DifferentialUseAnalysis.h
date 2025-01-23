@@ -124,7 +124,7 @@ inline bool is_value_needed_in_reverse(
       }
     }
 #ifdef ENZYME_ENABLE_FPOPT
-    if ((getLogFunction(gutils->oldFunc->getParent(), "enzymeLogValue") ||
+    if ((hasFPOptLogger(gutils->oldFunc->getParent()) ||
          gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (EnzymePrintDiffUse)
