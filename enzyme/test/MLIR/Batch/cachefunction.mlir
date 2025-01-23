@@ -1,3 +1,5 @@
+// RUN: %eopt -enzyme-batch %s | FileCheck %s
+
 module {
   func.func private @f(%arg0: tensor<16xf32>, %arg1: tensor<16xf32>) -> tensor<16xf32> {
     return %arg0 : tensor<16xf32>
