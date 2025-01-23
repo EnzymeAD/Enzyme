@@ -649,6 +649,7 @@ cc_binary(
         "@llvm-project//mlir:OpenMPDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
     ],
 )
