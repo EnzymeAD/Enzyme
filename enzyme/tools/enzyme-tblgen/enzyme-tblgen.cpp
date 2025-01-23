@@ -2054,7 +2054,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic != MLIRDerivatives) {
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "    if (auto *logFunc = getLogFunction(" << origName
+      os << "    if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogValue\")) {\n"
          << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
          << "      getForwardBuilder(BuilderZ);\n"
@@ -2402,7 +2402,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       // Insert logging function call (optional)
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "        if (auto *logFunc = getLogFunction(" << origName
+      os << "        if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogError\")) {\n"
          << "          std::string idStr = getLogIdentifier(" << origName
          << ");\n"
@@ -2438,7 +2438,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic != MLIRDerivatives) {
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "        if (auto *logFunc = getLogFunction(" << origName
+      os << "        if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogGrad\")) {\n"
          << "          std::string idStr = getLogIdentifier(" << origName
          << ");\n"

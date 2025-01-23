@@ -3660,7 +3660,7 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
   return absres;
 }
 
-llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName) {
+llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName) {
   if (demangledName != "enzymeLogError" && demangledName != "enzymeLogGrad" &&
       demangledName != "enzymeLogValue") {
     llvm_unreachable("Unknown log function");
@@ -3671,6 +3671,12 @@ llvm::Function *getLogFunction(llvm::Module *M, llvm::StringRef demangledName) {
     }
   }
   return nullptr; // Return nullptr if no matching function is found
+}
+
+bool hasFPOptLogger(llvm::Module *M) {
+  return getFPOptLogger(M, "enzymeLogError") ||
+         getFPOptLogger(M, "enzymeLogGrad") ||
+         getFPOptLogger(M, "enzymeLogValue");
 }
 
 std::string getLogIdentifier(llvm::Instruction &I) {

@@ -1423,9 +1423,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         Returns, "", nullptr);
   }
 #ifdef ENZYME_ENABLE_FPOPT
-  if (getLogFunction(F->getParent(), "enzymeLogError") ||
-      getLogFunction(F->getParent(), "enzymeLogValue") ||
-      getLogFunction(F->getParent(), "enzymeLogGrad")) {
+  if (hasFPOptLogger(F->getParent())) {
     for (const auto &pair : VMap) {
       if (auto *before = dyn_cast<Instruction>(pair.first)) {
         if (!before->getType()->isFloatingPointTy()) {
