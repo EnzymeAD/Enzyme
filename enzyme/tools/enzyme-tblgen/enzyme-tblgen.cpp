@@ -2052,8 +2052,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     else
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
-#ifdef ENZYME_ENABLE_FPOPT
     if (intrinsic != MLIRDerivatives) {
+      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "    if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogValue\")) {\n"
          << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
@@ -2102,8 +2102,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "      logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
          << "    }\n";
+      os << "#endif\n";
     }
-#endif
 
     if (intrinsic == MLIRDerivatives) {
       os << "    if (gutils->isConstantInstruction(op))\n";
@@ -2400,8 +2400,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       os << "        assert(res);\n";
 
-#ifdef ENZYME_ENABLE_FPOPT
       // Insert logging function call (optional)
+      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogError\")) {\n"
          << "          std::string idStr = getLogIdentifier(" << origName
@@ -2416,7 +2416,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
          << "        }\n";
-#endif
+      os << "#endif\n";
 
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";
@@ -2437,7 +2437,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
-#ifdef ENZYME_ENABLE_FPOPT
+      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (auto *logFunc = getLogFunction(" << origName
          << ".getModule(), \"enzymeLogGrad\")) {\n"
          << "          std::string idStr = getLogIdentifier(" << origName
@@ -2452,7 +2452,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
          << "        }\n";
-#endif
+      os << "#endif\n";
 
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";

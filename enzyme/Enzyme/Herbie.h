@@ -15,6 +15,7 @@ class FunctionPass;
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeEnableFPOpt;
 extern llvm::cl::opt<bool> EnzymePrintFPOpt;
+extern llvm::cl::opt<bool> FPOptPrintPreproc;
 }
 
 llvm::FunctionPass *createFPOptPass();

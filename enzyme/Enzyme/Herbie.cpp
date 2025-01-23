@@ -79,6 +79,9 @@ static cl::opt<bool>
 static cl::opt<std::string>
     FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
                  cl::desc("Which log to use in the FPOpt pass"));
+cl::opt<bool> FPOptPrintPreproc(
+    "fpopt-print-preproc", cl::init(false), cl::Hidden,
+    cl::desc("Enable Enzyme to print FPOpt preprocesing info"));
 static cl::opt<std::string>
     FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
                        cl::desc("Use a custom cost model in the FPOpt pass"));
