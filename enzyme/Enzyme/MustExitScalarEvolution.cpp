@@ -340,8 +340,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     const Loop *L, ICmpInst *ExitCond, bool ExitIfTrue, bool ControlsExit,
     bool AllowPredicates) {
   // If the condition was exit on true, convert the condition to exit on false
-  auto Pred = (!ExitIfTrue) ? ExitCond->getPredicate()
-                            : ExitCond->getInversePredicate();
+#if LLVM_VERSION_MAJOR >= 20
+  llvm::CmpPredicate Pred = ExitCond->getPredicate();
+#else
+  auto Pred = ExitCond->getPredicate();
+#endif
+  if (ExitIfTrue)
+    Pred = ExitCond->getInversePredicate();
   const auto OriginalPred = Pred;
 
 #if LLVM_VERSION_MAJOR < 14
