@@ -631,6 +631,7 @@ cc_binary(
     deps = [
         ":EnzymeMLIR",
         "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
