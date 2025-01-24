@@ -3079,7 +3079,7 @@ bool improveViaHerbie(
   std::string Program = HERBIE_BINARY;
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
 
-  SmallVector<llvm::StringRef> BaseArgs = {
+  SmallVector<std::string> BaseArgs = {
       Program,        "report",
       "--seed",       std::to_string(FPOptRandomSeed),
       "--timeout",    std::to_string(HerbieTimeout),
@@ -3125,13 +3125,13 @@ bool improveViaHerbie(
     BaseArgs.push_back("reduce:avg-error");
   }
 
-  SmallVector<SmallVector<llvm::StringRef>> BaseArgsList;
+  SmallVector<SmallVector<std::string>> BaseArgsList;
 
   if (!HerbieDisableTaylor) {
-    SmallVector<llvm::StringRef> Args1 = BaseArgs;
+    SmallVector<std::string> Args1 = BaseArgs;
     BaseArgsList.push_back(Args1);
 
-    SmallVector<llvm::StringRef> Args2 = BaseArgs;
+    SmallVector<std::string> Args2 = BaseArgs;
     Args2.push_back("--disable");
     Args2.push_back("generate:taylor");
     BaseArgsList.push_back(Args2);
@@ -3279,7 +3279,12 @@ bool improveViaHerbie(
     }
     input.close();
 
-    SmallVector<llvm::StringRef> Args = BaseArgs;
+    SmallVector<StringRef> Args;
+    Args.reserve(BaseArgs.size());
+    for (const auto &arg : BaseArgs) {
+      Args.emplace_back(arg);
+    }
+
     Args.push_back(tmpin);
     Args.push_back(tmpout);
 
@@ -4169,8 +4174,8 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   if (!FPOptLogPath.empty()) {
     if (!isLogged(FPOptLogPath, functionName)) {
       if (EnzymePrintFPOpt)
-        llvm::errs() << "Skipping matched function: " << functionName
-                     << " since this function is not found in the log\n";
+        llvm::errs() << "Skipping matched function: " << demangledName
+                     << " (demangled) since this function is not found in the log\n";
       return false;
     }
   }
