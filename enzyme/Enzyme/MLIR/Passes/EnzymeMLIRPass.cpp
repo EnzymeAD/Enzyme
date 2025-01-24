@@ -152,6 +152,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
     bool freeMemory = true;
+    bool omp = false;
     size_t width = CI.getWidth();
 
     std::vector<bool> volatile_args;
@@ -163,7 +164,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr, postpasses);
+        /*augmented*/ nullptr, omp, postpasses);
     if (!newFunc)
       return failure();
 
@@ -229,7 +230,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
-
+    bool omp = false;
     auto mode = DerivativeMode::ReverseModeCombined;
     std::vector<DIFFE_TYPE> retType;
     std::vector<bool> returnPrimals;
@@ -289,7 +290,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
                                 returnShadows, mode, freeMemory, width,
                                 /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr, postpasses);
+                                /*augmented*/ nullptr, omp, postpasses);
     if (!newFunc)
       return failure();
 

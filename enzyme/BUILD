@@ -616,6 +616,7 @@ cc_library(
         "@llvm-project//mlir:ShapeDialect",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",
@@ -630,6 +631,7 @@ cc_binary(
     deps = [
         ":EnzymeMLIR",
         "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:AllPassesAndDialects",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:AsyncDialect",
@@ -649,6 +651,7 @@ cc_binary(
         "@llvm-project//mlir:OpenMPDialect",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:Transforms",
     ],
 )
