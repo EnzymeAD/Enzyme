@@ -292,7 +292,9 @@ public:
 
     SmallVector<Value *, 2> operandValues;
     for (auto operand : operands) {
-      operandValues.push_back(operand->getLLValue(builder, VMap));
+      auto *val = operand->getLLValue(builder, VMap);
+      assert(val);
+      operandValues.push_back(val);
     }
 
     Value *val = nullptr;
