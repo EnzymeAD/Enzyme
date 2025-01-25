@@ -1921,30 +1921,42 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
   // Arguments
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
-    return valueToNodeMap[symbolToValueMap[trimmedExpr]];
+    // llvm::errs() << "Trying to lookup " << trimmedExpr << " as an argument!\n";
+    if (auto node = valueToNodeMap[symbolToValueMap[trimmedExpr]]) {
+      return node;
+    }
   }
 
   // Constants
-  std::regex constantPattern(
+  static const std::regex constantPattern(
       "^#s\\(literal\\s+([-+]?\\d+(/\\d+)?|[-+]?inf\\.0)\\s+(\\w+)\\)$");
+  static const std::regex plainConstantPattern(
+      R"(^([-+]?(\d+(\.\d+)?)(/\d+)?|[-+]?inf\.0))");
 
-  std::smatch matches;
-  if (std::regex_match(trimmedExpr, matches, constantPattern)) {
-    std::string value = matches[1].str();
-    std::string dtype = matches[3].str();
-    if (dtype == "binary64") {
-      dtype = "f64";
-    } else if (dtype == "binary32") {
-      dtype = "f32";
-    } else {
-      std::string msg =
-          "Herbie expr parser: Unexpected constant dtype: " + dtype;
-      llvm_unreachable(msg.c_str());
+  {
+    std::smatch matches;
+    if (std::regex_match(trimmedExpr, matches, constantPattern)) {
+      std::string value = matches[1].str();
+      std::string dtype = matches[5].str();
+      if (dtype == "binary64") {
+        dtype = "f64";
+      } else if (dtype == "binary32") {
+        dtype = "f32";
+      } else {
+        std::string msg =
+            "Herbie expr parser: Unexpected constant dtype: " + dtype;
+        llvm_unreachable(msg.c_str());
+      }
+      // if (EnzymePrintFPOpt)
+      //   llvm::errs() << "Herbie expr parser: Found __const " << value
+      //                << " with dtype " << dtype << "\n";
+      return std::make_shared<FPConst>(value, dtype);
+
+    } else if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
+      std::string value = matches[1].str();
+      std::string dtype = "f64"; // Assume f64 by default
+      return std::make_shared<FPConst>(value, dtype);
     }
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Herbie expr parser: Found __const " << value
-    //                << " with dtype " << dtype << "\n";
-    return std::make_shared<FPConst>(value, dtype);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
