@@ -189,13 +189,10 @@ def EnzymeOpsRemoverOpInterface : OpInterface<"EnzymeOpsRemoverOpInterface"> {
   let methods = [
     InterfaceMethod<
     /*desc=*/[{
-      Pushes the inner enzyme operations outside of self.
+      Pushes the nested enzyme operations outside of self.
 
       Modifications to IR must be notified through the provided
       PatternRewriter.
-
-      If no modifications are made, return failure.
-      If operations were successfully removed, return success.
     }],
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"removeEnzymeOps",
