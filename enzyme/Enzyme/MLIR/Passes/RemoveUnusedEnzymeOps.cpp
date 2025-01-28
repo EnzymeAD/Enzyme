@@ -296,7 +296,163 @@ static void applyPatterns(Operation *op) {
                   InitSimplify>(op->getContext());
 
   GreedyRewriteConfig config;
-  (void)applyPatternsAndFoldGreedily(op, std::move(patterns), config);
+  config.fold = true;
+  (void)applyPatternsGreedily(op, std::move(patterns), config);
+}
+
+// A worklist that supports removing operations
+// original implementation is from
+// https://github.com/llvm/llvm-project/blob/9d8d538e40ef040cb53e8db7a32f3024865187f3/mlir/lib/Transforms/Utils/GreedyPatternRewriteDriver.cpp#L198
+class Worklist {
+public:
+  Worklist() { list.reserve(8); }
+
+  bool empty();
+  void push(Operation *op);
+  void remove(Operation *op);
+  Operation *pop();
+  void reverse();
+
+private:
+  std::vector<Operation *> list;
+  llvm::DenseMap<Operation *, unsigned> map;
+};
+
+bool Worklist::empty() {
+  // Skip all nullptr.
+  return !llvm::any_of(list,
+                       [](Operation *op) { return static_cast<bool>(op); });
+}
+
+void Worklist::push(Operation *op) {
+  assert(op && "cannot push nullptr to worklist");
+  // Check to see if the worklist already contains this op.
+  if (!map.insert({op, list.size()}).second)
+    return;
+  list.push_back(op);
+}
+
+void Worklist::reverse() {
+  std::reverse(list.begin(), list.end());
+  for (size_t i = 0, e = list.size(); i < e; ++i)
+    map[list[i]] = i;
+}
+
+Operation *Worklist::pop() {
+  // Skip and remove all trailing nullptr.
+  while (!list.back())
+    list.pop_back();
+  Operation *op = list.back();
+  list.pop_back();
+  map.erase(op);
+  // Cleanup: Remove all trailing nullptr.
+  while (!list.empty() && !list.back())
+    list.pop_back();
+  return op;
+}
+
+void Worklist::remove(Operation *op) {
+  assert(op && "cannot remove nullptr from worklist");
+  auto it = map.find(op);
+  if (it != map.end()) {
+    assert(list[it->second] == op && "malformed worklist data structure");
+    list[it->second] = nullptr;
+    map.erase(it);
+  }
+}
+
+// Drives Enzyme ops removal with the following goals:
+//  * Each EnzymeOpsRemoverOpInterface should be processed once.
+//  * Inserted ops next in the post order should still be run.
+class PostOrderWalkDriver : public RewriterBase::Listener {
+public:
+  PostOrderWalkDriver(Operation *root_) : root(root_) {}
+
+  void initializeWorklist();
+  LogicalResult processWorklist();
+
+protected:
+  void notifyOperationInserted(Operation *op,
+                               OpBuilder::InsertPoint previous) override;
+  void notifyOperationErased(Operation *op) override;
+
+private:
+  void addToWorklist(Operation *op);
+
+  Worklist worklist;
+
+  Operation *current = nullptr;
+  Operation *root;
+};
+
+void PostOrderWalkDriver::addToWorklist(Operation *op) {
+  // This driver only processes EnzymeOpsRemoverOpInterface ops.
+  if (!isa<EnzymeOpsRemoverOpInterface>(op))
+    return;
+  worklist.push(op);
+}
+
+void PostOrderWalkDriver::notifyOperationInserted(
+    Operation *op, OpBuilder::InsertPoint previous) {
+  if (!isa<EnzymeOpsRemoverOpInterface>(op))
+    return;
+
+  if (!current) {
+    addToWorklist(op);
+    return;
+  }
+
+  // Check if the inserted op would be next in the post order or not compared to
+  // the current operation.
+  bool shouldInsert = false;
+  (void)root->walk([&](EnzymeOpsRemoverOpInterface iface) {
+    if ((Operation *)iface == current) {
+      shouldInsert = true;
+      return WalkResult::interrupt();
+    }
+
+    if ((Operation *)iface == op) {
+      shouldInsert = false;
+      return WalkResult::interrupt();
+    }
+
+    return WalkResult::advance();
+  });
+
+  if (shouldInsert)
+    addToWorklist(op);
+}
+
+void PostOrderWalkDriver::notifyOperationErased(Operation *op) {
+  if (op == current) {
+    current = nullptr;
+  }
+  if (!isa<EnzymeOpsRemoverOpInterface>(op))
+    return;
+  worklist.remove(op);
+}
+
+void PostOrderWalkDriver::initializeWorklist() {
+  root->walk(
+      [this](EnzymeOpsRemoverOpInterface iface) { addToWorklist(iface); });
+  worklist.reverse();
+}
+
+LogicalResult PostOrderWalkDriver::processWorklist() {
+  PatternRewriter rewriter(root->getContext());
+  rewriter.setListener(this);
+
+  bool result = true;
+  while (!worklist.empty()) {
+    auto op = worklist.pop();
+    auto iface = cast<EnzymeOpsRemoverOpInterface>(op);
+    current = op;
+    rewriter.setInsertionPoint(current);
+    result &= iface.removeEnzymeOps(rewriter).succeeded();
+    current = nullptr;
+  }
+
+  return LogicalResult::success(result);
 }
 
 struct RemoveUnusedEnzymeOpsPass
@@ -308,15 +464,15 @@ struct RemoveUnusedEnzymeOpsPass
 
     bool failed = false;
     op->walk([&](FunctionOpInterface func) {
-      func->walk([&](enzyme::EnzymeOpsRemoverOpInterface iface) {
-        auto result = iface.removeEnzymeOps();
-        if (!result.succeeded())
-          failed = true;
-      });
+      PostOrderWalkDriver driver(func);
+      driver.initializeWorklist();
+      failed |= driver.processWorklist().failed();
     });
 
-    if (failed)
-      return signalPassFailure();
+    if (failed) {
+      signalPassFailure();
+      return;
+    }
 
     applyPatterns(op);
   }

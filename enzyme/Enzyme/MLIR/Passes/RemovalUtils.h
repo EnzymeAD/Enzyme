@@ -45,10 +45,8 @@ struct CacheInfo {
   }
 
   // Pushed values must be the same
-  CacheInfo merge(CacheInfo other);
+  CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
-
-LogicalResult removeOpsWithinBlock(Block *block);
 
 } // namespace enzyme
 } // namespace mlir

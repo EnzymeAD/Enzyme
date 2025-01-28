@@ -21,6 +21,7 @@ namespace mlir {
 class OpBuilder;
 class Operation;
 class IRMapping;
+class PatternRewriter;
 
 namespace enzyme {
 
