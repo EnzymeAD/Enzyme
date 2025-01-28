@@ -45,18 +45,3 @@ mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other,
   CacheInfo newInfo{newInitOp};
   return newInfo;
 }
-
-mlir::LogicalResult
-mlir::enzyme::removeOpsWithinBlock(mlir::Block *block,
-                                   mlir::PatternRewriter &rewriter) {
-  bool matched = false;
-
-  for (auto &it : *block) {
-    mlir::Operation *op = &it;
-    if (auto iface = dyn_cast<mlir::enzyme::EnzymeOpsRemoverOpInterface>(op)) {
-      matched |= iface.removeEnzymeOps(rewriter).succeeded();
-    }
-  }
-
-  return success(matched);
-}

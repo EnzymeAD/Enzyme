@@ -71,8 +71,6 @@ struct ForOpEnzymeOpsRemover
     auto forOp = cast<scf::ForOp>(op);
     scf::ForOp otherForOp; // where caches pops are
 
-    (void)removeOpsWithinBlock(forOp.getBody(), rewriter);
-
     // Gradients whose values need to be passed as iteration variables.
     llvm::SetVector<Value> updatedGradients;
 

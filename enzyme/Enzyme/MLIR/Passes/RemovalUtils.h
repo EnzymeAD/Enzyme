@@ -48,7 +48,5 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
-LogicalResult removeOpsWithinBlock(Block *block, PatternRewriter &rewriter);
-
 } // namespace enzyme
 } // namespace mlir
