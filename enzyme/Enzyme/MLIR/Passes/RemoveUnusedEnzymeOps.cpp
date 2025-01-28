@@ -312,6 +312,8 @@ static void applyPatterns(Operation *op) {
 }
 
 // A worklist that supports removing operations
+// original implementation is from
+// https://github.com/llvm/llvm-project/blob/9d8d538e40ef040cb53e8db7a32f3024865187f3/mlir/lib/Transforms/Utils/GreedyPatternRewriteDriver.cpp#L198
 class Worklist {
 public:
   Worklist() { list.reserve(8); }
