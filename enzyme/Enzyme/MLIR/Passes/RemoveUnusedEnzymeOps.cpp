@@ -428,7 +428,6 @@ void PostOrderWalkDriver::notifyOperationInserted(
 
 void PostOrderWalkDriver::notifyOperationErased(Operation *op) {
   if (op == current) {
-    llvm::outs() << "removing current\n";
     current = nullptr;
   }
   if (!isa<EnzymeOpsRemoverOpInterface>(op))
