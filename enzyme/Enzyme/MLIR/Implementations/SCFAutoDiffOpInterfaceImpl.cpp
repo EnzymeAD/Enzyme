@@ -105,7 +105,7 @@ struct ForOpEnzymeOpsRemover
 
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
-      return failure();
+      return success();
 
     for (auto &it : *body) {
       Operation *op = &it;

@@ -462,12 +462,17 @@ struct RemoveUnusedEnzymeOpsPass
 
     applyPatterns(op);
 
-    // TODO: we should use the result here.
+    bool failed = false;
     op->walk([&](FunctionOpInterface func) {
       PostOrderWalkDriver driver(func);
       driver.initializeWorklist();
-      (void)driver.processWorklist();
+      failed |= driver.processWorklist().failed();
     });
+
+    if (failed) {
+      signalPassFailure();
+      return;
+    }
 
     applyPatterns(op);
   }
