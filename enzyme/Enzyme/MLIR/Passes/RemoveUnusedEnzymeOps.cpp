@@ -328,17 +328,17 @@ private:
 };
 
 bool Worklist::empty() {
-  for (auto op : list) {
-    if (op)
-      return false;
-  }
-  return true;
+  // Skip all nullptr.
+  return !llvm::any_of(list,
+                       [](Operation *op) { return static_cast<bool>(op); });
 }
 
 void Worklist::push(Operation *op) {
-  unsigned idx = list.size();
+  assert(op && "cannot push nullptr to worklist");
+  // Check to see if the worklist already contains this op.
+  if (!map.insert({op, list.size()}).second)
+    return;
   list.push_back(op);
-  map[op] = idx;
 }
 
 void Worklist::reverse() {
@@ -348,20 +348,26 @@ void Worklist::reverse() {
 }
 
 Operation *Worklist::pop() {
-  Operation *op = nullptr;
-  while (!op) {
-    op = list.back();
+  // Skip and remove all trailing nullptr.
+  while (!list.back())
     list.pop_back();
-  }
-  assert(op);
+  Operation *op = list.back();
+  list.pop_back();
   map.erase(op);
+  // Cleanup: Remove all trailing nullptr.
+  while (!list.empty() && !list.back())
+    list.pop_back();
   return op;
 }
 
 void Worklist::remove(Operation *op) {
-  auto idx = map[op];
-  list[idx] = nullptr;
-  map.erase(op);
+  assert(op && "cannot remove nullptr from worklist");
+  auto it = map.find(op);
+  if (it != map.end()) {
+    assert(list[it->second] == op && "malformed worklist data structure");
+    list[it->second] = nullptr;
+    map.erase(it);
+  }
 }
 
 // Drives Enzyme ops removal with the following goals:
