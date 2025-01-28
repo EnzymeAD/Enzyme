@@ -290,17 +290,6 @@ struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
   }
 };
 
-struct EnzymeOpsRemoverOpPattern
-    : public OpInterfaceRewritePattern<enzyme::EnzymeOpsRemoverOpInterface> {
-  using OpInterfaceRewritePattern<
-      enzyme::EnzymeOpsRemoverOpInterface>::OpInterfaceRewritePattern;
-
-  LogicalResult matchAndRewrite(enzyme::EnzymeOpsRemoverOpInterface iface,
-                                PatternRewriter &rewriter) const final {
-    return iface.removeEnzymeOps(rewriter);
-  }
-};
-
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
