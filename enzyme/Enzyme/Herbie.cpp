@@ -677,43 +677,6 @@ void topoSort(const SetVector<Instruction *> &insts,
   llvm::reverse(instsSorted);
 }
 
-bool herbiable(const Value &Val) {
-  const Instruction *I = dyn_cast<Instruction>(&Val);
-  if (!I)
-    return false;
-
-  switch (I->getOpcode()) {
-  case Instruction::FNeg:
-  case Instruction::FAdd:
-  case Instruction::FSub:
-  case Instruction::FMul:
-  case Instruction::FDiv:
-    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
-  case Instruction::Call: {
-    const CallInst *CI = dyn_cast<CallInst>(I);
-    if (CI && CI->getCalledFunction() &&
-        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
-      StringRef funcName = CI->getCalledFunction()->getName();
-      return funcName.startswith("llvm.sin") ||
-             funcName.startswith("llvm.cos") ||
-             funcName.startswith("llvm.tan") ||
-             funcName.startswith("llvm.exp") ||
-             funcName.startswith("llvm.log") ||
-             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
-             funcName.startswith("llvm.pow") ||
-             funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd") ||
-             funcName.startswith("hypot") || funcName.startswith("expm1") ||
-             funcName.startswith("log1p");
-      // llvm.fabs is deliberately excluded
-    }
-    return false;
-  }
-  default:
-    return false;
-  }
-}
-
 enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
 
 unsigned getMPFRPrec(PrecisionChangeType type) {
@@ -841,8 +804,8 @@ struct PrecisionChange {
 
 void changePrecision(Instruction *I, PrecisionChange &change,
                      MapVector<Value *, Value *> &oldToNew) {
-  if (!herbiable(*I)) {
-    llvm_unreachable("Trying to tune an instruction is not herbiable");
+  if (!Poseidonable(*I)) {
+    llvm_unreachable("Trying to tune an instruction is not Poseidonable");
   }
 
   IRBuilder<> Builder(I);
@@ -940,7 +903,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
     }
 
   } else {
-    llvm_unreachable("Unknown herbiable instruction");
+    llvm_unreachable("Unexpectedly Poseidonable instruction");
   }
 
   oldToNew[I] = newI;
@@ -1923,7 +1886,6 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
   // Arguments
   if (trimmedExpr.front() != '(' && trimmedExpr.front() != '#') {
-    // llvm::errs() << "Trying to lookup " << trimmedExpr << " as an argument!\n";
     if (auto node = valueToNodeMap[symbolToValueMap[trimmedExpr]]) {
       return node;
     }
@@ -1939,7 +1901,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     std::smatch matches;
     if (std::regex_match(trimmedExpr, matches, constantPattern)) {
       std::string value = matches[1].str();
-      std::string dtype = matches[5].str();
+      std::string dtype = matches[3].str();
       if (dtype == "binary64") {
         dtype = "f64";
       } else if (dtype == "binary32") {
@@ -2520,7 +2482,8 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
           continue;
         }
 
-        // Original non-herbiable operands or herbiable intermediate operations
+        // Original non-Poseidonable operands or Poseidonable intermediate
+        // operations
         if (CC.inputs.count(operand) ||
             !newCC.operations.count(cast<Instruction>(operand))) {
           newCC.inputs.insert(operand);
@@ -4188,8 +4151,9 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   if (!FPOptLogPath.empty()) {
     if (!isLogged(FPOptLogPath, functionName)) {
       if (EnzymePrintFPOpt)
-        llvm::errs() << "Skipping matched function: " << demangledName
-                     << " (demangled) since this function is not found in the log\n";
+        llvm::errs()
+            << "Skipping matched function: " << demangledName
+            << " (demangled) since this function is not found in the log\n";
       return false;
     }
   }
@@ -4204,7 +4168,7 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   // Extract change:
 
   // E1) create map<Value, FPNode> for all instructions I, map[I] = FPLLValue(I)
-  // E2) for all instructions, if herbiable(I), map[I] = FPNode(operation(I),
+  // E2) for all instructions, if Poseidonable(I), map[I] = FPNode(operation(I),
   // map[operands(I)])
   // E3) floodfill for all starting locations I to find all distinct graphs /
   // outputs.
@@ -4235,12 +4199,13 @@ B2:
 
   for (auto &BB : F) {
     for (auto &I : BB) {
-      if (!herbiable(I)) {
+      if (!Poseidonable(I)) {
         valueToNodeMap[&I] =
-            std::make_shared<FPLLValue>(&I, "__nh", "__nh"); // Non-herbiable
+            std::make_shared<FPLLValue>(&I, "__nh", "__nh"); // Non-Poseidonable
         if (EnzymePrintFPOpt)
-          llvm::errs() << "Registered FPLLValue for non-herbiable instruction: "
-                       << I << "\n";
+          llvm::errs()
+              << "Registered FPLLValue for non-Poseidonable instruction: " << I
+              << "\n";
         continue;
       }
 
@@ -4320,11 +4285,12 @@ B2:
   SmallVector<FPCC, 1> connected_components;
   for (auto &BB : F) {
     for (auto &I : BB) {
-      // Not a herbiable instruction, doesn't make sense to create graph node
+      // Not a Poseidonable instruction, doesn't make sense to create graph node
       // out of.
-      if (!herbiable(I)) {
+      if (!Poseidonable(I)) {
         if (EnzymePrintFPOpt)
-          llvm::errs() << "Skipping non-herbiable instruction: " << I << "\n";
+          llvm::errs() << "Skipping non-Poseidonable instruction: " << I
+                       << "\n";
         continue;
       }
 
@@ -4370,7 +4336,7 @@ B2:
         auto cur = todo.pop_back_val();
         assert(valueToNodeMap.count(cur) && "Node not found in valueToNodeMap");
 
-        // We now can assume that this is a herbiable expression
+        // We now can assume that this is a Poseidonable expression
         // Since we can only herbify instructions, let's assert that
         assert(isa<Instruction>(cur));
         auto I2 = cast<Instruction>(cur);
@@ -4384,7 +4350,7 @@ B2:
           continue;
         }
 
-        // Assume that a herbiable expression can only be in one connected
+        // Assume that a Poseidonable expression can only be in one connected
         // component.
         assert(!component_seen.contains(cur));
 
@@ -4400,15 +4366,16 @@ B2:
         for (auto &operand_ : enumerate(operands)) {
           auto &operand = operand_.value();
           auto i = operand_.index();
-          if (!herbiable(*operand)) {
+          if (!Poseidonable(*operand)) {
             if (EnzymePrintFPOpt)
-              llvm::errs() << "Non-herbiable input found: " << *operand << "\n";
+              llvm::errs() << "Non-Poseidonable input found: " << *operand
+                           << "\n";
 
             // Don't mark constants as input `llvm::Value`s
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
 
-            // look up error log to get bounds of non-herbiable inputs
+            // look up error log to get bounds of non-Poseidonable inputs
             if (!FPOptLogPath.empty()) {
               ValueInfo valueInfo;
               auto blockIt = std::find_if(
@@ -4424,8 +4391,9 @@ B2:
                      "Instruction not found");
               size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
-              extractValueFromLog(FPOptLogPath, functionName, blockIdx, instIdx,
-                                  valueInfo);
+              bool res = extractValueFromLog(FPOptLogPath, functionName,
+                                             blockIdx, instIdx, valueInfo);
+              assert(res && "FP instruction not found in log!");
               auto node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
 
@@ -4445,7 +4413,7 @@ B2:
 
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
-            if (!herbiable(*I3)) {
+            if (!Poseidonable(*I3)) {
               if (EnzymePrintFPOpt)
                 llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
@@ -4458,7 +4426,7 @@ B2:
         }
       }
 
-      // Don't bother with graphs without any herbiable operations
+      // Don't bother with graphs without any Poseidonable operations
       if (!operation_seen.empty()) {
         if (EnzymePrintFPOpt) {
           llvm::errs() << "Found a connected component with "
@@ -4567,7 +4535,7 @@ B2:
   // converting llvm instructions into herbie string (FPNode ....)
   if (connected_components.empty()) {
     if (EnzymePrintFPOpt)
-      llvm::errs() << "No herbiable connected components found\n";
+      llvm::errs() << "No Poseidonable connected components found\n";
     return false;
   }
 

@@ -2124,51 +2124,54 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "    if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogValue\")) {\n"
-         << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
-         << "      getForwardBuilder(BuilderZ);\n"
-         << "      std::string idStr = getLogIdentifier(" << origName << ");\n"
-         << "      Value *idValue = "
+         << "      if (Poseidonable(" << origName << ")) {\n"
+         << "        IRBuilder<> BuilderZ(&" << origName << ");\n"
+         << "        getForwardBuilder(BuilderZ);\n"
+         << "        std::string idStr = getLogIdentifier(" << origName
+         << ");\n"
+         << "        Value *idValue = "
             "BuilderZ.CreateGlobalStringPtr(idStr);\n"
-         << "      Value *origValue = "
+         << "        Value *origValue = "
             "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
          << origName << "), Type::getDoubleTy(" << origName
          << ".getContext()));\n"
-         << "      unsigned numOperands = isa<CallInst>(" << origName
+         << "        unsigned numOperands = isa<CallInst>(" << origName
          << ") ? cast<CallInst>(" << origName << ").arg_size() : " << origName
          << ".getNumOperands();\n"
-         << "      Value *numOperandsValue = "
+         << "        Value *numOperandsValue = "
             "ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), numOperands);\n"
-         << "      auto operands = isa<CallInst>(" << origName
+         << "        auto operands = isa<CallInst>(" << origName
          << ") ? cast<CallInst>(" << origName << ").args() : " << origName
          << ".operands();\n"
-         << "      ArrayType *operandArrayType = "
+         << "        ArrayType *operandArrayType = "
             "ArrayType::get(Type::getDoubleTy("
          << origName << ".getContext()), numOperands);\n"
-         << "      Value *operandArrayValue = "
+         << "        Value *operandArrayValue = "
             "IRBuilder<>(gutils->inversionAllocs).CreateAlloca("
             "operandArrayType);\n"
-         << "      for (auto operand : enumerate(operands)) {\n"
-         << "        Value *operandValue = "
+         << "        for (auto operand : enumerate(operands)) {\n"
+         << "          Value *operandValue = "
             "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(operand.value()), "
             "Type::getDoubleTy("
          << origName << ".getContext()));\n"
-         << "        Value *ptr = "
+         << "          Value *ptr = "
             "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
             "{ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), operand.index())});\n"
-         << "        BuilderZ.CreateStore(operandValue, ptr);\n"
-         << "      }\n"
-         << "      Value *operandPtrValue = "
+         << "          BuilderZ.CreateStore(operandValue, ptr);\n"
+         << "        }\n"
+         << "        Value *operandPtrValue = "
             "BuilderZ.CreateGEP(operandArrayType, operandArrayValue, "
             "{ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), 0), ConstantInt::get(Type::getInt32Ty("
          << origName << ".getContext()), 0)});\n"
-         << "      CallInst *logCallInst = BuilderZ.CreateCall(logFunc, "
+         << "        CallInst *logCallInst = BuilderZ.CreateCall(logFunc, "
          << "{idValue, origValue, numOperandsValue, operandPtrValue});\n"
-         << "      logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << "        logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
+         << "      }\n"
          << "    }\n";
       os << "#endif\n";
     }
@@ -2472,9 +2475,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogError\")) {\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
+         << "          if (Poseidonable(" << origName << ")) {\n"
+         << "            std::string idStr = getLogIdentifier(" << origName
          << ");\n"
-         << "          Value *idValue = "
+         << "            Value *idValue = "
             "BuilderZ.CreateGlobalStringPtr(idStr);\n"
          << "            Value *errValue = Builder2.CreateFPExt(res, "
             "Type::getDoubleTy("
@@ -2483,6 +2487,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "{idValue, errValue});\n"
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
+         << "          }\n"
          << "        }\n";
       os << "#endif\n";
 
@@ -2508,9 +2513,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (auto *logFunc = getFPOptLogger(" << origName
          << ".getModule(), \"enzymeLogGrad\")) {\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
+         << "          if (Poseidonable(" << origName << ")) {\n"
+         << "            std::string idStr = getLogIdentifier(" << origName
          << ");\n"
-         << "          Value *idValue = "
+         << "            Value *idValue = "
             "BuilderZ.CreateGlobalStringPtr(idStr);\n"
          << "            Value *diffValue = Builder2.CreateFPExt(dif, "
             "Type::getDoubleTy("
@@ -2519,6 +2525,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
             "{idValue, diffValue});\n"
          << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
+         << "          }\n"
          << "        }\n";
       os << "#endif\n";
 

@@ -3673,6 +3673,44 @@ llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName) {
   return nullptr; // Return nullptr if no matching function is found
 }
 
+bool Poseidonable(const llvm::Value &V) {
+  const Instruction *I = dyn_cast<Instruction>(&V);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+  case Instruction::FRem:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return funcName.startswith("llvm.sin") ||
+             funcName.startswith("llvm.cos") ||
+             funcName.startswith("llvm.tan") ||
+             funcName.startswith("llvm.exp") ||
+             funcName.startswith("llvm.log") ||
+             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
+             funcName.startswith("llvm.pow") ||
+             funcName.startswith("llvm.fabs") ||
+             funcName.startswith("llvm.fma") ||
+             funcName.startswith("llvm.fmuladd") ||
+             funcName.startswith("hypot") || funcName.startswith("expm1") ||
+             funcName.startswith("log1p");
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
 bool hasFPOptLogger(llvm::Module *M) {
   return getFPOptLogger(M, "enzymeLogError") ||
          getFPOptLogger(M, "enzymeLogGrad") ||
