@@ -82,7 +82,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   let summary = "Perform forward mode AD on a funcop";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width); 
   let results = (outs Variadic<AnyType>:$outputs);
-
+  let hasCanonicalizer = 1;
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
@@ -93,7 +93,7 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   let summary = "Perform reverse mode AD on a funcop";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width);
   let results = (outs Variadic<AnyType>:$outputs);
-
+  let hasCanonicalizer = 1;
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];

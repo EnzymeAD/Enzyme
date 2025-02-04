@@ -156,6 +156,28 @@ llvm::LogicalResult SetOp::ensureOnlySafeAccesses(
 // GetFuncOp
 //===----------------------------------------------------------------------===//
 
+class FwdDiffDead final : public OpRewritePattern<ForwardDiffOp> {
+public:
+  using OpRewritePattern<ForwardDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ForwardDiffOp uop,
+                                PatternRewriter &rewriter) const override {
+    return failure();
+    // auto ty = uop.getResult().getType();
+    // if (!LLVM::isCompatibleType(ty))
+    //   return failure();
+    // rewriter.replaceOpWithNewOp<LLVM::UndefOp>(uop, ty);
+    // return success();
+  }
+};
+
+void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                          MLIRContext *context) {
+  results.insert<FwdDiffDead>(context);
+}
+
+
+
 LogicalResult
 ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
@@ -180,6 +202,27 @@ LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   return success();
 }
+
+class AutoDiffDead final : public OpRewritePattern<AutoDiffOp> {
+public:
+  using OpRewritePattern<AutoDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AutoDiffOp uop,
+                                PatternRewriter &rewriter) const override {
+    return failure();
+    // auto ty = uop.getResult().getType();
+    // if (!LLVM::isCompatibleType(ty))
+    //   return failure();
+    // rewriter.replaceOpWithNewOp<LLVM::UndefOp>(uop, ty);
+    // return success();
+  }
+};
+
+void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                          MLIRContext *context) {
+  results.insert<AutoDiffDead>(context);
+}
+
 
 LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
