@@ -2480,6 +2480,11 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
   // TODO replace forwardBlock with the first block dominated by inst,
   // that dominates (or is) forwardBlock to ensuring maximum reuse
   IRBuilder<> lcssa(&forwardBlock->front());
+  #if LLVM_VERSION_MAJOR >= 18
+    auto It = lcssa.GetInsertPoint();
+    It.setHeadBit(true);
+    lcssa.SetInsertPoint(It);
+  #endif
   auto lcssaPHI =
       lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
   lcssaFixes[inst][forwardBlock] = lcssaPHI;
