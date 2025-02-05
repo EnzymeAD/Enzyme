@@ -147,8 +147,9 @@ static cl::opt<bool> FPOptShowTable(
 static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
+// TODO: Fix this
 static cl::opt<unsigned> FPOptMaxFPCCDepth(
-    "fpopt-max-fpcc-depth", cl::init(10), cl::Hidden,
+    "fpopt-max-fpcc-depth", cl::init(99999), cl::Hidden,
     cl::desc("The maximum depth of a floating-point connected component"));
 static cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
