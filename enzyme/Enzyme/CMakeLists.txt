@@ -57,7 +57,7 @@ if(ENZYME_ENABLE_FPOPT)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/sbrantq/herbie
-        GIT_TAG 8204c92e060cbf9ff0f5c2725d290e7d4266f380
+        GIT_TAG 9a81e9ecd01515ed88fb4efb77e4c0ae7be9cba5
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
