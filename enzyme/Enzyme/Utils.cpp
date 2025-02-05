@@ -3691,18 +3691,60 @@ bool Poseidonable(const llvm::Value &V) {
     if (CI && CI->getCalledFunction() &&
         (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
       StringRef funcName = CI->getCalledFunction()->getName();
-      return funcName.startswith("llvm.sin") ||
-             funcName.startswith("llvm.cos") ||
-             funcName.startswith("llvm.tan") ||
-             funcName.startswith("llvm.exp") ||
-             funcName.startswith("llvm.log") ||
-             funcName.startswith("llvm.sqrt") || funcName.startswith("cbrt") ||
-             funcName.startswith("llvm.pow") ||
-             funcName.startswith("llvm.fabs") ||
-             funcName.startswith("llvm.fma") ||
-             funcName.startswith("llvm.fmuladd") ||
-             funcName.startswith("hypot") || funcName.startswith("expm1") ||
-             funcName.startswith("log1p");
+      return
+          // LLVM intrinsics
+          funcName.startswith("llvm.sin") || funcName.startswith("llvm.cos") ||
+          funcName.startswith("llvm.tan") || funcName.startswith("llvm.exp") ||
+          funcName.startswith("llvm.log") || funcName.startswith("llvm.sqrt") ||
+          funcName.startswith("llvm.pow") || funcName.startswith("llvm.fabs") ||
+          funcName.startswith("llvm.fma") ||
+          funcName.startswith("llvm.fmuladd") ||
+          funcName.startswith("llvm.maxnum") ||
+          funcName.startswith("llvm.minnum") ||
+          funcName.startswith("llvm.ceil") ||
+          funcName.startswith("llvm.floor") ||
+          // funcName.startswith("llvm.erf") ||
+          funcName.startswith("llvm.exp2") ||
+          // funcName.startswith("llvm.lgamma") ||
+          funcName.startswith("llvm.log10") ||
+          funcName.startswith("llvm.log2") ||
+          funcName.startswith("llvm.rint") ||
+          funcName.startswith("llvm.round") ||
+          // funcName.startswith("llvm.tgamma") ||
+          funcName.startswith("llvm.trunc") ||
+          funcName.startswith("llvm.copysign") ||
+          funcName.startswith("llvm.fdim") ||
+          funcName.startswith("llvm.fmod") ||
+          // funcName.startswith("llvm.remainder") ||
+
+          // libm functions
+          funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
+          funcName == "cosf" || funcName == "tan" || funcName == "tanf" ||
+          funcName == "asin" || funcName == "asinf" || funcName == "acos" ||
+          funcName == "acosf" || funcName == "atan" || funcName == "atanf" ||
+          funcName == "atan2" || funcName == "atan2f" || funcName == "sinh" ||
+          funcName == "sinhf" || funcName == "cosh" || funcName == "coshf" ||
+          funcName == "tanh" || funcName == "tanhf" || funcName == "asinh" ||
+          funcName == "asinhf" || funcName == "acosh" || funcName == "acoshf" ||
+          funcName == "atanh" || funcName == "atanhf" || funcName == "sqrt" ||
+          funcName == "sqrtf" || funcName == "cbrt" || funcName == "cbrtf" ||
+          funcName == "pow" || funcName == "powf" || funcName == "exp" ||
+          funcName == "expf" || funcName == "log" || funcName == "logf" ||
+          funcName == "fabs" || funcName == "fabsf" || funcName == "fma" ||
+          funcName == "fmaf" || funcName == "hypot" || funcName == "hypotf" ||
+          funcName == "expm1" || funcName == "expm1f" || funcName == "log1p" ||
+          funcName == "log1pf" || funcName == "ceil" || funcName == "ceilf" ||
+          funcName == "floor" || funcName == "floorf" || funcName == "erf" ||
+          funcName == "erff" || funcName == "exp2" || funcName == "exp2f" ||
+          funcName == "lgamma" || funcName == "lgammaf" ||
+          funcName == "log10" || funcName == "log10f" || funcName == "log2" ||
+          funcName == "log2f" || funcName == "rint" || funcName == "rintf" ||
+          funcName == "round" || funcName == "roundf" || funcName == "tgamma" ||
+          funcName == "tgammaf" || funcName == "trunc" ||
+          funcName == "truncf" || funcName == "copysign" ||
+          funcName == "copysignf" || funcName == "fdim" ||
+          funcName == "fdimf" || funcName == "fmod" || funcName == "fmodf" ||
+          funcName == "remainder" || funcName == "remainderf";
     }
     return false;
   }

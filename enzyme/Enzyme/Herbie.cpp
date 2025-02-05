@@ -259,7 +259,6 @@ public:
   virtual Value *getLLValue(IRBuilder<> &builder,
                             const ValueToValueMapTy *VMap = nullptr) {
     Module *M = builder.GetInsertBlock()->getModule();
-
     if (op == "if") {
       Value *condValue = operands[0]->getLLValue(builder, VMap);
       auto IP = builder.GetInsertPoint();
@@ -270,206 +269,351 @@ public:
       Then->getParent()->setName("herbie.then");
       builder.SetInsertPoint(Then);
       Value *ThenVal = operands[1]->getLLValue(builder, VMap);
-      if (Instruction *I = dyn_cast<Instruction>(ThenVal)) {
+      if (Instruction *I = dyn_cast<Instruction>(ThenVal))
         I->setName("herbie.then_val");
-      }
 
       Else->getParent()->setName("herbie.else");
       builder.SetInsertPoint(Else);
       Value *ElseVal = operands[2]->getLLValue(builder, VMap);
-      if (Instruction *I = dyn_cast<Instruction>(ElseVal)) {
+      if (Instruction *I = dyn_cast<Instruction>(ElseVal))
         I->setName("herbie.else_val");
-      }
 
       builder.SetInsertPoint(&*IP);
       auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
       Phi->addIncoming(ThenVal, Then->getParent());
       Phi->addIncoming(ElseVal, Else->getParent());
       Phi->setName("herbie.merge");
-
       return Phi;
     }
 
-    SmallVector<Value *, 2> operandValues;
+    SmallVector<Value *, 3> operandValues;
     for (auto operand : operands) {
-      auto *val = operand->getLLValue(builder, VMap);
-      assert(val);
+      Value *val = operand->getLLValue(builder, VMap);
+      assert(val && "Operand produced a null value!");
       operandValues.push_back(val);
     }
 
-    Value *val = nullptr;
-
-    if (op == "neg") {
-      val = builder.CreateFNeg(operandValues[0], "herbie.neg");
-    } else if (op == "+") {
-      val =
-          builder.CreateFAdd(operandValues[0], operandValues[1], "herbie.add");
-    } else if (op == "-") {
-      val =
-          builder.CreateFSub(operandValues[0], operandValues[1], "herbie.sub");
-    } else if (op == "*") {
-      val =
-          builder.CreateFMul(operandValues[0], operandValues[1], "herbie.mul");
-    } else if (op == "/") {
-      val =
-          builder.CreateFDiv(operandValues[0], operandValues[1], "herbie.div");
-    } else if (op == "sin") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::sin, operandValues[0],
-                                         nullptr, "herbie.sin");
-    } else if (op == "cos") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::cos, operandValues[0],
-                                         nullptr, "herbie.cos");
-    } else if (op == "tan") {
-#if LLVM_VERSION_MAJOR > 16 // TODO: Double check version
-      val = builder.CreateUnaryIntrinsic(Intrinsic::tan, operandValues[0],
-                                         "herbie.tan");
+    static const std::unordered_map<
+        std::string, std::function<Value *(IRBuilder<> &, Module *,
+                                           const SmallVectorImpl<Value *> &)>>
+        opMap = {
+            {"neg",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+                 -> Value * { return b.CreateFNeg(ops[0], "herbie.neg"); }},
+            {"+",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFAdd(ops[0], ops[1], "herbie.add");
+             }},
+            {"-",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFSub(ops[0], ops[1], "herbie.sub");
+             }},
+            {"*",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFMul(ops[0], ops[1], "herbie.mul");
+             }},
+            {"/",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFDiv(ops[0], ops[1], "herbie.div");
+             }},
+            {"fmin",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateBinaryIntrinsic(Intrinsic::minnum, ops[0], ops[1],
+                                              nullptr, "herbie.fmin");
+             }},
+            {"fmax",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateBinaryIntrinsic(Intrinsic::maxnum, ops[0], ops[1],
+                                              nullptr, "herbie.fmax");
+             }},
+            {"sin",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::sin, ops[0], nullptr,
+                                             "herbie.sin");
+             }},
+            {"cos",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::cos, ops[0], nullptr,
+                                             "herbie.cos");
+             }},
+            {"tan",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+               return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0],
+                                             "herbie.tan");
 #else
-      // Using std::tan(f) for lower versions of LLVM.
-      auto *Ty = operandValues[0]->getType();
-      std::string funcName = Ty->isDoubleTy() ? "tan" : "tanf";
-      llvm::Function *tanFunc = M->getFunction(funcName);
-      if (!tanFunc) {
-        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
-        tanFunc =
-            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
-      }
-      if (tanFunc) {
-        val = builder.CreateCall(tanFunc, {operandValues[0]}, "herbie.tan");
-      } else {
-        std::string msg =
-            "Failed to find or declare " + funcName + " in the module.";
-        llvm_unreachable(msg.c_str());
-      }
-
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "tan" : "tanf";
+               Function *tanFunc = M->getFunction(funcName);
+               if (!tanFunc) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 tanFunc = Function::Create(FT, Function::ExternalLinkage,
+                                            funcName, M);
+               }
+               return b.CreateCall(tanFunc, {ops[0]}, "herbie.tan");
 #endif
-    } else if (op == "exp") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::exp, operandValues[0],
-                                         nullptr, "herbie.exp");
-    } else if (op == "expm1") {
-      auto *Ty = operandValues[0]->getType();
-      std::string funcName = Ty->isDoubleTy() ? "expm1" : "expm1f";
-      llvm::Function *expm1Func = M->getFunction(funcName);
-      if (!expm1Func) {
-        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
-        expm1Func =
-            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
-      }
-      if (expm1Func) {
-        val = builder.CreateCall(expm1Func, {operandValues[0]}, "herbie.expm1");
-      } else {
-        std::string msg = "Failed to find or declare " + funcName +
-                          " in the module. Consider disabling Herbie rules for "
-                          "numerics (-herbie-disable-numerics).";
-        llvm_unreachable(msg.c_str());
-      }
-    } else if (op == "log") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::log, operandValues[0],
-                                         nullptr, "herbie.log");
-    } else if (op == "log1p") {
-      auto *Ty = operandValues[0]->getType();
-      std::string funcName = Ty->isDoubleTy() ? "log1p" : "log1pf";
-      llvm::Function *log1pFunc = M->getFunction(funcName);
-      if (!log1pFunc) {
-        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
-        log1pFunc =
-            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
-      }
-      if (log1pFunc) {
-        val = builder.CreateCall(log1pFunc, {operandValues[0]}, "herbie.log1p");
-      } else {
-        std::string msg =
-            "Failed to find or declare log1p in the module. Consider disabling "
-            "Herbie rules for numerics (-herbie-disable-numerics).";
-        llvm_unreachable(msg.c_str());
-      }
-    } else if (op == "sqrt") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::sqrt, operandValues[0],
-                                         nullptr, "herbie.sqrt");
-    } else if (op == "cbrt") {
-      auto *Ty = operandValues[0]->getType();
-      std::string funcName = Ty->isDoubleTy() ? "cbrt" : "cbrtf";
-      llvm::Function *cbrtFunc = M->getFunction(funcName);
-      if (!cbrtFunc) {
-        auto *funcTy = FunctionType::get(Ty, {Ty}, false);
-        cbrtFunc =
-            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
-      }
-      if (cbrtFunc) {
-        val = builder.CreateCall(cbrtFunc, {operandValues[0]}, "herbie.cbrt");
-      } else {
-        std::string msg =
-            "Failed to find or declare " + funcName +
-            " in the module. Consider disabling "
-            "Herbie rules for numerics (-herbie-disable-numerics).";
-        llvm_unreachable(msg.c_str());
-      }
-    } else if (op == "pow") {
-      val = builder.CreateBinaryIntrinsic(Intrinsic::pow, operandValues[0],
-                                          operandValues[1], nullptr,
-                                          "herbie.pow");
-    } else if (op == "fma") {
-      val = builder.CreateIntrinsic(
-          Intrinsic::fma, {operandValues[0]->getType()},
-          {operandValues[0], operandValues[1], operandValues[2]}, nullptr,
-          "herbie.fma");
-    } else if (op == "fabs") {
-      val = builder.CreateUnaryIntrinsic(Intrinsic::fabs, operandValues[0],
-                                         nullptr, "herbie.fabs");
-    } else if (op == "hypot") {
-      auto *Ty = operandValues[0]->getType();
-      std::string funcName = Ty->isDoubleTy() ? "hypot" : "hypotf";
-      llvm::Function *hypotFunc = M->getFunction(funcName);
-      if (!hypotFunc) {
-        auto *funcTy = FunctionType::get(Ty, {Ty, Ty}, false);
-        hypotFunc =
-            Function::Create(funcTy, Function::ExternalLinkage, funcName, M);
-      }
-      if (hypotFunc) {
-        val = builder.CreateCall(
-            hypotFunc, {operandValues[0], operandValues[1]}, "herbie.hypot");
-      } else {
-        std::string msg =
-            "Failed to find or declare " + funcName +
-            " in the module. Consider disabling "
-            "Herbie rules for numerics (-herbie-disable-numerics).";
-        llvm_unreachable(msg.c_str());
-      }
-    } else if (op == "==") {
-      val = builder.CreateFCmpOEQ(operandValues[0], operandValues[1],
-                                  "herbie.if.eq");
-    } else if (op == "!=") {
-      val = builder.CreateFCmpONE(operandValues[0], operandValues[1],
-                                  "herbie.if.ne");
-    } else if (op == "<") {
-      val = builder.CreateFCmpOLT(operandValues[0], operandValues[1],
-                                  "herbie.if.lt");
-    } else if (op == ">") {
-      val = builder.CreateFCmpOGT(operandValues[0], operandValues[1],
-                                  "herbie.if.gt");
-    } else if (op == "<=") {
-      val = builder.CreateFCmpOLE(operandValues[0], operandValues[1],
-                                  "herbie.if.le");
-    } else if (op == ">=") {
-      val = builder.CreateFCmpOGE(operandValues[0], operandValues[1],
-                                  "herbie.if.ge");
-    } else if (op == "and") {
-      val = builder.CreateAnd(operandValues[0], operandValues[1],
-                              "herbie.if.and");
-    } else if (op == "or") {
-      val =
-          builder.CreateOr(operandValues[0], operandValues[1], "herbie.if.or");
-    } else if (op == "not") {
-      val = builder.CreateNot(operandValues[0], "herbie.if.not");
-    } else if (op == "TRUE") {
-      val = ConstantInt::getTrue(builder.getContext());
-    } else if (op == "FALSE") {
-      val = ConstantInt::getFalse(builder.getContext());
-    } else {
+             }},
+            {"exp",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::exp, ops[0], nullptr,
+                                             "herbie.exp");
+             }},
+            {"expm1",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "expm1" : "expm1f";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.expm1");
+             }},
+            {"log",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::log, ops[0], nullptr,
+                                             "herbie.log");
+             }},
+            {"log1p",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "log1p" : "log1pf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.log1p");
+             }},
+            {"sqrt",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::sqrt, ops[0], nullptr,
+                                             "herbie.sqrt");
+             }},
+            {"cbrt",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "cbrt" : "cbrtf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.cbrt");
+             }},
+            {"pow",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
+                                              nullptr, "herbie.pow");
+             }},
+            {"fma",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
+                                        {ops[0], ops[1], ops[2]}, nullptr,
+                                        "herbie.fma");
+             }},
+            {"fabs",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateUnaryIntrinsic(Intrinsic::fabs, ops[0], nullptr,
+                                             "herbie.fabs");
+             }},
+            {"hypot",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "hypot" : "hypotf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0], ops[1]}, "herbie.hypot");
+             }},
+            {"asin",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "asin" : "asinf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.asin");
+             }},
+            {"acos",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "acos" : "acosf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.acos");
+             }},
+            {"atan",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "atan" : "atanf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.atan");
+             }},
+            {"atan2",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "atan2" : "atan2f";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0], ops[1]}, "herbie.atan2");
+             }},
+            {"sinh",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "sinh" : "sinhf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.sinh");
+             }},
+            {"cosh",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "cosh" : "coshf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.cosh");
+             }},
+            {"tanh",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               Type *Ty = ops[0]->getType();
+               std::string funcName = Ty->isDoubleTy() ? "tanh" : "tanhf";
+               Function *f = M->getFunction(funcName);
+               if (!f) {
+                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
+                                      M);
+               }
+               return b.CreateCall(f, {ops[0]}, "herbie.tanh");
+             }},
+            {"==",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpOEQ(ops[0], ops[1], "herbie.eq");
+             }},
+            {"!=",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpONE(ops[0], ops[1], "herbie.ne");
+             }},
+            {"<",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpOLT(ops[0], ops[1], "herbie.lt");
+             }},
+            {">",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpOGT(ops[0], ops[1], "herbie.gt");
+             }},
+            {"<=",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpOLE(ops[0], ops[1], "herbie.le");
+             }},
+            {">=",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateFCmpOGE(ops[0], ops[1], "herbie.ge");
+             }},
+            {"and",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateAnd(ops[0], ops[1], "herbie.and");
+             }},
+            {"or",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &ops) -> Value * {
+               return b.CreateOr(ops[0], ops[1], "herbie.or");
+             }},
+            {"not",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+                 -> Value * { return b.CreateNot(ops[0], "herbie.not"); }},
+            {"TRUE",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+                 -> Value * { return ConstantInt::getTrue(b.getContext()); }},
+            {"FALSE",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+                 -> Value * { return ConstantInt::getFalse(b.getContext()); }},
+            {"PI",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+                 -> Value * { return ConstantFP::get(b.getDoubleTy(), M_PI); }},
+            {"E",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+                 -> Value * { return ConstantFP::get(b.getDoubleTy(), M_E); }},
+            {"INFINITY",
+             [](IRBuilder<> &b, Module *M,
+                const SmallVectorImpl<Value *> &) -> Value * {
+               return ConstantFP::getInfinity(b.getDoubleTy(), false);
+             }},
+            {"NaN",
+             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+                 -> Value * { return ConstantFP::getNaN(b.getDoubleTy()); }},
+        };
+
+    auto it = opMap.find(op);
+    if (it != opMap.end())
+      return it->second(builder, M, operandValues);
+    else {
       std::string msg = "FPNode getLLValue: Unexpected operator " + op;
       llvm_unreachable(msg.c_str());
     }
-
-    return val;
   }
 };
 
@@ -756,8 +900,12 @@ StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   static const std::unordered_set<std::string> libmFunctions = {
-      "sin",  "cos", "exp", "log",   "sqrt",  "tan",
-      "cbrt", "pow", "fma", "hypot", "expm1", "log1p"};
+      "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
+      "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "sqrt",
+      "cbrt",  "pow",   "exp",      "log",   "fabs",   "fma",   "hypot",
+      "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
+      "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
+      "fdim",  "fmod",  "remainder"};
 
   std::string baseName = funcName.str();
   if (baseName.back() == 'f' || baseName.back() == 'l') {
@@ -1064,7 +1212,9 @@ public:
       } else if (node->dtype == "f64") {
         precType = PrecisionChangeType::FP64;
       } else {
-        llvm_unreachable("Unsupported FP node precision type");
+        llvm_unreachable(
+            ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
+                .c_str());
       }
     }
 
@@ -1108,6 +1258,47 @@ public:
         cache.emplace(node, else_val);
       }
       return;
+    } else if (node->op == "and") {
+      evaluateNode(node->operands[0].get(), inputValues);
+      double op0 = getResult(node->operands[0].get());
+      if (op0 != 1.0) {
+        cache.emplace(node, 0.0);
+        return;
+      }
+      evaluateNode(node->operands[1].get(), inputValues);
+      double op1 = getResult(node->operands[1].get());
+      if (op1 != 1.0) {
+        cache.emplace(node, 0.0);
+        return;
+      }
+      cache.emplace(node, 1.0);
+      return;
+    } else if (node->op == "or") {
+      evaluateNode(node->operands[0].get(), inputValues);
+      double op0 = getResult(node->operands[0].get());
+      if (op0 == 1.0) {
+        cache.emplace(node, 1.0);
+        return;
+      }
+      evaluateNode(node->operands[1].get(), inputValues);
+      double op1 = getResult(node->operands[1].get());
+      if (op1 == 1.0) {
+        cache.emplace(node, 1.0);
+        return;
+      }
+      cache.emplace(node, 0.0);
+      return;
+    } else if (node->op == "not") {
+      evaluateNode(node->operands[0].get(), inputValues);
+      double op = getResult(node->operands[0].get());
+      cache.emplace(node, (op == 1.0) ? 0.0 : 1.0);
+      return;
+    } else if (node->op == "TRUE") {
+      cache.emplace(node, 1.0);
+      return;
+    } else if (node->op == "FALSE") {
+      cache.emplace(node, 0.0);
+      return;
     }
 
     PrecisionChangeType nodePrec = getNodePrecision(node);
@@ -1117,6 +1308,34 @@ public:
     }
 
     double res = 0.0;
+
+    auto evalUnary = [&](auto doubleFunc, auto floatFunc) -> double {
+      double op = getResult(node->operands[0].get());
+      if (nodePrec == PrecisionChangeType::FP32)
+        return floatFunc(static_cast<float>(op));
+      else
+        return doubleFunc(op);
+    };
+
+    auto evalBinary = [&](auto doubleFunc, auto floatFunc) -> double {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      if (nodePrec == PrecisionChangeType::FP32)
+        return floatFunc(static_cast<float>(op0), static_cast<float>(op1));
+      else
+        return doubleFunc(op0, op1);
+    };
+
+    auto evalTernary = [&](auto doubleFunc, auto floatFunc) -> double {
+      double op0 = getResult(node->operands[0].get());
+      double op1 = getResult(node->operands[1].get());
+      double op2 = getResult(node->operands[2].get());
+      if (nodePrec == PrecisionChangeType::FP32)
+        return floatFunc(static_cast<float>(op0), static_cast<float>(op1),
+                         static_cast<float>(op2));
+      else
+        return doubleFunc(op0, op1, op2);
+    };
 
     if (node->op == "neg") {
       double op = getResult(node->operands[0].get());
@@ -1147,75 +1366,123 @@ public:
                 ? static_cast<float>(op0) / static_cast<float>(op1)
                 : op0 / op1;
     } else if (node->op == "sin") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::sin(static_cast<float>(op))
-                : std::sin(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::sin),
+                      static_cast<float (*)(float)>(sinf));
     } else if (node->op == "cos") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::cos(static_cast<float>(op))
-                : std::cos(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::cos),
+                      static_cast<float (*)(float)>(cosf));
     } else if (node->op == "tan") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::tan(static_cast<float>(op))
-                : std::tan(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::tan),
+                      static_cast<float (*)(float)>(tanf));
     } else if (node->op == "exp") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::exp(static_cast<float>(op))
-                : std::exp(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::exp),
+                      static_cast<float (*)(float)>(expf));
     } else if (node->op == "expm1") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::expm1(static_cast<float>(op))
-                : std::expm1(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::expm1),
+                      static_cast<float (*)(float)>(expm1f));
     } else if (node->op == "log") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::log(static_cast<float>(op))
-                : std::log(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::log),
+                      static_cast<float (*)(float)>(logf));
     } else if (node->op == "log1p") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::log1p(static_cast<float>(op))
-                : std::log1p(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::log1p),
+                      static_cast<float (*)(float)>(log1pf));
     } else if (node->op == "sqrt") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::sqrt(static_cast<float>(op))
-                : std::sqrt(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
+                      static_cast<float (*)(float)>(sqrtf));
     } else if (node->op == "cbrt") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::cbrt(static_cast<float>(op))
-                : std::cbrt(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
+                      static_cast<float (*)(float)>(cbrtf));
+    } else if (node->op == "asin") {
+      res = evalUnary(static_cast<double (*)(double)>(std::asin),
+                      static_cast<float (*)(float)>(asinf));
+    } else if (node->op == "acos") {
+      res = evalUnary(static_cast<double (*)(double)>(std::acos),
+                      static_cast<float (*)(float)>(acosf));
+    } else if (node->op == "atan") {
+      res = evalUnary(static_cast<double (*)(double)>(std::atan),
+                      static_cast<float (*)(float)>(atanf));
+    } else if (node->op == "sinh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::sinh),
+                      static_cast<float (*)(float)>(sinhf));
+    } else if (node->op == "cosh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::cosh),
+                      static_cast<float (*)(float)>(coshf));
+    } else if (node->op == "tanh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::tanh),
+                      static_cast<float (*)(float)>(tanhf));
+    } else if (node->op == "asinh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::asinh),
+                      static_cast<float (*)(float)>(asinhf));
+    } else if (node->op == "acosh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::acosh),
+                      static_cast<float (*)(float)>(acoshf));
+    } else if (node->op == "atanh") {
+      res = evalUnary(static_cast<double (*)(double)>(std::atanh),
+                      static_cast<float (*)(float)>(atanhf));
+    } else if (node->op == "ceil") {
+      res = evalUnary(static_cast<double (*)(double)>(std::ceil),
+                      static_cast<float (*)(float)>(ceilf));
+    } else if (node->op == "floor") {
+      res = evalUnary(static_cast<double (*)(double)>(std::floor),
+                      static_cast<float (*)(float)>(floorf));
+    } else if (node->op == "exp2") {
+      res = evalUnary(static_cast<double (*)(double)>(std::exp2),
+                      static_cast<float (*)(float)>(exp2f));
+    } else if (node->op == "log10") {
+      res = evalUnary(static_cast<double (*)(double)>(std::log10),
+                      static_cast<float (*)(float)>(log10f));
+    } else if (node->op == "log2") {
+      res = evalUnary(static_cast<double (*)(double)>(std::log2),
+                      static_cast<float (*)(float)>(log2f));
+    } else if (node->op == "rint") {
+      res = evalUnary(static_cast<double (*)(double)>(std::rint),
+                      static_cast<float (*)(float)>(rintf));
+    } else if (node->op == "round") {
+      res = evalUnary(static_cast<double (*)(double)>(std::round),
+                      static_cast<float (*)(float)>(roundf));
+    } else if (node->op == "trunc") {
+      res = evalUnary(static_cast<double (*)(double)>(std::trunc),
+                      static_cast<float (*)(float)>(truncf));
     } else if (node->op == "pow") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::pow(static_cast<float>(op0), static_cast<float>(op1))
-                : std::pow(op0, op1);
+      res = evalBinary(static_cast<double (*)(double, double)>(std::pow),
+                       static_cast<float (*)(float, float)>(powf));
     } else if (node->op == "fabs") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::fabs(static_cast<float>(op))
-                : std::fabs(op);
+      res = evalUnary(static_cast<double (*)(double)>(std::fabs),
+                      static_cast<float (*)(float)>(fabsf));
     } else if (node->op == "hypot") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::hypot(static_cast<float>(op0), static_cast<float>(op1))
-                : std::hypot(op0, op1);
+      res = evalBinary(static_cast<double (*)(double, double)>(std::hypot),
+                       static_cast<float (*)(float, float)>(hypotf));
+    } else if (node->op == "atan2") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::atan2),
+                       static_cast<float (*)(float, float)>(atan2f));
+    } else if (node->op == "copysign") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::copysign),
+                       static_cast<float (*)(float, float)>(copysignf));
+    } else if (node->op == "fmax") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::fmax),
+                       static_cast<float (*)(float, float)>(fmaxf));
+    } else if (node->op == "fmin") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::fmin),
+                       static_cast<float (*)(float, float)>(fminf));
+    } else if (node->op == "fdim") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::fdim),
+                       static_cast<float (*)(float, float)>(fdimf));
+    } else if (node->op == "fmod") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::fmod),
+                       static_cast<float (*)(float, float)>(fmodf));
+    } else if (node->op == "remainder") {
+      res = evalBinary(static_cast<double (*)(double, double)>(std::remainder),
+                       static_cast<float (*)(float, float)>(remainderf));
     } else if (node->op == "fma") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      double op2 = getResult(node->operands[2].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? std::fma(static_cast<float>(op0), static_cast<float>(op1),
-                           static_cast<float>(op2))
-                : std::fma(op0, op1, op2);
+      res =
+          evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
+                      static_cast<float (*)(float, float, float)>(fmaf));
+    } else if (node->op == "lgamma") {
+      res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
+                      static_cast<float (*)(float)>(lgammaf));
+    } else if (node->op == "tgamma") {
+      res = evalUnary(static_cast<double (*)(double)>(std::tgamma),
+                      static_cast<float (*)(float)>(tgammaf));
     } else if (node->op == "==") {
       double op0 = getResult(node->operands[0].get());
       double op1 = getResult(node->operands[1].get());
@@ -1258,21 +1525,14 @@ public:
                         ? static_cast<float>(op0) >= static_cast<float>(op1)
                         : op0 >= op1;
       res = result ? 1.0 : 0.0;
-    } else if (node->op == "and") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (op0 == 1.0 && op1 == 1.0) ? 1.0 : 0.0;
-    } else if (node->op == "or") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (op0 == 1.0 || op1 == 1.0) ? 1.0 : 0.0;
-    } else if (node->op == "not") {
-      double op = getResult(node->operands[0].get());
-      res = (op == 1.0) ? 0.0 : 1.0;
-    } else if (node->op == "TRUE") {
-      res = 1.0;
-    } else if (node->op == "FALSE") {
-      res = 0.0;
+    } else if (node->op == "PI") {
+      res = M_PI;
+    } else if (node->op == "E") {
+      res = M_E;
+    } else if (node->op == "INFINITY") {
+      res = INFINITY;
+    } else if (node->op == "NAN") {
+      res = NAN;
     } else {
       std::string msg = "FPEvaluator: Unexpected operator " + node->op;
       llvm_unreachable(msg.c_str());
@@ -1382,7 +1642,6 @@ public:
       double constVal = node->getLowerBound(); // TODO: Can be improved
       CachedValue cv(53);
       mpfr_set_d(cv.value, constVal, MPFR_RNDN);
-
       cache.emplace(node, std::move(cv));
       return;
     }
@@ -1393,23 +1652,18 @@ public:
         return;
 
       double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-      // llvm::errs() << "Input value for " << *cast<FPLLValue>(node)->value
-      //              << ": " << inputValue << "\n";
       CachedValue cv(53);
       mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
-
       cache.emplace(node, std::move(cv));
       return;
     }
 
-    // Type of results of if nodes depend on the evaluated branches
     if (node->op == "if") {
       if (cache.find(node) != cache.end())
         return;
 
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &cond = getResult(node->operands[0].get());
-
       if (0 == mpfr_cmp_ui(cond, 1)) {
         evaluateNode(node->operands[1].get(), inputValues, groundTruth);
         mpfr_t &then_val = getResult(node->operands[1].get());
@@ -1426,24 +1680,15 @@ public:
       return;
     }
 
-    auto it = cache.find(node);
-
     unsigned nodePrec = getNodePrecision(node, groundTruth);
-    // llvm::errs() << "Precision for " << node->op << " set to " << nodePrec
-    //              << "\n";
-
-    if (it != cache.end()) {
+    if (cache.find(node) != cache.end()) {
       assert(cache.at(node).prec == nodePrec && "Unexpected precision change");
       return;
     } else {
-      // Prepare for recomputation
       cache.emplace(node, CachedValue(nodePrec));
     }
-
     mpfr_t &res = cache.at(node).value;
 
-    // Cast operands to dest precision first -- this agrees with our
-    // precision tuner behavior, i.e., fpcasting operands first
     if (node->op == "neg") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
@@ -1496,6 +1741,29 @@ public:
       mpfr_t &op = getResult(node->operands[0].get());
       mpfr_prec_round(op, nodePrec, MPFR_RNDN);
       mpfr_tan(res, op, MPFR_RNDN);
+    } else if (node->op == "asin") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_asin(res, op, MPFR_RNDN);
+    } else if (node->op == "acos") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_acos(res, op, MPFR_RNDN);
+    } else if (node->op == "atan") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_atan(res, op, MPFR_RNDN);
+    } else if (node->op == "atan2") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_atan2(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "exp") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
@@ -1558,127 +1826,225 @@ public:
       mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
       mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
       mpfr_hypot(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "asinh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_asinh(res, op, MPFR_RNDN);
+    } else if (node->op == "acosh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_acosh(res, op, MPFR_RNDN);
+    } else if (node->op == "atanh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_atanh(res, op, MPFR_RNDN);
+    } else if (node->op == "sinh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_sinh(res, op, MPFR_RNDN);
+    } else if (node->op == "cosh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_cosh(res, op, MPFR_RNDN);
+    } else if (node->op == "tanh") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_tanh(res, op, MPFR_RNDN);
+    } else if (node->op == "ceil") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_ceil(res, op);
+    } else if (node->op == "floor") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_floor(res, op);
+    } else if (node->op == "erf") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_erf(res, op, MPFR_RNDN);
+    } else if (node->op == "exp2") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_exp2(res, op, MPFR_RNDN);
+    } else if (node->op == "log10") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_log10(res, op, MPFR_RNDN);
+    } else if (node->op == "log2") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_log2(res, op, MPFR_RNDN);
+    } else if (node->op == "rint") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_rint(res, op, MPFR_RNDN);
+    } else if (node->op == "round") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_round(res, op);
+    } else if (node->op == "trunc") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      mpfr_t &op = getResult(node->operands[0].get());
+      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+      mpfr_trunc(res, op);
+    } else if (node->op == "copysign") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_copysign(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "fdim") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_dim(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "fmod") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_fmod(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "remainder") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_remainder(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "fmax") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_max(res, op0, op1, MPFR_RNDN);
+    } else if (node->op == "fmin") {
+      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+      mpfr_t &op0 = getResult(node->operands[0].get());
+      mpfr_t &op1 = getResult(node->operands[1].get());
+      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+      mpfr_min(res, op0, op1, MPFR_RNDN);
     } else if (node->op == "==") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 == mpfr_cmp(op0, op1)) {
+      if (0 == mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "!=") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 != mpfr_cmp(op0, op1)) {
+      if (0 != mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "<") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 > mpfr_cmp(op0, op1)) {
+      if (0 > mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == ">") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 < mpfr_cmp(op0, op1)) {
+      if (0 < mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "<=") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 >= mpfr_cmp(op0, op1)) {
+      if (0 >= mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == ">=") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 <= mpfr_cmp(op0, op1)) {
+      if (0 <= mpfr_cmp(op0, op1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "and") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1)) {
+      if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "or") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
       mpfr_t &op0 = getResult(node->operands[0].get());
       mpfr_t &op1 = getResult(node->operands[1].get());
-
-      if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1)) {
+      if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1))
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      }
     } else if (node->op == "not") {
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &op = getResult(node->operands[0].get());
       mpfr_set_prec(res, nodePrec);
-      if (0 == mpfr_cmp_ui(op, 1)) {
+      if (0 == mpfr_cmp_ui(op, 1))
         mpfr_set_ui(res, 0, MPFR_RNDN);
-      } else {
+      else
         mpfr_set_ui(res, 1, MPFR_RNDN);
-      }
     } else if (node->op == "TRUE") {
       mpfr_set_ui(res, 1, MPFR_RNDN);
     } else if (node->op == "FALSE") {
       mpfr_set_ui(res, 0, MPFR_RNDN);
+    } else if (node->op == "PI") {
+      mpfr_const_pi(res, MPFR_RNDN);
+    } else if (node->op == "E") {
+      mpfr_const_euler(res, MPFR_RNDN);
+    } else if (node->op == "INFINITY") {
+      mpfr_set_inf(res, 1);
+    } else if (node->op == "NAN") {
+      mpfr_set_nan(res);
     } else {
       std::string msg = "MPFREvaluator: Unexpected operator " + node->op;
       llvm_unreachable(msg.c_str());
     }
-
-    // if (mpfr_nan_p(res)) {
-    //   llvm::errs() << "WARNING MPFREvaluator: NaN detected for node "
-    //                << node->op << "\n";
-    //   llvm::errs() << "Problematic operand(s):";
-    //   for (const auto &operand : node->operands) {
-    //     mpfr_t &op = getResult(operand.get());
-    //     llvm::errs() << " " << mpfr_get_d(op, MPFR_RNDN);
-    //   }
-    //   llvm::errs() << "\n";
-    //   llvm::errs() << "Sampled input values:";
-    //   for (const auto &[_, input] : inputValues) {
-    //     llvm::errs() << " " << input;
-    //   }
-    //   llvm::errs() << "\n";
-    // }
   }
 
   mpfr_t &getResult(FPNode *node) {
@@ -1915,12 +2281,40 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       //   llvm::errs() << "Herbie expr parser: Found __const " << value
       //                << " with dtype " << dtype << "\n";
       return std::make_shared<FPConst>(value, dtype);
-
     } else if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
       std::string value = matches[1].str();
       std::string dtype = "f64"; // Assume f64 by default
       return std::make_shared<FPConst>(value, dtype);
     }
+  }
+
+  if (trimmedExpr.substr(0, 9) == "#s(approx") {
+    if (trimmedExpr.back() != ')') {
+      llvm_unreachable(("Malformed approx expression: " + trimmedExpr).c_str());
+    }
+    std::string inner = trimmedExpr.substr(9, trimmedExpr.size() - 9 - 1);
+    inner.erase(0, inner.find_first_not_of(" "));
+    inner.erase(inner.find_last_not_of(" ") + 1);
+
+    int depth = 0;
+    size_t splitPos = std::string::npos;
+    for (size_t i = 0; i < inner.size(); ++i) {
+      if (inner[i] == '(')
+        depth++;
+      else if (inner[i] == ')')
+        depth--;
+      else if (inner[i] == ' ' && depth == 0) {
+        splitPos = i;
+        break;
+      }
+    }
+    if (splitPos == std::string::npos) {
+      llvm_unreachable(("Malformed approx expression: " + trimmedExpr).c_str());
+    }
+    std::string resultPart = inner.substr(splitPos + 1);
+    resultPart.erase(0, resultPart.find_first_not_of(" "));
+    resultPart.erase(resultPart.find_last_not_of(" ") + 1);
+    return parseHerbieExpr(resultPart, valueToNodeMap, symbolToValueMap);
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
@@ -1930,12 +2324,10 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
   trimmedExpr = trimmedExpr.substr(1, trimmedExpr.size() - 2);
 
-  // Get the operator
   auto endOp = trimmedExpr.find(' ');
   std::string fullOp = trimmedExpr.substr(0, endOp);
 
   size_t pos = fullOp.find('.');
-
   std::string dtype;
   std::string op;
   if (pos != std::string::npos) {
@@ -1989,6 +2381,9 @@ getOperandValueProperties(const Value *V) {
 
 InstructionCost getInstructionCompCost(const Instruction *I,
                                        const TargetTransformInfo &TTI) {
+  if (!I->getType()->isFPOrFPVectorTy())
+    return 0;
+
   if (!FPOptCostModelPath.empty()) {
     static std::map<std::pair<std::string, std::string>, InstructionCost>
         CostModel;
@@ -2005,24 +2400,20 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       std::string Line;
       while (std::getline(CostFile, Line)) {
         std::istringstream SS(Line);
-        std::string OpcodeStr, PrecisionStr;
-        std::string CostStr;
+        std::string OpcodeStr, PrecisionStr, CostStr;
 
         if (!std::getline(SS, OpcodeStr, ',')) {
-          std::string msg = "Unexpected line in custom cost model: " + Line;
-          llvm_unreachable(msg.c_str());
+          llvm_unreachable(
+              ("Unexpected line in custom cost model: " + Line).c_str());
         }
         if (!std::getline(SS, PrecisionStr, ',')) {
-          std::string msg = "Unexpected line in custom cost model: " + Line;
-          llvm_unreachable(msg.c_str());
+          llvm_unreachable(
+              ("Unexpected line in custom cost model: " + Line).c_str());
         }
         if (!std::getline(SS, CostStr)) {
-          std::string msg = "Unexpected line in custom cost model: " + Line;
-          llvm_unreachable(msg.c_str());
+          llvm_unreachable(
+              ("Unexpected line in custom cost model: " + Line).c_str());
         }
-        // llvm::errs() << "Cost model: " << OpcodeStr << ", " << PrecisionStr
-        //              << ", " << CostStr << "\n";
-
         CostModel[{OpcodeStr, PrecisionStr}] = std::stoi(CostStr);
       }
 
@@ -2059,7 +2450,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       return 0;
     case Instruction::Call: {
       auto *Call = cast<CallInst>(I);
-      if (auto CalledFunc = Call->getCalledFunction()) {
+      if (auto *CalledFunc = Call->getCalledFunction()) {
         if (CalledFunc->isIntrinsic()) {
           switch (CalledFunc->getIntrinsicID()) {
           case Intrinsic::sin:
@@ -2068,6 +2459,11 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           case Intrinsic::cos:
             OpcodeName = "cos";
             break;
+#if LLVM_VERSION_MAJOR > 16
+          case Intrinsic::tan:
+            OpcodeName = "tan";
+            break;
+#endif
           case Intrinsic::exp:
             OpcodeName = "exp";
             break;
@@ -2086,6 +2482,42 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           case Intrinsic::pow:
             OpcodeName = "pow";
             break;
+          case Intrinsic::fmuladd:
+            OpcodeName = "fmuladd";
+            break;
+          case Intrinsic::maxnum:
+            OpcodeName = "maxnum";
+            break;
+          case Intrinsic::minnum:
+            OpcodeName = "minnum";
+            break;
+          case Intrinsic::ceil:
+            OpcodeName = "ceil";
+            break;
+          case Intrinsic::floor:
+            OpcodeName = "floor";
+            break;
+          case Intrinsic::exp2:
+            OpcodeName = "exp2";
+            break;
+          case Intrinsic::log10:
+            OpcodeName = "log10";
+            break;
+          case Intrinsic::log2:
+            OpcodeName = "log2";
+            break;
+          case Intrinsic::rint:
+            OpcodeName = "rint";
+            break;
+          case Intrinsic::round:
+            OpcodeName = "round";
+            break;
+          case Intrinsic::trunc:
+            OpcodeName = "trunc";
+            break;
+          case Intrinsic::copysign:
+            OpcodeName = "copysign";
+            break;
           default: {
             std::string msg = "Custom cost model: unsupported intrinsic " +
                               CalledFunc->getName().str();
@@ -2094,37 +2526,22 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           }
         } else {
           std::string FuncName = CalledFunc->getName().str();
-          if (FuncName.back() == 'f' || FuncName.back() == 'l') {
+          if (!FuncName.empty() &&
+              (FuncName.back() == 'f' || FuncName.back() == 'l'))
             FuncName.pop_back();
-          }
 
-          if (FuncName == "sin") {
-            OpcodeName = "sin";
-          } else if (FuncName == "cos") {
-            OpcodeName = "cos";
-          } else if (FuncName == "tan") {
-            OpcodeName = "tan";
-          } else if (FuncName == "exp") {
-            OpcodeName = "exp";
-          } else if (FuncName == "log") {
-            OpcodeName = "log";
-          } else if (FuncName == "sqrt") {
-            OpcodeName = "sqrt";
-          } else if (FuncName == "expm1") {
-            OpcodeName = "expm1";
-          } else if (FuncName == "log1p") {
-            OpcodeName = "log1p";
-          } else if (FuncName == "cbrt") {
-            OpcodeName = "cbrt";
-          } else if (FuncName == "pow") {
-            OpcodeName = "pow";
-          } else if (FuncName == "fabs") {
-            OpcodeName = "fabs";
-          } else if (FuncName == "fma") {
-            OpcodeName = "fma";
-          } else if (FuncName == "hypot") {
-            OpcodeName = "hypot";
-          } else {
+          static const std::unordered_set<std::string> LibmFuncs = {
+              "sin",   "cos",      "tan",    "asin",   "acos",     "atan",
+              "atan2", "sinh",     "cosh",   "tanh",   "asinh",    "acosh",
+              "atanh", "exp",      "log",    "sqrt",   "cbrt",     "pow",
+              "fabs",  "fma",      "hypot",  "expm1",  "log1p",    "ceil",
+              "floor", "erf",      "exp2",   "lgamma", "log10",    "log2",
+              "rint",  "round",    "tgamma", "trunc",  "copysign", "fdim",
+              "fmod",  "remainder"};
+
+          if (LibmFuncs.count(FuncName))
+            OpcodeName = FuncName;
+          else {
             std::string msg =
                 "Custom cost model: unknown function call " + FuncName;
             llvm_unreachable(msg.c_str());
@@ -2135,31 +2552,31 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       }
       break;
     }
-    default:
+    default: {
       std::string msg = "Custom cost model: unexpected opcode " +
                         std::string(I->getOpcodeName());
       llvm_unreachable(msg.c_str());
     }
+    }
 
     std::string PrecisionName;
     Type *Ty = I->getType();
-    if (I->getOpcode() == Instruction::FCmp) {
+    if (I->getOpcode() == Instruction::FCmp)
       Ty = I->getOperand(0)->getType();
-    }
 
-    if (Ty->isBFloatTy()) {
+    if (Ty->isBFloatTy())
       PrecisionName = "bf16";
-    } else if (Ty->isHalfTy()) {
+    else if (Ty->isHalfTy())
       PrecisionName = "half";
-    } else if (Ty->isFloatTy()) {
+    else if (Ty->isFloatTy())
       PrecisionName = "float";
-    } else if (Ty->isDoubleTy()) {
+    else if (Ty->isDoubleTy())
       PrecisionName = "double";
-    } else if (Ty->isX86_FP80Ty()) {
+    else if (Ty->isX86_FP80Ty())
       PrecisionName = "fp80";
-    } else if (Ty->isFP128Ty()) {
+    else if (Ty->isFP128Ty())
       PrecisionName = "fp128";
-    } else {
+    else {
       std::string msg = "Custom cost model: unsupported precision type!";
       llvm_unreachable(msg.c_str());
     }
@@ -2168,20 +2585,19 @@ InstructionCost getInstructionCompCost(const Instruction *I,
         I->getOpcode() == Instruction::FPTrunc) {
       Type *SrcTy = I->getOperand(0)->getType();
       std::string SrcPrecisionName;
-
-      if (SrcTy->isBFloatTy()) {
+      if (SrcTy->isBFloatTy())
         SrcPrecisionName = "bf16";
-      } else if (SrcTy->isHalfTy()) {
+      else if (SrcTy->isHalfTy())
         SrcPrecisionName = "half";
-      } else if (SrcTy->isFloatTy()) {
+      else if (SrcTy->isFloatTy())
         SrcPrecisionName = "float";
-      } else if (SrcTy->isDoubleTy()) {
+      else if (SrcTy->isDoubleTy())
         SrcPrecisionName = "double";
-      } else if (SrcTy->isX86_FP80Ty()) {
+      else if (SrcTy->isX86_FP80Ty())
         SrcPrecisionName = "fp80";
-      } else if (SrcTy->isFP128Ty()) {
+      else if (SrcTy->isFP128Ty())
         SrcPrecisionName = "fp128";
-      } else {
+      else {
         std::string msg = "Custom cost model: unsupported precision type!";
         llvm_unreachable(msg.c_str());
       }
@@ -2192,19 +2608,17 @@ InstructionCost getInstructionCompCost(const Instruction *I,
 
     auto Key = std::make_pair(OpcodeName, PrecisionName);
     auto It = CostModel.find(Key);
-    if (It != CostModel.end()) {
+    if (It != CostModel.end())
       return It->second;
-    }
 
     std::string msg = "Custom cost model: entry not found for " + OpcodeName +
                       " @ " + PrecisionName;
-    llvm::errs() << "Unexpected Intruction: " << *I << "\n";
+    llvm::errs() << "Unexpected Instruction: " << *I << "\n";
     llvm_unreachable(msg.c_str());
+  } else {
+    llvm::errs() << "WARNING: Custom cost model not found, using TTI cost!\n";
+    return TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
   }
-
-  std::string msg = "Custom cost model: instruction cost for " +
-                    std::string(I->getOpcodeName()) + " not found!";
-  llvm_unreachable(msg.c_str());
 }
 
 InstructionCost computeMaxCost(
@@ -2478,7 +2892,7 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
       auto operands =
           isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
       for (auto &operand : operands) {
-        if (newCC.inputs.count(operand)) {
+        if (newCC.inputs.count(operand) || isa<ConstantFP>(operand)) {
           continue;
         }
 
@@ -3415,20 +3829,34 @@ std::string getHerbieOperator(const Instruction &I) {
     assert(CI && CI->getCalledFunction() &&
            "getHerbieOperator: Call without a function");
 
-    std::string funcName = CI->getCalledFunction()->getName().str();
+    StringRef funcName = CI->getCalledFunction()->getName();
 
-    // Special cases
-    if (startsWith(funcName, "cbrt"))
-      return "cbrt";
-
-    std::regex regex("llvm\\.(\\w+)\\.?.*");
-    std::smatch matches;
-    if (std::regex_search(funcName, matches, regex) && matches.size() > 1) {
-      if (matches[1].str() == "fmuladd")
-        return "fma";
-      return matches[1].str();
+    // LLVM intrinsics
+    if (funcName.startswith("llvm.")) {
+      std::regex regex("llvm\\.(\\w+)\\.?.*");
+      std::smatch matches;
+      std::string nameStr = funcName.str();
+      if (std::regex_search(nameStr, matches, regex) && matches.size() > 1) {
+        std::string intrinsic = matches[1];
+        // Special case mappings
+        if (intrinsic == "fmuladd")
+          return "fma";
+        if (intrinsic == "maxnum")
+          return "fmax";
+        if (intrinsic == "minnum")
+          return "fmin";
+        return intrinsic;
+      }
+      assert(0 && "getHerbieOperator: Unknown LLVM intrinsic");
     }
-    assert(0 && "getHerbieOperator: Unknown callee");
+    // libm functions
+    else {
+      std::string name = funcName.str();
+      if (!name.empty() && name.back() == 'f') {
+        name.pop_back();
+      }
+      return name;
+    }
   }
   default:
     assert(0 && "getHerbieOperator: Unknown operator");
