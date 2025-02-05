@@ -56,11 +56,11 @@ set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable FPOpt")
 if(ENZYME_ENABLE_FPOPT)
   include(ExternalProject)
     ExternalProject_Add(herbie
-        GIT_REPOSITORY https://github.com/herbie-fp/herbie
-        GIT_TAG 5e640bd324ece7105804c7842c6026fd92808890
+        GIT_REPOSITORY https://github.com/sbrantq/herbie
+        GIT_TAG f36d7f9bc3171dee0f852364369ae206f949cae5
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/herbie.rkt
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
