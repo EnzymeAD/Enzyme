@@ -1651,7 +1651,7 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
     // may be nocapure/readonly, but the actual arg (which will be put in the
     // array) may not be.
     if (F->getCallingConv() == call->getCallingConv())
-      if (F->getArg(idx)->hasNoCaptureAttr())
+      if (idx < F->arg_size() && F->getArg(idx)->hasNoCaptureAttr())
         return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
