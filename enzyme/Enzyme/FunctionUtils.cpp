@@ -698,7 +698,7 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
     AttributeList list;
     list = list.addFnAttribute(NewF->getContext(), Attribute::ReadOnly);
     list = list.addParamAttribute(NewF->getContext(), 0, Attribute::ReadNone);
-    list = list.addParamAttribute(NewF->getContext(), 0, Attribute::NoCapture);
+    list = addFunctionNoCapture(NewF->getContext(), list, 0);
     auto allocSize = NewF->getParent()->getOrInsertFunction(
         allocName,
         FunctionType::get(
@@ -1109,7 +1109,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
         B.SetInsertPoint(Bound->getNextNode());
       }
       B.CreateStore(B.CreateLoad(AI2->getAllocatedType(), AI2), AI);
-      Bound->addParamAttr(i, Attribute::NoCapture);
+      addCallSiteNoCapture(Bound, i);
     }
   }
   PreservedAnalyses PA;

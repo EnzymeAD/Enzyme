@@ -161,8 +161,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
          << ", llvm::Attribute::ReadNone);\n"
          << "      F->addParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadOnly);\n"
-         << "      F->addParamAttr(" << i << " + offset"
-         << ", llvm::Attribute::NoCapture);\n";
+         << "      addFunctionNoCapture(F, " << i << " + offset);\n";
       os << "  }\n";
     }
   }
@@ -171,8 +170,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     size_t i = (lv23 ? argPos - 1 : argPos);
     if (typeOfArg == ArgType::vincData || typeOfArg == ArgType::mldData) {
-      os << "  F->addParamAttr(" << i << " + offset"
-         << ", llvm::Attribute::NoCapture);\n";
+      os << "  addFunctionNoCapture(F, " << i << " + offset);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
         os << "  F->removeParamAttr(" << i << " + offset"
@@ -191,8 +189,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
        << ", llvm::Attribute::ReadNone);\n"
        << "      F->addParamAttr(" << ptrRetArg << " + offset"
        << ", llvm::Attribute::WriteOnly);\n"
-       << "      F->addParamAttr(" << ptrRetArg << " + offset"
-       << ", llvm::Attribute::NoCapture);\n"
+       << "  addFunctionNoCapture(F, " << ptrRetArg << " + offset);\n"
        << "  }\n";
   }
   os << "  return res;\n";

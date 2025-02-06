@@ -1651,7 +1651,7 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
     // may be nocapure/readonly, but the actual arg (which will be put in the
     // array) may not be.
     if (F->getCallingConv() == call->getCallingConv())
-      if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
+      if (idx < F->arg_size() && F->getArg(idx)->hasNoCaptureAttr())
         return true;
     // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
     //   return true;
@@ -2010,7 +2010,11 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoFree,
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Attribute::AttrKind::Captures,
+#else
     llvm::Attribute::AttrKind::NoCapture,
+#endif
     llvm::Attribute::AttrKind::ReadNone};
 
 // Parameter attributes from the original function/call that
@@ -2025,7 +2029,11 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
     llvm::Attribute::AttrKind::NoFree,
     llvm::Attribute::AttrKind::Alignment,
     llvm::Attribute::AttrKind::StackAlignment,
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Attribute::AttrKind::Captures,
+#else
     llvm::Attribute::AttrKind::NoCapture,
+#endif
     llvm::Attribute::AttrKind::ReadNone,
 };
 #ifdef __clang__
@@ -2041,6 +2049,57 @@ getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
   return llvm::Intrinsic::getOrInsertDeclaration(M, id, Tys);
 #else
   return llvm::Intrinsic::getDeclaration(M, id, Tys);
+#endif
+}
+
+static inline llvm::Instruction *getFirstNonPHIOrDbg(llvm::BasicBlock *B) {
+#if LLVM_VERSION_MAJOR >= 20
+  return &*B->getFirstNonPHIOrDbg();
+#else
+  return B->getFirstNonPHIOrDbg();
+#endif
+}
+
+static inline llvm::Instruction *
+getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
+#if LLVM_VERSION_MAJOR >= 20
+  return &*B->getFirstNonPHIOrDbgOrLifetime();
+#else
+  return B->getFirstNonPHIOrDbgOrLifetime();
+#endif
+}
+
+static inline void addCallSiteNoCapture(llvm::CallBase *call, size_t idx) {
+#if LLVM_VERSION_MAJOR >= 20
+  call->addParamAttr(
+      idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
+                                llvm::CaptureInfo::none().toIntValue()));
+#else
+  call->addParamAttr(idx, llvm::Attribute::NoCapture);
+#endif
+}
+
+static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
+#if LLVM_VERSION_MAJOR >= 20
+  call->addParamAttr(
+      idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
+                                llvm::CaptureInfo::none().toIntValue()));
+#else
+  call->addParamAttr(idx, llvm::Attribute::NoCapture);
+#endif
+}
+
+[[nodiscard]] static inline llvm::AttributeList
+addFunctionNoCapture(llvm::LLVMContext &ctx, llvm::AttributeList list,
+                     size_t idx) {
+#if LLVM_VERSION_MAJOR >= 20
+  return list.addParamAttribute(
+      ctx, {idx},
+      llvm::Attribute::get(ctx, llvm::Attribute::Captures,
+                           llvm::CaptureInfo::none().toIntValue()));
+#else
+  unsigned idxs = {(unsigned)idx};
+  return list.addParamAttribute(ctx, idxs, llvm::Attribute::NoCapture);
 #endif
 }
 
