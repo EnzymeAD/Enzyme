@@ -2098,7 +2098,8 @@ addFunctionNoCapture(llvm::LLVMContext &ctx, llvm::AttributeList list,
       llvm::Attribute::get(ctx, llvm::Attribute::Captures,
                            llvm::CaptureInfo::none().toIntValue()));
 #else
-  return list.addParamAttribute(ctx, {idx}, llvm::Attribute::NoCapture);
+  unsigned idxs = {(unsigned)idx};
+  return list.addParamAttribute(ctx, idxs, llvm::Attribute::NoCapture);
 #endif
 }
 
