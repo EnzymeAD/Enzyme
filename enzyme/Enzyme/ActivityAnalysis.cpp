@@ -169,6 +169,7 @@ bool isInactiveCall(CallBase &CI) {
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
+    "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
     "_ZNSt16allocator_traitsISaIdEE10deallocate",
     "_ZNSaIcED1Ev",
