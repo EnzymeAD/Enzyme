@@ -161,16 +161,14 @@ public:
     AttributeList AL;
     AL = AL.addParamAttribute(DT->getContext(), 0,
                               Attribute::AttrKind::ReadOnly);
-    AL = AL.addParamAttribute(DT->getContext(), 0,
-                              Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(DT->getContext(), AL, 0);
     AL =
         AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NoAlias);
     AL =
         AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NonNull);
     AL = AL.addParamAttribute(DT->getContext(), 1,
                               Attribute::AttrKind::WriteOnly);
-    AL = AL.addParamAttribute(DT->getContext(), 1,
-                              Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(DT->getContext(), AL, 1);
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NoAlias);
     AL =
@@ -208,11 +206,11 @@ public:
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(context, AL, 0);
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::WriteOnly);
-    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(context, AL, 1);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,
@@ -241,11 +239,11 @@ public:
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(context, AL, 0);
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::WriteOnly);
-    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
+    AL = addFunctionNoCapture(context, AL, 1);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
     AL = AL.addAttributeAtIndex(context, AttributeList::FunctionIndex,

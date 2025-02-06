@@ -2713,9 +2713,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   auto i = nf->arg_begin(), j = NewF->arg_begin();
   while (i != nf->arg_end()) {
     VMap[i] = j;
-    if (nf->hasParamAttribute(attrIndex, Attribute::NoCapture)) {
-      NewF->addParamAttr(attrIndex, Attribute::NoCapture);
+#if LLVM_VERSION_MAJOR > 20
+    if (nf->hasParamAttribute(attrIndex, Attribute::Captures)) {
+      NewF->addParamAttr(attrIndex,
+                         nf->getParamAttribute(attrIndex, Attribute::Captures));
     }
+#else
+    if (nf->hasParamAttribute(attrIndex, Attribute::NoCapture)) {
+      NewF->addParamAttr(
+          attrIndex, nf->getParamAttribute(attrIndex, Attribute::NoCapture));
+    }
+#endif
     if (nf->hasParamAttribute(attrIndex, Attribute::NoAlias)) {
       NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }

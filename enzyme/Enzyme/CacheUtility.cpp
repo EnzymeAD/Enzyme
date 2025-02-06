@@ -194,8 +194,8 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
       continue;
     if (!Inc)
       continue;
-    if (Inc != Header->getFirstNonPHIOrDbg())
-      Inc->moveBefore(Header->getFirstNonPHIOrDbg());
+    if (Inc != getFirstNonPHIOrDbg(Header))
+      Inc->moveBefore(getFirstNonPHIOrDbg(Header));
     return std::make_pair(PN, Inc);
   }
   llvm::errs() << *Header << "\n";

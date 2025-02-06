@@ -125,7 +125,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
   if (F.getName() == "fprintf") {
     for (auto &arg : F.args()) {
       if (arg.getType()->isPointerTy()) {
-        arg.addAttr(Attribute::NoCapture);
+        addFunctionNoCapture(&F, arg.getArgNo());
         changed = true;
       }
     }
@@ -148,7 +148,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       for (auto &arg : F.args()) {
         if (arg.getType()->isPointerTy()) {
           arg.addAttr(Attribute::ReadNone);
-          arg.addAttr(Attribute::NoCapture);
+          addFunctionNoCapture(&F, arg.getArgNo());
         }
       }
   }
@@ -168,7 +168,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     for (int i = 0; i < 2; i++)
       if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
-        F.addParamAttr(i, Attribute::NoCapture);
+        addFunctionNoCapture(&F, i);
         F.addParamAttr(i, Attribute::WriteOnly);
       }
   }
@@ -192,7 +192,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     F.addParamAttr(0, Attribute::WriteOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
-      F.addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::WriteOnly);
     }
     F.addParamAttr(6, Attribute::WriteOnly);
@@ -211,7 +211,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     F.addParamAttr(0, Attribute::ReadOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
-      F.addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::ReadOnly);
     }
     F.addParamAttr(6, Attribute::WriteOnly);
@@ -231,12 +231,12 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
 
     if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
-      F.addParamAttr(0, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 0);
       F.addParamAttr(0, Attribute::ReadOnly);
     }
     if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
       F.addParamAttr(1, Attribute::WriteOnly);
-      F.addParamAttr(1, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 1);
     }
   }
   if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
@@ -246,9 +246,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(0, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 0);
     F.addParamAttr(1, Attribute::WriteOnly);
-    F.addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 1);
   }
   if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
     changed = true;
@@ -257,9 +257,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 1);
     F.addParamAttr(2, Attribute::WriteOnly);
-    F.addParamAttr(2, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 2);
   }
   // Map of MPI function name to the arg index of its type argument
   std::map<std::string, int> MPI_TYPE_ARGS = {
@@ -2347,7 +2347,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2361,7 +2361,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2375,7 +2375,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2389,7 +2389,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2439,9 +2439,9 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #endif
           CI->addParamAttr(1, Attribute::ReadOnly);
-          CI->addParamAttr(1, Attribute::NoCapture);
+          addCallSiteNoCapture(CI, 1);
           CI->addParamAttr(3, Attribute::ReadOnly);
-          CI->addParamAttr(3, Attribute::NoCapture);
+          addCallSiteNoCapture(CI, 3);
         }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
@@ -2502,7 +2502,7 @@ public:
           for (size_t i : {0, 1}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2527,7 +2527,7 @@ public:
           for (size_t i : {0, 2}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2553,7 +2553,7 @@ public:
           for (size_t i : {0, 1, 2, 3}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2579,7 +2579,7 @@ public:
           for (size_t i : {0}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2601,7 +2601,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }

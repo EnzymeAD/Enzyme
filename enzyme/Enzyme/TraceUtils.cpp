@@ -196,11 +196,8 @@ TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
         Builder.CreateIntToPtr(cast, getInt8PtrTy(cast->getContext()));
     return {retval, ConstantInt::get(size_type, valsize / 8)};
   } else {
-    auto insertPoint = Builder.GetInsertBlock()
-                           ->getParent()
-                           ->getEntryBlock()
-                           .getFirstNonPHIOrDbgOrLifetime();
-    IRBuilder<> AllocaBuilder(insertPoint);
+    IRBuilder<> AllocaBuilder(getFirstNonPHIOrDbgOrLifetime(
+        &Builder.GetInsertBlock()->getParent()->getEntryBlock()));
     auto alloca = AllocaBuilder.CreateAlloca(val->getType(), nullptr,
                                              val->getName() + ".ptr");
     Builder.CreateStore(val, alloca);
@@ -248,7 +245,8 @@ CallInst *TraceUtils::InsertChoice(IRBuilder<> &Builder, Value *address,
   auto call = Builder.CreateCall(interface->insertChoiceTy(),
                                  interface->insertChoice(Builder), args);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
@@ -259,7 +257,7 @@ CallInst *TraceUtils::InsertCall(IRBuilder<> &Builder, Value *address,
   auto call = Builder.CreateCall(interface->insertCallTy(),
                                  interface->insertCall(Builder), args);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
 #if LLVM_VERSION_MAJOR >= 14
   call->addAttributeAtIndex(
       AttributeList::FunctionIndex,
@@ -283,7 +281,7 @@ CallInst *TraceUtils::InsertArgument(IRBuilder<> &Builder, Value *name,
   auto call = Builder.CreateCall(interface->insertArgumentTy(),
                                  interface->insertArgument(Builder), args);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
@@ -322,7 +320,7 @@ CallInst *TraceUtils::InsertChoiceGradient(IRBuilder<> &Builder,
 
   auto call = Builder.CreateCall(interface_type, interface_function, args);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
@@ -339,7 +337,7 @@ CallInst *TraceUtils::InsertArgumentGradient(IRBuilder<> &Builder,
 
   auto call = Builder.CreateCall(interface_type, interface_function, args);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
@@ -352,16 +350,14 @@ CallInst *TraceUtils::GetTrace(IRBuilder<> &Builder, Value *address,
   auto call = Builder.CreateCall(interface->getTraceTy(),
                                  interface->getTrace(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
 Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
                                    Type *choiceType, const Twine &Name) {
-  IRBuilder<> AllocaBuilder(Builder.GetInsertBlock()
-                                ->getParent()
-                                ->getEntryBlock()
-                                .getFirstNonPHIOrDbgOrLifetime());
+  IRBuilder<> AllocaBuilder(getFirstNonPHIOrDbgOrLifetime(
+      &Builder.GetInsertBlock()->getParent()->getEntryBlock()));
   AllocaInst *store_dest =
       AllocaBuilder.CreateAlloca(choiceType, nullptr, Name + ".ptr");
   auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
@@ -385,7 +381,7 @@ Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
                      Attribute::get(call->getContext(), "enzyme_inactive"));
 #endif
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return Builder.CreateLoad(choiceType, store_dest, "from.trace." + Name);
 }
 
@@ -396,7 +392,7 @@ Instruction *TraceUtils::HasChoice(IRBuilder<> &Builder, Value *address,
   auto call = Builder.CreateCall(interface->hasChoiceTy(),
                                  interface->hasChoice(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
@@ -407,7 +403,7 @@ Instruction *TraceUtils::HasCall(IRBuilder<> &Builder, Value *address,
   auto call = Builder.CreateCall(interface->hasCallTy(),
                                  interface->hasCall(Builder), args, Name);
   call->addParamAttr(1, Attribute::ReadOnly);
-  call->addParamAttr(1, Attribute::NoCapture);
+  addCallSiteNoCapture(call, 1);
   return call;
 }
 
