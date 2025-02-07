@@ -3693,29 +3693,29 @@ bool Poseidonable(const llvm::Value &V) {
       StringRef funcName = CI->getCalledFunction()->getName();
       return
           // LLVM intrinsics
-          funcName.startswith("llvm.sin") || funcName.startswith("llvm.cos") ||
-          funcName.startswith("llvm.tan") || funcName.startswith("llvm.exp") ||
-          funcName.startswith("llvm.log") || funcName.startswith("llvm.sqrt") ||
-          funcName.startswith("llvm.pow") || funcName.startswith("llvm.fabs") ||
-          funcName.startswith("llvm.fma") ||
-          funcName.startswith("llvm.fmuladd") ||
-          funcName.startswith("llvm.maxnum") ||
-          funcName.startswith("llvm.minnum") ||
-          funcName.startswith("llvm.ceil") ||
-          funcName.startswith("llvm.floor") ||
-          // funcName.startswith("llvm.erf") ||
-          funcName.startswith("llvm.exp2") ||
-          // funcName.startswith("llvm.lgamma") ||
-          funcName.startswith("llvm.log10") ||
-          funcName.startswith("llvm.log2") ||
-          funcName.startswith("llvm.rint") ||
-          funcName.startswith("llvm.round") ||
-          // funcName.startswith("llvm.tgamma") ||
-          funcName.startswith("llvm.trunc") ||
-          funcName.startswith("llvm.copysign") ||
-          funcName.startswith("llvm.fdim") ||
-          funcName.startswith("llvm.fmod") ||
-          // funcName.startswith("llvm.remainder") ||
+          funcName.startswith("llvm.sin.") ||
+          funcName.startswith("llvm.cos.") ||
+          funcName.startswith("llvm.tan.") ||
+          funcName.startswith("llvm.exp.") ||
+          funcName.startswith("llvm.log.") ||
+          funcName.startswith("llvm.sqrt.") ||
+          funcName.startswith("llvm.pow.") ||
+          funcName.startswith("llvm.fabs.") ||
+          funcName.startswith("llvm.fma.") ||
+          funcName.startswith("llvm.fmuladd.") ||
+          funcName.startswith("llvm.maxnum.") ||
+          funcName.startswith("llvm.minnum.") ||
+          funcName.startswith("llvm.ceil.") ||
+          funcName.startswith("llvm.floor.") ||
+          funcName.startswith("llvm.exp2.") ||
+          funcName.startswith("llvm.log10.") ||
+          funcName.startswith("llvm.log2.") ||
+          funcName.startswith("llvm.rint.") ||
+          funcName.startswith("llvm.round.") ||
+          funcName.startswith("llvm.trunc.") ||
+          funcName.startswith("llvm.copysign.") ||
+          funcName.startswith("llvm.fdim.") ||
+          funcName.startswith("llvm.fmod.") ||
 
           // libm functions
           funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
