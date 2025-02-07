@@ -81,7 +81,7 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
 };
 
 #if LLVM_VERSION_MAJOR >= 18
-void registerEnzyme(llvm::PassBuilder &PB);
+extern "C" void registerEnzyme(llvm::PassBuilder &PB);
 #endif
 
 class EnzymePlugin final : public clang::ASTConsumer {
