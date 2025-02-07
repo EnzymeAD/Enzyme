@@ -250,6 +250,7 @@ td_library(
     srcs = [
         "Enzyme/MLIR/Dialect/Dialect.td",
     ],
+    includes = ["."],
     deps = [
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
