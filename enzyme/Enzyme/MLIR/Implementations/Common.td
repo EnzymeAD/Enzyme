@@ -107,7 +107,7 @@ class Inst<string mnemonic, string dialect_, string postop_="", string preop_=""
   string name = mnemonic;
   string dialect = dialect_;
   string postop = postop_;
-  string preop = preopt_;
+  string preop = preop_;
 }
 
 def Op {
