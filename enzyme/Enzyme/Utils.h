@@ -2092,13 +2092,13 @@ static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
 [[nodiscard]] static inline llvm::AttributeList
 addFunctionNoCapture(llvm::LLVMContext &ctx, llvm::AttributeList list,
                      size_t idx) {
+  unsigned idxs = {(unsigned)idx};
 #if LLVM_VERSION_MAJOR >= 20
   return list.addParamAttribute(
-      ctx, {idx},
+      ctx, idxs,
       llvm::Attribute::get(ctx, llvm::Attribute::Captures,
                            llvm::CaptureInfo::none().toIntValue()));
 #else
-  unsigned idxs = {(unsigned)idx};
   return list.addParamAttribute(ctx, idxs, llvm::Attribute::NoCapture);
 #endif
 }
