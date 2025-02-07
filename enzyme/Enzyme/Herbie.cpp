@@ -140,6 +140,9 @@ static cl::opt<bool> FPOptEnableSolver(
 static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
+static cl::opt<bool> FPOptLooseCoverage(
+    "fpopt-loose-coverage", cl::init(false), cl::Hidden,
+    cl::desc("Allow unexecuted FP instructions in subgraph indentification"));
 static cl::opt<bool> FPOptShowTable(
     "fpopt-show-table", cl::init(false), cl::Hidden,
     cl::desc(
@@ -4822,7 +4825,15 @@ B2:
 
               bool res = extractValueFromLog(FPOptLogPath, functionName,
                                              blockIdx, instIdx, valueInfo);
-              assert(res && "FP instruction not found in log!");
+              if (!res) {
+                if (FPOptLooseCoverage)
+                  continue;
+                llvm::errs() << "FP Instruction " << *I2
+                             << " has no execution logged!\n";
+                llvm_unreachable(
+                    "Unexecuted instruction found; set -fpopt-loose-coverage "
+                    "to suppress this error\n");
+              }
               auto node = valueToNodeMap[operand];
               node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
 
