@@ -3658,7 +3658,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-void registerEnzyme(llvm::PassBuilder &PB) {
+extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
 #ifdef ENZYME_RUNPASS
   augmentPassBuilder(PB);
 #endif
