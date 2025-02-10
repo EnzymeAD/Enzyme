@@ -3432,7 +3432,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       // llvm::dbgs() << "Running mem2reg" << "\n";
       herbieFPM.addPass(llvm::PromotePass());
       herbieFPM.addPass(llvm::GVNPass())  ;
-      herbieFPM.addPass(llvm::SROAPass());
+      herbieFPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
     }
 
     // check if we need to queue reassociations
@@ -3450,7 +3450,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       o.SinkCommonInsts = true;
       o.HoistCommonInsts = true;
       o.ForwardSwitchCondToPhi = false;
-      o.FoldTwoEntryPHINode = true; // Important for PHI->select
+      // o.FoldTwoEntryPHINode = true; // Important for PHI->select
       o.SimplifyCondBranch = true;  // Important for if-conversion
       herbieFPM.addPass(llvm::SimplifyCFGPass(o));
     }

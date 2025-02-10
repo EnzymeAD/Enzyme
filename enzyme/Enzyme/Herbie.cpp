@@ -3841,7 +3841,7 @@ std::string getHerbieOperator(const Instruction &I) {
     StringRef funcName = CI->getCalledFunction()->getName();
 
     // LLVM intrinsics
-    if (funcName.startswith("llvm.")) {
+    if (funcName.starts_with("llvm.")) {
       std::regex regex("llvm\\.(\\w+)\\.?.*");
       std::smatch matches;
       std::string nameStr = funcName.str();
