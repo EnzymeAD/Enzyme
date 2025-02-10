@@ -4503,6 +4503,27 @@ bool accuracyDPSolver(
                << costToAccuracyMap.begin()->first << ", "
                << costToAccuracyMap.rbegin()->first << "]\n";
 
+  llvm::errs() << "DP table contains " << costToAccuracyMap.size()
+               << " entries.\n";
+
+  unsigned long long totalCandidateCompositions = 1;
+  for (const auto &AO : AOs) {
+    // +1 for the "do nothing" possibility
+    totalCandidateCompositions *= AO.candidates.size() + 1;
+  }
+  for (const auto &ACC : ACCs) {
+    totalCandidateCompositions *= ACC.candidates.size() + 1;
+  }
+  llvm::errs() << "Total candidate compositions: " << totalCandidateCompositions
+               << "\n";
+
+  if (costToSolutionMap.find(0) != costToSolutionMap.end()) {
+    if (costToSolutionMap[0].empty()) {
+      llvm::errs() << "WARNING: No-op solution (utilized cost budget = 0) is "
+                      "considered Pareto-optimal.\n";
+    }
+  }
+
   double minAccCost = std::numeric_limits<double>::infinity();
   InstructionCost bestCompCost = 0;
   for (const auto &pair : costToAccuracyMap) {
