@@ -147,6 +147,10 @@ static cl::opt<bool> FPOptShowTable(
     "fpopt-show-table", cl::init(false), cl::Hidden,
     cl::desc(
         "Print the full DP table (highly verbose for large applications)"));
+static cl::opt<bool> FPOptShowPTDetails(
+    "fpopt-show-pt-details", cl::init(false), cl::Hidden,
+    cl::desc("Print details of precision tuning candidates along with the DP "
+             "table (highly verbose for large applications)"));
 static cl::opt<int64_t> FPOptComputationCostBudget(
     "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
@@ -4481,6 +4485,20 @@ bool accuracyDPSolver(
                   llvm::errs() << "\t\tACC: "
                                << item->candidates[step.candidateIndex].desc
                                << " (#" << step.candidateIndex << ")\n";
+                  if (FPOptShowPTDetails) {
+                    auto &candidate = item->candidates[step.candidateIndex];
+                    for (const auto &change : candidate.changes) {
+                      llvm::errs()
+                          << "\t\t\tChanging from "
+                          << getPrecisionChangeTypeString(change.oldType)
+                          << " to "
+                          << getPrecisionChangeTypeString(change.newType)
+                          << ":\n";
+                      for (auto *val : change.nodes) {
+                        llvm::errs() << "\t\t\t\t" << *val->value << "\n";
+                      }
+                    }
+                  }
                 } else {
                   llvm_unreachable(
                       "accuracyDPSolver: Unexpected type of solution step");
