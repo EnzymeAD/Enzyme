@@ -4168,7 +4168,7 @@ bool accuracyGreedySolver(
     double bestAccuracyCost = std::numeric_limits<double>::infinity();
     InstructionCost bestCandidateComputationCost;
 
-    for (auto &candidate : enumerate(AO.candidates)) {
+    for (const auto &candidate : enumerate(AO.candidates)) {
       size_t i = candidate.index();
       auto candCompCost = AO.getCompCostDelta(i);
       auto candAccCost = AO.getAccCostDelta(i);
@@ -4327,7 +4327,7 @@ bool accuracyDPSolver(
         InstructionCost currCompCost = pair.first;
         double currAccCost = pair.second;
 
-        for (auto &candidate : enumerate(AO.candidates)) {
+        for (const auto &candidate : enumerate(AO.candidates)) {
           size_t i = candidate.index();
           auto candCompCost = AO.getCompCostDelta(i);
           auto candAccCost = AO.getAccCostDelta(i);
@@ -4430,7 +4430,7 @@ bool accuracyDPSolver(
         InstructionCost currCompCost = pair.first;
         double currAccCost = pair.second;
 
-        for (auto &candidate : enumerate(ACC.candidates)) {
+        for (const auto &candidate : enumerate(ACC.candidates)) {
           size_t i = candidate.index();
           auto candCompCost =
               ACC.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
@@ -4851,13 +4851,15 @@ B2:
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
+            Type* elemType = GV->getValueType();
+          
             assert(
-                GV->getType()->getPointerElementType()->isFloatingPointTy() &&
+                elemType->isFloatingPointTy() &&
                 "Global variable is not floating point type");
             std::string dtype;
-            if (GV->getType()->getPointerElementType()->isFloatTy()) {
+            if (elemType->isFloatTy()) {
               dtype = "f32";
-            } else if (GV->getType()->getPointerElementType()->isDoubleTy()) {
+            } else if (elemType->isDoubleTy()) {
               dtype = "f64";
             } else {
               llvm_unreachable(
@@ -4960,7 +4962,7 @@ B2:
         auto operands =
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
-        for (auto &operand_ : enumerate(operands)) {
+        for (const auto &operand_ : enumerate(operands)) {
           auto &operand = operand_.value();
           auto i = operand_.index();
           if (!Poseidonable(*operand)) {
