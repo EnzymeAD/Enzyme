@@ -1,22 +1,14 @@
 CompileFlags:
-  Compiler: /home/vimarsh6739/tools/bin/clang++
-  CompilationDatabase: /home/vimarsh6739/higher-order/Enzyme/enzyme/build
+  Compiler: /home/vimarsh6739/poseidon/llvm-project/build/bin/clang++
+  CompilationDatabase: /home/vimarsh6739/poseidon/Enzyme/enzyme/build
   # Add extra flags that will be applied to all files, including headers
   Add: 
-    - "-I/home/vimarsh6739/tools/include"
+    - "-I/home/vimarsh6739/poseidon/llvm-project/llvm/include"
     - "-D_GNU_SOURCE"
     - "-D__STDC_CONSTANT_MACROS"
     - "-D__STDC_FORMAT_MACROS"
     - "-D__STDC_LIMIT_MACROS"
     - "-std=c++17"
-  FallbackFlags:
-    - "-xc++-header"
-    - "-std=c++17"
-    - "-I/home/vimarsh6739/tools/include"
-    - "-D_GNU_SOURCE"
-    - "-D__STDC_CONSTANT_MACROS"
-    - "-D__STDC_FORMAT_MACROS"
-    - "-D__STDC_LIMIT_MACROS"
 Index:
   Background: Build
 Diagnostics:

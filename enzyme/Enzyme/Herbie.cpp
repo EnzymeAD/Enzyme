@@ -357,7 +357,7 @@ public:
              [](IRBuilder<> &b, Module *M,
                 const SmallVectorImpl<Value *> &ops) -> Value * {
 #if LLVM_VERSION_MAJOR > 16
-               return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0],
+               return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
                                              "herbie.tan");
 #else
                Type *Ty = ops[0]->getType();
@@ -988,7 +988,16 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           OpBuilder.setFastMathFlags(I->getFastMathFlags());
           newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
         } else if (Constant *constOp = dyn_cast<Constant>(operand)) {
-          newOp = ConstantExpr::getFPCast(constOp, newType);
+          auto srcBits =
+              constOp->getType()->getPrimitiveSizeInBits().getFixedValue();
+          auto dstBits = newType->getPrimitiveSizeInBits().getFixedValue();
+
+          Instruction::CastOps opcode = (srcBits < dstBits) ? Instruction::FPExt
+                                        : (srcBits > dstBits)
+                                            ? Instruction::FPTrunc
+                                            : Instruction::BitCast;
+
+          newOp = ConstantExpr::getCast(opcode, constOp, newType);
         } else {
           llvm_unreachable("Unsupported operand type");
         }
@@ -1015,7 +1024,16 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           ArgBuilder.setFastMathFlags(I->getFastMathFlags());
           newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
         } else if (Constant *constArg = dyn_cast<Constant>(arg)) {
-          newArg = ConstantExpr::getFPCast(constArg, newType);
+          auto srcBits =
+              constArg->getType()->getPrimitiveSizeInBits().getFixedValue();
+          auto dstBits = newType->getPrimitiveSizeInBits().getFixedValue();
+
+          Instruction::CastOps opcode = (srcBits < dstBits) ? Instruction::FPExt
+                                        : (srcBits > dstBits)
+                                            ? Instruction::FPTrunc
+                                            : Instruction::BitCast;
+
+          newArg = ConstantExpr::getCast(opcode, constArg, newType);
         } else {
           llvm_unreachable("Unsupported argument type");
         }
