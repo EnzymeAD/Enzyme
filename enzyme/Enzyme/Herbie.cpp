@@ -147,6 +147,12 @@ static cl::opt<bool> FPOptShowTable(
     "fpopt-show-table", cl::init(false), cl::Hidden,
     cl::desc(
         "Print the full DP table (highly verbose for large applications)"));
+static cl::list<int64_t> FPOptShowTableCosts(
+    "fpopt-show-table-costs", cl::ZeroOrMore, cl::CommaSeparated, cl::Hidden,
+    cl::desc(
+        "Comma-separated list of computation costs for which to print DP table "
+        "entries. If provided, only specified computation costs are "
+        "printed. "));
 static cl::opt<bool> FPOptShowPTDetails(
     "fpopt-show-pt-details", cl::init(false), cl::Hidden,
     cl::desc("Print details of precision tuning candidates along with the DP "
@@ -648,7 +654,7 @@ public:
       return symbol;
     } else {
       assert(!operands.empty() && "FPNode has no operands!");
-      std::string expr = "(" + op;
+      std::string expr = "(" + (op == "neg" ? "-" : op);
       for (auto operand : operands) {
         expr += " " + operand->toFullExpression(valueToNodeMap);
       }
@@ -4043,9 +4049,14 @@ std::string getPrecondition(
     upperStr << std::setprecision(std::numeric_limits<double>::max_digits10)
              << std::scientific << upper;
 
-    preconditions += " (<=" + (std::isinf(lower) ? "" : " " + lowerStr.str()) +
-                     " " + arg +
-                     (std::isinf(upper) ? "" : " " + upperStr.str()) + ")";
+    preconditions +=
+        " (<=" +
+        (std::isinf(lower) ? (lower > 0 ? " INFINITY" : " (- INFINITY)")
+                           : (" " + lowerStr.str())) +
+        " " + arg +
+        (std::isinf(upper) ? (upper > 0 ? " INFINITY" : " (- INFINITY)")
+                           : (" " + upperStr.str())) +
+        ")";
   }
 
   return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
@@ -4469,6 +4480,17 @@ bool accuracyDPSolver(
     if (FPOptShowTable) {
       llvm::errs() << "\n*** DP Table ***\n";
       for (const auto &pair : costToAccuracyMap) {
+        if (!FPOptShowTableCosts.empty()) {
+          bool shouldPrint = false;
+          for (auto selectedCost : FPOptShowTableCosts)
+            if (pair.first == selectedCost) {
+              shouldPrint = true;
+              break;
+            }
+          if (!shouldPrint)
+            continue;
+        }
+
         llvm::errs() << "Computation cost: " << pair.first
                      << ", Accuracy cost: " << pair.second << "\n";
         llvm::errs() << "\tSolution steps: \n";
