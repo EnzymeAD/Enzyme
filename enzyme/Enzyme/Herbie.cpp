@@ -207,60 +207,6 @@ static const std::unordered_set<std::string> LibmFuncs = {
     "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
     "fdim",  "fmod",  "remainder"};
 
-// https://arxiv.org/pdf/1806.06403
-double geomean(const SmallVectorImpl<double> &dataset, double epsilon = 1e-5) {
-  std::vector<double> dataset_nozeros;
-  for (double x : dataset) {
-    if (x != 0.0)
-      dataset_nozeros.push_back(x);
-  }
-
-  if (dataset_nozeros.empty()) {
-    return 0.0;
-  }
-
-  double sum_log = 0.0;
-  for (double x : dataset_nozeros) {
-    sum_log += std::log(x);
-  }
-  double geomeanNozeros = std::exp(sum_log / dataset_nozeros.size());
-
-  double min_val =
-      *std::min_element(dataset_nozeros.begin(), dataset_nozeros.end());
-  double deltamin = 0.0;
-  double deltamax = std::max(geomeanNozeros - min_val, 0.0);
-  double delta = (deltamin + deltamax) / 2.0;
-  double epsilon_threshold = epsilon * geomeanNozeros;
-
-  auto compute_auxExp = [&](double d) -> double {
-    double sum = 0.0;
-    for (double x : dataset_nozeros) {
-      sum += std::log(x + d);
-    }
-    return std::exp(sum / dataset_nozeros.size()) - d;
-  };
-
-  double auxExp = compute_auxExp(delta);
-
-  while ((auxExp - geomeanNozeros) > epsilon_threshold) {
-    if (auxExp < geomeanNozeros)
-      deltamin = delta;
-    else
-      deltamax = delta;
-    delta = (deltamin + deltamax) / 2.0;
-    auxExp = compute_auxExp(delta);
-  }
-
-  double sum_log_all = 0.0;
-  for (double x : dataset) {
-    sum_log_all += std::log(x + delta);
-  }
-  double gmeanE = std::exp(sum_log_all / dataset.size()) - delta;
-
-  assert(!std::isnan(gmeanE) && !std::isinf(gmeanE));
-  return gmeanE;
-}
-
 class FPNode {
 public:
   enum class NodeType { Node, LLValue, Const };
@@ -3367,7 +3313,11 @@ void setUnifiedAccuracyCost(
 
   SmallVector<double, 4> goldVals;
   goldVals.resize(FPOptNumSamples);
-  SmallVector<double, 4> errors;
+
+  double errSumLog = 0.0;
+  unsigned errCountNonZero = 0;
+  unsigned errCountZero = 0;
+  double errMinNonZero = std::numeric_limits<double>::max();
 
   // Compute gold values using MPFR for the original expression.
   for (const auto &pair : enumerate(sampledPoints)) {
@@ -3377,24 +3327,41 @@ void setUnifiedAccuracyCost(
     double goldVal = results[0];
     goldVals[pair.index()] = goldVal;
 
-    // Also compute the current FP value (for AO’s original cost)
+    // Also compute the current FP value (for AO’s original cost).
     getFPValues(outputs, pair.value(), results);
     double realVal = results[0];
     double error = std::fabs(goldVal - realVal);
     if (!std::isnan(error) && !std::isinf(error)) {
-      errors.push_back(error);
+      if (error == 0.0) {
+        ++errCountZero;
+      } else {
+        errSumLog += std::log(error);
+        ++errCountNonZero;
+        errMinNonZero = std::min(errMinNonZero, error);
+      }
     }
   }
 
-  assert(!errors.empty() &&
-         "No valid samples for AO -- try increasing the number of samples");
-  AO.initialAccCost = geomean(errors) * std::fabs(AO.grad);
+  // Compute the geometric mean from the running accumulators.
+  unsigned totalErr = errCountNonZero + errCountZero;
+  double geoErr = 0.0;
+  if (totalErr == 0 || errCountNonZero == 0)
+    geoErr = 0.0;
+  else {
+    double eps = errMinNonZero * 1e-5;
+    geoErr = std::exp((errSumLog + errCountZero * std::log(eps)) / totalErr);
+  }
+  AO.initialAccCost = geoErr * std::fabs(AO.grad);
   assert(!std::isnan(AO.initialAccCost));
 
   SmallVector<RewriteCandidate, 4> newCandidates;
   for (auto &candidate : AO.candidates) {
     bool discardCandidate = false;
-    SmallVector<double, 4> candidateErrors;
+    double candSumLog = 0.0;
+    unsigned candCountNonZero = 0;
+    unsigned candCountZero = 0;
+    double candMinNonZero = std::numeric_limits<double>::max();
+
     auto parsedNode =
         parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
@@ -3406,7 +3373,7 @@ void setUnifiedAccuracyCost(
       double goldVal = goldVals[pair.index()];
 
       // In strict mode, if the gold value is finite but candidate's result is
-      // not, discard.
+      // not, discard the candidate.
       if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
           (std::isnan(realVal) || std::isinf(realVal))) {
         discardCandidate = true;
@@ -3415,12 +3382,27 @@ void setUnifiedAccuracyCost(
 
       double error = std::fabs(goldVal - realVal);
       if (!std::isnan(error) && !std::isinf(error)) {
-        candidateErrors.push_back(error);
+        if (error == 0.0) {
+          ++candCountZero;
+        } else {
+          candSumLog += std::log(error);
+          ++candCountNonZero;
+          candMinNonZero = std::min(candMinNonZero, error);
+        }
       }
     }
 
-    if (!discardCandidate && !candidateErrors.empty()) {
-      candidate.accuracyCost = geomean(candidateErrors) * std::fabs(AO.grad);
+    if (!discardCandidate && ((candCountNonZero + candCountZero) > 0)) {
+      unsigned totalCand = candCountNonZero + candCountZero;
+      double candGeo = 0.0;
+      if (candCountNonZero == 0)
+        candGeo = 0.0;
+      else {
+        double eps = candMinNonZero * 1e-5;
+        candGeo =
+            std::exp((candSumLog + candCountZero * std::log(eps)) / totalCand);
+      }
+      candidate.accuracyCost = candGeo * std::fabs(AO.grad);
       assert(!std::isnan(candidate.accuracyCost));
       newCandidates.push_back(std::move(candidate));
     }
@@ -3437,8 +3419,7 @@ void setUnifiedAccuracyCost(
   getSampledPoints(ACC.component->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
-  SmallMapVector<FPNode *, SmallVector<double, 4>, 4>
-      goldVals; // output -> gold vals
+  SmallMapVector<FPNode *, SmallVector<double, 4>, 4> goldVals;
   for (auto *output : ACC.component->outputs) {
     auto *node = valueToNodeMap[output].get();
     goldVals[node].resize(FPOptNumSamples);
@@ -3450,53 +3431,68 @@ void setUnifiedAccuracyCost(
     outputs.push_back(valueToNodeMap[output].get());
   }
 
-  // Compute gold values for each output.
+  struct RunningAcc {
+    double sumLog = 0.0;
+    unsigned countNonZero = 0;
+    unsigned countZero = 0;
+    double minNonZero = std::numeric_limits<double>::max();
+  };
+  std::unordered_map<FPNode *, RunningAcc> runAcc;
+  for (auto *node : outputs)
+    runAcc[node] = RunningAcc();
+
   for (const auto &pair : enumerate(sampledPoints)) {
     SmallVector<double, 8> results;
     getMPFRValues(outputs, pair.value(), results, true, 53);
-    for (const auto &[output, result] : zip(outputs, results)) {
-      goldVals[output][pair.index()] = result;
-    }
+    for (const auto &[node, result] : zip(outputs, results))
+      goldVals[node][pair.index()] = result;
 
-    // Emulate FPCC with parsed precision.
+    // Get the FP values with parsed precision.
     getFPValues(outputs, pair.value(), results);
-    for (const auto &[output, result] : zip(outputs, results)) {
-      double goldVal = goldVals[output][pair.index()];
+    for (const auto &[node, result] : zip(outputs, results)) {
+      double goldVal = goldVals[node][pair.index()];
       double error = std::fabs(goldVal - result);
       if (!std::isnan(error) && !std::isinf(error)) {
-        ACC.errors[output].push_back(error);
+        if (error == 0.0)
+          ++runAcc[node].countZero;
+        else {
+          runAcc[node].sumLog += std::log(error);
+          ++runAcc[node].countNonZero;
+          runAcc[node].minNonZero = std::min(runAcc[node].minNonZero, error);
+        }
       }
     }
   }
 
-  // Normalize accuracy costs and compute aggregated initialAccCost.
+  // For each output, compute the geometric mean and the per-output cost.
   ACC.initialAccCost = 0.0;
-  for (auto *output : outputs) {
-    assert(!ACC.errors[output].empty() &&
-           "No valid samples for at least one output node -- try increasing "
-           "the number of samples");
-    ACC.perOutputInitialAccCost[output] =
-        geomean(ACC.errors[output]) * std::fabs(output->grad);
-    ACC.initialAccCost += ACC.perOutputInitialAccCost[output];
+  for (auto *node : outputs) {
+    RunningAcc &ra = runAcc[node];
+    unsigned total = ra.countNonZero + ra.countZero;
+    double geo = 0.0;
+    if (total == 0 || ra.countNonZero == 0)
+      geo = 0.0;
+    else {
+      double eps = ra.minNonZero * 1e-5;
+      geo = std::exp((ra.sumLog + ra.countZero * std::log(eps)) / total);
+    }
+    ACC.perOutputInitialAccCost[node] = geo * std::fabs(node->grad);
+    ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
   }
   assert(!std::isnan(ACC.initialAccCost));
 
   SmallVector<PTCandidate, 4> newCandidates;
   for (auto &candidate : ACC.candidates) {
     bool discardCandidate = false;
-    // Clear candidate errors for fresh computation.
-    for (auto *output : outputs) {
-      candidate.errors[output].clear();
-    }
+    std::unordered_map<FPNode *, RunningAcc> candAcc;
+    for (auto *node : outputs)
+      candAcc[node] = RunningAcc();
 
     for (const auto &pair : enumerate(sampledPoints)) {
       SmallVector<double, 8> results;
       getFPValues(outputs, pair.value(), results, &candidate);
-
-      for (const auto &[output, result] : zip(outputs, results)) {
-        double goldVal = goldVals[output][pair.index()];
-        // In strict mode, if the gold value is finite but candidate's result is
-        // not, discard.
+      for (const auto &[node, result] : zip(outputs, results)) {
+        double goldVal = goldVals[node][pair.index()];
         if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
             (std::isnan(result) || std::isinf(result))) {
           discardCandidate = true;
@@ -3504,7 +3500,14 @@ void setUnifiedAccuracyCost(
         }
         double error = std::fabs(goldVal - result);
         if (!std::isnan(error) && !std::isinf(error)) {
-          candidate.errors[output].push_back(error);
+          if (error == 0.0)
+            ++candAcc[node].countZero;
+          else {
+            candAcc[node].sumLog += std::log(error);
+            ++candAcc[node].countNonZero;
+            candAcc[node].minNonZero =
+                std::min(candAcc[node].minNonZero, error);
+          }
         }
       }
       if (discardCandidate)
@@ -3513,13 +3516,18 @@ void setUnifiedAccuracyCost(
 
     if (!discardCandidate) {
       candidate.accuracyCost = 0.0;
-      for (auto *output : outputs) {
-        assert(!candidate.errors[output].empty() &&
-               "No valid samples for output -- try increasing the number of "
-               "samples");
-        candidate.perOutputAccCost[output] =
-            geomean(candidate.errors[output]) * std::fabs(output->grad);
-        candidate.accuracyCost += candidate.perOutputAccCost[output];
+      for (auto *node : outputs) {
+        RunningAcc &ra = candAcc[node];
+        unsigned total = ra.countNonZero + ra.countZero;
+        double geo = 0.0;
+        if (total == 0 || ra.countNonZero == 0)
+          geo = 0.0;
+        else {
+          double eps = ra.minNonZero * 1e-5;
+          geo = std::exp((ra.sumLog + ra.countZero * std::log(eps)) / total);
+        }
+        candidate.perOutputAccCost[node] = geo * std::fabs(node->grad);
+        candidate.accuracyCost += candidate.perOutputAccCost[node];
       }
       assert(!std::isnan(candidate.accuracyCost));
       newCandidates.push_back(std::move(candidate));
@@ -4595,12 +4603,26 @@ bool accuracyDPSolver(
       }
       llvm::errs() << "*** End of DP Table ***\n\n";
     }
-    llvm::errs() << "*** Critical Computation Costs ***\n";
-    for (const auto &pair : costToAccuracyMap) {
-      llvm::errs() << pair.first << ",";
+  }
+
+  std::string budgetsStr;
+  for (const auto &pair : costToAccuracyMap) {
+    budgetsStr += std::to_string(pair.first.getValue().value()) + ",";
+  }
+
+  if (!budgetsStr.empty())
+    budgetsStr.pop_back();
+
+  std::string budgetsFile = FPOptCachePath + "/budgets.txt";
+  if (!llvm::sys::fs::exists(budgetsFile)) {
+    std::error_code EC;
+    llvm::raw_fd_ostream Out(budgetsFile, EC, llvm::sys::fs::OF_Text);
+    if (EC) {
+      llvm::errs() << "Error opening " << budgetsFile << ": " << EC.message()
+                   << "\n";
+    } else {
+      Out << budgetsStr;
     }
-    llvm::errs() << "\n";
-    llvm::errs() << "*** End of Critical Computation Costs ***\n\n";
   }
 
   llvm::errs() << "Critical computation cost range: ["
@@ -5384,13 +5406,13 @@ B2:
       }
     }
 
-    // TODO: just for testing
-    if (FPOptEnablePT) {
-      for (auto &ACC : ACCs) {
-        ACC.apply(0);
-        changed = true;
-      }
-    }
+    // // TODO: just for testing
+    // if (FPOptEnablePT) {
+    //   for (auto &ACC : ACCs) {
+    //     ACC.apply(0);
+    //     changed = true;
+    //   }
+    // }
   } else {
     // TODO: Solver
     if (FPOptLogPath.empty()) {
