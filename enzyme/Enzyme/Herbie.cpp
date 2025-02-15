@@ -114,6 +114,12 @@ static cl::opt<bool> HerbieDisableNumerics(
     "herbie-disable-numerics", cl::init(false), cl::Hidden,
     cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
              "expm1, log1p, fma, and hypot"));
+static cl::opt<bool> HerbieDisableArithmetic(
+    "herbie-disable-arithmetic", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules on basic arithmetic fasts."));
+static cl::opt<bool> HerbieDisableFractions(
+    "herbie-disable-fractions", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules on fraction arithmetic."));
 static cl::opt<bool>
     HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
                         cl::desc("Disable Herbie's series expansion"));
@@ -140,6 +146,11 @@ static cl::opt<bool> FPOptEnableSolver(
 static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                             cl::Hidden,
                                             cl::desc("Which solver to use"));
+static cl::opt<bool> FPOptStrictMode(
+    "fpopt-strict-mode", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Discard all FPOpt candidates that produce NaN or inf outputs for any "
+        "input point that originally produced finite outputs"));
 static cl::opt<bool> FPOptLooseCoverage(
     "fpopt-loose-coverage", cl::init(false), cl::Hidden,
     cl::desc("Allow unexecuted FP instructions in subgraph indentification"));
@@ -187,6 +198,14 @@ static cl::opt<double> FPOptAccuracyDominanceThreshold(
     "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
     cl::desc("The threshold for accuracy dominance in DP solver"));
 }
+
+static const std::unordered_set<std::string> LibmFuncs = {
+    "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
+    "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "exp",
+    "log",   "sqrt",  "cbrt",     "pow",   "fabs",   "fma",   "hypot",
+    "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
+    "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
+    "fdim",  "fmod",  "remainder"};
 
 // https://arxiv.org/pdf/1806.06403
 double geomean(const SmallVectorImpl<double> &dataset, double epsilon = 1e-5) {
@@ -2434,18 +2453,53 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   return node;
 }
 
-TargetTransformInfo::OperandValueKind getOperandValueKind(const Value *V) {
-  if (isa<Constant>(V)) {
-    assert(!isa<UndefValue>(V));
-    return TargetTransformInfo::OK_UniformConstantValue;
+const std::map<std::pair<std::string, std::string>, InstructionCost> &
+getCostModel() {
+  static std::map<std::pair<std::string, std::string>, InstructionCost>
+      CostModel;
+  static bool Loaded = false;
+  if (!Loaded) {
+    std::ifstream CostFile(FPOptCostModelPath);
+    if (!CostFile.is_open()) {
+      std::string msg =
+          "Cost model file could not be opened: " + FPOptCostModelPath;
+      llvm_unreachable(msg.c_str());
+    }
+    std::string Line;
+    while (std::getline(CostFile, Line)) {
+      std::istringstream SS(Line);
+      std::string OpcodeStr, PrecisionStr, CostStr;
+      if (!std::getline(SS, OpcodeStr, ',')) {
+        llvm_unreachable(
+            ("Unexpected line in custom cost model: " + Line).c_str());
+      }
+      if (!std::getline(SS, PrecisionStr, ',')) {
+        llvm_unreachable(
+            ("Unexpected line in custom cost model: " + Line).c_str());
+      }
+      if (!std::getline(SS, CostStr)) {
+        llvm_unreachable(
+            ("Unexpected line in custom cost model: " + Line).c_str());
+      }
+      CostModel[{OpcodeStr, PrecisionStr}] = std::stoi(CostStr);
+    }
+    Loaded = true;
   }
-  return TargetTransformInfo::OK_AnyValue;
+  return CostModel;
 }
 
-TargetTransformInfo::OperandValueProperties
-getOperandValueProperties(const Value *V) {
-  // TODO: Power of 2?
-  return TargetTransformInfo::OP_None;
+InstructionCost queryCostModel(const std::string &OpcodeName,
+                               const std::string &PrecisionName) {
+  const auto &CostModel = getCostModel();
+  auto Key = std::make_pair(OpcodeName, PrecisionName);
+  auto It = CostModel.find(Key);
+  if (It != CostModel.end())
+    return It->second;
+
+  std::string msg = "Custom cost model: entry not found for " + OpcodeName +
+                    " @ " + PrecisionName;
+  llvm::errs() << msg << "\n";
+  llvm_unreachable(msg.c_str());
 }
 
 InstructionCost getInstructionCompCost(const Instruction *I,
@@ -2454,41 +2508,6 @@ InstructionCost getInstructionCompCost(const Instruction *I,
     return 0;
 
   if (!FPOptCostModelPath.empty()) {
-    static std::map<std::pair<std::string, std::string>, InstructionCost>
-        CostModel;
-    static bool Loaded = false;
-
-    if (!Loaded) {
-      std::ifstream CostFile(FPOptCostModelPath);
-      if (!CostFile.is_open()) {
-        std::string msg =
-            "Cost model file could not be opened: " + FPOptCostModelPath;
-        llvm_unreachable(msg.c_str());
-      }
-
-      std::string Line;
-      while (std::getline(CostFile, Line)) {
-        std::istringstream SS(Line);
-        std::string OpcodeStr, PrecisionStr, CostStr;
-
-        if (!std::getline(SS, OpcodeStr, ',')) {
-          llvm_unreachable(
-              ("Unexpected line in custom cost model: " + Line).c_str());
-        }
-        if (!std::getline(SS, PrecisionStr, ',')) {
-          llvm_unreachable(
-              ("Unexpected line in custom cost model: " + Line).c_str());
-        }
-        if (!std::getline(SS, CostStr)) {
-          llvm_unreachable(
-              ("Unexpected line in custom cost model: " + Line).c_str());
-        }
-        CostModel[{OpcodeStr, PrecisionStr}] = std::stoi(CostStr);
-      }
-
-      Loaded = true;
-    }
-
     std::string OpcodeName;
     switch (I->getOpcode()) {
     case Instruction::FNeg:
@@ -2599,15 +2618,6 @@ InstructionCost getInstructionCompCost(const Instruction *I,
               (FuncName.back() == 'f' || FuncName.back() == 'l'))
             FuncName.pop_back();
 
-          static const std::unordered_set<std::string> LibmFuncs = {
-              "sin",   "cos",      "tan",    "asin",   "acos",     "atan",
-              "atan2", "sinh",     "cosh",   "tanh",   "asinh",    "acosh",
-              "atanh", "exp",      "log",    "sqrt",   "cbrt",     "pow",
-              "fabs",  "fma",      "hypot",  "expm1",  "log1p",    "ceil",
-              "floor", "erf",      "exp2",   "lgamma", "log10",    "log2",
-              "rint",  "round",    "tgamma", "trunc",  "copysign", "fdim",
-              "fmod",  "remainder"};
-
           if (LibmFuncs.count(FuncName))
             OpcodeName = FuncName;
           else {
@@ -2650,6 +2660,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       llvm_unreachable(msg.c_str());
     }
 
+    // For FPExt/FPTrunc, update the opcode name to include conversion info.
     if (I->getOpcode() == Instruction::FPExt ||
         I->getOpcode() == Instruction::FPTrunc) {
       Type *SrcTy = I->getOperand(0)->getType();
@@ -2675,19 +2686,25 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       PrecisionName = SrcPrecisionName;
     }
 
-    auto Key = std::make_pair(OpcodeName, PrecisionName);
-    auto It = CostModel.find(Key);
-    if (It != CostModel.end())
-      return It->second;
-
-    std::string msg = "Custom cost model: entry not found for " + OpcodeName +
-                      " @ " + PrecisionName;
-    llvm::errs() << "Unexpected Instruction: " << *I << "\n";
-    llvm_unreachable(msg.c_str());
+    return queryCostModel(OpcodeName, PrecisionName);
   } else {
     llvm::errs() << "WARNING: Custom cost model not found, using TTI cost!\n";
     return TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
   }
+}
+
+const std::unordered_set<std::string> &getPTFuncs() {
+  static const std::unordered_set<std::string> PTFuncs = []() {
+    std::unordered_set<std::string> funcs;
+    for (const auto &func : LibmFuncs) {
+      InstructionCost costFP32 = queryCostModel(func, "float");
+      InstructionCost costFP64 = queryCostModel(func, "double");
+      if (costFP32 < costFP64)
+        funcs.insert(func);
+    }
+    return funcs;
+  }();
+  return PTFuncs;
 }
 
 InstructionCost computeMaxCost(
@@ -3352,70 +3369,63 @@ void setUnifiedAccuracyCost(
   goldVals.resize(FPOptNumSamples);
   SmallVector<double, 4> errors;
 
+  // Compute gold values using MPFR for the original expression.
   for (const auto &pair : enumerate(sampledPoints)) {
     ArrayRef<FPNode *> outputs = {valueToNodeMap[AO.oldOutput].get()};
     SmallVector<double, 1> results;
     getMPFRValues(outputs, pair.value(), results, true, 53);
     double goldVal = results[0];
-    // llvm::errs() << "DEBUG AO gold value: " << goldVal << "\n";
     goldVals[pair.index()] = goldVal;
 
+    // Also compute the current FP value (for AO’s original cost)
     getFPValues(outputs, pair.value(), results);
     double realVal = results[0];
-    // llvm::errs() << "DEBUG AO real value: " << realVal << "\n";
-
     double error = std::fabs(goldVal - realVal);
     if (!std::isnan(error) && !std::isinf(error)) {
       errors.push_back(error);
     }
   }
 
-  assert(!errors.empty() && "No valid samples for AO -- try increasing the "
-                            "number of samples");
+  assert(!errors.empty() &&
+         "No valid samples for AO -- try increasing the number of samples");
   AO.initialAccCost = geomean(errors) * std::fabs(AO.grad);
-  // llvm::errs() << "DEBUG calculated AO initial accuracy cost: "
-  //              << AO.initialAccCost << "\n";
   assert(!std::isnan(AO.initialAccCost));
 
+  SmallVector<RewriteCandidate, 4> newCandidates;
   for (auto &candidate : AO.candidates) {
-    const auto &expr = candidate.expr;
-    auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
+    bool discardCandidate = false;
+    SmallVector<double, 4> candidateErrors;
+    auto parsedNode =
+        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
-    SmallVector<double, 4> errors;
     for (const auto &pair : enumerate(sampledPoints)) {
-      // Compute the "gold" value & real value for each sampled point
-      // Compute an average of (difference * gradient)
-      // TODO: Consider geometric average???
-      assert(valueToNodeMap.count(AO.oldOutput));
-
-      // llvm::errs() << "Computing real output for candidate: " << expr <<
-      // "\n";
-
-      // llvm::errs() << "Current input values:\n";
-      // for (const auto &entry : pair.value()) {
-      //   llvm::errs() << valueToNodeMap[entry.first]->symbol << ": "
-      //                << entry.second << "\n";
-      // }
-
-      // llvm::errs() << "Gold value: " << goldVals[pair.index()] << "\n";
-
       ArrayRef<FPNode *> outputs = {parsedNode.get()};
       SmallVector<double, 1> results;
       getFPValues(outputs, pair.value(), results);
       double realVal = results[0];
-
-      // llvm::errs() << "Real value: " << realVal << "\n";
       double goldVal = goldVals[pair.index()];
+
+      // In strict mode, if the gold value is finite but candidate's result is
+      // not, discard.
+      if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
+          (std::isnan(realVal) || std::isinf(realVal))) {
+        discardCandidate = true;
+        break;
+      }
+
       double error = std::fabs(goldVal - realVal);
       if (!std::isnan(error) && !std::isinf(error)) {
-        errors.push_back(error);
+        candidateErrors.push_back(error);
       }
     }
-    assert(!errors.empty() && "No valid samples for AO -- try increasing the "
-                              "number of samples");
-    candidate.accuracyCost = geomean(errors) * std::fabs(AO.grad);
-    assert(!std::isnan(candidate.accuracyCost));
+
+    if (!discardCandidate && !candidateErrors.empty()) {
+      candidate.accuracyCost = geomean(candidateErrors) * std::fabs(AO.grad);
+      assert(!std::isnan(candidate.accuracyCost));
+      newCandidates.push_back(std::move(candidate));
+    }
   }
+  AO.candidates = std::move(newCandidates);
 }
 
 void setUnifiedAccuracyCost(
@@ -3440,21 +3450,17 @@ void setUnifiedAccuracyCost(
     outputs.push_back(valueToNodeMap[output].get());
   }
 
+  // Compute gold values for each output.
   for (const auto &pair : enumerate(sampledPoints)) {
     SmallVector<double, 8> results;
-
-    // Get ground truth values for all outputs
     getMPFRValues(outputs, pair.value(), results, true, 53);
     for (const auto &[output, result] : zip(outputs, results)) {
       goldVals[output][pair.index()] = result;
-      // llvm::errs() << "DEBUG ACC gold value: " << result << "\n";
     }
 
-    // Emulate FPCC with parsed precision
+    // Emulate FPCC with parsed precision.
     getFPValues(outputs, pair.value(), results);
-
     for (const auto &[output, result] : zip(outputs, results)) {
-      // llvm::errs() << "DEBUG ACC real value: " << result << "\n";
       double goldVal = goldVals[output][pair.index()];
       double error = std::fabs(goldVal - result);
       if (!std::isnan(error) && !std::isinf(error)) {
@@ -3463,26 +3469,24 @@ void setUnifiedAccuracyCost(
     }
   }
 
-  // Normalize accuracy costs and compute aggregated initialAccCost
+  // Normalize accuracy costs and compute aggregated initialAccCost.
   ACC.initialAccCost = 0.0;
   for (auto *output : outputs) {
     assert(!ACC.errors[output].empty() &&
-           "No valid samples for at least one output node "
-           "-- try increasing the number of samples");
-    // Local error --> global error
+           "No valid samples for at least one output node -- try increasing "
+           "the number of samples");
     ACC.perOutputInitialAccCost[output] =
         geomean(ACC.errors[output]) * std::fabs(output->grad);
-    // llvm::errs() << "DEBUG calculated ACC per output initial accuracy cost: "
-    //              << ACC.perOutputInitialAccCost[output] << "\n";
     ACC.initialAccCost += ACC.perOutputInitialAccCost[output];
   }
   assert(!std::isnan(ACC.initialAccCost));
 
-  // Compute accuracy costs for each PT candidate
+  SmallVector<PTCandidate, 4> newCandidates;
   for (auto &candidate : ACC.candidates) {
-    std::unordered_map<FPNode *, unsigned> numValidSamplesPerOutput;
+    bool discardCandidate = false;
+    // Clear candidate errors for fresh computation.
     for (auto *output : outputs) {
-      candidate.perOutputAccCost[output] = 0.;
+      candidate.errors[output].clear();
     }
 
     for (const auto &pair : enumerate(sampledPoints)) {
@@ -3491,30 +3495,37 @@ void setUnifiedAccuracyCost(
 
       for (const auto &[output, result] : zip(outputs, results)) {
         double goldVal = goldVals[output][pair.index()];
+        // In strict mode, if the gold value is finite but candidate's result is
+        // not, discard.
+        if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
+            (std::isnan(result) || std::isinf(result))) {
+          discardCandidate = true;
+          break;
+        }
         double error = std::fabs(goldVal - result);
         if (!std::isnan(error) && !std::isinf(error)) {
-          // Record local errors
           candidate.errors[output].push_back(error);
         }
       }
+      if (discardCandidate)
+        break;
     }
 
-    // Normalize accuracy costs and compute aggregated accuracyCost
-    candidate.accuracyCost = 0.0;
-    for (auto *output : outputs) {
-      assert(!candidate.errors[output].empty() &&
-             "No valid samples for output -- try increasing "
-             "the number of samples");
-      // Local error --> global error
-      candidate.perOutputAccCost[output] =
-          geomean(candidate.errors[output]) * std::fabs(output->grad);
-      // llvm::errs()
-      //     << "DEBUG calculated ACC per output candidate accuracy cost: "
-      //     << candidate.perOutputAccCost[output] << "\n";
-      candidate.accuracyCost += candidate.perOutputAccCost[output];
+    if (!discardCandidate) {
+      candidate.accuracyCost = 0.0;
+      for (auto *output : outputs) {
+        assert(!candidate.errors[output].empty() &&
+               "No valid samples for output -- try increasing the number of "
+               "samples");
+        candidate.perOutputAccCost[output] =
+            geomean(candidate.errors[output]) * std::fabs(output->grad);
+        candidate.accuracyCost += candidate.perOutputAccCost[output];
+      }
+      assert(!std::isnan(candidate.accuracyCost));
+      newCandidates.push_back(std::move(candidate));
     }
-    assert(!std::isnan(candidate.accuracyCost));
   }
+  ACC.candidates = std::move(newCandidates);
 }
 
 bool improveViaHerbie(
@@ -3541,6 +3552,16 @@ bool improveViaHerbie(
   if (HerbieDisableNumerics) {
     BaseArgs.push_back("--disable");
     BaseArgs.push_back("rules:numerics");
+  }
+
+  if (HerbieDisableArithmetic) {
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("rules:arithmetic");
+  }
+
+  if (HerbieDisableFractions) {
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("rules:fractions");
   }
 
   if (HerbieDisableSetupSimplify) {
@@ -5187,18 +5208,14 @@ B2:
           PrecisionChangeType::FP64,
       };
 
-      // TODO: since we are only doing FP64 -> FP32, we can skip more expensive
-      // operations for now.
-      static const std::unordered_set<std::string> Funcs = {
-          "sin",   "cos",  "tan", "exp",  "log",   "sqrt", "expm1",
-          "log1p", "cbrt", "pow", "fabs", "hypot", "fma"};
+      const auto &PTFuncs = getPTFuncs();
 
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
-        if (Funcs.count(node->op) != 0) {
+        if (PTFuncs.count(node->op) != 0) {
           operations.push_back(node);
         }
       }
