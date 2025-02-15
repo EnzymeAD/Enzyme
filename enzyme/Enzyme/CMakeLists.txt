@@ -154,10 +154,6 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         COMPONENT dev)
 endif()
 
-if(${ENZYME_RUNPASS})
-    target_compile_definitions(LLVMEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-endif()
-
 if (APPLE)
 # Darwin-specific linker flags for loadable modules.
 set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
