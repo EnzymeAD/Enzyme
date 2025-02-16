@@ -1687,22 +1687,19 @@ public:
   void evaluateNode(const FPNode *node,
                     const SmallMapVector<Value *, double, 4> &inputValues,
                     bool groundTruth) {
-    if (isa<FPConst>(node)) {
-      if (cache.find(node) != cache.end())
-        return;
+    if (cache.find(node) != cache.end())
+      return;
 
+    if (isa<FPConst>(node)) {
       double constVal = node->getLowerBound(); // TODO: Can be improved
       CachedValue cv(53);
       mpfr_set_d(cv.value, constVal, MPFR_RNDN);
-      cache.emplace(node, std::move(cv));
+      cache.emplace(node, CachedValue(std::move(cv)));
       return;
     }
 
     if (isa<FPLLValue>(node) &&
         inputValues.count(cast<FPLLValue>(node)->value)) {
-      if (cache.find(node) != cache.end())
-        return;
-
       double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
       CachedValue cv(53);
       mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
@@ -1711,9 +1708,6 @@ public:
     }
 
     if (node->op == "if") {
-      if (cache.find(node) != cache.end())
-        return;
-
       evaluateNode(node->operands[0].get(), inputValues, groundTruth);
       mpfr_t &cond = getResult(node->operands[0].get());
       if (0 == mpfr_cmp_ui(cond, 1)) {
@@ -1733,12 +1727,7 @@ public:
     }
 
     unsigned nodePrec = getNodePrecision(node, groundTruth);
-    if (cache.find(node) != cache.end()) {
-      assert(cache.at(node).prec == nodePrec && "Unexpected precision change");
-      return;
-    } else {
-      cache.emplace(node, CachedValue(nodePrec));
-    }
+    cache.emplace(node, CachedValue(nodePrec));
     mpfr_t &res = cache.at(node).value;
 
     if (node->op == "neg") {
@@ -2094,8 +2083,9 @@ public:
     } else if (node->op == "NAN") {
       mpfr_set_nan(res);
     } else {
-      std::string msg = "MPFREvaluator: Unexpected operator " + node->op;
-      llvm_unreachable(msg.c_str());
+      llvm::errs() << "MPFREvaluator: Unexpected operator '" << node->op
+                   << "'\n";
+      llvm_unreachable("Unexpected operator encountered");
     }
   }
 
@@ -2156,7 +2146,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
     // llvm::errs() << "getMPFRValues: computing ground truth with precision "
     //              << curPrec << "\n";
 
-    for (const auto &output : outputs) {
+    for (const auto *output : outputs) {
       evaluator.evaluateNode(output, inputValues, true);
     }
 
@@ -3339,14 +3329,14 @@ void setUnifiedAccuracyCost(
 
   // Compute gold values using MPFR for the original expression.
   for (const auto &pair : enumerate(sampledPoints)) {
-    ArrayRef<FPNode *> outputs = {valueToNodeMap[AO.oldOutput].get()};
+    std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
     SmallVector<double, 1> results;
-    getMPFRValues(outputs, pair.value(), results, true, 53);
+    getMPFRValues({node.get()}, pair.value(), results, true, 53);
     double goldVal = results[0];
     goldVals[pair.index()] = goldVal;
 
     // Also compute the current FP value (for AO’s original cost).
-    getFPValues(outputs, pair.value(), results);
+    getFPValues({node.get()}, pair.value(), results);
     double realVal = results[0];
     double error = std::fabs(goldVal - realVal);
     if (!std::isnan(error) && !std::isinf(error)) {
@@ -3380,13 +3370,12 @@ void setUnifiedAccuracyCost(
     unsigned candCountZero = 0;
     double candMinNonZero = std::numeric_limits<double>::max();
 
-    auto parsedNode =
+    std::shared_ptr<FPNode> parsedNode =
         parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
     for (const auto &pair : enumerate(sampledPoints)) {
-      ArrayRef<FPNode *> outputs = {parsedNode.get()};
       SmallVector<double, 1> results;
-      getFPValues(outputs, pair.value(), results);
+      getFPValues({parsedNode.get()}, pair.value(), results);
       double realVal = results[0];
       double goldVal = goldVals[pair.index()];
 
@@ -4851,11 +4840,10 @@ B2:
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
-            Type* elemType = GV->getValueType();
-          
-            assert(
-                elemType->isFloatingPointTy() &&
-                "Global variable is not floating point type");
+            Type *elemType = GV->getValueType();
+
+            assert(elemType->isFloatingPointTy() &&
+                   "Global variable is not floating point type");
             std::string dtype;
             if (elemType->isFloatTy()) {
               dtype = "f32";
