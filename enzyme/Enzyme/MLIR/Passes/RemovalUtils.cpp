@@ -8,50 +8,40 @@
 
 #include "RemovalUtils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "mlir/IR/PatternMatch.h"
 #include <cassert>
 
 mlir::enzyme::CacheInfo
-mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other) {
+mlir::enzyme::CacheInfo::merge(mlir::enzyme::CacheInfo other,
+                               mlir::PatternRewriter &rewriter) {
   assert(other.pushOp->getBlock() == pushOp->getBlock());
   assert(other.popOp->getBlock() == popOp->getBlock());
 
   enzyme::InitOp newInitOp;
   if (other.initOp->isBeforeInBlock(initOp)) {
     newInitOp = other.initOp;
-    initOp.getResult().replaceAllUsesWith(newInitOp.getResult());
-    initOp->erase();
+    rewriter.replaceAllUsesWith(initOp.getResult(), newInitOp.getResult());
+    rewriter.eraseOp(initOp);
   } else {
     newInitOp = initOp;
-    other.initOp.getResult().replaceAllUsesWith(newInitOp.getResult());
-    other.initOp->erase();
+    rewriter.replaceAllUsesWith(other.initOp.getResult(),
+                                newInitOp.getResult());
+    rewriter.eraseOp(other.initOp);
   }
 
-  other.pushOp->erase();
+  rewriter.eraseOp(other.pushOp);
 
   enzyme::PopOp newPopOp;
   if (other.popOp->isBeforeInBlock(popOp)) {
     newPopOp = other.popOp;
-    popOp.getResult().replaceAllUsesWith(newPopOp.getResult());
-    popOp->erase();
+    rewriter.replaceAllUsesWith(popOp.getResult(), newPopOp.getResult());
+    rewriter.eraseOp(popOp);
   } else {
     newPopOp = popOp;
-    other.popOp.getResult().replaceAllUsesWith(newPopOp.getResult());
-    other.popOp->erase();
+    rewriter.replaceAllUsesWith(other.popOp.getResult(), newPopOp.getResult());
+    rewriter.eraseOp(other.popOp);
   }
 
   CacheInfo newInfo{newInitOp};
   return newInfo;
-}
-
-mlir::LogicalResult mlir::enzyme::removeOpsWithinBlock(mlir::Block *block) {
-  bool valid = true;
-
-  for (auto &it : *block) {
-    mlir::Operation *op = &it;
-    if (auto iface = dyn_cast<mlir::enzyme::EnzymeOpsRemoverOpInterface>(op)) {
-      valid &= iface.removeEnzymeOps().succeeded();
-    }
-  }
-
-  return success(valid);
 }

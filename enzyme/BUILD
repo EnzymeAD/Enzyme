@@ -1,6 +1,5 @@
-load("@llvm-project//llvm:tblgen.bzl", "gentbl")
-load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
 licenses(["notice"])
 
@@ -31,92 +30,105 @@ cc_binary(
     ],
 )
 
-gentbl(
+td_library(
+    name = "BlasDerivativesTdFiles",
+    srcs = ["Enzyme/BlasDerivatives.td"],
+)
+
+gentbl_cc_library(
     name = "call-derivatives",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-call-derivatives",
-        "CallDerivatives.inc",
+        ["-gen-call-derivatives"],
+        "Enzyme/CallDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "inst-derivatives",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-inst-derivatives",
-        "InstructionDerivatives.inc",
+        ["-gen-inst-derivatives"],
+        "Enzyme/InstructionDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "intr-derivatives",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-intr-derivatives",
-        "IntrinsicDerivatives.inc",
+        ["-gen-intr-derivatives"],
+        "Enzyme/IntrinsicDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "binop-derivatives",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-binop-derivatives",
-        "BinopDerivatives.inc",
+        ["-gen-binop-derivatives"],
+        "Enzyme/BinopDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "blas-derivatives",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-blas-derivatives",
-        "BlasDerivatives.inc",
+        ["-gen-blas-derivatives"],
+        "Enzyme/BlasDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "blas-attributor",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-update-blas-declarations",
-        "BlasAttributor.inc",
+        ["-update-blas-declarations"],
+        "Enzyme/BlasAttributor.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "blas-typeanalysis",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-blas-typeanalysis",
-        "BlasTA.inc",
+        ["-gen-blas-typeanalysis"],
+        "Enzyme/BlasTA.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "blas-diffuseanalysis",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [(
-        "-gen-blas-diffuseanalysis",
-        "BlasDiffUse.inc",
+        ["-gen-blas-diffuseanalysis"],
+        "Enzyme/BlasDiffUse.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/InstructionDerivatives.td",
-    td_srcs = ["Enzyme/BlasDerivatives.td"],
+    deps = [":BlasDerivativesTdFiles"],
 )
 
 cc_library(
@@ -132,7 +144,7 @@ cc_library(
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
-    ]) + ["bundled_includes.h"],
+    ]) + ["Enzyme/Clang/bundled_includes.h"],
     copts = [
         "-DENZYME_RUNPASS=1",
         "-DENZYME_VERSION_MAJOR=0",
@@ -142,6 +154,9 @@ cc_library(
         "-Wno-return-type",
     ],
     data = ["@llvm-project//clang:builtin_headers_gen"],
+    includes = [
+        "Enzyme/Clang",  # for bundled_includes.h
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":binop-derivatives",
@@ -207,7 +222,7 @@ cc_binary(
 genrule(
     name = "bundled-includes",
     srcs = glob(["include/**"]) + ["scripts/bundle-includes.sh"],
-    outs = ["bundled_includes.h"],
+    outs = ["Enzyme/Clang/bundled_includes.h"],
     cmd = "$(location :scripts/bundle-includes.sh) $(location :include/enzyme/enzyme) $@",
 )
 
@@ -249,6 +264,7 @@ td_library(
 
 gentbl_cc_library(
     name = "EnzymeOpsIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
             ["-gen-op-decls"],
@@ -289,6 +305,7 @@ td_library(
 
 gentbl_cc_library(
     name = "EnzymePassesIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
             [
@@ -305,6 +322,7 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "EnzymeTypesIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
             ["-gen-typedef-decls"],
@@ -322,6 +340,7 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "EnzymeEnumsIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
             ["-gen-enum-decls"],
@@ -339,6 +358,7 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "EnzymeAttributesIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
             ["-gen-attrdef-decls"],
@@ -356,6 +376,7 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "EnzymeTypeInterfacesIncGen",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [
         (
             ["--gen-type-interface-decls"],
@@ -373,6 +394,7 @@ gentbl_cc_library(
 
 gentbl_cc_library(
     name = "EnzymeOpInterfacesIncGen",
+    strip_include_prefix = "Enzyme",
     tbl_outs = [
         (
             ["--gen-op-interface-decls"],
@@ -395,144 +417,124 @@ td_library(
     ],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "affine-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/AffineDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/AffineDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/AffineDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "arith-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/ArithDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/ArithDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/ArithDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "complex-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/ComplexDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/ComplexDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/ComplexDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "llvm-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/LLVMDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/LLVMDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "nvvm-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/NVVMDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/NVVMDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "scf-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/SCFDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/SCFDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/SCFDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "cf-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/CFDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/CFDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/CFDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "memref-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/MemRefDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/MemRefDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "math-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/MathDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/MathDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/MathDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl(
+gentbl_cc_library(
     name = "func-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
-        "-gen-mlir-derivatives",
+        ["-gen-mlir-derivatives"],
         "Enzyme/MLIR/Implementations/FuncDerivatives.inc",
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/MLIR/Implementations/FuncDerivatives.td",
-    td_srcs = [
-        "Enzyme/MLIR/Implementations/FuncDerivatives.td",
-        "Enzyme/MLIR/Implementations/Common.td",
-    ],
+    deps = [":ImplementationsCommonTdFiles"],
 )
 
 cc_library(
@@ -606,8 +608,8 @@ cc_library(
         "@llvm-project//mlir:LinalgStructuredOpsIncGen",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
-        "@llvm-project//mlir:MemorySlotInterfaces",
         "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MemorySlotInterfaces",
         "@llvm-project//mlir:NVVMDialect",
         "@llvm-project//mlir:OpenMPDialect",
         "@llvm-project//mlir:Pass",

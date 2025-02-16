@@ -63,7 +63,7 @@ void TraceGenerator::visitFunction(Function &F) {
     return;
 
   auto fn = tutils->newFunc;
-  auto entry = fn->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+  auto entry = getFirstNonPHIOrDbgOrLifetime(&fn->getEntryBlock());
 
   while (isa<AllocaInst>(entry) && entry->getNextNode()) {
     entry = entry->getNextNode();

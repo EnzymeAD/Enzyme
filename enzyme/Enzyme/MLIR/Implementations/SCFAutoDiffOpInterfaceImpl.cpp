@@ -25,7 +25,6 @@
 #include "mlir/IR/Types.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <functional>
 
@@ -67,15 +66,13 @@ struct ForOpEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<ForOpEnzymeOpsRemover,
                                                         scf::ForOp> {
 
-  LogicalResult removeEnzymeOps(Operation *op) const {
+  LogicalResult removeEnzymeOps(Operation *op,
+                                PatternRewriter &rewriter) const {
     auto forOp = cast<scf::ForOp>(op);
     scf::ForOp otherForOp; // where caches pops are
 
-    if (removeOpsWithinBlock(forOp.getBody()).failed())
-      return failure();
-
     // Gradients whose values need to be passed as iteration variables.
-    llvm::SmallDenseSet<Value> updatedGradients;
+    llvm::SetVector<Value> updatedGradients;
 
     llvm::MapVector<Value, CacheInfo> cachesMap;
 
@@ -92,7 +89,7 @@ struct ForOpEnzymeOpsRemover
 
         Value pushedValue = info.pushedValue();
         if (cachesMap.contains(pushedValue)) {
-          info = info.merge(cachesMap.lookup(pushedValue));
+          info = info.merge(cachesMap.lookup(pushedValue), rewriter);
         }
         cachesMap[pushedValue] = info;
 
@@ -110,7 +107,6 @@ struct ForOpEnzymeOpsRemover
     if (updatedGradients.empty() && caches.empty())
       return success();
 
-    OpBuilder builder(forOp);
     for (auto &it : *body) {
       Operation *op = &it;
 
@@ -118,13 +114,13 @@ struct ForOpEnzymeOpsRemover
       if (!getOp || updatedGradients.contains(getOp.getGradient()))
         continue;
 
-      auto outerGet = builder.create<enzyme::GetOp>(
+      auto outerGet = rewriter.create<enzyme::GetOp>(
           getOp->getLoc(),
           cast<enzyme::GradientType>(getOp.getResult().getType()).getBasetype(),
           getOp.getGradient());
 
-      getOp.getResult().replaceAllUsesWith(outerGet.getResult());
-      getOp->erase();
+      rewriter.replaceAllUsesWith(getOp.getResult(), outerGet.getResult());
+      rewriter.eraseOp(getOp);
     }
 
     auto term = body->getTerminator();
@@ -132,21 +128,21 @@ struct ForOpEnzymeOpsRemover
     SmallVector<Value> newOperands(forOp.getInitArgs());
     for (auto grad : updatedGradients) {
       auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
-      auto outerGet = builder.create<enzyme::GetOp>(grad.getLoc(), Ty, grad);
+      auto outerGet = rewriter.create<enzyme::GetOp>(grad.getLoc(), Ty, grad);
 
       newOperands.push_back(outerGet.getResult());
       auto newArg = body->addArgument(Ty, grad.getLoc());
 
       {
-        OpBuilder::InsertionGuard guard(builder);
+        OpBuilder::InsertionGuard guard(rewriter);
 
-        builder.setInsertionPointToStart(body);
-        builder.create<enzyme::SetOp>(grad.getLoc(), grad, newArg);
+        rewriter.setInsertionPointToStart(body);
+        rewriter.create<enzyme::SetOp>(grad.getLoc(), grad, newArg);
 
-        builder.setInsertionPoint(term);
+        rewriter.setInsertionPoint(term);
 
         auto outputVal =
-            builder.create<enzyme::GetOp>(grad.getLoc(), Ty, grad).getResult();
+            rewriter.create<enzyme::GetOp>(grad.getLoc(), Ty, grad).getResult();
         term->insertOperands(term->getNumOperands(), ValueRange(outputVal));
       }
     }
@@ -159,26 +155,26 @@ struct ForOpEnzymeOpsRemover
       inductionVariable = body->getArgument(0);
     }
 
-    for (auto info : caches) {
+    for (auto &info : caches) {
       Value cache = info.initOp.getResult();
 
       // push does not depend on a value inside the loop, we can hoist the
       // push/pop before the for loops.
-      if (info.pushedValue().getParentRegion() != forOp->getRegion(0)) {
-        auto newPush = builder.create<enzyme::PushOp>(cache.getLoc(), cache,
-                                                      info.pushedValue());
-        info.pushOp->erase();
+      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
+        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
+                                                       info.pushedValue());
+        rewriter.eraseOp(info.pushOp);
         info.pushOp = newPush;
 
         {
-          OpBuilder::InsertionGuard guard(builder);
-          builder.setInsertionPoint(info.popOp->getParentOp());
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.popOp->getParentOp());
 
           auto popVal = info.popOp.getResult();
-          auto newPop = builder.create<enzyme::PopOp>(cache.getLoc(),
-                                                      popVal.getType(), cache);
-          popVal.replaceAllUsesWith(newPop.getResult());
-          info.popOp->erase();
+          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
+                                                       popVal.getType(), cache);
+          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+          rewriter.eraseOp(info.popOp);
           info.popOp = newPop;
         }
 
@@ -186,18 +182,18 @@ struct ForOpEnzymeOpsRemover
       }
 
       if (!inductionVariable) {
-        Value zero = builder.create<arith::ConstantOp>(forOp->getLoc(),
-                                                       builder.getIndexAttr(0));
+        Value zero = rewriter.create<arith::ConstantOp>(
+            forOp->getLoc(), rewriter.getIndexAttr(0));
         newOperands.push_back(zero);
 
         inductionVariable = body->addArgument(zero.getType(), forOp->getLoc());
         {
-          OpBuilder::InsertionGuard guard(builder);
-          builder.setInsertionPoint(term);
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(term);
 
-          auto one = builder.create<arith::ConstantOp>(forOp->getLoc(),
-                                                       builder.getIndexAttr(1));
-          auto newInductionVar = builder.create<arith::AddIOp>(
+          auto one = rewriter.create<arith::ConstantOp>(
+              forOp->getLoc(), rewriter.getIndexAttr(1));
+          auto newInductionVar = rewriter.create<arith::AddIOp>(
               forOp->getLoc(), inductionVariable, one);
           term->insertOperands(term->getNumOperands(),
                                ValueRange(newInductionVar));
@@ -215,25 +211,25 @@ struct ForOpEnzymeOpsRemover
       for (auto it : llvm::enumerate(newType.getShape())) {
         if (ShapedType::isDynamic(it.value())) {
           if (it.index() == 0)
-            dynamicDims.push_back(getNumberOfIterations(builder, forOp));
+            dynamicDims.push_back(getNumberOfIterations(rewriter, forOp));
           else
             return failure(); // TODO: find dynamic dims within the body.
         }
       }
 
-      Value initValue = builder.create<tensor::EmptyOp>(info.initOp->getLoc(),
-                                                        newType, dynamicDims);
+      Value initValue = rewriter.create<tensor::EmptyOp>(info.initOp->getLoc(),
+                                                         newType, dynamicDims);
 
       // cast<AutoDiffTypeInterface>(newType).createNullValue(
-      // builder, info.initOp->getLoc());
+      // rewriter, info.initOp->getLoc());
 
       newOperands.push_back(initValue);
 
       auto cacheValue = body->addArgument(newType, info.pushOp->getLoc());
 
       {
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPoint(info.pushOp);
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.pushOp);
 
         // TODO: if type is tensor, use insert_slice instead
         Value newCacheValue;
@@ -250,14 +246,14 @@ struct ForOpEnzymeOpsRemover
 
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
-          newCacheValue = builder.create<tensor::InsertSliceOp>(
+          newCacheValue = rewriter.create<tensor::InsertSliceOp>(
               info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
               ValueRange(inductionVariable), ValueRange(), ValueRange(),
-              builder.getDenseI64ArrayAttr(offsets),
-              builder.getDenseI64ArrayAttr(sizes),
-              builder.getDenseI64ArrayAttr(strides));
+              rewriter.getDenseI64ArrayAttr(offsets),
+              rewriter.getDenseI64ArrayAttr(sizes),
+              rewriter.getDenseI64ArrayAttr(strides));
         } else {
-          newCacheValue = builder.create<tensor::InsertOp>(
+          newCacheValue = rewriter.create<tensor::InsertOp>(
               info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
               inductionVariable);
         }
@@ -267,72 +263,81 @@ struct ForOpEnzymeOpsRemover
     }
 
     auto numInitArgs = forOp.getInitArgs().size();
-    auto newFor = builder.create<scf::ForOp>(
+    auto newFor = rewriter.create<scf::ForOp>(
         op->getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
         forOp.getStep(), newOperands);
 
     newFor.getRegion().takeBody(forOp.getRegion());
 
+    for (auto &&[res, newRes] :
+         llvm::zip(forOp->getResults(), newFor->getResults())) {
+      rewriter.replaceAllUsesWith(res, newRes);
+    }
+
+    rewriter.eraseOp(forOp);
+    forOp = newFor;
+    rewriter.setInsertionPointAfter(forOp);
+
     unsigned resultIdx = numInitArgs;
     for (auto grad : updatedGradients) {
       // set the updated gradient after the new for op.
-      OpBuilder::InsertionGuard guard(builder);
-      builder.create<enzyme::SetOp>(grad.getLoc(), grad,
-                                    newFor->getResult(resultIdx));
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.create<enzyme::SetOp>(grad.getLoc(), grad,
+                                     newFor->getResult(resultIdx));
       ++resultIdx;
     }
 
-    if (inductionVariable && caches.size()) {
+    if (inductionVariable && !caches.empty()) {
       if (isa<BlockArgument>(inductionVariable) &&
           cast<BlockArgument>(inductionVariable).getArgNumber() != 0)
         resultIdx++;
 
-      OpBuilder::InsertionGuard guard(builder);
-      builder.setInsertionPoint(otherForOp);
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(otherForOp);
       SmallVector<Value> operands(otherForOp.getInitArgs().begin(),
                                   otherForOp.getInitArgs().end());
       operands.push_back(numIters.has_value()
-                             ? builder.create<arith::ConstantOp>(
+                             ? rewriter.create<arith::ConstantOp>(
                                    otherForOp->getLoc(),
-                                   builder.getIndexAttr(numIters.value() - 1))
-                             : getNumberOfIterations(builder, forOp));
+                                   rewriter.getIndexAttr(numIters.value() - 1))
+                             : getNumberOfIterations(rewriter, forOp));
 
       Block *otherBody = otherForOp.getBody();
       Value otherInductionVariable =
-          otherBody->addArgument(builder.getIndexType(), otherForOp->getLoc());
+          otherBody->addArgument(rewriter.getIndexType(), otherForOp->getLoc());
       auto otherTerm = otherBody->getTerminator();
 
-      builder.setInsertionPoint(otherTerm);
+      rewriter.setInsertionPoint(otherTerm);
 
       otherInductionVariable =
-          builder
+          rewriter
               .create<arith::SubIOp>(
                   otherForOp->getLoc(), otherInductionVariable,
-                  builder
+                  rewriter
                       .create<arith::ConstantOp>(otherForOp->getLoc(),
-                                                 builder.getIndexAttr(1))
+                                                 rewriter.getIndexAttr(1))
                       .getResult())
               .getResult();
       otherTerm->insertOperands(otherTerm->getNumOperands(),
                                 ValueRange(otherInductionVariable));
 
-      builder.setInsertionPoint(otherForOp);
-      auto newOtherForOp = builder.create<scf::ForOp>(
+      rewriter.setInsertionPoint(otherForOp);
+      auto newOtherForOp = rewriter.create<scf::ForOp>(
           otherForOp->getLoc(), otherForOp.getLowerBound(),
           otherForOp.getUpperBound(), otherForOp.getStep(), operands);
 
       for (auto &&[res, newRes] :
            llvm::zip(otherForOp->getResults(), newOtherForOp->getResults())) {
-        res.replaceAllUsesWith(newRes);
+        rewriter.replaceAllUsesWith(res, newRes);
       }
       newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
 
-      otherForOp->erase();
+      rewriter.eraseOp(otherForOp);
       otherForOp = newOtherForOp;
     }
 
-    for (auto info : caches) {
-      if (info.pushedValue().getParentRegion() != newFor->getRegion(0))
+    for (auto &info : caches) {
+      if (info.pushedValue().getParentRegion() != newFor.getRegion())
         continue;
 
       Value cache = info.initOp.getResult();
@@ -341,34 +346,34 @@ struct ForOpEnzymeOpsRemover
           info.cachedType().cast<AutoDiffTypeInterface>().getShadowType(
               numIters.value_or(ShapedType::kDynamic));
       enzyme::InitOp newInit = ({
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPoint(info.initOp);
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.initOp);
 
-        builder.create<enzyme::InitOp>(
+        rewriter.create<enzyme::InitOp>(
             info.initOp->getLoc(),
             enzyme::CacheType::get(cache.getContext(), newType));
       });
       info.pushOp = ({
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointAfter(newFor);
-        auto newPush = builder.create<enzyme::PushOp>(
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(newFor);
+        auto newPush = rewriter.create<enzyme::PushOp>(
             cache.getLoc(), newInit.getResult(), newFor->getResult(resultIdx));
-        info.pushOp->erase();
+        rewriter.eraseOp(info.pushOp);
         newPush;
       });
 
       resultIdx++;
 
       {
-        OpBuilder::InsertionGuard guard(builder);
+        OpBuilder::InsertionGuard guard(rewriter);
 
-        builder.setInsertionPoint(otherForOp);
+        rewriter.setInsertionPoint(otherForOp);
 
-        auto popNewValue = builder.create<enzyme::PopOp>(
+        auto popNewValue = rewriter.create<enzyme::PopOp>(
             info.popOp->getLoc(), newType, newInit.getResult());
 
         Block *popBody = otherForOp.getBody();
-        builder.setInsertionPoint(info.popOp);
+        rewriter.setInsertionPoint(info.popOp);
 
         Value newInductionVariable =
             popBody->getArgument(popBody->getNumArguments() - 1);
@@ -387,28 +392,26 @@ struct ForOpEnzymeOpsRemover
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
           popValue =
-              builder
+              rewriter
                   .create<tensor::ExtractSliceOp>(
                       info.popOp->getLoc(), TT, popNewValue,
                       ValueRange(newInductionVariable), ValueRange(),
-                      ValueRange(), builder.getDenseI64ArrayAttr(offsets),
-                      builder.getDenseI64ArrayAttr(sizes),
-                      builder.getDenseI64ArrayAttr(strides))
+                      ValueRange(), rewriter.getDenseI64ArrayAttr(offsets),
+                      rewriter.getDenseI64ArrayAttr(sizes),
+                      rewriter.getDenseI64ArrayAttr(strides))
                   .getResult();
         } else {
           popValue =
-              builder
+              rewriter
                   .create<tensor::ExtractOp>(info.popOp->getLoc(), popNewValue,
                                              newInductionVariable)
                   .getResult();
         }
 
-        info.popOp.getResult().replaceAllUsesWith(popValue);
-        info.popOp->erase();
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
+        rewriter.eraseOp(info.popOp);
       }
     }
-
-    forOp->erase();
 
     return success();
   }

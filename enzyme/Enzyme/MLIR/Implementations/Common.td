@@ -103,10 +103,11 @@ class StaticSelect<string condition_> : Operation</*usesPrimal*/0, /*usesShadow*
   string condition = condition_;
 }
 
-class Inst<string mnemonic, string dialect_, string postop_="">  : Operation</*primal*/1, /*shadow*/0> {
+class Inst<string mnemonic, string dialect_, string postop_="", string preop_="">  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
   string dialect = dialect_;
   string postop = postop_;
+  string preop = preop_;
 }
 
 def Op {

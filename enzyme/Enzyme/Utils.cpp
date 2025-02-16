@@ -537,8 +537,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   if (F->empty()) {
     F->setLinkage(Function::LinkageTypes::InternalLinkage);
     F->addFnAttr(Attribute::AlwaysInline);
-    F->addParamAttr(0, Attribute::NoCapture);
-    F->addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
 
     BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
     BasicBlock *error = BasicBlock::Create(M.getContext(), "error", F);
@@ -650,8 +650,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
+  addFunctionNoCapture(F, 1);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
@@ -834,7 +834,7 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (A->getType()->isPointerTy())
-    F->addParamAttr(1 + ((bool)layout), Attribute::NoCapture);
+    addFunctionNoCapture(F, 1 + ((bool)layout));
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *loop = BasicBlock::Create(M.getContext(), "loop", F);
@@ -1009,16 +1009,16 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
-    F->addParamAttr(3, Attribute::NoCapture);
-    F->addParamAttr(5, Attribute::NoCapture);
-    F->addParamAttr(7, Attribute::NoCapture);
+    addFunctionNoCapture(F, 3);
+    addFunctionNoCapture(F, 5);
+    addFunctionNoCapture(F, 7);
     F->addParamAttr(3, Attribute::NoAlias);
     F->addParamAttr(5, Attribute::NoAlias);
     F->addParamAttr(7, Attribute::NoAlias);
     F->addParamAttr(3, Attribute::ReadOnly);
     F->addParamAttr(5, Attribute::ReadOnly);
     if (byRef) {
-      F->addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(F, 2);
       F->addParamAttr(2, Attribute::NoAlias);
       F->addParamAttr(2, Attribute::ReadOnly);
     }
@@ -1203,8 +1203,8 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
-    F->addParamAttr(2, Attribute::NoCapture);
-    F->addParamAttr(4, Attribute::NoCapture);
+    addFunctionNoCapture(F, 2);
+    addFunctionNoCapture(F, 2);
     F->addParamAttr(2, Attribute::NoAlias);
     F->addParamAttr(4, Attribute::NoAlias);
     F->addParamAttr(2, Attribute::ReadOnly);
@@ -1338,9 +1338,9 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::NoAlias);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
   F->addParamAttr(1, Attribute::NoAlias);
   F->addParamAttr(0, Attribute::WriteOnly);
   F->addParamAttr(1, Attribute::ReadOnly);
@@ -1450,9 +1450,9 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::NoAlias);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
   F->addParamAttr(1, Attribute::NoAlias);
   F->addParamAttr(0, Attribute::WriteOnly);
   F->addParamAttr(1, Attribute::ReadOnly);
@@ -1602,8 +1602,8 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
+  addFunctionNoCapture(F, 1);
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
@@ -1628,7 +1628,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
     IRBuilder<> Free1Builder(free1);
 
     for (unsigned i = 0; i < width; i++) {
-      F->addParamAttr(i + 1, Attribute::NoCapture);
+      addFunctionNoCapture(F, i + 1);
       Argument *shadow = F->arg_begin() + i + 1;
 
       if (i < width - 1) {
@@ -1871,12 +1871,12 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::ReadOnly);
-  F->addParamAttr(1, Attribute::NoCapture);
-  F->addParamAttr(2, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
+  addFunctionNoCapture(F, 2);
   F->addParamAttr(2, Attribute::ReadOnly);
-  F->addParamAttr(3, Attribute::NoCapture);
+  addFunctionNoCapture(F, 3);
   F->addParamAttr(3, Attribute::ReadNone);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
