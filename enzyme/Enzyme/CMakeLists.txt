@@ -144,9 +144,6 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
-    if(${ENZYME_RUNPASS})
-        target_compile_definitions(Enzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-    endif()
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
         LIBRARY DESTINATION lib COMPONENT shlib

@@ -3658,10 +3658,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-  augmentPassBuilder(PB);
-#endif
+// A version used by Rust-Enzyme, which does not require cmake adjustments.
+// Rust just always sets augment to true.
+extern "C" void registerEnzyme2(llvm::PassBuilder &PB, bool augment = false) {
+  if (augment) {
+    augmentPassBuilder(PB);
+  }
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -3692,6 +3694,16 @@ extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
         }
         return false;
       });
+}
+
+// A version used by ClangEnzyme and LLDEnzyme, allowing to
+// hardcode the usage of augmentPassBuilder at build time.
+extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  registerEnzyme2(PB, /*augment*/ true);
+#else
+  registerEnzyme2(PB, /*augment*/ false);
+#endif
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
