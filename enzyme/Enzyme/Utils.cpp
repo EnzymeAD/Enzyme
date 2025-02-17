@@ -3700,6 +3700,7 @@ bool Poseidonable(const llvm::Value &V) {
           funcName.starts_with("llvm.log.") ||
           funcName.starts_with("llvm.sqrt.") ||
           funcName.starts_with("llvm.pow.") ||
+          funcName.starts_with("llvm.powi.") ||
           funcName.starts_with("llvm.fabs.") ||
           funcName.starts_with("llvm.fma.") ||
           funcName.starts_with("llvm.fmuladd.") ||

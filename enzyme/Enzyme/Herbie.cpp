@@ -1000,6 +1000,9 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       Value *newOp = nullptr;
       if (oldToNew.count(operand)) {
         newOp = oldToNew[operand];
+      } else if (operand->getType()->isIntegerTy()) {
+        newOp = operand;
+        oldToNew[operand] = newOp;
       } else {
         if (Instruction *opInst = dyn_cast<Instruction>(operand)) {
           IRBuilder<> OpBuilder(opInst->getParent(),
@@ -1036,6 +1039,9 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       Value *newArg = nullptr;
       if (oldToNew.count(arg)) {
         newArg = oldToNew[arg];
+      } else if (arg->getType()->isIntegerTy()) {
+        newArg = arg;
+        oldToNew[arg] = newArg;
       } else {
         if (Instruction *argInst = dyn_cast<Instruction>(arg)) {
           IRBuilder<> ArgBuilder(argInst->getParent(),
@@ -1070,7 +1076,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       Intrinsic::ID intrinsicID = calledFunc->getIntrinsicID();
       if (intrinsicID != Intrinsic::not_intrinsic) {
         Function *newFunc =
-            Intrinsic::getDeclaration(CI->getModule(), intrinsicID, {newType});
+            Intrinsic::getDeclaration(CI->getModule(), intrinsicID, newType);
         newI = Builder.CreateCall(newFunc, newArgs);
       } else {
         llvm::errs() << "PT: Unknown intrinsic: " << *CI << "\n";
@@ -2524,6 +2530,9 @@ InstructionCost getInstructionCompCost(const Instruction *I,
           case Intrinsic::pow:
             OpcodeName = "pow";
             break;
+          case Intrinsic::powi:
+            OpcodeName = "powi";
+            break;
           case Intrinsic::fmuladd:
             OpcodeName = "fmuladd";
             break;
@@ -3938,6 +3947,8 @@ std::string getHerbieOperator(const Instruction &I) {
           return "fmax";
         if (intrinsic == "minnum")
           return "fmin";
+        if (intrinsic == "powi")
+          return "pow";
         return intrinsic;
       }
       assert(0 && "getHerbieOperator: Unknown LLVM intrinsic");
@@ -4744,6 +4755,8 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
     }
   }
 
+  // F.print(llvm::errs());
+
   bool changed = false;
 
   int symbolCounter = 0;
@@ -4839,6 +4852,17 @@ B2:
             if (EnzymePrintFPOpt)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
+          } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
+            // e.g., powi intrinsic has a constant int as its exponent
+            double exponent = static_cast<double>(CI->getSExtValue());
+            std::string dtype = "f64";
+            std::string doubleStr = std::to_string(exponent);
+            valueToNodeMap[operand] =
+                std::make_shared<FPConst>(doubleStr.c_str(), dtype);
+            if (EnzymePrintFPOpt)
+              llvm::errs() << "Registered FPNode for " << dtype
+                           << " constant (casted from integer): " << doubleStr
+                           << "\n";
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
             Type *elemType = GV->getValueType();
 
@@ -5175,6 +5199,8 @@ B2:
         }
 
         // TODO: Herbie properties
+        // llvm::errs() << "Generating herbie expression for " << *output <<
+        // "\n";
         std::string expr =
             valueToNodeMap[output]->toFullExpression(valueToNodeMap);
         SmallSet<std::string, 8> args;
