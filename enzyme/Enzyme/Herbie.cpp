@@ -152,11 +152,11 @@ static cl::opt<bool> FPOptStrictMode(
         "Discard all FPOpt candidates that produce NaN or inf outputs for any "
         "input point that originally produced finite outputs"));
 static cl::opt<std::string> FPOptReduction(
-    "fpopt-reduction", cl::init("geomean"), cl::Hidden,
+    "fpopt-reduction", cl::init("maxabs"), cl::Hidden,
     cl::desc("Which reduction strategy to use in accuracy cost estimations. "
-             "Options are 'geomean', 'arithmean', and 'max'"));
+             "Options are 'geomean', 'arithmean', and 'maxabs'"));
 static cl::opt<double> FPOptGeoMeanEps(
-    "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
+    "fpopt-geo-mean-eps", cl::init(1.0), cl::Hidden,
     cl::desc("The offset used in the geometric mean "
              "calculation; if = 0, zeros are replaced with ULPs"));
 static cl::opt<bool> FPOptLooseCoverage(
@@ -237,7 +237,9 @@ public:
   std::string symbol;
   SmallVector<std::shared_ptr<FPNode>, 2> operands;
   double grad;
-  double geometricAvg;
+  double geoMean;
+  double arithMean;
+  double maxAbs;
   unsigned executions;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
@@ -3162,7 +3164,6 @@ public:
   InstructionCost initialCompCost;
   unsigned executions; // Requires manual initialization
   std::unordered_map<FPNode *, double> perOutputInitialAccCost;
-  std::unordered_map<FPNode *, SmallVector<double, 4>> errors;
 
   SmallVector<PTCandidate, 8> candidates;
 
@@ -3397,7 +3398,7 @@ void setUnifiedAccuracyCost(
     }
     assert(count != 0 && "No valid sample found for original expr");
     origCost = sum / count;
-  } else if (FPOptReduction == "max") {
+  } else if (FPOptReduction == "maxabs") {
     double maxErr = 0.0;
     for (const auto &pair : enumerate(sampledPoints)) {
       std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
@@ -3484,7 +3485,7 @@ void setUnifiedAccuracyCost(
         assert(count != 0 && "No valid sample found for candidate expr");
         candCost = sum / count;
       }
-    } else if (FPOptReduction == "max") {
+    } else if (FPOptReduction == "maxabs") {
       double maxErr = 0.0;
       for (const auto &pair : enumerate(sampledPoints)) {
         SmallVector<double, 1> results;
@@ -3610,7 +3611,7 @@ void setUnifiedAccuracyCost(
       ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
       ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
     }
-  } else if (FPOptReduction == "max") {
+  } else if (FPOptReduction == "maxabs") {
     std::unordered_map<FPNode *, double> runAcc;
     for (auto *node : outputs)
       runAcc[node] = 0.0;
@@ -3731,7 +3732,7 @@ void setUnifiedAccuracyCost(
         assert(!std::isnan(candidate.accuracyCost));
         newCandidates.push_back(std::move(candidate));
       }
-    } else if (FPOptReduction == "max") {
+    } else if (FPOptReduction == "maxabs") {
       std::unordered_map<FPNode *, double> candAcc;
       for (auto *node : outputs)
         candAcc[node] = 0.0;
@@ -4184,13 +4185,30 @@ std::string getHerbieOperator(const Instruction &I) {
   }
 }
 
+struct GradInfo {
+  double geoMean;
+  double arithMean;
+  double maxAbs;
+
+  GradInfo() : geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
+};
+
+// Updated ValueInfo structure
 struct ValueInfo {
   double minRes;
   double maxRes;
   unsigned executions;
-  double geometricAvg;
-  SmallVector<double, 2> lower;
-  SmallVector<double, 2> upper;
+  double geoMean;
+  double arithMean;
+  double maxAbs;
+
+  SmallVector<double, 2> minOperands;
+  SmallVector<double, 2> maxOperands;
+
+  ValueInfo()
+      : minRes(std::numeric_limits<double>::max()),
+        maxRes(std::numeric_limits<double>::lowest()), executions(0),
+        geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
 };
 
 bool extractValueFromLog(const std::string &logPath,
@@ -4205,34 +4223,58 @@ bool extractValueFromLog(const std::string &logPath,
   std::regex valuePattern("^Value:" + functionName + ":" +
                           std::to_string(blockIdx) + ":" +
                           std::to_string(instIdx) + "$");
-  std::regex newEntryPattern("^(Value|Grad):");
 
-  while (getline(file, line)) {
+  std::regex newEntryPattern("^(Value|Grad|Error):");
+
+  std::regex minResPattern(R"(^\s*MinRes\s*=\s*([\d\.eE+\-]+))");
+  std::regex maxResPattern(R"(^\s*MaxRes\s*=\s*([\d\.eE+\-]+))");
+  std::regex executionsPattern(R"(^\s*Executions\s*=\s*(\d+))");
+  std::regex geoMeanPattern(R"(^\s*GeoMeanAbs\s*=\s*([\d\.eE+\-]+))");
+  std::regex arithMeanPattern(R"(^\s*ArithMeanAbs\s*=\s*([\d\.eE+\-]+))");
+  std::regex maxAbsPattern(R"(^\s*MaxAbs\s*=\s*([\d\.eE+\-]+))");
+
+  std::regex operandPattern(
+      R"(^\s*Operand\[(\d+)\]\s*=\s*\[([\d\.eE+\-]+),\s*([\d\.eE+\-]+)\])");
+
+  while (std::getline(file, line)) {
     if (!line.empty() && line.back() == '\r') {
       line.pop_back();
     }
 
     if (std::regex_search(line, valuePattern)) {
-      std::string minResLine, maxResLine, executionsLine, geometricAvgLine;
-      if (getline(file, minResLine) && getline(file, maxResLine) &&
-          getline(file, executionsLine) && getline(file, geometricAvgLine)) {
-        std::regex minResPattern(R"(MinRes = ([\d\.eE+-]+))");
-        std::regex maxResPattern(R"(MaxRes = ([\d\.eE+-]+))");
-        std::regex executionsPattern(R"(Executions = (\d+))");
-        std::regex geometricAvgPattern(R"(Geometric Average = ([\d\.eE+-]+))");
+      std::string minResLine, maxResLine, execLine;
+      std::string geoMeanLine, arithMeanLine, maxAbsLine;
 
-        std::smatch minResMatch, maxResMatch, executionsMatch,
-            geometricAvgMatch;
-        if (std::regex_search(minResLine, minResMatch, minResPattern) &&
-            std::regex_search(maxResLine, maxResMatch, maxResPattern) &&
-            std::regex_search(executionsLine, executionsMatch,
-                              executionsPattern) &&
-            std::regex_search(geometricAvgLine, geometricAvgMatch,
-                              geometricAvgPattern)) {
-          data.minRes = stringToDouble(minResMatch[1]);
-          data.maxRes = stringToDouble(maxResMatch[1]);
-          data.executions = std::stol(executionsMatch[1]);
-          data.geometricAvg = stringToDouble(geometricAvgMatch[1]);
+      if (std::getline(file, minResLine) && std::getline(file, maxResLine) &&
+          std::getline(file, execLine) && std::getline(file, geoMeanLine) &&
+          std::getline(file, arithMeanLine) && std::getline(file, maxAbsLine)) {
+
+        auto stripCR = [](std::string &s) {
+          if (!s.empty() && s.back() == '\r') {
+            s.pop_back();
+          }
+        };
+        stripCR(minResLine);
+        stripCR(maxResLine);
+        stripCR(execLine);
+        stripCR(geoMeanLine);
+        stripCR(arithMeanLine);
+        stripCR(maxAbsLine);
+
+        std::smatch mMinRes, mMaxRes, mExec, mGeo, mArith, mMaxAbs;
+        if (std::regex_search(minResLine, mMinRes, minResPattern) &&
+            std::regex_search(maxResLine, mMaxRes, maxResPattern) &&
+            std::regex_search(execLine, mExec, executionsPattern) &&
+            std::regex_search(geoMeanLine, mGeo, geoMeanPattern) &&
+            std::regex_search(arithMeanLine, mArith, arithMeanPattern) &&
+            std::regex_search(maxAbsLine, mMaxAbs, maxAbsPattern)) {
+
+          data.minRes = stringToDouble(mMinRes[1]);
+          data.maxRes = stringToDouble(mMaxRes[1]);
+          data.executions = static_cast<unsigned>(std::stoul(mExec[1]));
+          data.geoMean = stringToDouble(mGeo[1]);
+          data.arithMean = stringToDouble(mArith[1]);
+          data.maxAbs = stringToDouble(mMaxAbs[1]);
         } else {
           std::string error =
               "Failed to parse stats for: Function: " + functionName +
@@ -4240,53 +4282,48 @@ bool extractValueFromLog(const std::string &logPath,
               ", InstIdx: " + std::to_string(instIdx);
           llvm_unreachable(error.c_str());
         }
+      } else {
+        std::string error =
+            "Incomplete stats block for: Function: " + functionName +
+            ", BlockIdx: " + std::to_string(blockIdx) +
+            ", InstIdx: " + std::to_string(instIdx);
+        llvm_unreachable(error.c_str());
       }
 
-      std::regex rangePattern(
-          R"(Operand\[\d+\] = \[([\d\.eE+-]+), ([\d\.eE+-]+)\])");
-      while (getline(file, line)) {
+      while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+
         if (std::regex_search(line, newEntryPattern)) {
-          // Ablation study only: widen the range by `FPOptWidenRange` times
-          if (FPOptWidenRange != 1) {
-            double center = (data.minRes + data.maxRes) / 2.0;
-            double half_range = (data.maxRes - data.minRes) / 2.0;
-            double new_half_range = half_range * FPOptWidenRange;
-            data.minRes = center - new_half_range;
-            data.maxRes = center + new_half_range;
-
-            for (size_t i = 0; i < data.lower.size(); ++i) {
-              double op_center = (data.lower[i] + data.upper[i]) / 2.0;
-              double op_half_range = (data.upper[i] - data.lower[i]) / 2.0;
-              double op_new_half_range = op_half_range * FPOptWidenRange;
-              data.lower[i] = op_center - op_new_half_range;
-              data.upper[i] = op_center + op_new_half_range;
-            }
-          }
-
-          // All operands have been extracted
           return true;
         }
 
-        std::smatch rangeMatch;
-        if (std::regex_search(line, rangeMatch, rangePattern)) {
-          data.lower.push_back(stringToDouble(rangeMatch[1]));
-          data.upper.push_back(stringToDouble(rangeMatch[2]));
+        std::smatch operandMatch;
+        if (std::regex_search(line, operandMatch, operandPattern)) {
+          unsigned opIdx = static_cast<unsigned>(std::stoul(operandMatch[1]));
+          double minVal = stringToDouble(operandMatch[2]);
+          double maxVal = stringToDouble(operandMatch[3]);
+
+          if (opIdx >= data.minOperands.size()) {
+            data.minOperands.resize(opIdx + 1, 0.0);
+            data.maxOperands.resize(opIdx + 1, 0.0);
+          }
+          data.minOperands[opIdx] = minVal;
+          data.maxOperands[opIdx] = maxVal;
         }
       }
     }
   }
 
-  std::string error =
-      "Failed to extract value info for: Function: " + functionName +
-      ", BlockIdx: " + std::to_string(blockIdx) +
-      ", InstIdx: " + std::to_string(instIdx);
-
+  llvm::errs() << "Failed to extract value info for: Function: " << functionName
+               << ", BlockIdx: " << blockIdx << ", InstIdx: " << instIdx
+               << "\n";
   return false;
 }
 
 bool extractGradFromLog(const std::string &logPath,
                         const std::string &functionName, size_t blockIdx,
-                        size_t instIdx, double &grad) {
+                        size_t instIdx, GradInfo &data) {
   std::ifstream file(logPath);
   if (!file.is_open()) {
     llvm_unreachable("Failed to open log file");
@@ -4297,21 +4334,45 @@ bool extractGradFromLog(const std::string &logPath,
                          std::to_string(blockIdx) + ":" +
                          std::to_string(instIdx) + "$");
 
-  while (getline(file, line)) {
+  std::regex geoMeanPattern(R"(^\s*GeoMeanAbs\s*=\s*([\d\.eE+\-]+))");
+  std::regex arithMeanPattern(R"(^\s*ArithMeanAbs\s*=\s*([\d\.eE+\-]+))");
+  std::regex maxAbsPattern(R"(^\s*MaxAbs\s*=\s*([\d\.eE+\-]+))");
+
+  while (std::getline(file, line)) {
     if (!line.empty() && line.back() == '\r') {
       line.pop_back();
     }
 
     if (std::regex_search(line, gradPattern)) {
+      std::string geoMeanLine, arithMeanLine, maxAbsLine;
+      if (std::getline(file, geoMeanLine) &&
+          std::getline(file, arithMeanLine) && std::getline(file, maxAbsLine)) {
 
-      // Extract Grad data
-      std::regex gradExtractPattern(R"(Grad = ([\d\.eE+-]+))");
-      std::smatch gradMatch;
-      if (getline(file, line) &&
-          std::regex_search(line, gradMatch, gradExtractPattern)) {
-        grad = stringToDouble(gradMatch[1]);
-        return true;
+        auto stripCR = [](std::string &s) {
+          if (!s.empty() && s.back() == '\r') {
+            s.pop_back();
+          }
+        };
+        stripCR(geoMeanLine);
+        stripCR(arithMeanLine);
+        stripCR(maxAbsLine);
+
+        std::smatch mGeo, mArith, mMax;
+        if (std::regex_search(geoMeanLine, mGeo, geoMeanPattern) &&
+            std::regex_search(arithMeanLine, mArith, arithMeanPattern) &&
+            std::regex_search(maxAbsLine, mMax, maxAbsPattern)) {
+
+          data.geoMean = stringToDouble(mGeo[1]);
+          data.arithMean = stringToDouble(mArith[1]);
+          data.maxAbs = stringToDouble(mMax[1]);
+          return true;
+        }
       }
+
+      llvm::errs() << "Incomplete gradient block for: Function: "
+                   << functionName << ", BlockIdx: " << blockIdx
+                   << ", InstIdx: " << instIdx << "\n";
+      return false;
     }
   }
 
@@ -5200,7 +5261,7 @@ B2:
 
             // look up error log to get bounds of non-Poseidonable inputs
             if (!FPOptLogPath.empty()) {
-              ValueInfo valueInfo;
+              ValueInfo data;
               auto blockIt = std::find_if(
                   I2->getFunction()->begin(), I2->getFunction()->end(),
                   [&](const auto &block) { return &block == I2->getParent(); });
@@ -5215,7 +5276,7 @@ B2:
               size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
               bool res = extractValueFromLog(FPOptLogPath, functionName,
-                                             blockIdx, instIdx, valueInfo);
+                                             blockIdx, instIdx, data);
               if (!res) {
                 if (FPOptLooseCoverage)
                   continue;
@@ -5226,7 +5287,7 @@ B2:
                     "to suppress this error\n");
               }
               auto node = valueToNodeMap[operand];
-              node->updateBounds(valueInfo.lower[i], valueInfo.upper[i]);
+              node->updateBounds(data.minOperands[i], data.maxOperands[i]);
 
               if (EnzymePrintFPOpt) {
                 llvm::errs() << "Range of " << *operand << " is ["
@@ -5303,7 +5364,7 @@ B2:
           for (auto &CC : newCCs) {
             // Extract grad and value info for all instructions.
             for (auto &op : CC.operations) {
-              double grad = 0;
+              GradInfo grad;
               auto blockIt = std::find_if(
                   op->getFunction()->begin(), op->getFunction()->end(),
                   [&](const auto &block) { return &block == op->getParent(); });
@@ -5320,14 +5381,24 @@ B2:
                                               blockIdx, instIdx, grad);
 
               auto node = valueToNodeMap[op];
-              node->grad = grad;
+              if (FPOptReduction == "geomean") {
+                node->grad = grad.geoMean;
+              } else if (FPOptReduction == "arithmean") {
+                node->grad = grad.arithMean;
+              } else if (FPOptReduction == "maxabs") {
+                node->grad = grad.maxAbs;
+              } else {
+                llvm_unreachable("Unknown FPOpt reduction type");
+              }
 
               if (found) {
                 ValueInfo valueInfo;
                 extractValueFromLog(FPOptLogPath, functionName, blockIdx,
                                     instIdx, valueInfo);
                 node->executions = valueInfo.executions;
-                node->geometricAvg = valueInfo.geometricAvg;
+                node->geoMean = valueInfo.geoMean;
+                node->arithMean = valueInfo.arithMean;
+                node->maxAbs = valueInfo.maxAbs;
                 node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
 
                 if (EnzymePrintFPOpt) {
@@ -5337,10 +5408,10 @@ B2:
                 }
 
                 if (EnzymePrintFPOpt)
-                  llvm::errs()
-                      << "Grad of " << *op << " is: " << node->grad << "\n"
-                      << "Execution count of " << *op
-                      << " is: " << node->executions << "\n";
+                  llvm::errs() << "Grad of " << *op << " is: " << node->grad
+                               << " (" << FPOptReduction << ")\n"
+                               << "Execution count of " << *op
+                               << " is: " << node->executions << "\n";
               } else { // Unknown bounds
                 if (EnzymePrintFPOpt)
                   llvm::errs()
@@ -5490,8 +5561,18 @@ B2:
 
       // Sort operations by the gradient
       llvm::sort(operations, [](const auto &a, const auto &b) {
-        return std::fabs(a->grad * a->geometricAvg) <
-               std::fabs(b->grad * b->geometricAvg);
+        if (FPOptReduction == "geomean") {
+          return std::fabs(a->grad * a->geoMean) >
+                 std::fabs(b->grad * b->geoMean);
+        } else if (FPOptReduction == "arithmean") {
+          return std::fabs(a->grad * a->arithMean) >
+                 std::fabs(b->grad * b->arithMean);
+        } else if (FPOptReduction == "maxabs") {
+          return std::fabs(a->grad * a->maxAbs) >
+                 std::fabs(b->grad * b->maxAbs);
+        } else {
+          llvm_unreachable("Unknown FPOpt reduction type");
+        }
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
@@ -5504,13 +5585,6 @@ B2:
         if (EnzymePrintFPOpt && !opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of Funcs (" << numToChange << ")\n";
-          llvm::errs() << "Subset sensitivity score range: ["
-                       << std::fabs(opsToChange.front()->grad *
-                                    opsToChange.front()->geometricAvg)
-                       << ", "
-                       << std::fabs(opsToChange.back()->grad *
-                                    opsToChange.back()->geometricAvg)
-                       << "]\n";
         }
 
         for (auto prec : precTypes) {
@@ -5538,10 +5612,11 @@ B2:
         allOperations.push_back(node);
       }
 
-      // Sort all operations by the gradient
+      // Sort all operations by their sensitivity estimation (gradient-value
+      // product)
       llvm::sort(allOperations, [](const auto &a, const auto &b) {
-        return std::fabs(a->grad * a->geometricAvg) <
-               std::fabs(b->grad * b->geometricAvg);
+        return std::fabs(a->grad * a->geoMean) <
+               std::fabs(b->grad * b->geoMean);
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
@@ -5554,13 +5629,6 @@ B2:
         if (EnzymePrintFPOpt && !opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of all operations (" << numToChange << ")\n";
-          llvm::errs() << "Subset sensitivity score range: ["
-                       << std::fabs(opsToChange.front()->grad *
-                                    opsToChange.front()->geometricAvg)
-                       << ", "
-                       << std::fabs(opsToChange.back()->grad *
-                                    opsToChange.back()->geometricAvg)
-                       << "]\n";
         }
 
         for (auto prec : precTypes) {
