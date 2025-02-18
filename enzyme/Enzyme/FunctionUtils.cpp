@@ -2437,7 +2437,7 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
     for (auto &z : pair.second) {
       if (auto inst = dyn_cast<Instruction>(z.first->getArgOperand(0)))
         if (!DT.dominates(inst, First))
-          legal = true;
+          legal = false;
     }
     if (!legal)
       continue;
