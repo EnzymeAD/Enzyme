@@ -4212,9 +4212,7 @@ bool accuracyDPSolver(
   using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
 
   CostMap costToAccuracyMap;
-  costToAccuracyMap[0] = 0;
   SolutionMap costToSolutionMap;
-  costToSolutionMap[0] = {};
   CostMap newCostToAccuracyMap;
   SolutionMap newCostToSolutionMap;
   CostMap prunedCostToAccuracyMap;
@@ -4304,6 +4302,9 @@ bool accuracyDPSolver(
 
   } else {
     llvm::errs() << "Cache file not found. Proceeding to solve DP.\n";
+
+    costToAccuracyMap[0] = 0;
+    costToSolutionMap[0] = {};
 
     std::unordered_map<ApplicableOutput *, size_t> aoPtrToIndex;
     for (size_t i = 0; i < AOs.size(); ++i) {
@@ -4623,16 +4624,16 @@ bool accuracyDPSolver(
     }
   }
 
-  std::string budgetsStr;
-  for (const auto &pair : costToAccuracyMap) {
-    budgetsStr += std::to_string(pair.first.getValue().value()) + ",";
-  }
-
-  if (!budgetsStr.empty())
-    budgetsStr.pop_back();
-
   std::string budgetsFile = FPOptCachePath + "/budgets.txt";
   if (!llvm::sys::fs::exists(budgetsFile)) {
+    std::string budgetsStr;
+    for (const auto &pair : costToAccuracyMap) {
+      budgetsStr += std::to_string(pair.first.getValue().value()) + ",";
+    }
+
+    if (!budgetsStr.empty())
+      budgetsStr.pop_back();
+
     std::error_code EC;
     llvm::raw_fd_ostream Out(budgetsFile, EC, llvm::sys::fs::OF_Text);
     if (EC) {
@@ -4650,7 +4651,7 @@ bool accuracyDPSolver(
   llvm::errs() << "DP table contains " << costToAccuracyMap.size()
                << " entries.\n";
 
-  unsigned long long totalCandidateCompositions = 1;
+  double totalCandidateCompositions = 1.0;
   for (const auto &AO : AOs) {
     // +1 for the "do nothing" possibility
     totalCandidateCompositions *= AO.candidates.size() + 1;
@@ -4687,12 +4688,6 @@ bool accuracyDPSolver(
 
   llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost << "\n";
   llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
-
-  if (bestCompCost == 0 && minAccCost == 0) {
-    llvm::errs() << "WARNING: DP Solver recommended no optimization given the "
-                    "current computation cost budget.\n";
-    return changed;
-  }
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "FPOpt DP solver: expected a solution!");
