@@ -151,6 +151,14 @@ static cl::opt<bool> FPOptStrictMode(
     cl::desc(
         "Discard all FPOpt candidates that produce NaN or inf outputs for any "
         "input point that originally produced finite outputs"));
+static cl::opt<std::string> FPOptReduction(
+    "fpopt-reduction", cl::init("geomean"), cl::Hidden,
+    cl::desc("Which reduction strategy to use in accuracy cost estimations. "
+             "Options are 'geomean', 'arithmean', and 'max'"));
+static cl::opt<double> FPOptGeoMeanEps(
+    "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
+    cl::desc("The offset used in the geometric mean "
+             "calculation; if = 0, zeros are replaced with ULPs"));
 static cl::opt<bool> FPOptLooseCoverage(
     "fpopt-loose-coverage", cl::init(false), cl::Hidden,
     cl::desc("Allow unexecuted FP instructions in subgraph indentification"));
@@ -206,6 +214,15 @@ static const std::unordered_set<std::string> LibmFuncs = {
     "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
     "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
     "fdim",  "fmod",  "remainder"};
+
+double getOneULP(double value) {
+  assert(!std::isnan(value) && !std::isinf(value));
+
+  double next = std::nextafter(value, std::numeric_limits<double>::infinity());
+  double ulp = std::fabs(next - value);
+
+  return ulp;
+}
 
 class FPNode {
 public:
@@ -3331,94 +3348,167 @@ void setUnifiedAccuracyCost(
   SmallVector<double, 4> goldVals;
   goldVals.resize(FPOptNumSamples);
 
-  double errSumLog = 0.0;
-  unsigned errCountNonZero = 0;
-  unsigned errCountZero = 0;
-  double errMinNonZero = std::numeric_limits<double>::max();
+  double origCost = 0.0;
+  if (FPOptReduction == "geomean") {
+    double sumLog = 0.0;
+    unsigned count = 0;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      SmallVector<double, 1> results;
+      getMPFRValues({node.get()}, pair.value(), results, true, 53);
+      double goldVal = results[0];
+      goldVals[pair.index()] = goldVal;
 
-  // Compute gold values using MPFR for the original expression.
-  for (const auto &pair : enumerate(sampledPoints)) {
-    std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
-    SmallVector<double, 1> results;
-    getMPFRValues({node.get()}, pair.value(), results, true, 53);
-    double goldVal = results[0];
-    goldVals[pair.index()] = goldVal;
-
-    // Also compute the current FP value (for AO’s original cost).
-    getFPValues({node.get()}, pair.value(), results);
-    double realVal = results[0];
-    double error = std::fabs(goldVal - realVal);
-    if (!std::isnan(error) && !std::isinf(error)) {
-      if (error == 0.0) {
-        ++errCountZero;
-      } else {
-        errSumLog += std::log(error);
-        ++errCountNonZero;
-        errMinNonZero = std::min(errMinNonZero, error);
+      getFPValues({node.get()}, pair.value(), results);
+      double realVal = results[0];
+      double error = std::fabs(goldVal - realVal);
+      if (!std::isnan(error)) {
+        if (error == 0.0) {
+          if (FPOptGeoMeanEps == 0.0)
+            error = getOneULP(goldVal);
+          else
+            error += FPOptGeoMeanEps;
+        } else if (FPOptGeoMeanEps != 0.0) {
+          error += FPOptGeoMeanEps;
+        }
+        sumLog += std::log(error);
+        ++count;
       }
     }
+    assert(count != 0 && "No valid sample found for original expr");
+    origCost = std::exp(sumLog / count);
+  } else if (FPOptReduction == "arithmean") {
+    double sum = 0.0;
+    unsigned count = 0;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      SmallVector<double, 1> results;
+      getMPFRValues({node.get()}, pair.value(), results, true, 53);
+      double goldVal = results[0];
+      goldVals[pair.index()] = goldVal;
+
+      getFPValues({node.get()}, pair.value(), results);
+      double realVal = results[0];
+      double error = std::fabs(goldVal - realVal);
+      if (!std::isnan(error)) {
+        sum += error;
+        ++count;
+      }
+    }
+    assert(count != 0 && "No valid sample found for original expr");
+    origCost = sum / count;
+  } else if (FPOptReduction == "max") {
+    double maxErr = 0.0;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      SmallVector<double, 1> results;
+      getMPFRValues({node.get()}, pair.value(), results, true, 53);
+      double goldVal = results[0];
+      goldVals[pair.index()] = goldVal;
+
+      getFPValues({node.get()}, pair.value(), results);
+      double realVal = results[0];
+      double error = std::fabs(goldVal - realVal);
+      if (!std::isnan(error))
+        maxErr = std::max(maxErr, error);
+    }
+    origCost = maxErr;
+  } else {
+    llvm_unreachable("Unknown fpopt-reduction strategy");
   }
 
-  // Compute the geometric mean from the running accumulators.
-  unsigned totalErr = errCountNonZero + errCountZero;
-  double geoErr = 0.0;
-  if (totalErr == 0 || errCountNonZero == 0)
-    geoErr = 0.0;
-  else {
-    double eps = errMinNonZero * 1e-5;
-    geoErr = std::exp((errSumLog + errCountZero * std::log(eps)) / totalErr);
-  }
-  AO.initialAccCost = geoErr * std::fabs(AO.grad);
+  AO.initialAccCost = origCost * std::fabs(AO.grad);
   assert(!std::isnan(AO.initialAccCost));
 
   SmallVector<RewriteCandidate, 4> newCandidates;
   for (auto &candidate : AO.candidates) {
     bool discardCandidate = false;
-    double candSumLog = 0.0;
-    unsigned candCountNonZero = 0;
-    unsigned candCountZero = 0;
-    double candMinNonZero = std::numeric_limits<double>::max();
+    double candCost = 0.0;
 
     std::shared_ptr<FPNode> parsedNode =
         parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
-    for (const auto &pair : enumerate(sampledPoints)) {
-      SmallVector<double, 1> results;
-      getFPValues({parsedNode.get()}, pair.value(), results);
-      double realVal = results[0];
-      double goldVal = goldVals[pair.index()];
+    if (FPOptReduction == "geomean") {
+      double sumLog = 0.0;
+      unsigned count = 0;
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 1> results;
+        getFPValues({parsedNode.get()}, pair.value(), results);
+        double realVal = results[0];
+        double goldVal = goldVals[pair.index()];
 
-      // In strict mode, if the gold value is finite but candidate's result is
-      // not, discard the candidate.
-      if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
-          (std::isnan(realVal) || std::isinf(realVal))) {
-        discardCandidate = true;
-        break;
-      }
+        if (FPOptStrictMode && (!std::isnan(goldVal)) && std::isnan(realVal)) {
+          discardCandidate = true;
+          break;
+        }
 
-      double error = std::fabs(goldVal - realVal);
-      if (!std::isnan(error) && !std::isinf(error)) {
-        if (error == 0.0) {
-          ++candCountZero;
-        } else {
-          candSumLog += std::log(error);
-          ++candCountNonZero;
-          candMinNonZero = std::min(candMinNonZero, error);
+        double error = std::fabs(goldVal - realVal);
+        if (!std::isnan(error)) {
+          if (error == 0.0) {
+            if (FPOptGeoMeanEps == 0.0)
+              error = getOneULP(goldVal);
+            else
+              error += FPOptGeoMeanEps;
+          } else if (FPOptGeoMeanEps != 0.0) {
+            error += FPOptGeoMeanEps;
+          }
+          sumLog += std::log(error);
+          ++count;
         }
       }
+      if (!discardCandidate) {
+        assert(count != 0 && "No valid sample found for candidate expr");
+        candCost = std::exp(sumLog / count);
+      }
+    } else if (FPOptReduction == "arithmean") {
+      double sum = 0.0;
+      unsigned count = 0;
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 1> results;
+        getFPValues({parsedNode.get()}, pair.value(), results);
+        double realVal = results[0];
+        double goldVal = goldVals[pair.index()];
+
+        if (FPOptStrictMode && !std::isnan(goldVal) && std::isnan(realVal)) {
+          discardCandidate = true;
+          break;
+        }
+
+        double error = std::fabs(goldVal - realVal);
+        if (!std::isnan(error)) {
+          sum += error;
+          ++count;
+        }
+      }
+      if (!discardCandidate) {
+        assert(count != 0 && "No valid sample found for candidate expr");
+        candCost = sum / count;
+      }
+    } else if (FPOptReduction == "max") {
+      double maxErr = 0.0;
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 1> results;
+        getFPValues({parsedNode.get()}, pair.value(), results);
+        double realVal = results[0];
+        double goldVal = goldVals[pair.index()];
+
+        if (FPOptStrictMode && !std::isnan(goldVal) && std::isnan(realVal)) {
+          discardCandidate = true;
+          break;
+        }
+
+        double error = std::fabs(goldVal - realVal);
+        if (!std::isnan(error))
+          maxErr = std::max(maxErr, error);
+      }
+      if (!discardCandidate)
+        candCost = maxErr;
+    } else {
+      llvm_unreachable("Unknown fpopt-reduction strategy");
     }
 
-    if (!discardCandidate && ((candCountNonZero + candCountZero) > 0)) {
-      unsigned totalCand = candCountNonZero + candCountZero;
-      double candGeo = 0.0;
-      if (candCountNonZero == 0)
-        candGeo = 0.0;
-      else {
-        double eps = candMinNonZero * 1e-5;
-        candGeo =
-            std::exp((candSumLog + candCountZero * std::log(eps)) / totalCand);
-      }
-      candidate.accuracyCost = candGeo * std::fabs(AO.grad);
+    if (!discardCandidate) {
+      candidate.accuracyCost = candCost * std::fabs(AO.grad);
       assert(!std::isnan(candidate.accuracyCost));
       newCandidates.push_back(std::move(candidate));
     }
@@ -3443,110 +3533,237 @@ void setUnifiedAccuracyCost(
   }
 
   SmallVector<FPNode *, 4> outputs;
-  for (auto *output : ACC.component->outputs) {
+  for (auto *output : ACC.component->outputs)
     outputs.push_back(valueToNodeMap[output].get());
-  }
 
-  struct RunningAcc {
-    double sumLog = 0.0;
-    unsigned countNonZero = 0;
-    unsigned countZero = 0;
-    double minNonZero = std::numeric_limits<double>::max();
-  };
-  std::unordered_map<FPNode *, RunningAcc> runAcc;
-  for (auto *node : outputs)
-    runAcc[node] = RunningAcc();
+  if (FPOptReduction == "geomean") {
+    struct RunningAcc {
+      double sumLog = 0.0;
+      unsigned count = 0;
+    };
+    std::unordered_map<FPNode *, RunningAcc> runAcc;
+    for (auto *node : outputs)
+      runAcc[node] = RunningAcc();
 
-  for (const auto &pair : enumerate(sampledPoints)) {
-    SmallVector<double, 8> results;
-    getMPFRValues(outputs, pair.value(), results, true, 53);
-    for (const auto &[node, result] : zip(outputs, results))
-      goldVals[node][pair.index()] = result;
+    for (const auto &pair : enumerate(sampledPoints)) {
+      SmallVector<double, 8> results;
+      getMPFRValues(outputs, pair.value(), results, true, 53);
+      for (const auto &[node, result] : zip(outputs, results))
+        goldVals[node][pair.index()] = result;
 
-    // Get the FP values with parsed precision.
-    getFPValues(outputs, pair.value(), results);
-    for (const auto &[node, result] : zip(outputs, results)) {
-      double goldVal = goldVals[node][pair.index()];
-      double error = std::fabs(goldVal - result);
-      if (!std::isnan(error) && !std::isinf(error)) {
-        if (error == 0.0)
-          ++runAcc[node].countZero;
-        else {
+      getFPValues(outputs, pair.value(), results);
+      for (const auto &[node, result] : zip(outputs, results)) {
+        double goldVal = goldVals[node][pair.index()];
+        double error = std::fabs(goldVal - result);
+        if (!std::isnan(error)) {
+          if (error == 0.0) {
+            if (FPOptGeoMeanEps == 0.0)
+              error = getOneULP(goldVal);
+            else
+              error += FPOptGeoMeanEps;
+          } else if (FPOptGeoMeanEps != 0.0) {
+            error += FPOptGeoMeanEps;
+          }
           runAcc[node].sumLog += std::log(error);
-          ++runAcc[node].countNonZero;
-          runAcc[node].minNonZero = std::min(runAcc[node].minNonZero, error);
+          ++runAcc[node].count;
         }
       }
     }
-  }
-
-  // For each output, compute the geometric mean and the per-output cost.
-  ACC.initialAccCost = 0.0;
-  for (auto *node : outputs) {
-    RunningAcc &ra = runAcc[node];
-    unsigned total = ra.countNonZero + ra.countZero;
-    double geo = 0.0;
-    if (total == 0 || ra.countNonZero == 0)
-      geo = 0.0;
-    else {
-      double eps = ra.minNonZero * 1e-5;
-      geo = std::exp((ra.sumLog + ra.countZero * std::log(eps)) / total);
+    ACC.initialAccCost = 0.0;
+    for (auto *node : outputs) {
+      RunningAcc &ra = runAcc[node];
+      assert(ra.count != 0 && "No valid sample found for original subgraph");
+      double red = std::exp(ra.sumLog / ra.count);
+      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
     }
-    ACC.perOutputInitialAccCost[node] = geo * std::fabs(node->grad);
-    ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+  } else if (FPOptReduction == "arithmean") {
+    struct RunningAccArith {
+      double sum = 0.0;
+      unsigned count = 0;
+    };
+    std::unordered_map<FPNode *, RunningAccArith> runAcc;
+    for (auto *node : outputs)
+      runAcc[node] = RunningAccArith();
+
+    for (const auto &pair : enumerate(sampledPoints)) {
+      SmallVector<double, 8> results;
+      getMPFRValues(outputs, pair.value(), results, true, 53);
+      for (const auto &[node, result] : zip(outputs, results))
+        goldVals[node][pair.index()] = result;
+
+      getFPValues(outputs, pair.value(), results);
+      for (const auto &[node, result] : zip(outputs, results)) {
+        double goldVal = goldVals[node][pair.index()];
+        double error = std::fabs(goldVal - result);
+        if (!std::isnan(error)) {
+          runAcc[node].sum += error;
+          ++runAcc[node].count;
+        }
+      }
+    }
+    ACC.initialAccCost = 0.0;
+    for (auto *node : outputs) {
+      auto &ra = runAcc[node];
+      assert(ra.count != 0 && "No valid sample found for original subgraph");
+      double red = ra.sum / ra.count;
+      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+    }
+  } else if (FPOptReduction == "max") {
+    std::unordered_map<FPNode *, double> runAcc;
+    for (auto *node : outputs)
+      runAcc[node] = 0.0;
+
+    for (const auto &pair : enumerate(sampledPoints)) {
+      SmallVector<double, 8> results;
+      getMPFRValues(outputs, pair.value(), results, true, 53);
+      for (const auto &[node, result] : zip(outputs, results))
+        goldVals[node][pair.index()] = result;
+
+      getFPValues(outputs, pair.value(), results);
+      for (const auto &[node, result] : zip(outputs, results)) {
+        double goldVal = goldVals[node][pair.index()];
+        double error = std::fabs(goldVal - result);
+        if (!std::isnan(error))
+          runAcc[node] = std::max(runAcc[node], error);
+      }
+    }
+    ACC.initialAccCost = 0.0;
+    for (auto *node : outputs) {
+      double red = runAcc[node];
+      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+    }
+  } else {
+    llvm_unreachable("Unknown fpopt-reduction strategy");
   }
   assert(!std::isnan(ACC.initialAccCost));
 
   SmallVector<PTCandidate, 4> newCandidates;
   for (auto &candidate : ACC.candidates) {
     bool discardCandidate = false;
-    std::unordered_map<FPNode *, RunningAcc> candAcc;
-    for (auto *node : outputs)
-      candAcc[node] = RunningAcc();
+    if (FPOptReduction == "geomean") {
+      struct RunningAcc {
+        double sumLog = 0.0;
+        unsigned count = 0;
+      };
+      std::unordered_map<FPNode *, RunningAcc> candAcc;
+      for (auto *node : outputs)
+        candAcc[node] = RunningAcc();
 
-    for (const auto &pair : enumerate(sampledPoints)) {
-      SmallVector<double, 8> results;
-      getFPValues(outputs, pair.value(), results, &candidate);
-      for (const auto &[node, result] : zip(outputs, results)) {
-        double goldVal = goldVals[node][pair.index()];
-        if (FPOptStrictMode && (!std::isnan(goldVal) && !std::isinf(goldVal)) &&
-            (std::isnan(result) || std::isinf(result))) {
-          discardCandidate = true;
-          break;
-        }
-        double error = std::fabs(goldVal - result);
-        if (!std::isnan(error) && !std::isinf(error)) {
-          if (error == 0.0)
-            ++candAcc[node].countZero;
-          else {
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 8> results;
+        getFPValues(outputs, pair.value(), results, &candidate);
+        for (const auto &[node, result] : zip(outputs, results)) {
+          double goldVal = goldVals[node][pair.index()];
+          if (FPOptStrictMode && !std::isnan(goldVal) && std::isnan(result)) {
+            discardCandidate = true;
+            break;
+          }
+          double error = std::fabs(goldVal - result);
+          if (!std::isnan(error)) {
+            if (error == 0.0) {
+              if (FPOptGeoMeanEps == 0.0)
+                error = getOneULP(goldVal);
+              else
+                error += FPOptGeoMeanEps;
+            } else if (FPOptGeoMeanEps != 0.0) {
+              error += FPOptGeoMeanEps;
+            }
             candAcc[node].sumLog += std::log(error);
-            ++candAcc[node].countNonZero;
-            candAcc[node].minNonZero =
-                std::min(candAcc[node].minNonZero, error);
+            ++candAcc[node].count;
           }
         }
+        if (discardCandidate)
+          break;
       }
-      if (discardCandidate)
-        break;
-    }
-
-    if (!discardCandidate) {
-      candidate.accuracyCost = 0.0;
-      for (auto *node : outputs) {
-        RunningAcc &ra = candAcc[node];
-        unsigned total = ra.countNonZero + ra.countZero;
-        double geo = 0.0;
-        if (total == 0 || ra.countNonZero == 0)
-          geo = 0.0;
-        else {
-          double eps = ra.minNonZero * 1e-5;
-          geo = std::exp((ra.sumLog + ra.countZero * std::log(eps)) / total);
+      if (!discardCandidate) {
+        candidate.accuracyCost = 0.0;
+        for (auto *node : outputs) {
+          RunningAcc &ra = candAcc[node];
+          assert(ra.count != 0 &&
+                 "No valid sample found for candidate subgraph");
+          double red = std::exp(ra.sumLog / ra.count);
+          candidate.perOutputAccCost[node] = red * std::fabs(node->grad);
+          candidate.accuracyCost += candidate.perOutputAccCost[node];
         }
-        candidate.perOutputAccCost[node] = geo * std::fabs(node->grad);
-        candidate.accuracyCost += candidate.perOutputAccCost[node];
+        assert(!std::isnan(candidate.accuracyCost));
+        newCandidates.push_back(std::move(candidate));
       }
-      assert(!std::isnan(candidate.accuracyCost));
-      newCandidates.push_back(std::move(candidate));
+    } else if (FPOptReduction == "arithmean") {
+      struct RunningAccArith {
+        double sum = 0.0;
+        unsigned count = 0;
+      };
+      std::unordered_map<FPNode *, RunningAccArith> candAcc;
+      for (auto *node : outputs)
+        candAcc[node] = RunningAccArith();
+
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 8> results;
+        getFPValues(outputs, pair.value(), results, &candidate);
+        for (const auto &[node, result] : zip(outputs, results)) {
+          double goldVal = goldVals[node][pair.index()];
+          if (FPOptStrictMode && !std::isnan(goldVal) && std::isnan(result)) {
+            discardCandidate = true;
+            break;
+          }
+          double error = std::fabs(goldVal - result);
+          if (!std::isnan(error)) {
+            candAcc[node].sum += error;
+            ++candAcc[node].count;
+          }
+        }
+        if (discardCandidate)
+          break;
+      }
+      if (!discardCandidate) {
+        candidate.accuracyCost = 0.0;
+        for (auto *node : outputs) {
+          auto &ra = candAcc[node];
+          assert(ra.count != 0 &&
+                 "No valid sample found for candidate subgraph");
+          double red = ra.sum / ra.count;
+          candidate.perOutputAccCost[node] = red * std::fabs(node->grad);
+          candidate.accuracyCost += candidate.perOutputAccCost[node];
+        }
+        assert(!std::isnan(candidate.accuracyCost));
+        newCandidates.push_back(std::move(candidate));
+      }
+    } else if (FPOptReduction == "max") {
+      std::unordered_map<FPNode *, double> candAcc;
+      for (auto *node : outputs)
+        candAcc[node] = 0.0;
+
+      for (const auto &pair : enumerate(sampledPoints)) {
+        SmallVector<double, 8> results;
+        getFPValues(outputs, pair.value(), results, &candidate);
+        for (const auto &[node, result] : zip(outputs, results)) {
+          double goldVal = goldVals[node][pair.index()];
+          if (FPOptStrictMode && !std::isnan(goldVal) && std::isnan(result)) {
+            discardCandidate = true;
+            break;
+          }
+          double error = std::fabs(goldVal - result);
+          if (!std::isnan(error))
+            candAcc[node] = std::max(candAcc[node], error);
+        }
+        if (discardCandidate)
+          break;
+      }
+      if (!discardCandidate) {
+        candidate.accuracyCost = 0.0;
+        for (auto *node : outputs) {
+          double red = candAcc[node];
+          candidate.perOutputAccCost[node] = red * std::fabs(node->grad);
+          candidate.accuracyCost += candidate.perOutputAccCost[node];
+        }
+        assert(!std::isnan(candidate.accuracyCost));
+        newCandidates.push_back(std::move(candidate));
+      }
+    } else {
+      llvm_unreachable("Unknown fpopt-reduction strategy");
     }
   }
   ACC.candidates = std::move(newCandidates);
