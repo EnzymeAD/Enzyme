@@ -55,6 +55,10 @@
 
 #include "LibraryFuncs.h"
 
+#ifdef ENZYME_ENABLE_FPOPT
+#include "Herbie.h"
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -3655,6 +3659,153 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
 
   return absres;
 }
+
+llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName) {
+  if (demangledName != "enzymeLogError" && demangledName != "enzymeLogGrad" &&
+      demangledName != "enzymeLogValue") {
+    llvm_unreachable("Unknown log function");
+  }
+  for (llvm::Function &F : *M) {
+    if (startsWith(llvm::demangle(F.getName().str()), demangledName)) {
+      return &F;
+    }
+  }
+  return nullptr; // Return nullptr if no matching function is found
+}
+
+bool Poseidonable(const llvm::Value &V) {
+  const Instruction *I = dyn_cast<Instruction>(&V);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+  case Instruction::FRem:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return
+          // LLVM intrinsics
+          funcName.starts_with("llvm.sin.") ||
+          funcName.starts_with("llvm.cos.") ||
+          funcName.starts_with("llvm.tan.") ||
+          funcName.starts_with("llvm.exp.") ||
+          funcName.starts_with("llvm.log.") ||
+          funcName.starts_with("llvm.sqrt.") ||
+          funcName.starts_with("llvm.pow.") ||
+          funcName.starts_with("llvm.powi.") ||
+          funcName.starts_with("llvm.fabs.") ||
+          funcName.starts_with("llvm.fma.") ||
+          funcName.starts_with("llvm.fmuladd.") ||
+          funcName.starts_with("llvm.maxnum.") ||
+          funcName.starts_with("llvm.minnum.") ||
+          funcName.starts_with("llvm.ceil.") ||
+          funcName.starts_with("llvm.floor.") ||
+          funcName.starts_with("llvm.exp2.") ||
+          funcName.starts_with("llvm.log10.") ||
+          funcName.starts_with("llvm.log2.") ||
+          funcName.starts_with("llvm.rint.") ||
+          funcName.starts_with("llvm.round.") ||
+          funcName.starts_with("llvm.trunc.") ||
+          funcName.starts_with("llvm.copysign.") ||
+          funcName.starts_with("llvm.fdim.") ||
+          funcName.starts_with("llvm.fmod.") ||
+
+          // libm functions
+          funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
+          funcName == "cosf" || funcName == "tan" || funcName == "tanf" ||
+          funcName == "asin" || funcName == "asinf" || funcName == "acos" ||
+          funcName == "acosf" || funcName == "atan" || funcName == "atanf" ||
+          funcName == "atan2" || funcName == "atan2f" || funcName == "sinh" ||
+          funcName == "sinhf" || funcName == "cosh" || funcName == "coshf" ||
+          funcName == "tanh" || funcName == "tanhf" || funcName == "asinh" ||
+          funcName == "asinhf" || funcName == "acosh" || funcName == "acoshf" ||
+          funcName == "atanh" || funcName == "atanhf" || funcName == "sqrt" ||
+          funcName == "sqrtf" || funcName == "cbrt" || funcName == "cbrtf" ||
+          funcName == "pow" || funcName == "powf" || funcName == "exp" ||
+          funcName == "expf" || funcName == "log" || funcName == "logf" ||
+          funcName == "fabs" || funcName == "fabsf" || funcName == "fma" ||
+          funcName == "fmaf" || funcName == "hypot" || funcName == "hypotf" ||
+          funcName == "expm1" || funcName == "expm1f" || funcName == "log1p" ||
+          funcName == "log1pf" || funcName == "ceil" || funcName == "ceilf" ||
+          funcName == "floor" || funcName == "floorf" || funcName == "erf" ||
+          funcName == "erff" || funcName == "exp2" || funcName == "exp2f" ||
+          funcName == "lgamma" || funcName == "lgammaf" ||
+          funcName == "log10" || funcName == "log10f" || funcName == "log2" ||
+          funcName == "log2f" || funcName == "rint" || funcName == "rintf" ||
+          funcName == "round" || funcName == "roundf" || funcName == "tgamma" ||
+          funcName == "tgammaf" || funcName == "trunc" ||
+          funcName == "truncf" || funcName == "copysign" ||
+          funcName == "copysignf" || funcName == "fdim" ||
+          funcName == "fdimf" || funcName == "fmod" || funcName == "fmodf" ||
+          funcName == "remainder" || funcName == "remainderf";
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+bool hasFPOptLogger(llvm::Module *M) {
+  return getFPOptLogger(M, "enzymeLogError") ||
+         getFPOptLogger(M, "enzymeLogGrad") ||
+         getFPOptLogger(M, "enzymeLogValue");
+}
+
+std::string getLogIdentifier(llvm::Instruction &I) {
+  if (!I.hasMetadata("enzyme_preprocess_origin")) {
+    llvm::errs() << "FP Instruction without preprocess origin metadata: " << I
+                 << "\n";
+    llvm::errs() << "Consider setting `-enzyme-inline=0`.\n";
+  }
+  assert(I.hasMetadata("enzyme_preprocess_origin"));
+  auto *CMD = cast<ConstantAsMetadata>(
+      I.getMetadata("enzyme_preprocess_origin")->getOperand(0));
+  uintptr_t ptrValue = cast<ConstantInt>(CMD->getValue())->getZExtValue();
+  auto *OI = reinterpret_cast<Instruction *>(ptrValue);
+
+  llvm::StringRef functionName = OI->getFunction()->getName();
+  int blockIdx = -1, instIdx = -1;
+  auto blockIt = llvm::find_if(*OI->getFunction(), [&](const auto &block) {
+    return &block == OI->getParent();
+  });
+  if (blockIt != OI->getFunction()->end()) {
+    blockIdx = std::distance(OI->getFunction()->begin(), blockIt);
+  }
+  auto instIt = llvm::find_if(*OI->getParent(),
+                              [&](const auto &curr) { return &curr == OI; });
+  if (instIt != OI->getParent()->end()) {
+    instIdx = std::distance(OI->getParent()->begin(), instIt);
+  }
+
+  return functionName.str() + ":" + std::to_string(blockIdx) + ":" +
+         std::to_string(instIdx);
+}
+
+#ifdef ENZYME_ENABLE_FPOPT
+void attachFPOptMetadata(llvm::Instruction *After,
+                         const llvm::Instruction *Before) {
+  if (FPOptPrintPreproc)
+    llvm::errs() << "(FPOpt Preprocessing) Attaching metadata to associate "
+                 << *Before << " with " << *After << "\n";
+
+  After->setMetadata("enzyme_active", MDNode::get(After->getContext(), {}));
+  After->setMetadata(
+      "enzyme_preprocess_origin",
+      MDTuple::get(After->getContext(),
+                   {ConstantAsMetadata::get(ConstantInt::get(
+                       Type::getInt64Ty(After->getContext()),
+                       reinterpret_cast<std::uintptr_t>(Before)))}));
+}
+#endif
 
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,

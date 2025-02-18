@@ -44,11 +44,32 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
-list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Herbie.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
+
+# set(ENZYME_LINK_TARGETS)
+set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable FPOpt")
+
+if(ENZYME_ENABLE_FPOPT)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/sbrantq/herbie
+        GIT_TAG 9a81e9ecd01515ed88fb4efb77e4c0ae7be9cba5
+        UPDATE_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+    )
+    list(APPEND ENZYME_SRC Herbie.cpp)
+    add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
+    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+endif()
+
 
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
@@ -71,6 +92,7 @@ if (${Clang_FOUND})
         intrinsics_gen
 	LINK_COMPONENTS
 	LLVM
+    ${ENZYME_LINK_TARGETS}
     )
 target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
 endif()
@@ -185,8 +207,8 @@ target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme
 add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
 target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
 
-# this custom target exists to prevent CMake from incorrectly assuming that 
-# targets that link depend on LLDEnzyme-XX can be built at the same time or 
+# this custom target exists to prevent CMake from incorrectly assuming that
+# targets that link depend on LLDEnzyme-XX can be built at the same time or
 # before LLDEnzyme-XX has finished.
 add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
@@ -194,8 +216,8 @@ add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
 add_library(ClangEnzymeFlags INTERFACE)
 target_compile_options(ClangEnzymeFlags INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 
-# this custom target exists to prevent CMake from incorrectly assuming that 
-# targets that link depend on ClangEnzyme-XX can be built at the same time or 
+# this custom target exists to prevent CMake from incorrectly assuming that
+# targets that link depend on ClangEnzyme-XX can be built at the same time or
 # before ClangEnzyme-XX has finished.
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
