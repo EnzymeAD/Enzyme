@@ -3696,9 +3696,9 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB, bool augmen
 
 extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
 #ifdef ENZYME_RUNPASS
-  registerEnzyme2(PB, /*augment*/ true);
+  registerEnzymeAndPassPipeline(PB, /*augment*/ true);
 #else
-  registerEnzyme2(PB, /*augment*/ false);
+  registerEnzymeAndPassPipeline(PB, /*augment*/ false);
 #endif
 }
 
