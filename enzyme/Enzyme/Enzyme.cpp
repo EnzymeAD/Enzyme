@@ -3658,10 +3658,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-  augmentPassBuilder(PB);
-#endif
+extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
+                                              bool augment = false) {
+  if (augment) {
+    augmentPassBuilder(PB);
+  }
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -3692,6 +3693,14 @@ extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
         }
         return false;
       });
+}
+
+extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  registerEnzymeAndPassPipeline(PB, /*augment*/ true);
+#else
+  registerEnzymeAndPassPipeline(PB, /*augment*/ false);
+#endif
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
