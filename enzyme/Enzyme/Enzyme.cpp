@@ -3658,8 +3658,6 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-// A version used by Rust-Enzyme, which does not require cmake adjustments.
-// Rust just always sets augment to true.
 extern "C" void registerEnzyme2(llvm::PassBuilder &PB, bool augment = false) {
   if (augment) {
     augmentPassBuilder(PB);
@@ -3696,8 +3694,6 @@ extern "C" void registerEnzyme2(llvm::PassBuilder &PB, bool augment = false) {
       });
 }
 
-// A version used by ClangEnzyme and LLDEnzyme, allowing to
-// hardcode the usage of augmentPassBuilder at build time.
 extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
 #ifdef ENZYME_RUNPASS
   registerEnzyme2(PB, /*augment*/ true);
