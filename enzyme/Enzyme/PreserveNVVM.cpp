@@ -290,7 +290,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
         } else
           assert("Unknown mode");
       }
-    } else {
+    } else if (M.getTargetTriple().find("nvptx") != std::string::npos) {
       llvm::errs() << M << "\n";
       llvm::errs() << "Use of " << handlername
                    << " must be a "
