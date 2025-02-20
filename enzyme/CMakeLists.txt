@@ -31,6 +31,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(ENZYME_NO_PLUGINS "Disable Clang/LLD/Opt plugins" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
@@ -70,17 +71,25 @@ message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
 find_package(LLVM REQUIRED CONFIG)
 
+if (LLVM_ENABLE_PLUGINS)
+  message("LLVM_ENABLE_PLUGINS ON")
+else()
+  message("LLVM_ENABLE_PLUGINS OFF")
+  message("ENZYME_NO_PLUGINS ON")
+  set(ENZYME_NO_PLUGINS ON)
+endif()
+
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
   if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
       message("found llvm match ${CMAKE_MATCH_1} dir ${LLVM_DIR}")
-    if (EXISTS ${LLVM_DIR}/../../../bin/llvm-lit) 
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/../../../bin/llvm-lit) 
+    if (EXISTS ${LLVM_DIR}/../../../bin/llvm-lit)
+      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/../../../bin/llvm-lit)
     else()
       set(LLVM_EXTERNAL_LIT lit)
     endif()
   else()
-    if (EXISTS ${LLVM_DIR}/bin/llvm-lit) 
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/bin/llvm-lit) 
+    if (EXISTS ${LLVM_DIR}/bin/llvm-lit)
+      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/bin/llvm-lit)
     else()
       set(LLVM_EXTERNAL_LIT lit)
     endif()
@@ -194,7 +203,7 @@ if (${Clang_FOUND})
     add_definitions(${CLANG_DEFINITIONS})
 endif()
 else()
-    set(Clang_FOUND 0) 
+    set(Clang_FOUND 0)
 endif()
 message("found Clang ${Clang_FOUND}")
 
@@ -210,7 +219,7 @@ if (DEFINED MLIR_DIR)
         include(AddMLIR)
     endif()
 else()
-    set(MLIR_FOUND 0) 
+    set(MLIR_FOUND 0)
 endif()
 message("found MLIR ${MLIR_FOUND}")
 # include(AddClang)
@@ -273,14 +282,17 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 add_subdirectory(tools)
 add_subdirectory(Enzyme)
 add_subdirectory(BCLoad)
+if (NOT ENZYME_NO_PLUGINS)
 add_subdirectory(test)
+endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks")
+if ((NOT ENZYME_NO_PLUGINS) AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
     add_subdirectory(benchmarks)
 endif()
 
+set(ENZYME_DISABLE_DEFAULTS ON)
 
 # Make relative paths absolute (needed later on)
 foreach(p LIB BIN INCLUDE CMAKE)
@@ -290,6 +302,7 @@ if(NOT IS_ABSOLUTE "${${var}}")
 endif()
 endforeach()
 
+if (NOT ENZYME_DISABLE_DEFAULTS)
 export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
   FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
@@ -298,6 +311,7 @@ export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS ClangEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 
 file(GLOB_RECURSE ENZYME_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/*")
 set(bundled_includes "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/bundled_includes.h")
@@ -323,8 +337,10 @@ if (${ENZYME_FLANG} AND ${Clang_FOUND})
   )
 endif()
 
+if (NOT ENZYME_DISABLE_DEFAULTS)
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
@@ -355,19 +371,19 @@ endif()
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfig.cmake" @ONLY)
-   
+
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake" @ONLY)
 
 configure_file(cmake/EnzymeConfigVersion.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake" @ONLY)
-   
+
 install(FILES
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-   
-install(EXPORT EnzymeTargets 
-  DESTINATION "${INSTALL_CMAKE_DIR}" 
+
+install(EXPORT EnzymeTargets
+  DESTINATION "${INSTALL_CMAKE_DIR}"
   COMPONENT   dev)
