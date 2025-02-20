@@ -2070,7 +2070,7 @@ getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
 }
 
 static inline void addCallSiteNoCapture(llvm::CallBase *call, size_t idx) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   call->addParamAttr(
       idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
                                 llvm::CaptureInfo::none().toIntValue()));
@@ -2080,7 +2080,7 @@ static inline void addCallSiteNoCapture(llvm::CallBase *call, size_t idx) {
 }
 
 static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   call->addParamAttr(
       idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
                                 llvm::CaptureInfo::none().toIntValue()));
@@ -2093,7 +2093,7 @@ static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
 addFunctionNoCapture(llvm::LLVMContext &ctx, llvm::AttributeList list,
                      size_t idx) {
   unsigned idxs = {(unsigned)idx};
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   return list.addParamAttribute(
       ctx, idxs,
       llvm::Attribute::get(ctx, llvm::Attribute::Captures,
