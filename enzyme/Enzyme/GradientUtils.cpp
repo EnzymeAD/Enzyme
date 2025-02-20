@@ -3833,6 +3833,12 @@ bool GradientUtils::legalRecompute(const Value *val,
             reverse); // TODO ADD && !TR.intType(getOriginal(dli),
                       // /*mustfind*/false).isPossibleFloat();
       }
+      if (auto ci = dyn_cast<CallInst>(uiv)) {
+        auto called = ci->getCalledFunction();
+        if (ci->hasFnAttr("enzyme_shouldrecompute") ||
+            (called && called->hasFnAttribute("enzyme_shouldrecompute")))
+          return true;
+      }
       if (phi->getNumIncomingValues() == 0) {
         return false;
       }

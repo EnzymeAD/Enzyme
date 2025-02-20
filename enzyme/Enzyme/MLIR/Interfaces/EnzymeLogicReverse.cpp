@@ -128,7 +128,8 @@ void MEnzymeLogic::handlePredecessors(
         for (auto &op : term->getOpOperands())
           if (auto blk_idx =
                   iface.getSuccessorBlockArgument(op.getOperandNumber()))
-            if ((*blk_idx).getOwner() == oBB) {
+            if (!gutils->isConstantValue(op.get()) &&
+                (*blk_idx).getOwner() == oBB) {
               auto idx = (*blk_idx).getArgNumber();
               if (diffes[idx]) {
 
