@@ -50,8 +50,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-# on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
 if (NOT ENZYME_NO_PLUGINS)
+        # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
         if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
             add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
                 ${ENZYME_SRC}
