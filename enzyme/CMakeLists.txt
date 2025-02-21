@@ -73,8 +73,12 @@ find_package(LLVM REQUIRED CONFIG)
 
 if (NOT LLVM_ENABLE_PLUGINS)
   message("LLVM_ENABLE_PLUGINS OFF")
-  message("ENZYME_ENABLE_PLUGINS OFF")
+  message("Setting ENZYME_ENABLE_PLUGINS OFF")
   set(ENZYME_ENABLE_PLUGINS OFF)
+  if (NOT ENZYME_EXTERNAL_SHARED_LIB)
+    message("ENZYME_EXTERNAL_SHARED_LIB OFF")
+    message(SEND_ERROR "Building neither plugins nor a shared library. This is likely not what you want.")
+  endif()
 endif()
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
