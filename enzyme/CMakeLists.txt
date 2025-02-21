@@ -77,7 +77,7 @@ if (NOT LLVM_ENABLE_PLUGINS)
   set(ENZYME_ENABLE_PLUGINS OFF)
 endif()
 
-if ((NOT ENZYME_EXTERNAL_SHARED_LIB) and (NOT ENZYME_ENABLE_PLUGINS))
+if ((NOT ENZYME_EXTERNAL_SHARED_LIB) AND (NOT ENZYME_ENABLE_PLUGINS))
   message("ENZYME_EXTERNAL_SHARED_LIB OFF")
   message("ENZYME_ENABLE_PLUGINS OFF")
   message(SEND_ERROR "Building neither plugins nor a shared library. This is likely not what you want.")
