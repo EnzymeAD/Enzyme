@@ -31,7 +31,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(ENZYME_NO_PLUGINS "Disable Clang/LLD/Opt plugins" OFF)
+option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
@@ -71,12 +71,10 @@ message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
 find_package(LLVM REQUIRED CONFIG)
 
-if (LLVM_ENABLE_PLUGINS)
-  message("LLVM_ENABLE_PLUGINS ON")
-else()
+if (NOT LLVM_ENABLE_PLUGINS)
   message("LLVM_ENABLE_PLUGINS OFF")
-  message("ENZYME_NO_PLUGINS ON")
-  set(ENZYME_NO_PLUGINS ON)
+  message("ENZYME_ENABLE_PLUGINS OFF")
+  set(ENZYME_ENABLE_PLUGINS OFF)
 endif()
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
@@ -282,17 +280,15 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 add_subdirectory(tools)
 add_subdirectory(Enzyme)
 add_subdirectory(BCLoad)
-if (NOT ENZYME_NO_PLUGINS)
-add_subdirectory(test)
+if (ENZYME_ENABLE_PLUGINS)
+    add_subdirectory(test)
 endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if ((NOT ENZYME_NO_PLUGINS) AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
+if (ENZYME_ENABLE_PLUGINS AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
     add_subdirectory(benchmarks)
 endif()
-
-set(ENZYME_DISABLE_DEFAULTS ON)
 
 # Make relative paths absolute (needed later on)
 foreach(p LIB BIN INCLUDE CMAKE)
@@ -302,7 +298,7 @@ if(NOT IS_ABSOLUTE "${${var}}")
 endif()
 endforeach()
 
-if (NOT ENZYME_DISABLE_DEFAULTS)
+if (ENZYME_ENABLE_PLUGINS)
 export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
   FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
@@ -337,7 +333,7 @@ if (${ENZYME_FLANG} AND ${Clang_FOUND})
   )
 endif()
 
-if (NOT ENZYME_DISABLE_DEFAULTS)
+if (ENZYME_ENABLE_PLUGINS)
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 endif()

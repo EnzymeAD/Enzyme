@@ -50,7 +50,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-if (NOT ENZYME_NO_PLUGINS)
+if (ENZYME_ENABLE_PLUGINS)
         # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
         if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
             add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
@@ -205,25 +205,25 @@ add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
-if (NOT ENZYME_NO_PLUGINS)
-install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
-    EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
+if (ENZYME_ENABLE_PLUGINS)
+    install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        COMPONENT dev)
 
-if (${Clang_FOUND})
-install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
-    EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
-    install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
-endif()
-install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
-    EXPORT EnzymeTargets
-    LIBRARY DESTINATION lib COMPONENT shlib
-    COMPONENT dev)
-endif()
+    if (${Clang_FOUND})
+    install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        COMPONENT dev)
+        install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
+    endif()
+    install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        COMPONENT dev)
+    endif()
 
-if (ENZYME_MLIR)
-    add_subdirectory(MLIR)
+    if (ENZYME_MLIR)
+        add_subdirectory(MLIR)
 endif()
