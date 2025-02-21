@@ -80,7 +80,7 @@ endif()
 if ((NOT ENZYME_EXTERNAL_SHARED_LIB) AND (NOT ENZYME_ENABLE_PLUGINS))
   message("ENZYME_EXTERNAL_SHARED_LIB OFF")
   message("ENZYME_ENABLE_PLUGINS OFF")
-  message(SEND_ERROR "You have selected a built without creating the Enzyme plugin, nor Enzyme as a shared library -- and nothing will be built.")
+  message(SEND_ERROR "You have selected a build without creating the Enzyme plugin, nor Enzyme as a shared library -- and nothing will be built.")
 endif()
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
