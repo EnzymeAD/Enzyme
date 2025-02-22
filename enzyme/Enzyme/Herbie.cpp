@@ -26,6 +26,7 @@
 #include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/JSON.h"
@@ -101,7 +102,7 @@ static cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
                                   cl::desc("Herbie's timeout to use for each "
                                            "candidate expressions."));
 static cl::opt<std::string>
-    FPOptCachePath("fpopt-cache-path", cl::init(""), cl::Hidden,
+    FPOptCachePath("fpopt-cache-path", cl::init("cache"), cl::Hidden,
                    cl::desc("Path to cache Herbie results"));
 static cl::opt<int>
     HerbieNumPoints("herbie-num-pts", cl::init(1024), cl::Hidden,
@@ -151,12 +152,16 @@ static cl::opt<bool> FPOptStrictMode(
     cl::desc(
         "Discard all FPOpt candidates that produce NaN or inf outputs for any "
         "input point that originally produced finite outputs"));
-static cl::opt<std::string> FPOptReduction(
-    "fpopt-reduction", cl::init("maxabs"), cl::Hidden,
-    cl::desc("Which reduction strategy to use in accuracy cost estimations. "
+static cl::opt<std::string> FPOptReductionProf(
+    "fpopt-reduction-prof", cl::init("geomean"), cl::Hidden,
+    cl::desc("Which reduction result to extract from profiles. "
+             "Options are 'geomean', 'arithmean', and 'maxabs'"));
+static cl::opt<std::string> FPOptReductionEval(
+    "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
+    cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
 static cl::opt<double> FPOptGeoMeanEps(
-    "fpopt-geo-mean-eps", cl::init(1.0), cl::Hidden,
+    "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
     cl::desc("The offset used in the geometric mean "
              "calculation; if = 0, zeros are replaced with ULPs"));
 static cl::opt<bool> FPOptLooseCoverage(
@@ -3350,7 +3355,7 @@ void setUnifiedAccuracyCost(
   goldVals.resize(FPOptNumSamples);
 
   double origCost = 0.0;
-  if (FPOptReduction == "geomean") {
+  if (FPOptReductionEval == "geomean") {
     double sumLog = 0.0;
     unsigned count = 0;
     for (const auto &pair : enumerate(sampledPoints)) {
@@ -3378,7 +3383,7 @@ void setUnifiedAccuracyCost(
     }
     assert(count != 0 && "No valid sample found for original expr");
     origCost = std::exp(sumLog / count);
-  } else if (FPOptReduction == "arithmean") {
+  } else if (FPOptReductionEval == "arithmean") {
     double sum = 0.0;
     unsigned count = 0;
     for (const auto &pair : enumerate(sampledPoints)) {
@@ -3398,7 +3403,7 @@ void setUnifiedAccuracyCost(
     }
     assert(count != 0 && "No valid sample found for original expr");
     origCost = sum / count;
-  } else if (FPOptReduction == "maxabs") {
+  } else if (FPOptReductionEval == "maxabs") {
     double maxErr = 0.0;
     for (const auto &pair : enumerate(sampledPoints)) {
       std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
@@ -3429,7 +3434,7 @@ void setUnifiedAccuracyCost(
     std::shared_ptr<FPNode> parsedNode =
         parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap);
 
-    if (FPOptReduction == "geomean") {
+    if (FPOptReductionEval == "geomean") {
       double sumLog = 0.0;
       unsigned count = 0;
       for (const auto &pair : enumerate(sampledPoints)) {
@@ -3461,7 +3466,7 @@ void setUnifiedAccuracyCost(
         assert(count != 0 && "No valid sample found for candidate expr");
         candCost = std::exp(sumLog / count);
       }
-    } else if (FPOptReduction == "arithmean") {
+    } else if (FPOptReductionEval == "arithmean") {
       double sum = 0.0;
       unsigned count = 0;
       for (const auto &pair : enumerate(sampledPoints)) {
@@ -3485,7 +3490,7 @@ void setUnifiedAccuracyCost(
         assert(count != 0 && "No valid sample found for candidate expr");
         candCost = sum / count;
       }
-    } else if (FPOptReduction == "maxabs") {
+    } else if (FPOptReductionEval == "maxabs") {
       double maxErr = 0.0;
       for (const auto &pair : enumerate(sampledPoints)) {
         SmallVector<double, 1> results;
@@ -3537,7 +3542,7 @@ void setUnifiedAccuracyCost(
   for (auto *output : ACC.component->outputs)
     outputs.push_back(valueToNodeMap[output].get());
 
-  if (FPOptReduction == "geomean") {
+  if (FPOptReductionEval == "geomean") {
     struct RunningAcc {
       double sumLog = 0.0;
       unsigned count = 0;
@@ -3578,7 +3583,7 @@ void setUnifiedAccuracyCost(
       ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
       ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
     }
-  } else if (FPOptReduction == "arithmean") {
+  } else if (FPOptReductionEval == "arithmean") {
     struct RunningAccArith {
       double sum = 0.0;
       unsigned count = 0;
@@ -3611,7 +3616,7 @@ void setUnifiedAccuracyCost(
       ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
       ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
     }
-  } else if (FPOptReduction == "maxabs") {
+  } else if (FPOptReductionEval == "maxabs") {
     std::unordered_map<FPNode *, double> runAcc;
     for (auto *node : outputs)
       runAcc[node] = 0.0;
@@ -3644,7 +3649,7 @@ void setUnifiedAccuracyCost(
   SmallVector<PTCandidate, 4> newCandidates;
   for (auto &candidate : ACC.candidates) {
     bool discardCandidate = false;
-    if (FPOptReduction == "geomean") {
+    if (FPOptReductionEval == "geomean") {
       struct RunningAcc {
         double sumLog = 0.0;
         unsigned count = 0;
@@ -3692,7 +3697,7 @@ void setUnifiedAccuracyCost(
         assert(!std::isnan(candidate.accuracyCost));
         newCandidates.push_back(std::move(candidate));
       }
-    } else if (FPOptReduction == "arithmean") {
+    } else if (FPOptReductionEval == "arithmean") {
       struct RunningAccArith {
         double sum = 0.0;
         unsigned count = 0;
@@ -3732,7 +3737,7 @@ void setUnifiedAccuracyCost(
         assert(!std::isnan(candidate.accuracyCost));
         newCandidates.push_back(std::move(candidate));
       }
-    } else if (FPOptReduction == "maxabs") {
+    } else if (FPOptReductionEval == "maxabs") {
       std::unordered_map<FPNode *, double> candAcc;
       for (auto *node : outputs)
         candAcc[node] = 0.0;
@@ -5028,6 +5033,10 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
     }
   }
 
+  if (!FPOptCachePath.empty()) {
+    llvm::sys::fs::create_directories(FPOptCachePath, true);
+  }
+
   // F.print(llvm::errs());
 
   bool changed = false;
@@ -5381,11 +5390,11 @@ B2:
                                               blockIdx, instIdx, grad);
 
               auto node = valueToNodeMap[op];
-              if (FPOptReduction == "geomean") {
+              if (FPOptReductionProf == "geomean") {
                 node->grad = grad.geoMean;
-              } else if (FPOptReduction == "arithmean") {
+              } else if (FPOptReductionProf == "arithmean") {
                 node->grad = grad.arithMean;
-              } else if (FPOptReduction == "maxabs") {
+              } else if (FPOptReductionProf == "maxabs") {
                 node->grad = grad.maxAbs;
               } else {
                 llvm_unreachable("Unknown FPOpt reduction type");
@@ -5409,7 +5418,7 @@ B2:
 
                 if (EnzymePrintFPOpt)
                   llvm::errs() << "Grad of " << *op << " is: " << node->grad
-                               << " (" << FPOptReduction << ")\n"
+                               << " (" << FPOptReductionProf << ")\n"
                                << "Execution count of " << *op
                                << " is: " << node->executions << "\n";
               } else { // Unknown bounds
@@ -5561,13 +5570,13 @@ B2:
 
       // Sort operations by the gradient
       llvm::sort(operations, [](const auto &a, const auto &b) {
-        if (FPOptReduction == "geomean") {
+        if (FPOptReductionEval == "geomean") {
           return std::fabs(a->grad * a->geoMean) >
                  std::fabs(b->grad * b->geoMean);
-        } else if (FPOptReduction == "arithmean") {
+        } else if (FPOptReductionEval == "arithmean") {
           return std::fabs(a->grad * a->arithMean) >
                  std::fabs(b->grad * b->arithMean);
-        } else if (FPOptReduction == "maxabs") {
+        } else if (FPOptReductionEval == "maxabs") {
           return std::fabs(a->grad * a->maxAbs) >
                  std::fabs(b->grad * b->maxAbs);
         } else {
