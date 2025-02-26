@@ -70,6 +70,7 @@ jobs:
           echo lit
           echo `which lit`
           echo `python -c "import sys; print(sys.executable)"`
+          find /Library/Frameworks/Python.framework/ -iname "*lit*"
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
