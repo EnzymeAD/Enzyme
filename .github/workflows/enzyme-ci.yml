@@ -67,6 +67,9 @@ jobs:
           brew update
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
+          echo lit
+          echo `which lit`
+          echo `python -c "import sys; print(sys.executable)"`
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
