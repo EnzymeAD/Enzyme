@@ -1721,6 +1721,9 @@ void clearFunctionAttributes(Function *f) {
     f->removeRetAttr(Attribute::Alignment);
   }
   Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 20
+    Attribute::Range,
+#endif
 #if LLVM_VERSION_MAJOR >= 17
     Attribute::NoFPClass,
 #endif
@@ -2558,6 +2561,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   llvm::Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Attribute::Range,
+#endif
 #if LLVM_VERSION_MAJOR >= 17
     llvm::Attribute::NoFPClass,
 #endif
