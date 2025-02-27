@@ -3799,8 +3799,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
@@ -3920,8 +3919,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
@@ -4000,8 +3998,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
