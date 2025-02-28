@@ -2682,6 +2682,8 @@ InstructionCost getInstructionCompCost(const Instruction *I,
 
 const std::unordered_set<std::string> &getPTFuncs() {
   static const std::unordered_set<std::string> PTFuncs = []() {
+    if (FPOptCostModelPath.empty())
+      return std::unordered_set<std::string>{};
     std::unordered_set<std::string> funcs;
     for (const auto &func : LibmFuncs) {
       InstructionCost costFP32 = queryCostModel(func, "float");
