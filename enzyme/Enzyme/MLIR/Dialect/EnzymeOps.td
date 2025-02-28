@@ -208,4 +208,15 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   ];
 }
 
+def SampleOp : Enzyme_Op<"sample",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 #endif // ENZYME_OPS
