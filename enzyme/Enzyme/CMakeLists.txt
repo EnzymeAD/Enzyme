@@ -157,12 +157,14 @@ if (APPLE)
 # Darwin-specific linker flags for loadable modules.
 set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
     LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+if (ENZYME_ENABLE_PLUGINS)
 if (${Clang_FOUND})
 set_target_properties(ClangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
 set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+endif()
 endif()
 
 add_library(LLDEnzymeFlags INTERFACE)
@@ -187,6 +189,7 @@ target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme
 add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
 target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
 
+if (ENZYME_ENABLE_PLUGINS)
 # this custom target exists to prevent CMake from incorrectly assuming that
 # targets that link depend on LLDEnzyme-XX can be built at the same time or
 # before LLDEnzyme-XX has finished.
@@ -205,25 +208,25 @@ add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
-if (ENZYME_ENABLE_PLUGINS)
-    install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
-        EXPORT EnzymeTargets
-        LIBRARY DESTINATION lib COMPONENT shlib
-        COMPONENT dev)
+install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    COMPONENT dev)
 
-    if (${Clang_FOUND})
-    install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
-        EXPORT EnzymeTargets
-        LIBRARY DESTINATION lib COMPONENT shlib
-        COMPONENT dev)
-        install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
-    endif()
-    install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
-        EXPORT EnzymeTargets
-        LIBRARY DESTINATION lib COMPONENT shlib
-        COMPONENT dev)
-    endif()
+if (${Clang_FOUND})
+install(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    COMPONENT dev)
+    install(DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme" DESTINATION "include")
+endif()
+install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    COMPONENT dev)
 
-    if (ENZYME_MLIR)
-        add_subdirectory(MLIR)
+endif()
+    
+if (ENZYME_MLIR)
+    add_subdirectory(MLIR)
 endif()
