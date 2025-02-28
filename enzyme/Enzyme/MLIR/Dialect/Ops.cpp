@@ -207,13 +207,11 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
   build(builder, result, resultTy, input, shapeAttr);
 }
 
-
 //===----------------------------------------------------------------------===//
 // SampleOp
 //===----------------------------------------------------------------------===//
 
-LogicalResult
-SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =
