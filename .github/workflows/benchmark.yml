@@ -47,9 +47,9 @@ jobs:
       run: make bench-enzyme
     - name: results
       run: cat enzyme/benchmarks/*/*/results.txt
-    - name: graph results
-      if: github.event_name != 'pull_request' && matrix.build == 'Release'
-      run: |
-          for p in enzyme/benchmarks/ReverseMode/*/results.json; do
-          python3 enzyme/benchmarks/upload-results.py $p --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
-          done
+    # - name: graph results
+    #   if: github.event_name != 'pull_request' && matrix.build == 'Release'
+    #   run: |
+    #       for p in enzyme/benchmarks/ReverseMode/*/results.json; do
+    #       python3 enzyme/benchmarks/upload-results.py $p --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+    #       done
