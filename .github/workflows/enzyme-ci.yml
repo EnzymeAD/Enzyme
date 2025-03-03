@@ -85,9 +85,6 @@ jobs:
     - name: make check-enzyme
       working-directory: build
       run: make -j3 check-enzyme-bench
-    - name: graph results
-      if: github.event_name != 'pull_request' && matrix.build == 'Release'
-      run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
 
   build-xcode:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} macOS XCode
