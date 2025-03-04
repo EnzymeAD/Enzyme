@@ -75,4 +75,4 @@ jobs:
       run: make -j `nproc` test-cmake
     - name: make check-enzyme-integration
       working-directory: build
-      run: make -j `nproc` check-enzyme-integration
+      run: make SHELL='sh -x' VERBOSE=1 check-enzyme-integration
