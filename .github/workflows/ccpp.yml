@@ -4,9 +4,29 @@ on:
   push:
     branches:
     - main
+    paths:
+      - '.github/workflows/ccpp.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   pull_request:
     branches:
     - main
+    paths:
+      - '.github/workflows/ccpp.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   merge_group:
 
 jobs:
@@ -19,7 +39,7 @@ jobs:
       matrix:
         llvm: ["15", "16", "17", "18"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
     
     timeout-minutes: 45
     
@@ -28,7 +48,7 @@ jobs:
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-get install -y libmpfr-dev
-          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
     - uses: actions/checkout@v4
