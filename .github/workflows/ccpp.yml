@@ -40,18 +40,26 @@ jobs:
     name: Integration CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/enzymead/enzyme-dev-docker/${{ matrix.os }}-llvm-${{ matrix.llvm }}
+      image: ${{ matrix.os }}
     
     strategy:
       fail-fast: false
       matrix:
         llvm: ["15", "16", "17", "18"]
         build: ["Release"] # "RelWithDebInfo"
-        os: ["ubuntu-20"]
+        os: ["ubuntu:20.04"]
     
     timeout-minutes: 45
     
     steps:
+    - name: add llvm 
+      run: |
+        apt-get -q update
+        apt-get install -y --no-install-recommends ca-certificates software-properties-common curl gnupg2
+        curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add -
+        apt-add-repository -y "deb http://apt.llvm.org/`lsb_release -cs`/ llvm-toolchain-`lsb_release -cs`-${{ matrix.llvm }} main"
+        apt-get -q update
+        apt-get install -y --no-install-recommends sudo git ssh zlib1g-dev libzstd-dev automake autoconf cmake make lldb ninja-build gcc g++ gfortran build-essential libtool llvm-${{ matrix.llvm }}-dev clang-format clangd lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev libblas-dev libeigen3-dev libboost-dev python3 python3-pip
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
