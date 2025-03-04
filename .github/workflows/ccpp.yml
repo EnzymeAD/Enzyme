@@ -61,6 +61,7 @@ jobs:
         apt-add-repository -y "deb http://apt.llvm.org/`lsb_release -cs`/ llvm-toolchain-`lsb_release -cs`-${{ matrix.llvm }} main"
         apt-get -q update
         apt-get install -y --no-install-recommends sudo git ssh zlib1g-dev libzstd-dev automake autoconf cmake make lldb ninja-build gcc g++ gfortran build-essential libtool llvm-${{ matrix.llvm }}-dev clang-format clangd lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev libblas-dev libeigen3-dev libboost-dev python3 python3-pip
+        python3 -m pip install --upgrade pip lit
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
@@ -75,4 +76,4 @@ jobs:
       run: make -j `nproc` test-cmake
     - name: make check-enzyme-integration
       working-directory: build
-      run: make SHELL='sh -x' VERBOSE=1 check-enzyme-integration
+      run: make -j `nproc` check-enzyme-integration
