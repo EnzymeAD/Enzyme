@@ -41,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.os }}
+      options: --user root
     
     strategy:
       fail-fast: false
@@ -67,7 +68,8 @@ jobs:
       working-directory: build
       run: cmake ../enzyme -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
-      run: cd build && make -j `nproc` LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
+      working-directory: build
+      run: make -j `nproc` LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
     - name: make test-cmake
       working-directory: build
       run: make -j `nproc` test-cmake
