@@ -16,7 +16,18 @@ def DifferentiatePass : Pass<"enzyme"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect"
+    "cf::ControlFlowDialect",
+    "tensor::TensorDialect",
+    "enzyme::EnzymeDialect",
+  ];
+  let options = [
+    Option<
+      /*C++ variable name=*/"postpasses",
+      /*CLI argument=*/"postpasses",
+      /*type=*/"std::string",
+      /*default=*/"",
+      /*description=*/"Optimization passes to apply to generated derivative functions"
+    >,
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
@@ -85,6 +96,9 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect"
+  ];
   let options = [
     ListOption<
       /*C++ variable name=*/"funcsToAnalyze",
@@ -112,6 +126,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*type=*/"bool",
       /*default=*/"true",
       /*description=*/"Whether to use the new Dataflow activity analysis"
+    >,
+    Option<
+      /*C++ variable name=*/"relative",
+      /*CLI argument=*/"relative",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Use relative bottom-up activity analysis"
     >,
     Option<
       /*C++ variable name=*/"inactiveArgs",
@@ -163,6 +184,9 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
+  let dependentDialects = [
+    "tensor::TensorDialect"
+  ];
   let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
 }
 

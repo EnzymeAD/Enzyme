@@ -52,7 +52,7 @@ class TGPattern;
 class Rule {
 private:
   TGPattern *pattern;
-  DagInit *rewriteRule;
+  const DagInit *rewriteRule;
   // which argument from the primary function do we handle here?
   size_t activeArg;
   StringMap<size_t> argNameToPos;
@@ -63,12 +63,12 @@ private:
 public:
   SmallVector<std::string, 1> nameVec;
   DenseMap<size_t, ArgType> argTypesFull;
-  Rule(TGPattern *pattern, ArrayRef<std::string> nameVec, DagInit *dag,
+  Rule(TGPattern *pattern, ArrayRef<std::string> nameVec, const DagInit *dag,
        size_t activeArgIdx, const StringMap<size_t> &patternArgs,
        const DenseMap<size_t, ArgType> &patternTypes,
        const DenseSet<size_t> &patternMutables);
   bool isBLASLevel2or3() const;
-  DagInit *getRuleDag() const;
+  const DagInit *getRuleDag() const;
   size_t getHandledArgIdx() const;
   const StringMap<size_t> &getArgNameMap() const;
   const DenseMap<size_t, ArgType> &getArgTypeMap() const;
@@ -94,7 +94,7 @@ void fillArgUserMap(ArrayRef<Rule> rules, ArrayRef<std::string> nameVec,
 /// A single Blas function, including replacement rules. E.g. scal, axpy, ...
 class TGPattern {
 private:
-  Record *record;
+  const Record *record;
   std::string blasName;
   bool BLASLevel2or3;
 
@@ -123,7 +123,7 @@ private:
   DenseMap<size_t, SmallVector<size_t, 3>> relatedLengths;
 
 public:
-  TGPattern(Record *r);
+  TGPattern(const Record *r);
   SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg,
                                               bool hideuplo = false) const;
   bool isBLASLevel2or3() const;
@@ -137,7 +137,7 @@ public:
   ArrayRef<Rule> getRules() const;
   ArrayRef<SMLoc> getLoc() const;
   ArgType getTypeOfArg(StringRef name) const;
-  DagInit *getDuals() const;
+  const DagInit *getDuals() const;
 };
 
 #endif

@@ -25,12 +25,28 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 namespace {
-class FloatTypeInterface
-    : public AutoDiffTypeInterface::ExternalModel<FloatTypeInterface,
-                                                  FloatType> {
+
+static mlir::Type batchType(mlir::Type type, int64_t width) {
+  if (width == 1)
+    return type;
+
+  if (auto TT = dyn_cast<mlir::TensorType>(type)) {
+    SmallVector<int64_t> shape;
+    shape.reserve(TT.getShape().size() + 1);
+    shape.push_back(width);
+    shape.append(TT.getShape().begin(), TT.getShape().end());
+    return TT.clone(shape);
+  }
+
+  return RankedTensorType::get({width}, type);
+}
+
+template <typename ConcreteType>
+class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
+                               FloatTypeInterface<ConcreteType>, ConcreteType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    auto fltType = self.cast<FloatType>();
+    auto fltType = self.cast<ConcreteType>();
     return builder.create<arith::ConstantFloatOp>(
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
@@ -44,9 +60,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -77,6 +92,13 @@ public:
         return builder.create<arith::ConstantOp>(loc, tenType, attr);
       }
     }
+    if (auto IT = dyn_cast<IntegerType>(ET)) {
+      APInt apvalue(IT.getWidth(), 0);
+      auto attr = DenseElementsAttr::get(tenType, apvalue);
+      return builder.create<arith::ConstantOp>(loc, tenType, attr);
+    }
+    llvm::errs() << " cannot create null value of tensor type: " << tenType
+                 << "\n";
     assert(0);
     return nullptr;
   }
@@ -98,9 +120,8 @@ public:
     return added;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -131,9 +152,8 @@ public:
     return a;
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -165,9 +185,8 @@ public:
     return builder.create<complex::ConjOp>(loc, a)->getResult(0);
   }
 
-  Type getShadowType(Type self, unsigned width) const {
-    assert(width == 1 && "unsupported width != 1");
-    return self;
+  Type getShadowType(Type self, int64_t width) const {
+    return batchType(self, width);
   }
 
   bool isMutable(Type self) const { return false; }
@@ -181,10 +200,10 @@ public:
 void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, BuiltinDialect *) {
-    BFloat16Type::attachInterface<FloatTypeInterface>(*context);
-    Float16Type::attachInterface<FloatTypeInterface>(*context);
-    Float32Type::attachInterface<FloatTypeInterface>(*context);
-    Float64Type::attachInterface<FloatTypeInterface>(*context);
+    BFloat16Type::attachInterface<FloatTypeInterface<BFloat16Type>>(*context);
+    Float16Type::attachInterface<FloatTypeInterface<Float16Type>>(*context);
+    Float32Type::attachInterface<FloatTypeInterface<Float32Type>>(*context);
+    Float64Type::attachInterface<FloatTypeInterface<Float64Type>>(*context);
     IntegerType::attachInterface<IntegerTypeInterface<IntegerType>>(*context);
     IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
     UnrankedTensorType::attachInterface<TensorTypeInterface>(*context);

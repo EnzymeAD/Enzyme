@@ -8,11 +8,11 @@ on:
 jobs:
   build:
     name: Format
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
-    - uses: DoozyX/clang-format-lint-action@v0.16.2
+    - uses: DoozyX/clang-format-lint-action@v0.18.2
       with:
         source: 'enzyme/Enzyme enzyme/tools/enzyme-tblgen'
         exclude: './CMakeLists.txt enzyme/Enzyme/SCEV'

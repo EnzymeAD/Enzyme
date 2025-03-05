@@ -3,7 +3,7 @@
 
 declare void @julia.safepoint()
 
-declare noalias nonnull {} addrspace(10)* @ijl_new_array({} addrspace(10)*, {} addrspace(10)*)
+declare noalias nonnull {} addrspace(10)* @ijl_new_array({} addrspace(10)*, {} addrspace(10)*) "enzyme_allocation"
 
 declare {}* @julia.pointer_from_objref({} addrspace(11)*) readnone
 

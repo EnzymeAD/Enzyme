@@ -74,7 +74,8 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
           newVals.push_back(gutils->invertPointerM(op, builder));
         } else {
           Type retTy =
-              arg.getType().cast<AutoDiffTypeInterface>().getShadowType();
+              arg.getType().cast<AutoDiffTypeInterface>().getShadowType(
+                  gutils->width);
           auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
               builder, op.getLoc());
           newVals.push_back(toret);
@@ -146,7 +147,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
           if (auto iface =
                   dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
             if (!iface.isMutable()) {
-              Type retTy = iface.getShadowType();
+              Type retTy = iface.getShadowType(gutils->width);
               auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
                   builder, operand.get().getLoc());
               newOperands.push_back(toret);
@@ -346,7 +347,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
                       << result.getType() << "\n";
       return failure();
     }
-    newOpResultTypes.push_back(typeIface.getShadowType());
+    newOpResultTypes.push_back(typeIface.getShadowType(gutils->width));
   }
 
   SmallVector<Value> newOperands;
@@ -381,16 +382,19 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // table.
   SmallVector<Value> reps;
   size_t idx = 0;
-  for (Value r : op->getResults()) {
+  for (OpResult r : op->getResults()) {
     // TODO only if used
     reps.push_back(replacement->getResult(idx));
     idx++;
     if (!gutils->isConstantValue(r)) {
+      assert(resultPositionsToShadow.count(r.getResultNumber()));
       auto inverted = gutils->invertedPointers.lookupOrNull(r);
       assert(inverted);
       gutils->invertedPointers.map(r, replacement->getResult(idx));
       inverted.replaceAllUsesWith(replacement->getResult(idx));
       gutils->erase(inverted.getDefiningOp());
+      idx++;
+    } else if (resultPositionsToShadow.count(r.getResultNumber())) {
       idx++;
     }
   }
@@ -409,6 +413,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // Replace all uses of original results
   gutils->replaceOrigOpWith(op, reps);
   gutils->erase(newOp);
+  gutils->originalToNewFnOps[op] = replacement;
 
   return success();
 }
@@ -428,4 +433,5 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerCFDialectAutoDiffInterface(registry);
   enzyme::registerLinalgDialectAutoDiffInterface(registry);
   enzyme::registerFuncDialectAutoDiffInterface(registry);
+  enzyme::registerTensorDialectAutoDiffInterface(registry);
 }

@@ -173,17 +173,22 @@ public:
 
   void setToEntryState(PointsToSets *lattice) override;
 
-  void visitOperation(Operation *op, const PointsToSets &before,
-                      PointsToSets *after) override;
+  LogicalResult visitOperation(Operation *op, const PointsToSets &before,
+                               PointsToSets *after) override;
 
   void visitCallControlFlowTransfer(CallOpInterface call,
                                     dataflow::CallControlFlowAction action,
                                     const PointsToSets &before,
                                     PointsToSets *after) override;
 
-  void processCapturingStore(ProgramPoint dependent, PointsToSets *after,
+  void processCapturingStore(ProgramPoint *dependent, PointsToSets *after,
                              Value capturedValue, Value destinationAddress,
                              bool isMustStore = false);
+
+  void processCallToSummarizedFunc(
+      CallOpInterface call,
+      const DenseMap<DistinctAttr, AliasClassSet> &summary,
+      PointsToSets *after);
 
 private:
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
@@ -226,15 +231,19 @@ public:
 class AliasAnalysis
     : public dataflow::SparseForwardDataFlowAnalysis<AliasClassLattice> {
 public:
-  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx)
+  AliasAnalysis(DataFlowSolver &solver, MLIRContext *ctx, bool relative = false)
       : SparseForwardDataFlowAnalysis(solver),
-        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))) {}
+        entryClass(DistinctAttr::create(StringAttr::get(ctx, "entry"))),
+        relative(relative) {
+    if (relative)
+      assert(!solver.getConfig().isInterprocedural());
+  }
 
   void setToEntryState(AliasClassLattice *lattice) override;
 
-  void visitOperation(Operation *op,
-                      ArrayRef<const AliasClassLattice *> operands,
-                      ArrayRef<AliasClassLattice *> results) override;
+  LogicalResult visitOperation(Operation *op,
+                               ArrayRef<const AliasClassLattice *> operands,
+                               ArrayRef<AliasClassLattice *> results) override;
 
   void visitExternalCall(CallOpInterface call,
                          ArrayRef<const AliasClassLattice *> operands,
@@ -245,8 +254,20 @@ private:
                 ArrayRef<const AliasClassLattice *> operands,
                 ArrayRef<AliasClassLattice *> results);
 
+  /// Create a pseudo alias class when loading from a function argument that
+  /// points to unknown locations. The pseudo class indicates that it points to
+  /// _something_ and is expected to be unified with a concrete alias class when
+  /// the function summaries are used at this function's call sites.
+  void createImplicitArgDereference(Operation *op, AliasClassLattice *source,
+                                    DistinctAttr srcClass,
+                                    AliasClassLattice *result);
+
   /// A special alias class to denote unannotated pointer arguments.
   const DistinctAttr entryClass;
+
+  /// If true, the analysis will operate in an intraprocedural way assuming it
+  /// is called bottom-up on the function call graph.
+  const bool relative;
 
   /// Alias classes originally assigned to known-distinct values, e.g., fresh
   /// allocations, by this analysis. This does NOT necessarily need to be shared

@@ -11,6 +11,8 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 
 #include "EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
@@ -126,7 +128,8 @@ void MEnzymeLogic::handlePredecessors(
         for (auto &op : term->getOpOperands())
           if (auto blk_idx =
                   iface.getSuccessorBlockArgument(op.getOperandNumber()))
-            if ((*blk_idx).getOwner() == oBB) {
+            if (!gutils->isConstantValue(op.get()) &&
+                (*blk_idx).getOwner() == oBB) {
               auto idx = (*blk_idx).getArgNumber();
               if (diffes[idx]) {
 
@@ -182,16 +185,41 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
+    bool omp, llvm::StringRef postpasses) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
 
+  MReverseCacheKey tup = {fn,
+                          retType,
+                          constants,
+                          returnPrimals,
+                          returnShadows,
+                          mode,
+                          freeMemory,
+                          static_cast<unsigned>(width),
+                          addedType,
+                          type_args,
+                          volatile_args,
+                          omp};
+
+  {
+    auto cachedFn = ReverseCachedFunctions.find(tup);
+    if (cachedFn != ReverseCachedFunctions.end())
+      return cachedFn->second;
+  }
+
+  SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
+  SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
+
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
-      retType, constants, addedType);
+      *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
+      retType, constants, addedType, omp, postpasses);
+
+  ReverseCachedFunctions[tup] = gutils->newFunc;
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
@@ -228,6 +256,20 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   if (!res.succeeded())
     return nullptr;
+
+  if (postpasses != "") {
+    mlir::PassManager pm(nf->getContext());
+    std::string error_message;
+    // llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
+    if (mlir::failed(result)) {
+      return nullptr;
+    }
+
+    if (!mlir::succeeded(pm.run(nf))) {
+      return nullptr;
+    }
+  }
 
   return nf;
 }

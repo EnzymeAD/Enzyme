@@ -27,6 +27,7 @@
 
 #include "MustExitScalarEvolution.h"
 #include "FunctionUtils.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 
@@ -229,12 +230,15 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
           !isa<SCEVCouldNotCompute>(BECount))
         MaxBECount = getConstant(getUnsignedRangeMax(BECount));
 
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 20
+      return ExitLimit(BECount, MaxBECount, MaxBECount, false,
+                       {ArrayRef(EL0.Predicates), ArrayRef(EL1.Predicates)});
+#elif LLVM_VERSION_MAJOR >= 16
       return ExitLimit(BECount, MaxBECount, MaxBECount, false,
                        {&EL0.Predicates, &EL1.Predicates});
 #else
-      return ExitLimit(BECount, MaxBECount, false,
-                       {&EL0.Predicates, &EL1.Predicates});
+        return ExitLimit(BECount, MaxBECount, false,
+                         {&EL0.Predicates, &EL1.Predicates});
 #endif
     }
     if (BO->getOpcode() == Instruction::Or) {
@@ -273,8 +277,13 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         if (EL0.ExactNotTaken == EL1.ExactNotTaken)
           BECount = EL0.ExactNotTaken;
       }
+#if LLVM_VERSION_MAJOR >= 20
+      return ExitLimit(BECount, MaxBECount, MaxBECount, false,
+                       {ArrayRef(EL0.Predicates), ArrayRef(EL1.Predicates)});
+#else
       return ExitLimit(BECount, MaxBECount, MaxBECount, false,
                        {&EL0.Predicates, &EL1.Predicates});
+#endif
 #else
         if (EL0.MaxNotTaken == getCouldNotCompute())
           MaxBECount = EL1.MaxNotTaken;
@@ -331,12 +340,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     const Loop *L, ICmpInst *ExitCond, bool ExitIfTrue, bool ControlsExit,
     bool AllowPredicates) {
   // If the condition was exit on true, convert the condition to exit on false
-  ICmpInst::Predicate Pred;
-  if (!ExitIfTrue)
-    Pred = ExitCond->getPredicate();
-  else
+#if LLVM_VERSION_MAJOR >= 20
+  llvm::CmpPredicate Pred = ExitCond->getPredicate();
+#else
+  auto Pred = ExitCond->getPredicate();
+#endif
+  if (ExitIfTrue)
     Pred = ExitCond->getInversePredicate();
-  const ICmpInst::Predicate OriginalPred = Pred;
+  const auto OriginalPred = Pred;
 
 #if LLVM_VERSION_MAJOR < 14
   // Handle common loops like: for (X = "string"; *X; ++X)
@@ -741,7 +752,11 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
 ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     const SCEV *LHS, const SCEV *RHS, const Loop *L, bool IsSigned,
     bool ControlsExit, bool AllowPredicates) {
+#if LLVM_VERSION_MAJOR >= 20
+  SmallVector<const SCEVPredicate *, 4> Predicates;
+#else
   SmallPtrSet<const SCEVPredicate *, 4> Predicates;
+#endif
 
   const SCEVAddRecExpr *IV = dyn_cast<SCEVAddRecExpr>(LHS);
   bool PredicatedIV = false;

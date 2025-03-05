@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
+#include <memory>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -84,11 +85,9 @@
 
 #include "llvm/Transforms/Utils.h"
 
-#if LLVM_VERSION_MAJOR >= 13
 #include "llvm/Transforms/IPO/Attributor.h"
 #include "llvm/Transforms/IPO/OpenMPOpt.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
-#endif
 
 #include "BlasAttributor.inc"
 
@@ -119,16 +118,14 @@ llvm::cl::opt<std::string> EnzymeTruncateAll(
         "Truncate all floating point operations. "
         "E.g. \"64to32\" or \"64to<exponent_width>-<significand_width>\"."));
 
-#if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define getAttribute getAttributeAtIndex
-#endif
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
   if (F.getName() == "fprintf") {
     for (auto &arg : F.args()) {
       if (arg.getType()->isPointerTy()) {
-        arg.addAttr(Attribute::NoCapture);
+        addFunctionNoCapture(&F, arg.getArgNo());
         changed = true;
       }
     }
@@ -151,7 +148,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       for (auto &arg : F.args()) {
         if (arg.getType()->isPointerTy()) {
           arg.addAttr(Attribute::ReadNone);
-          arg.addAttr(Attribute::NoCapture);
+          addFunctionNoCapture(&F, arg.getArgNo());
         }
       }
   }
@@ -171,12 +168,10 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     for (int i = 0; i < 2; i++)
       if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
-        F.addParamAttr(i, Attribute::NoCapture);
+        addFunctionNoCapture(&F, i);
         F.addParamAttr(i, Attribute::WriteOnly);
       }
   }
-
-  changed |= attributeTablegen(F);
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
@@ -197,7 +192,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     F.addParamAttr(0, Attribute::WriteOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
-      F.addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::WriteOnly);
     }
     F.addParamAttr(6, Attribute::WriteOnly);
@@ -216,7 +211,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     F.addParamAttr(0, Attribute::ReadOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
-      F.addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::ReadOnly);
     }
     F.addParamAttr(6, Attribute::WriteOnly);
@@ -236,12 +231,12 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
 
     if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
-      F.addParamAttr(0, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 0);
       F.addParamAttr(0, Attribute::ReadOnly);
     }
     if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
       F.addParamAttr(1, Attribute::WriteOnly);
-      F.addParamAttr(1, Attribute::NoCapture);
+      addFunctionNoCapture(&F, 1);
     }
   }
   if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
@@ -251,9 +246,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(0, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 0);
     F.addParamAttr(1, Attribute::WriteOnly);
-    F.addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 1);
   }
   if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
     changed = true;
@@ -262,9 +257,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 1);
     F.addParamAttr(2, Attribute::WriteOnly);
-    F.addParamAttr(2, Attribute::NoCapture);
+    addFunctionNoCapture(&F, 2);
   }
   // Map of MPI function name to the arg index of its type argument
   std::map<std::string, int> MPI_TYPE_ARGS = {
@@ -348,6 +343,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
       "fprintf",
       "fwrite",
+      "fputc",
       "strtol",
       "getenv",
       "memchr",
@@ -376,6 +372,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
           AttributeList::FunctionIndex,
           Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
     }
+  changed |= attributeTablegen(F);
   return changed;
 }
 
@@ -390,17 +387,13 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
         if (CI->getContext().supportsTypedPointers()) {
-#endif
           res = Builder.CreateAddrSpaceCast(
               res, PointerType::get(ptr->getPointerElementType(),
                                     PT->getAddressSpace()));
-#if LLVM_VERSION_MAJOR >= 15
         } else {
           res = Builder.CreateAddrSpaceCast(res, PT);
         }
-#endif
 #else
         res = Builder.CreateAddrSpaceCast(res, PT);
 #endif
@@ -684,13 +677,7 @@ public:
   {
     unsigned width = 1;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
-#else
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->getNumArgOperands();
-         ++i)
-#endif
-    {
+    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i) {
       Value *arg = CI->getArgOperand(i);
 
       if (auto MDName = getMetadataName(arg)) {
@@ -702,12 +689,7 @@ public:
             return {};
           }
 
-#if LLVM_VERSION_MAJOR >= 14
-          if (i + 1 >= CI->arg_size())
-#else
-          if (i + 1 >= CI->getNumArgOperands())
-#endif
-          {
+          if (i + 1 >= CI->arg_size()) {
             EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
                         "constant integer followong enzyme_width is missing",
                         *CI->getArgOperand(i), " in", *CI);
@@ -756,6 +738,7 @@ public:
     bool primalReturn;
     StringSet<> ActiveRandomVariables;
     std::vector<bool> overwritten_args;
+    bool runtimeActivity;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -789,9 +772,18 @@ public:
     unsigned truei = 0;
     unsigned byRefSize = 0;
     bool primalReturn = false;
+    bool runtimeActivity = false;
     StringSet<> ActiveRandomVariables;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
+
+    if (fn->hasParamAttribute(0, Attribute::StructRet)) {
+      Type *Ty = nullptr;
+      Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
+      if (whatType(Ty, mode) != DIFFE_TYPE::CONSTANT) {
+        retType = DIFFE_TYPE::DUP_ARG;
+      }
+    }
 
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
@@ -803,12 +795,7 @@ public:
         fn->getFunctionType()->getNumParams(),
         !(mode == DerivativeMode::ReverseModeCombined));
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-#else
-    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
       // handle metadata
@@ -821,6 +808,12 @@ public:
           continue;
         } else if (*metaString == "enzyme_dup_return") {
           retType = DIFFE_TYPE::DUP_ARG;
+          continue;
+        } else if (*metaString == "enzyme_noret") {
+          returnUsed = false;
+          continue;
+        } else if (*metaString == "enzyme_primal_return") {
+          primalReturn = true;
           continue;
         }
       }
@@ -842,75 +835,106 @@ public:
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
       Type *Ty = nullptr;
-#if LLVM_VERSION_MAJOR >= 12
       Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
-#else
-      Type *fnsrety = cast<PointerType>(FT->getParamType(0));
-      Ty = fnsrety->getPointerElementType();
-#endif
       Type *CTy = nullptr;
-#if LLVM_VERSION_MAJOR >= 12
       CTy = CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
                 .getValueAsType();
-#else
-      CTy = cast<PointerType>(CI->getArgOperand(0)->getType())
-                ->getPointerElementType();
-#endif
-      AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
-                                          DL.getPrefTypeAlign(Ty));
+      auto FnSize = (DL.getTypeSizeInBits(Ty) / 8);
+      auto CSize = CTy ? (DL.getTypeSizeInBits(CTy) / 8) : 0;
+      auto count = ((mode == DerivativeMode::ForwardMode ||
+                     mode == DerivativeMode::ForwardModeSplit ||
+                     mode == DerivativeMode::ForwardModeError) &&
+                    (retType == DIFFE_TYPE::DUP_ARG ||
+                     retType == DIFFE_TYPE::DUP_NONEED)) *
+                       width +
+                   primalReturn;
+      if (CSize < count * FnSize) {
+        EmitFailure(
+            "IllegalByRefSize", CI->getDebugLoc(), CI, "Struct return type ",
+            *CTy, " (", CSize, " bytes), not large enough to store ", count,
+            " returns of type ", *Ty, " (", FnSize, " bytes), width=", width,
+            " primal requested=", primalReturn);
+      }
+      Value *primal = nullptr;
+      if (primalReturn) {
+        Value *sretPt = CI->getArgOperand(0);
+        PointerType *pty = cast<PointerType>(sretPt->getType());
+        primal = Builder.CreatePointerCast(
+            sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+      } else {
+        AllocaInst *primalA = new AllocaInst(Ty, DL.getAllocaAddrSpace(),
+                                             nullptr, DL.getPrefTypeAlign(Ty));
+        primalA->insertBefore(CI);
+        primal = primalA;
+      }
 
-      primal->insertBefore(CI);
-
-      Value *shadow;
+      Value *shadow = nullptr;
       switch (mode) {
       case DerivativeMode::ForwardModeError:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
-        Value *sretPt = CI->getArgOperand(0);
-        if (width > 1) {
+        if (retType != DIFFE_TYPE::CONSTANT) {
+          Value *sretPt = CI->getArgOperand(0);
           PointerType *pty = cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(CTy)) {
-            Value *acc = UndefValue::get(
-                ArrayType::get(PointerType::get(sty->getElementType(0),
-                                                pty->getAddressSpace()),
-                               width));
+          auto shadowPtr = Builder.CreatePointerCast(
+              sretPt, PointerType::get(Ty, pty->getAddressSpace()));
+          if (width == 1) {
+            if (primalReturn)
+              shadowPtr = Builder.CreateConstGEP1_64(Ty, shadowPtr, 1);
+            shadow = shadowPtr;
+          } else {
+            Value *acc = UndefValue::get(ArrayType::get(
+                PointerType::get(Ty, pty->getAddressSpace()), width));
             for (size_t i = 0; i < width; ++i) {
-              Value *elem = Builder.CreateStructGEP(sty, sretPt, i);
+              Value *elem =
+                  Builder.CreateConstGEP1_64(Ty, shadowPtr, i + primalReturn);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
             shadow = acc;
-          } else {
-            EmitFailure(
-                "IllegalReturnType", CI->getDebugLoc(), CI,
-                "Return type of __enzyme_autodiff has to be a struct with",
-                width, "elements of the same type.");
-            return {};
           }
-        } else {
-          shadow = sretPt;
         }
         break;
       }
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
       case DerivativeMode::ReverseModeGradient: {
-        shadow = CI->getArgOperand(1);
+        if (retType != DIFFE_TYPE::CONSTANT)
+          shadow = CI->getArgOperand(1);
         sret = true;
         break;
       }
       }
 
       args.push_back(primal);
-      args.push_back(shadow);
-      constants.push_back(DIFFE_TYPE::DUP_ARG);
+      if (retType != DIFFE_TYPE::CONSTANT)
+        args.push_back(shadow);
+      if (retType == DIFFE_TYPE::DUP_ARG && !primalReturn && isWriteOnly(fn, 0))
+        retType = DIFFE_TYPE::DUP_NONEED;
+      constants.push_back(retType);
+      retType = DIFFE_TYPE::CONSTANT;
+      primalReturn = false;
     }
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-#else
-    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
-#endif
-    {
+    ssize_t interleaved = -1;
+
+    size_t maxsize;
+    maxsize = CI->arg_size();
+    size_t num_args = maxsize;
+    for (unsigned i = 1 + sret; i < maxsize; ++i) {
+      Value *res = CI->getArgOperand(i);
+      auto metaString = getMetadataName(res);
+      if (metaString && startsWith(*metaString, "enzyme_")) {
+        if (*metaString == "enzyme_interleave") {
+          maxsize = i;
+          interleaved = i + 1;
+          break;
+        }
+      }
+    }
+
+    DIFFE_TYPE last_ty = DIFFE_TYPE::DUP_ARG;
+
+    for (ssize_t i = 1 + sret; (size_t)i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
       auto metaString = getMetadataName(res);
 #if LLVM_VERSION_MAJOR > 16
@@ -976,7 +1000,6 @@ public:
         } else if (*metaString == "enzyme_const") {
           opt_ty = DIFFE_TYPE::CONSTANT;
         } else if (*metaString == "enzyme_noret") {
-          returnUsed = false;
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_allocated") {
@@ -1004,8 +1027,11 @@ public:
           freeMemory = false;
           skipArg = true;
           break;
+        } else if (*metaString == "enzyme_runtime_activity") {
+          runtimeActivity = true;
+          skipArg = true;
+          break;
         } else if (*metaString == "enzyme_primal_return") {
-          primalReturn = true;
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_const_return") {
@@ -1133,11 +1159,7 @@ public:
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
               Type *T = nullptr;
-#if LLVM_VERSION_MAJOR > 12
               T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
-#else
-              T = differet->getType()->getPointerElementType();
-#endif
               differet = Builder.CreateLoad(T, differet);
             }
             if (differet->getType() != fn->getReturnType())
@@ -1167,11 +1189,7 @@ public:
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
               Type *T = nullptr;
-#if LLVM_VERSION_MAJOR > 12
               T = CI->getParamAttr(i, Attribute::ByVal).getValueAsType();
-#else
-              T = tape->getType()->getPointerElementType();
-#endif
               tape = Builder.CreateLoad(T, tape);
             }
             continue;
@@ -1186,7 +1204,10 @@ public:
       overwritten_args[truei] = overwritten;
 
       auto PTy = FT->getParamType(truei);
-      DIFFE_TYPE ty = opt_ty ? *opt_ty : whatType(PTy, mode);
+      DIFFE_TYPE ty =
+          opt_ty ? *opt_ty
+                 : ((interleaved == -1) ? whatType(PTy, mode) : last_ty);
+      last_ty = ty;
 
       constants.push_back(ty);
 
@@ -1197,17 +1218,13 @@ public:
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
               if (CI->getContext().supportsTypedPointers()) {
-#endif
                 res = Builder.CreateAddrSpaceCast(
                     res, PointerType::get(ptr->getPointerElementType(),
                                           PT->getAddressSpace()));
-#if LLVM_VERSION_MAJOR >= 15
               } else {
                 res = Builder.CreateAddrSpaceCast(res, PT);
               }
-#endif
 #else
               res = Builder.CreateAddrSpaceCast(res, PT);
 #endif
@@ -1250,7 +1267,8 @@ public:
 
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        ++i;
+        if (interleaved == -1)
+          ++i;
 
         Value *res = nullptr;
 #if LLVM_VERSION_MAJOR >= 16
@@ -1260,22 +1278,19 @@ public:
 #endif
 
         for (unsigned v = 0; v < width; ++v) {
-#if LLVM_VERSION_MAJOR >= 14
-          if (i >= CI->arg_size())
-#else
-          if (i >= CI->getNumArgOperands())
-#endif
-          {
+          if ((size_t)((interleaved == -1) ? i : interleaved) >= num_args) {
             EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
                         "__enzyme_autodiff missing argument shadow at index ",
-                        i, ", need shadow of type ", *PTy,
+                        *((interleaved == -1) ? &i : &interleaved),
+                        ", need shadow of type ", *PTy,
                         " to shadow primal argument ", *args.back(),
                         " at call ", *CI);
             return {};
           }
 
           // cast diffe
-          Value *element = CI->getArgOperand(i);
+          Value *element =
+              CI->getArgOperand((interleaved == -1) ? i : interleaved);
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
               element = Builder.CreateBitCast(
@@ -1290,14 +1305,16 @@ public:
             } else {
               EmitFailure(
                   "NonPointerBatch", CI->getDebugLoc(), CI,
-                  "Batched argument at index ", i,
+                  "Batched argument at index ",
+                  *((interleaved == -1) ? &i : &interleaved),
                   " must be of pointer type, found: ", *element->getType());
               return {};
             }
           }
           if (PTy != element->getType()) {
-            element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
-                                                 element, truei);
+            element = castToDiffeFunctionArgType(
+                Builder, CI, FT, PTy, (interleaved == -1) ? i : interleaved,
+                mode, element, truei);
             if (!element) {
               return {};
             }
@@ -1310,13 +1327,16 @@ public:
                                                     element->getType(), width)),
                                                 element, {v});
 
-            if (v < width - 1 && !batch) {
+            if (v < width - 1 && !batch && (interleaved == -1)) {
               ++i;
             }
 
           } else {
             res = element;
           }
+
+          if (interleaved != -1)
+            interleaved++;
         }
 
         args.push_back(res);
@@ -1337,7 +1357,7 @@ public:
                     likelihood, diffeLikelihood, width, allocatedTapeSize,
                     freeMemory, returnUsed, tapeIsPointer, differentialReturn,
                     diffeTrace, retType, primalReturn, ActiveRandomVariables,
-                    overwritten_args});
+                    overwritten_args, runtimeActivity});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -1349,18 +1369,14 @@ public:
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
         if (a.getContext().supportsTypedPointers()) {
-#endif
           auto et = a.getType()->getPointerElementType();
           if (et->isFPOrFPVectorTy()) {
             dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
           } else if (et->isPointerTy()) {
             dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
           }
-#if LLVM_VERSION_MAJOR >= 13
         }
-#endif
 #endif
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
@@ -1502,12 +1518,7 @@ public:
       arg_types.push_back(BATCH_TYPE::VECTOR);
     }
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-#else
-    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
-#endif
-    {
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
@@ -1563,12 +1574,7 @@ public:
         bool batch = batchOffset.count(i - 1) != 0;
 
         for (unsigned v = 0; v < width; ++v) {
-#if LLVM_VERSION_MAJOR >= 14
-          if (i >= CI->arg_size())
-#else
-          if (i >= CI->getNumArgOperands())
-#endif
-          {
+          if (i >= CI->arg_size()) {
             EmitFailure("MissingVectorArg", CI->getDebugLoc(), CI,
                         "__enzyme_batch missing vector argument at index ", i,
                         ", need argument of type ", *PTy, " at call ", *CI);
@@ -1637,13 +1643,9 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 12
       retElemType =
           CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
               .getValueAsType();
-#else
-      retElemType = ret->getType()->getPointerElementType();
-#endif
     }
     ReplaceOriginalCall(Builder, ret, retElemType, batch, CI,
                         DerivativeMode::ForwardMode);
@@ -1694,7 +1696,8 @@ public:
       } else
         newFunc = Logic.CreateForwardDiff(
             context, fn, retType, constants, TA,
-            /*should return*/ primalReturn, mode, freeMemory, width,
+            /*should return*/ primalReturn, mode, freeMemory,
+            options.runtimeActivity, width,
             /*addedType*/ nullptr, type_args, overwritten_args,
             /*augmented*/ nullptr);
       break;
@@ -1703,7 +1706,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          overwritten_args, forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
+          overwritten_args, forceAnonymousTape, options.runtimeActivity, width,
+          /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -1738,7 +1742,8 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
-          /*should return*/ primalReturn, mode, freeMemory, width,
+          /*should return*/ primalReturn, mode, freeMemory,
+          options.runtimeActivity, width,
           /*addedType*/ tapeType, type_args, overwritten_args, aug);
       break;
     }
@@ -1758,7 +1763,8 @@ public:
                             .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
                             .forceAnonymousTape = false,
-                            .typeInfo = type_args},
+                            .typeInfo = type_args,
+                            .runtimeActivity = options.runtimeActivity},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1773,7 +1779,8 @@ public:
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
-          type_args, overwritten_args, forceAnonymousTape, width,
+          type_args, overwritten_args, forceAnonymousTape,
+          options.runtimeActivity, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1824,7 +1831,8 @@ public:
                               .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
                               .forceAnonymousTape = forceAnonymousTape,
-                              .typeInfo = type_args},
+                              .typeInfo = type_args,
+                              .runtimeActivity = options.runtimeActivity},
             TA, aug);
     }
     }
@@ -2001,13 +2009,9 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 12
       retElemType =
           CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
               .getValueAsType();
-#else
-      retElemType = ret->getType()->getPointerElementType();
-#endif
     }
 
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
@@ -2054,12 +2058,12 @@ public:
     bool has_dynamic_interface = dynamic_interface != nullptr;
     bool needs_interface =
         mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
-    TraceInterface *interface = nullptr;
+    std::unique_ptr<TraceInterface> interface;
     if (has_dynamic_interface) {
-      interface =
-          new DynamicTraceInterface(dynamic_interface, CI->getFunction());
+      interface = std::make_unique<DynamicTraceInterface>(dynamic_interface,
+                                                          CI->getFunction());
     } else if (needs_interface) {
-      interface = new StaticTraceInterface(F->getParent());
+      interface = std::make_unique<StaticTraceInterface>(F->getParent());
     }
 
     // Find sample function
@@ -2121,7 +2125,7 @@ public:
 
     auto newFunc = Logic.CreateTrace(
         RequestContext(CI, &Builder), F, sampleFunctions, observeFunctions,
-        opt->ActiveRandomVariables, mode, autodiff, interface);
+        opt->ActiveRandomVariables, mode, autodiff, interface.get());
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
@@ -2133,20 +2137,14 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 12
       retElemType =
           CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
               .getValueAsType();
-#else
-      retElemType = ret->getType()->getPointerElementType();
-#endif
     }
 
     bool status = HandleAutoDiff(
         CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
         newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
-
-    delete interface;
 
     return status;
   }
@@ -2329,11 +2327,7 @@ public:
         if (!Fn)
           continue;
 
-#if LLVM_VERSION_MAJOR >= 14
         size_t num_args = CI->arg_size();
-#else
-        size_t num_args = CI->getNumArgOperands();
-#endif
 
         if (Fn->getName().contains("__enzyme_todense")) {
 #if LLVM_VERSION_MAJOR >= 16
@@ -2353,7 +2347,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2367,7 +2361,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2381,7 +2375,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2395,7 +2389,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2445,9 +2439,9 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #endif
           CI->addParamAttr(1, Attribute::ReadOnly);
-          CI->addParamAttr(1, Attribute::NoCapture);
+          addCallSiteNoCapture(CI, 1);
           CI->addParamAttr(3, Attribute::ReadOnly);
-          CI->addParamAttr(3, Attribute::NoCapture);
+          addCallSiteNoCapture(CI, 3);
         }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
@@ -2467,7 +2461,7 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
 #endif
         }
-        if (Fn->getName().contains("strcmp")) {
+        if (getFuncName(Fn) == "strcmp") {
           Fn->addParamAttr(0, Attribute::ReadOnly);
           Fn->addParamAttr(1, Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
@@ -2508,7 +2502,7 @@ public:
           for (size_t i : {0, 1}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2533,7 +2527,7 @@ public:
           for (size_t i : {0, 2}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2559,7 +2553,7 @@ public:
           for (size_t i : {0, 1, 2, 3}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2585,7 +2579,7 @@ public:
           for (size_t i : {0}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2607,7 +2601,7 @@ public:
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
-              CI->addParamAttr(i, Attribute::NoCapture);
+              addCallSiteNoCapture(CI, i);
             }
           }
         }
@@ -2751,12 +2745,7 @@ public:
       Value *fn = CI->getArgOperand(0);
       SmallVector<Value *, 4> Args;
       SmallVector<Type *, 4> ArgTypes;
-#if LLVM_VERSION_MAJOR >= 14
-      for (size_t i = 1; i < CI->arg_size(); ++i)
-#else
-      for (size_t i = 1; i < CI->getNumArgOperands(); ++i)
-#endif
-      {
+      for (size_t i = 1; i < CI->arg_size(); ++i) {
         Args.push_back(CI->getArgOperand(i));
         ArgTypes.push_back(CI->getArgOperand(i)->getType());
       }
@@ -2813,7 +2802,7 @@ public:
       auto val = GradientUtils::GetOrCreateShadowConstant(
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*width*/ 1, AtomicAdd);
+          pair.second, /*runtimeActivity*/ false, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2853,23 +2842,28 @@ public:
         if (auto F = cur->getCalledFunction()) {
           if (!F->empty()) {
             // Garbage collect AC's created
-            SmallVector<AssumptionCache *, 2> ACAlloc;
+            SmallVector<std::unique_ptr<AssumptionCache>, 2> ACAlloc;
             auto getAC = [&](Function &F) -> llvm::AssumptionCache & {
-              auto AC = new AssumptionCache(F);
-              ACAlloc.push_back(AC);
-              return *AC;
+              auto AC = std::make_unique<AssumptionCache>(F);
+              ACAlloc.push_back(std::move(AC));
+              return *ACAlloc.back();
             };
             auto GetTLI =
                 [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
               return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
             };
 
+            TargetTransformInfo TTI(F->getParent()->getDataLayout());
             auto GetInlineCost = [&](CallBase &CB) {
-              TargetTransformInfo TTI(F->getParent()->getDataLayout());
               auto cst = llvm::getInlineCost(CB, Params, TTI, getAC, GetTLI);
               return cst;
             };
-            if (llvm::shouldInline(*cur, GetInlineCost, ORE)) {
+#if LLVM_VERSION_MAJOR >= 20
+            if (llvm::shouldInline(*cur, TTI, GetInlineCost, ORE))
+#else
+            if (llvm::shouldInline(*cur, GetInlineCost, ORE))
+#endif
+            {
               InlineFunctionInfo IFI;
               InlineResult IR = InlineFunction(*cur, IFI);
               if (IR.isSuccess()) {
@@ -2883,9 +2877,6 @@ public:
                 }
               }
             }
-            for (auto AC : ACAlloc) {
-              delete AC;
-            }
           }
         }
       }
@@ -2896,7 +2887,7 @@ public:
       // dead internal functions, which invalidates Enzyme's cache
       // code left here to re-enable upon Attributor patch
 
-#if LLVM_VERSION_MAJOR >= 13 && !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG) && !defined(ROCM)
 
       AnalysisGetter AG(Logic.PPC.FAM);
       SetVector<Function *> Functions;
@@ -2937,16 +2928,10 @@ public:
         //&AAPotentialValues::ID,
       };
 
-#if LLVM_VERSION_MAJOR >= 15
       AttributorConfig aconfig(CGUpdater);
       aconfig.Allowed = &Allowed;
       aconfig.DeleteFns = false;
       Attributor A(Functions, InfoCache, aconfig);
-#else
-
-      Attributor A(Functions, InfoCache, CGUpdater, &Allowed,
-                   /*DeleteFns*/ false);
-#endif
       for (Function *F : Functions) {
         // Populate the Attributor with abstract attribute opportunities in
         // the function and the information cache with IR information.
@@ -2962,9 +2947,12 @@ public:
   bool run(Module &M) {
     Logic.clear();
 
+    for (Function &F : make_early_inc_range(M)) {
+      attributeKnownFunctions(F);
+    }
+
     bool changed = false;
     for (Function &F : M) {
-      attributeKnownFunctions(F);
       if (F.empty())
         continue;
       for (BasicBlock &BB : F) {
@@ -2981,19 +2969,13 @@ public:
             if (F && F->getName() == "f90_mzero8") {
               IRBuilder<> B(CI);
 
-              SmallVector<Value *, 4> args;
-              args.push_back(CI->getArgOperand(0));
-              args.push_back(
-                  ConstantInt::get(Type::getInt8Ty(M.getContext()), 0));
-              args.push_back(B.CreateMul(
+              Value *args[3];
+              args[0] = CI->getArgOperand(0);
+              args[1] = ConstantInt::get(Type::getInt8Ty(M.getContext()), 0);
+              args[2] = B.CreateMul(
                   CI->getArgOperand(1),
-                  ConstantInt::get(CI->getArgOperand(1)->getType(), 8)));
-              args.push_back(ConstantInt::getFalse(M.getContext()));
-
-              Type *tys[] = {args[0]->getType(), args[2]->getType()};
-              auto memsetIntr =
-                  Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
-              B.CreateCall(memsetIntr, args);
+                  ConstantInt::get(CI->getArgOperand(1)->getType(), 8));
+              B.CreateMemSet(args[0], args[1], args[2], MaybeAlign());
 
               CI->eraseFromParent();
             }
@@ -3002,7 +2984,6 @@ public:
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 13
     if (Logic.PostOpt && EnzymeOMPOpt) {
       OpenMPOptPass().run(M, Logic.PPC.MAM);
       /// Attributor is run second time for promoted args to get attributes.
@@ -3012,7 +2993,6 @@ public:
           PromotePass().run(F, Logic.PPC.FAM);
       changed = true;
     }
-#endif
 
     std::set<Function *> done;
     for (Function &F : M) {
@@ -3075,11 +3055,7 @@ public:
               Function *samplefn = GetFunctionFromValue(CI->getOperand(0));
               unsigned expected =
                   samplefn->getFunctionType()->getNumParams() + 3;
-#if LLVM_VERSION_MAJOR >= 14
               unsigned actual = CI->arg_size();
-#else
-              unsigned actual = CI->getNumArgOperands();
-#endif
               if (actual - 3 != samplefn->getFunctionType()->getNumParams()) {
                 EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
                             "Illegal number of arguments passed to call to "
@@ -3134,11 +3110,7 @@ public:
               Function *pdf = GetFunctionFromValue(CI->getArgOperand(1));
               unsigned expected = pdf->getFunctionType()->getNumParams() - 1;
 
-#if LLVM_VERSION_MAJOR >= 14
               unsigned actual = CI->arg_size();
-#else
-              unsigned actual = CI->getNumArgOperands();
-#endif
               if (actual - 3 != expected) {
                 EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
                             "Illegal number of arguments passed to call to "
@@ -3217,18 +3189,9 @@ public:
       PB.registerLoopAnalyses(LAM);
       PB.registerCGSCCAnalyses(CGAM);
       PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-#if LLVM_VERSION_MAJOR >= 14
       auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2,
                                                      ThinOrFullLTOPhase::None);
-#elif LLVM_VERSION_MAJOR >= 12
-      auto PM = PB.buildModuleSimplificationPipeline(
-          PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
-#else
-      auto PM = PB.buildModuleSimplificationPipeline(
-          PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
-#endif
       PM.run(M, MAM);
-#if LLVM_VERSION_MAJOR >= 13
       if (EnzymeOMPOpt) {
         OpenMPOptPass().run(M, MAM);
         /// Attributor is run second time for promoted args to get attributes.
@@ -3237,7 +3200,6 @@ public:
           if (!F.empty())
             PromotePass().run(F, FAM);
       }
-#endif
     }
 
     for (auto &F : M) {
@@ -3312,24 +3274,20 @@ AnalysisKey EnzymeNewPM::Key;
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/IPO/AlwaysInliner.h"
-#if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
 #include "llvm/Transforms/IPO/ConstantMerge.h"
 #include "llvm/Transforms/IPO/CrossDSOCFI.h"
 #include "llvm/Transforms/IPO/DeadArgumentElimination.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
-#endif
 #include "llvm/Transforms/IPO/GlobalOpt.h"
-#if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/IPO/GlobalSplit.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include "llvm/Transforms/IPO/SCCP.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar/CallSiteSplitting.h"
-#endif
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/Float2Int.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -3337,7 +3295,6 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/SROA.h"
-#if LLVM_VERSION_MAJOR >= 12
 // #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/ArgumentPromotion.h"
 #include "llvm/Transforms/Scalar/ConstraintElimination.h"
@@ -3354,19 +3311,10 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
-#if LLVM_VERSION_MAJOR >= 15
-#if LLVM_VERSION_MAJOR < 14
-static InlineParams
-getInlineParamsFromOptLevel(llvm::PassBuilder::OptimizationLevel Level)
-#else
-static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level)
-#endif
-{
+static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
-#endif
 
-#if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
@@ -3381,124 +3329,11 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 // extern cl::opt<bool> EnableMatrix;
 #define EnableMatrix false
 #define EnableModuleInliner false
-#if LLVM_VERSION_MAJOR <= 14
-// extern cl::opt<bool> EnableFunctionSpecialization;
-#define EnableFunctionSpecialization false
-// extern cl::opt<bool> RunPartialInlining;
-#define RunPartialInlining false
-#endif
 } // namespace llvm
-#if LLVM_VERSION_MAJOR <= 14
-#include "llvm/Transforms/IPO/CalledValuePropagation.h"
-#include "llvm/Transforms/IPO/DeadArgumentElimination.h"
-#include "llvm/Transforms/IPO/SCCP.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#if LLVM_VERSION_MAJOR >= 12
-#include "llvm/Transforms/Coroutines/CoroCleanup.h"
-#endif
-#include "llvm/Transforms/IPO/FunctionAttrs.h"
-#include "llvm/Transforms/IPO/GlobalDCE.h"
-#include "llvm/Transforms/IPO/PartialInlining.h"
-#if LLVM_VERSION_MAJOR <= 12
-#include "llvm/Transforms/Utils/Mem2Reg.h"
-#endif
-#endif
-#endif
-#endif
 
 void augmentPassBuilder(llvm::PassBuilder &PB) {
-#if LLVM_VERSION_MAJOR < 14
-  using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
-#endif
 
-  auto PB0 = new llvm::PassBuilder(PB);
-#if LLVM_VERSION_MAJOR >= 12
-  auto prePass = [PB0](ModulePassManager &MPM, OptimizationLevel Level)
-#else
-  auto prePass = [PB0](ModulePassManager &MPM)
-#endif
-  {
-
-#if LLVM_VERSION_MAJOR < 12
-    llvm_unreachable("New Pass manager pipeline unsupported at version <= 11");
-#else
-#if LLVM_VERSION_MAJOR < 15
-  ////// End of Module simplification
-  // Specialize functions with IPSCCP.
-#if LLVM_VERSION_MAJOR >= 13
-    if (EnableFunctionSpecialization && Level == OptimizationLevel::O3)
-      MPM.addPass(FunctionSpecializationPass());
-#endif
-
-    // Interprocedural constant propagation now that basic cleanup has
-    // occurred and prior to optimizing globals.
-    // FIXME: This position in the pipeline hasn't been carefully
-    // considered in years, it should be re-analyzed.
-    MPM.addPass(IPSCCPPass());
-
-    // Attach metadata to indirect call sites indicating the set of
-    // functions they may target at run-time. This should follow
-    // IPSCCP.
-    MPM.addPass(CalledValuePropagationPass());
-
-    // Optimize globals to try and fold them into constants.
-    MPM.addPass(GlobalOptPass());
-
-    // Promote any localized globals to SSA registers.
-    // FIXME: Should this instead by a run of SROA?
-    // FIXME: We should probably run instcombine and simplifycfg
-    // afterward to delete control flows that are dead once globals
-    // have been folded to constants.
-    MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
-
-    // Remove any dead arguments exposed by cleanups and constant
-    // folding globals.
-    MPM.addPass(DeadArgumentEliminationPass());
-
-    // Create a small function pass pipeline to cleanup after all the
-    // global optimizations.
-    FunctionPassManager GlobalCleanupPM;
-    GlobalCleanupPM.addPass(InstCombinePass());
-
-#if LLVM_VERSION_MAJOR >= 14
-    GlobalCleanupPM.addPass(
-        SimplifyCFGPass(SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
-#else
-    GlobalCleanupPM.addPass(SimplifyCFGPass(SimplifyCFGOptions()));
-#endif
-    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(GlobalCleanupPM)));
-
-    ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
-#if LLVM_VERSION >= 13
-    bool EnableModuleInliner = false;
-    if (EnableModuleInliner)
-      MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
-    else
-#endif
-      MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
-
-    FunctionPassManager CoroCleanupPM;
-    CoroCleanupPM.addPass(CoroCleanupPass());
-    MPM.addPass(createModuleToFunctionPassAdaptor(std::move(CoroCleanupPM)));
-
-    ////// Finished Module simplification, starting ModuleOptimization
-    //
-    // Optimize globals now that the module is fully simplified.
-    MPM.addPass(GlobalOptPass());
-    MPM.addPass(GlobalDCEPass());
-
-    // Run partial inlining pass to partially inline functions that
-    // have large bodies.
-    if (RunPartialInlining)
-      MPM.addPass(PartialInlinerPass());
-
-    // Do RPO function attribute inference across the module to
-    // forward-propagate attributes where applicable.
-    // FIXME: Is this really an optimization rather than a
-    // canonicalization?
-    MPM.addPass(ReversePostOrderFunctionAttrsPass());
-#endif
+  auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
     FunctionPassManager OptimizePM;
     OptimizePM.addPass(Float2IntPass());
     OptimizePM.addPass(LowerConstantIntrinsicsPass());
@@ -3523,13 +3358,13 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     OptimizePM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
 
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
-#endif
   };
 
-#if LLVM_VERSION_MAJOR >= 12
-  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
+#if LLVM_VERSION_MAJOR >= 20
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
+                            ThinOrFullLTOPhase)
 #else
-  auto loadPass = [prePass](ModulePassManager &MPM)
+  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
   {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
@@ -3537,24 +3372,17 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     if (!EnzymeEnable)
       return;
 
-#if LLVM_VERSION_MAJOR >= 12
     if (Level != OptimizationLevel::O0)
       prePass(MPM, Level);
-#else
-    prePass(MPM);
-#endif
     MPM.addPass(llvm::AlwaysInlinerPass());
     FunctionPassManager OptimizerPM;
     FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 16
     OptimizerPM.addPass(llvm::GVNPass());
     OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
-#elif LLVM_VERSION_MAJOR >= 14
+#else
     OptimizerPM.addPass(llvm::GVNPass());
     OptimizerPM.addPass(llvm::SROAPass());
-#else
-    OptimizerPM.addPass(llvm::GVN());
-    OptimizerPM.addPass(llvm::SROA());
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
     MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
@@ -3562,12 +3390,9 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
 #if LLVM_VERSION_MAJOR >= 16
     OptimizerPM2.addPass(llvm::GVNPass());
     OptimizerPM2.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
-#elif LLVM_VERSION_MAJOR >= 14
+#else
     OptimizerPM2.addPass(llvm::GVNPass());
     OptimizerPM2.addPass(llvm::SROAPass());
-#else
-    OptimizerPM2.addPass(llvm::GVN());
-    OptimizerPM2.addPass(llvm::SROA());
 #endif
 
     LoopPassManager LPM1;
@@ -3577,27 +3402,17 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
     MPM.addPass(GlobalOptPass());
   };
-// TODO need for perf reasons to move Enzyme pass to the pre vectorization.
-#if LLVM_VERSION_MAJOR >= 15
+  // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
-#elif LLVM_VERSION_MAJOR >= 12
-  PB.registerPipelineEarlySimplificationEPCallback(loadPass);
-#else
-  PB.registerPipelineStartEPCallback(loadPass);
-#endif
 
-#if LLVM_VERSION_MAJOR >= 12
-  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
-#else
-  auto loadNVVM = [](ModulePassManager &MPM)
-#endif
-  { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
+  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel) {
+    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+  };
 
   // We should register at vectorizer start for consistency, however,
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
-#if LLVM_VERSION_MAJOR >= 15
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
@@ -3834,16 +3649,20 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     LPM.addPass(LoopDeletionPass());
     // FIXME: Add loop interchange.
 
+#if LLVM_VERSION_MAJOR >= 20
+    loadPass(MPM, Level, ThinOrFullLTOPhase::None);
+#else
     loadPass(MPM, Level);
+#endif
   };
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
-#endif
 }
 
-void registerEnzyme(llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-  augmentPassBuilder(PB);
-#endif
+extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
+                                              bool augment = false) {
+  if (augment) {
+    augmentPassBuilder(PB);
+  }
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -3874,6 +3693,14 @@ void registerEnzyme(llvm::PassBuilder &PB) {
         }
         return false;
       });
+}
+
+extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  registerEnzymeAndPassPipeline(PB, /*augment*/ true);
+#else
+  registerEnzymeAndPassPipeline(PB, /*augment*/ false);
+#endif
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK

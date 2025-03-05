@@ -7,6 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H
+#define ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H
+
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -25,13 +28,16 @@ public:
   MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                         FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                         IRMapping invertedPointers_,
+                        const llvm::ArrayRef<bool> returnPrimals,
+                        const llvm::ArrayRef<bool> returnShadows,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
                         ArrayRef<DIFFE_TYPE> ReturnActivity,
                         ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                         IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
-                        DerivativeMode mode_, unsigned width);
+                        DerivativeMode mode_, unsigned width, bool omp,
+                        llvm::StringRef postpasses);
 
   IRMapping mapReverseModeBlocks;
 
@@ -62,11 +68,13 @@ public:
   static MGradientUtilsReverse *CreateFromClone(
       MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
       FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const std::vector<bool> &returnPrimals,
-      const std::vector<bool> &returnShadows,
+      const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
       llvm::ArrayRef<DIFFE_TYPE> retType,
-      llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg);
+      llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg,
+      bool omp, llvm::StringRef postpasses);
 };
 
 } // namespace enzyme
 } // namespace mlir
+
+#endif // ENZYME_MLIR_INTERFACES_GRADIENT_UTILS_REVERSE_H

@@ -108,19 +108,20 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"__nv_drcp_rn", Intrinsic::not_intrinsic},
     {"__nv_drcp_ru", Intrinsic::not_intrinsic},
     {"__nv_drcp_rz", Intrinsic::not_intrinsic},
-    {"__nv_isnand", Intrinsic::not_intrinsic},
-    {"__nv_isnanf", Intrinsic::not_intrinsic},
-    {"__nv_isinfd", Intrinsic::not_intrinsic},
-    {"__nv_isinff", Intrinsic::not_intrinsic},
-    {"__nv_acos", Intrinsic::not_intrinsic},
     {"asin", Intrinsic::not_intrinsic},
     {"__nv_asin", Intrinsic::not_intrinsic},
     {"atan", Intrinsic::not_intrinsic},
     {"atan2", Intrinsic::not_intrinsic},
     {"__nv_atan2", Intrinsic::not_intrinsic},
+#if LLVM_VERSION_MAJOR >= 19
+    {"cosh", Intrinsic::cosh},
+    {"sinh", Intrinsic::sinh},
+    {"tanh", Intrinsic::tanh},
+#else
     {"cosh", Intrinsic::not_intrinsic},
     {"sinh", Intrinsic::not_intrinsic},
     {"tanh", Intrinsic::not_intrinsic},
+#endif
     {"acosh", Intrinsic::not_intrinsic},
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
@@ -161,6 +162,7 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"erf", Intrinsic::not_intrinsic},
     {"erfi", Intrinsic::not_intrinsic},
     {"erfc", Intrinsic::not_intrinsic},
+    {"erfinv", Intrinsic::not_intrinsic},
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
@@ -1220,7 +1222,19 @@ void TypeAnalyzer::considerTBAA() {
   for (BasicBlock &BB : *fntypeinfo.Function) {
     for (Instruction &I : BB) {
       if (auto MD = I.getMetadata("enzyme_type")) {
-        updateAnalysis(&I, TypeTree::fromMD(MD), &I);
+        auto TT = TypeTree::fromMD(MD);
+
+        auto RegSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+        for (const auto &pair : TT.getMapping()) {
+          if (pair.first[0] != -1) {
+            if ((size_t)pair.first[0] >= RegSize) {
+              llvm::errs() << " bad enzyme_type " << TT.str()
+                           << " RegSize=" << RegSize << " I:" << I << "\n";
+              llvm::report_fatal_error("Canonicalization failed");
+            }
+          }
+        }
+        updateAnalysis(&I, TT, &I);
       }
 
       if (CallBase *call = dyn_cast<CallBase>(&I)) {
@@ -1236,6 +1250,19 @@ void TypeAnalyzer::considerTBAA() {
               AttributeList::ReturnIndex, "enzyme_type");
           auto TT =
               TypeTree::parse(attr.getValueAsString(), call->getContext());
+
+          auto RegSize = I.getType()->isVoidTy()
+                             ? 0
+                             : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+          for (const auto &pair : TT.getMapping()) {
+            if (pair.first[0] != -1) {
+              if ((size_t)pair.first[0] >= RegSize) {
+                llvm::errs() << " bad enzyme_type " << TT.str()
+                             << " RegSize=" << RegSize << " I:" << I << "\n";
+                llvm::report_fatal_error("Canonicalization failed");
+              }
+            }
+          }
           updateAnalysis(call, TT, call);
         }
         for (size_t i = 0; i < num_args; i++) {
@@ -1243,6 +1270,18 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call->getArgOperand(i), TT, call);
           }
         }
@@ -1256,6 +1295,18 @@ void TypeAnalyzer::considerTBAA() {
                 AttributeList::ReturnIndex, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
+            auto RegSize = I.getType()->isVoidTy()
+                               ? 0
+                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            for (const auto &pair : TT.getMapping()) {
+              if (pair.first[0] != -1) {
+                if ((size_t)pair.first[0] >= RegSize) {
+                  llvm::errs() << " bad enzyme_type " << TT.str()
+                               << " RegSize=" << RegSize << " I:" << I << "\n";
+                  llvm::report_fatal_error("Canonicalization failed");
+                }
+              }
+            }
             updateAnalysis(call, TT, call);
           }
           size_t f_num_args = F->arg_size();
@@ -1264,6 +1315,19 @@ void TypeAnalyzer::considerTBAA() {
               auto attr = F->getAttributes().getParamAttr(i, "enzyme_type");
               auto TT =
                   TypeTree::parse(attr.getValueAsString(), call->getContext());
+              auto RegSize = I.getType()->isVoidTy()
+                                 ? 0
+                                 : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+              for (const auto &pair : TT.getMapping()) {
+                if (pair.first[0] != -1) {
+                  if ((size_t)pair.first[0] >= RegSize) {
+                    llvm::errs()
+                        << " bad enzyme_type " << TT.str()
+                        << " RegSize=" << RegSize << " I:" << I << "\n";
+                    llvm::report_fatal_error("Canonicalization failed");
+                  }
+                }
+              }
               updateAnalysis(call->getArgOperand(i), TT, call);
             }
           }
@@ -1340,10 +1404,19 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
         if (F) {
-          StringSet<> JuliaKnownTypes = {
-              "julia.gc_alloc_obj", "jl_alloc_array_1d",  "jl_alloc_array_2d",
-              "jl_alloc_array_3d",  "ijl_alloc_array_1d", "ijl_alloc_array_2d",
-              "ijl_alloc_array_3d", "jl_gc_alloc_typed",  "ijl_gc_alloc_typed"};
+          StringSet<> JuliaKnownTypes = {"julia.gc_alloc_obj",
+                                         "jl_alloc_array_1d",
+                                         "jl_alloc_array_2d",
+                                         "jl_alloc_array_3d",
+                                         "ijl_alloc_array_1d",
+                                         "ijl_alloc_array_2d",
+                                         "ijl_alloc_array_3d",
+                                         "jl_gc_alloc_typed",
+                                         "ijl_gc_alloc_typed",
+                                         "jl_alloc_genericmemory",
+                                         "ijl_alloc_genericmemory",
+                                         "jl_new_array",
+                                         "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
             visitCallBase(*call);
             continue;
@@ -1422,8 +1495,8 @@ void TypeAnalyzer::considerTBAA() {
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
-          llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
-          assert(0 && "unknown tbaa call instruction user");
+          llvm::errs() << " unknown tbaa call instruction user inst: " << I
+                       << " vdptr: " << vdptr.str() << "\n";
         }
       } else if (auto SI = dyn_cast<StoreInst>(&I)) {
         auto StoreSize =
@@ -1916,7 +1989,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
 
   APInt constOffset(BitWidth, 0);
 
+#if LLVM_VERSION_MAJOR >= 20
+  SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
   MapVector<Value *, APInt> VariableOffsets;
+#endif
   bool legalOffset =
       collectOffset(&gep, DL, BitWidth, VariableOffsets, constOffset);
   (void)legalOffset;
@@ -3822,12 +3899,14 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     return;
   }
 
-  case Intrinsic::nvvm_ldu_global_i:
-  case Intrinsic::nvvm_ldu_global_p:
-  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
   case Intrinsic::nvvm_ldg_global_i:
   case Intrinsic::nvvm_ldg_global_p:
-  case Intrinsic::nvvm_ldg_global_f: {
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f: {
     auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
 
@@ -3849,6 +3928,11 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::exp2:
   case Intrinsic::sin:
   case Intrinsic::cos:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::sinh:
+  case Intrinsic::cosh:
+  case Intrinsic::tanh:
+#endif
   case Intrinsic::floor:
   case Intrinsic::ceil:
   case Intrinsic::trunc:
@@ -4433,6 +4517,23 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 #include "BlasTA.inc"
     }
 
+    // clang-format off
+    const char* NoTARecurStartsWith[] = {
+      "std::__u::basic_ostream<wchar_t, std::__u::char_traits<wchar_t>>& std::__u::operator<<",
+    };
+    // clang-format on
+    {
+      std::string demangledName = llvm::demangle(funcName.str());
+      // replace all '> >' with '>>'
+      size_t start = 0;
+      while ((start = demangledName.find("> >", start)) != std::string::npos) {
+        demangledName.replace(start, 3, ">>");
+      }
+      for (auto Name : NoTARecurStartsWith)
+        if (startsWith(demangledName, Name))
+          return;
+    }
+
     // Manual TT specification is non-interprocedural and already handled once
     // at the start.
 
@@ -4737,6 +4838,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (funcName == "jl_get_binding_or_error" ||
         funcName == "ijl_get_binding_or_error") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "julia.gc_loaded") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(1), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(1)), &call);
+      return;
+    }
+    if (funcName == "julia.pointer_from_objref") {
+      if (direction & UP)
+        updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
       return;
     }
     if (funcName == "_ZNSt6chrono3_V212steady_clock3nowEv") {
@@ -5099,6 +5214,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "__size_returning_new_experiment") {
+      auto ptr = TypeTree(BaseType::Pointer);
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      ptr = ptr.Only(0, &call);
+      ptr |= TypeTree(BaseType::Integer).Only(DL.getPointerSize(), &call);
+      updateAnalysis(&call, ptr.Only(0, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
         funcName == "ijl_gc_alloc_typed") {
       auto ptr = TypeTree(BaseType::Pointer);
@@ -5114,6 +5245,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "julia.except_enter" || funcName == "ijl_excstack_state" ||
+        funcName == "jl_excstack_state") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "jl_array_copy" || funcName == "ijl_array_copy" ||
+        funcName == "jl_inactive_inout" ||
+        funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice") {
+      if (direction & DOWN)
+        updateAnalysis(&call, getAnalysis(call.getOperand(0)), &call);
+      if (direction & UP)
+        updateAnalysis(call.getOperand(0), getAnalysis(&call), &call);
+      return;
+    }
+
     if (isAllocationFunction(funcName, TLI)) {
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
@@ -5550,7 +5697,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     }
 
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
-        funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
+        funcName == "vprintf" || funcName == "puts" || funcName == "fputc" ||
+        funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
 
@@ -6202,6 +6350,36 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
 
     TypeTree Out;
     for (size_t i = 0; i < AT->getNumElements(); i++) {
+      Value *vec[2] = {
+          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
+          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
+      };
+      auto g2 = GetElementPtrInst::Create(
+          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      int Off = (int)ai.getLimitedValue();
+      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
+      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    }
+    return Out;
+  }
+  if (auto AT = dyn_cast<VectorType>(ET)) {
+#if LLVM_VERSION_MAJOR >= 12
+    assert(!AT->getElementCount().isScalable());
+    size_t numElems = AT->getElementCount().getKnownMinValue();
+#else
+    size_t numElems = AT->getNumElements();
+#endif
+    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+
+    TypeTree Out;
+    for (size_t i = 0; i < numElems; i++) {
       Value *vec[2] = {
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),

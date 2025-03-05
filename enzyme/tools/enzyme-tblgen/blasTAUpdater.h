@@ -1,6 +1,9 @@
+#ifndef ENZYME_TBLGEN_BLAS_TA_UPDATER_H
+#define ENZYME_TBLGEN_BLAS_TA_UPDATER_H
+
 #include "datastructures.h"
 
-void emit_BLASTypes(raw_ostream &os) {
+inline void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
   os << "const bool byRefFloat = byRef || blas.prefix == "
@@ -13,16 +16,7 @@ void emit_BLASTypes(raw_ostream &os) {
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
   os << "TypeTree ttFloat;\n"
-     << "llvm::Type *floatType; \n"
-     << "if (blas.floatType == \"s\" || blas.floatType == \"S\" || "
-        "blas.floatType == \"c\" || blas.floatType == \"C\") {\n"
-     << "  floatType = Type::getFloatTy(call.getContext());\n"
-     << "} else if (blas.floatType == \"d\" || blas.floatType == \"D\" || "
-        "blas.floatType == \"z\" || blas.floatType == \"Z\") {\n"
-     << "  floatType = Type::getDoubleTy(call.getContext());\n"
-     << "} else {\n"
-     << "  llvm_unreachable(\"unknown float type of blas\");\n"
-     << "}\n"
+     << "llvm::Type *floatType = blas.fpType(call.getContext(), true); \n"
      << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
      << "  ttFloat.insert({-1,0},floatType);\n"
@@ -74,7 +68,7 @@ void emit_BLASTypes(raw_ostream &os) {
 
 // cblas lv23 => layout
 // cublas => always handle
-void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
+inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   bool lv23 = pattern.isBLASLevel2or3();
 
@@ -189,7 +183,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   os << "}\n";
 }
 
-void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
+inline void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
 
@@ -208,3 +202,5 @@ void emitBlasTAUpdater(const RecordKeeper &RK, raw_ostream &os) {
     emit_BLASTA(newPattern, os);
   }
 }
+
+#endif // ENZYME_TBLGEN_BLAS_TA_UPDATER_H

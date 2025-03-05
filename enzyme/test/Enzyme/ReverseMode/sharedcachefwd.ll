@@ -197,13 +197,11 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.nvvm.barrier0()
 ; CHECK-NEXT:   %[[v9:.+]] = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.y()
 ; CHECK-NEXT:   %mul = shl i32 %[[v9]], 4
-; CHECK-NEXT:   %[[v10:.+]] = call i32 @llvm.nvvm.read.ptx.sreg.tid.y()
-; CHECK-NEXT:   %add = add i32 %mul, %[[v10]]
+; CHECK-NEXT:   %add = add i32 %mul, %1
 ; CHECK-NEXT:   %conv = zext i32 %add to i64
 ; CHECK-NEXT:   %[[v11:.+]] = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
 ; CHECK-NEXT:   %mul3 = shl i32 %[[v11]], 4
-; CHECK-NEXT:   %[[v12:.+]] = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
-; CHECK-NEXT:   %add5 = add i32 %mul3, %[[v12]]
+; CHECK-NEXT:   %add5 = add i32 %mul3, %0
 ; CHECK-NEXT:   %conv6 = zext i32 %add5 to i64
 ; CHECK-NEXT:   %[[v13:.+]] = call i32 @llvm.nvvm.read.ptx.sreg.nctaid.x()
 ; CHECK-NEXT:   %conv8 = zext i32 %[[v13]] to i64
@@ -212,10 +210,10 @@ attributes #6 = { nounwind }
 
 ; CHECK: for.body.lr.ph:
 ; CHECK-NEXT:   %mul9 = mul i64 %conv, %n
-; CHECK-NEXT:   %conv13 = zext i32 %[[v12]] to i64
+; CHECK-NEXT:   %conv13 = zext i32 %0 to i64
 ; CHECK-NEXT:   %add11 = add i64 %mul9, %conv13
 ; CHECK-NEXT:   %mul15 = mul i64 %n, %n
-; CHECK-NEXT:   %idxprom = zext i32 %[[v10]] to i64
+; CHECK-NEXT:   %idxprom = zext i32 %1 to i64
 ; CHECK-NEXT:   %arrayidx2195 = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_a, i64 0, i64 %idxprom, i64 %conv13
 ; CHECK-NEXT:   %arrayidx21 = addrspacecast float addrspace(3)* %arrayidx2195 to float*
 ; CHECK-NEXT:   %arrayidx4097 = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_b, i64 0, i64 %idxprom, i64 %conv13
@@ -403,11 +401,11 @@ attributes #6 = { nounwind }
 ; CHECK: invertfor.body44_phimerge_phimerge:
 ; CHECK-NEXT:   %[[v33:.+]] = phi {{(fast )?}}float [ %[[_unwrap51]], %invertfor.body44_phimerge_phirc ], [ 0.000000e+00, %invertfor.body44_phimerge ]
 ; CHECK-NEXT:   %[[m1diffe:.+]] = fmul fast float %"add56'de.1", %[[v33]]
-; CHECK-NEXT:   %[[conv13_unwrap53]] = zext i32 %[[v12]] to i64
+; CHECK-NEXT:   %[[conv13_unwrap53]] = zext i32 %0 to i64
 ; CHECK-NEXT:   %"arrayidx54101'ipg_unwrap" = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_b_shadow, i64 0, i64 %[[idxprom_unwrap20]], i64 %[[conv13_unwrap53]]
 ; CHECK-NEXT:   %"arrayidx54'ipc_unwrap" = addrspacecast float addrspace(3)* %"arrayidx54101'ipg_unwrap" to float*
 ; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx54'ipc_unwrap", float %[[m1diffe]] monotonic
-; CHECK-NEXT:   %[[idxprom_unwrap54]] = zext i32 %[[v10]] to i64
+; CHECK-NEXT:   %[[idxprom_unwrap54]] = zext i32 %1 to i64
 ; CHECK-NEXT:   %"arrayidx4999'ipg_unwrap" = getelementptr inbounds [16 x [16 x float]], [16 x [16 x float]] addrspace(3)* @_ZZ22gpu_square_matrix_multPfS_S_mE6tile_a_shadow, i64 0, i64 %[[idxprom_unwrap54]], i64 %[[idxprom_unwrap20]]
 ; CHECK-NEXT:   %"arrayidx49'ipc_unwrap" = addrspacecast float addrspace(3)* %"arrayidx4999'ipg_unwrap" to float*
 ; CHECK-NEXT:   %{{.+}} = atomicrmw fadd float* %"arrayidx49'ipc_unwrap", float %[[m0diffe]] monotonic

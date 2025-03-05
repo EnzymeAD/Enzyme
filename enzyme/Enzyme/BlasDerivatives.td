@@ -101,6 +101,7 @@ def is_diag_int : IntMatchers<
 
 def is_left : MagicInst;
 def is_lower : MagicInst;
+def is_zero : MagicInst;
 def is_nonunit : MagicInst;
 
 def First : MagicInst;
@@ -336,7 +337,6 @@ def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A,
 // }
 
 // C := alpha*op( A )*op( B ) + beta*C
-// FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
 def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
                   [cblas_layout, trans, trans, len, len, len, fp, mld<["transa", "m", "k"]>, mld<["transb", "k", "n"]>, fp, mld<["m", "n"]>],
@@ -365,6 +365,7 @@ def gemm : CallBlasPattern<(Op $layout, $transa, $transb, $m, $n, $k, $alpha, $A
                   /* beta  */ (FrobInnerProd<""> $m, $n, (Shadow $C), input<"C">),
                   /* C     */ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
                   ],
+                  // FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
                   (Seq<[], ["beta1"], 1>
                     (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
                     (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, $alpha, $A, (ld $A, $transa, $lda, $k, $m),          (Shadow $B),                        (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
@@ -411,7 +412,7 @@ def trmm : CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $a
                     ConstantInt<1>
                     )
                     ),
-                    /* B   */ (BlasCall<"trmm"> $layout, $side, $uplo, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, $side, $lda, $m, $n), (Shadow $B))
+                    /* B   */ (BlasCall<"trmm"> $layout, $side, $uplo, transpose<"transa">, $diag, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), (Shadow $B))
                   ]
                   >;
 
@@ -420,11 +421,117 @@ def symm: CallBlasPattern<(Op $layout, $side, $uplo, $m, $n, $alpha, $A, $lda, $
                           [cblas_layout, side, uplo, len, len, fp, mld<["side", "m", "n"]>, mld<["m", "n"]>, fp, mld<["m", "n"]>],
                    [
                         /*alpha*/ (AssertingInactiveArg),
-                        /*A*/ (AssertingInactiveArg),
-                        /*B*/ (AssertingInactiveArg),
+                        /*A*/ (Seq<["tmp", "is_left", "side", "m", "n"], [], 1>
+                            (BlasCall<"copy">
+                              (ISelect (is_left $side), $m, $n),
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>),
+                              use<"tmp">,
+                              ConstantInt<1>
+                            ),
+                            (BlasCall<"syr2k">
+                            $layout,
+                            $uplo,
+                            (side_to_trans $side),
+                            (ISelect (is_left $side), $m, $n),
+                            (ISelect (is_left $side), $n, $m),
+                            $alpha,
+                            $B, (ld $B, Char<"N">, $ldb, $m, $m),
+                            (Shadow $C),
+                            Constant<"1.0">, 
+                            (Shadow $A)
+                            ),
+                            (BlasCall<"axpy"> 
+                              (ISelect (is_left $side), $m, $n), 
+                              Constant<"-1">,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>),
+                              use<"tmp">,
+                              ConstantInt<1>
+                            ),
+                            (BlasCall<"axpy"> 
+                              (ISelect (is_left $side), $m, $n), 
+                              Constant<"0.5">,
+                              use<"tmp">,
+                              ConstantInt<1>,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>)
+                            )
+                        ),
+                        /*B*/ (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m), (Shadow $C), Constant<"1">, (Shadow $B)),
                         /*beta*/ (AssertingInactiveArg),
-                        /*C*/ (AssertingInactiveArg),
-                   ]>;
+                        /*C*/ (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>)
+                   ],
+                  // FWD: dC = dalpha A B + alpha dA B + alpha A dB + dbeta C + beta dC 
+                  (Seq<[], ["beta1"], 1>
+                    (BlasCall<"axpy"> (AssertingInactiveArg), (Shadow $beta), $C, (Shadow $C)),
+                    (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, $A, (ld $A, (side_to_trans $side), $lda, $n, $m),          (Shadow $B),                        (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
+                    (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, $alpha, (Shadow $A),                                 $B, (ld $B, Char<"N">, $ldb, $m, $m), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
+                    (BlasCall<"symm"> $layout, $side, $uplo, $m, $n, (Shadow $alpha), $A, (ld $A, (side_to_trans $side), $lda, $n, $m), $B, (ld $B, Char<"N">, $ldb, $m, $m), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $C)),
+                    (FirstUse<"beta1"> (BlasCall<"lascl"> $layout, Char<"G">, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, $beta, $m, $n, (Shadow $C), Alloca<1>))
+                  )
+                  >;
+
+
+
+def syr2: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $A, $lda),
+                          ["A"],
+                          [cblas_layout, uplo, len, fp, vinc<["n"]>, vinc<["n"]>, mld<["uplo", "n", "n"]>],
+      [
+          /*alpha*/ (AssertingInactiveArg),
+          /*x*/ (AssertingInactiveArg),
+          /*y*/ (AssertingInactiveArg),
+          /*A*/ (AssertingInactiveArg)
+      ]
+      >;
+
+
+def symv: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
+                          ["y"],
+                          [cblas_layout, uplo, len, fp, mld<["uplo", "n", "n"]>, vinc<["n"]>, fp, vinc<["n"]>],
+                   [
+                        /*alpha*/ (Seq<["Ax", "vector", "n"], [], 1>
+                          (BlasCall<"symv"> $layout, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), $x, Constant<"0.0">, use<"Ax">, ConstantInt<1>),
+                          (BlasCall<"dot"> $n, (Shadow $y), use<"Ax">, ConstantInt<1>)
+                          ),
+                        /*A*/ (Seq<["tmp", "vector", "n"], [], 1>
+                            // Save the diagonal as we shouldn't add syr2 into it
+                            (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
+
+                            (BlasCall<"syr2">
+                              $layout,
+                              $uplo,
+                              $n,
+                              $alpha,
+                              $x,
+                              (Shadow $y),
+                              (Shadow $A)
+                            ),
+                            (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
+                        ),
+                        /*x*/ (BlasCall<"symv"> $layout, $uplo, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $y), Constant<"1.0">, (Shadow $x)),
+                        /*beta*/ (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
+                        /*y*/ (BlasCall<"scal"> $n, $beta, (Shadow $y))
+                   ],
+                  // FWD: dy = dalpha A x + alpha dA x + alpha A dx + dbeta y + beta dy
+
+                  (Seq<[], ["beta1"], 1>
+                    // dbeta y
+                    (BlasCall<"axpy"> $n, (Shadow $beta), $y, (Shadow $y)),
+
+                    // alpha A dx  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $uplo, $n, $alpha,                   $A, (ld $A, Char<"N">, $lda, $n, $n),  (Shadow $x), (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // alpha dA x  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $uplo, $n, $alpha,                   (Shadow $A),                           $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // dalpha A x  (optional + beta dy)
+                    (BlasCall<"symv"> $layout, $uplo, $n, (Shadow $alpha),                   $A, (ld $A, Char<"N">, $lda, $n, $n),  $x, (FirstUse<"beta1"> $beta, Constant<"1">), (Shadow $y)),
+
+                    // (beta dy)
+                    (FirstUse<"beta1"> (BlasCall<"scal"> $n, $beta, (Shadow $y)))
+                  )
+                  >;
 
 def syr2k : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda, $B, $ldb, $beta, $C, $ldc),
                   ["C"],
@@ -444,7 +551,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   [
                   
                   /* alpha */ (AssertingInactiveArg), /*(Seq<["AB", "product", "m", "n"], [], true> 
-                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $m), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $n, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),*/
                   /* A     */
                   (Seq<[], [], 1>
@@ -651,7 +758,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                       
                       (BlasCall<"trsm"> $layout, (uplo_to_side $uplo), $uplo, Char<"T">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), use<"ztri">, $n) ,
 
-                      (For<"i", 0> (Sub $n, ConstantInt<1>),
+                      (For<"i", 0> (ISelect (is_zero $n), ConstantInt<0>, (Sub $n, ConstantInt<1>)),
                         (BlasCall<"axpy">
                             (Sub (Sub $n, ConstantInt<1>), $i),
                             Constant<"1.0">,

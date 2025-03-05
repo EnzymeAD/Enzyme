@@ -30,20 +30,22 @@ using namespace mlir::enzyme;
 mlir::enzyme::MGradientUtils::MGradientUtils(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
-    IRMapping &invertedPointers_,
+    IRMapping &invertedPointers_, const llvm::ArrayRef<bool> returnPrimals,
+    const llvm::ArrayRef<bool> returnShadows,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode, unsigned width, bool omp)
+    DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      RetDiffeTypes(ReturnActivity) {}
+      TA(TA_), TR(TR_), omp(omp), postpasses(postpasses),
+      returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
+      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {
@@ -54,6 +56,15 @@ mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     llvm_unreachable("Could not get new val from original");
   }
   return originalToNewFn.lookupOrNull(originst);
+}
+
+SmallVector<mlir::Value, 1>
+mlir::enzyme::MGradientUtils::getNewFromOriginal(ValueRange originst) const {
+  SmallVector<mlir::Value, 1> results;
+  for (auto op : originst) {
+    results.push_back(getNewFromOriginal(op));
+  }
+  return results;
 }
 
 Block *
@@ -106,7 +117,8 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     return invertedPointers.lookupOrNull(v);
 
   if (isConstantValue(v)) {
-    if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
+    if (auto iface =
+            getShadowType(v.getType()).dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
       if (auto op = v.getDefiningOp())
         Builder2.setInsertionPoint(getNewFromOriginal(op));

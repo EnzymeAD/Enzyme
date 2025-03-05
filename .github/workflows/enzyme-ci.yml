@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["11", "12", "13", "14", "15", "16"]
+        llvm: ["15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
   
     timeout-minutes: 30 
 
@@ -28,10 +28,6 @@ jobs:
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
           sudo python3 -m pip install --upgrade pip lit
-          if [[ '${{ matrix.llvm }}' == '13' ]]; then
-            sudo sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-            sudo sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
-          fi
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
@@ -50,9 +46,6 @@ jobs:
     - name: make check-enzyme
       working-directory: build
       run: make  -j `nproc` check-enzyme-bench
-    - name: graph results
-      if: github.event_name != 'pull_request' && matrix.build == 'Release'
-      run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
   
   build-macos:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} macOS
@@ -61,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["12", "13", "14", "15", "16"]
+        llvm: ["15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -76,7 +69,7 @@ jobs:
       run: rm -rf build && mkdir build
     - name: cmake
       working-directory: build
-      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=/Users/runner/Library/Python/3.12/bin/lit -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`find /Users/runner/Library/Python/ -iname lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
     - name: make
       working-directory: build
       run: make -j 3
@@ -89,9 +82,6 @@ jobs:
     - name: make check-enzyme
       working-directory: build
       run: make -j3 check-enzyme-bench
-    - name: graph results
-      if: github.event_name != 'pull_request' && matrix.build == 'Release'
-      run: python3 enzyme/test/upload-results.py build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
 
   build-xcode:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} macOS XCode
@@ -100,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["13"] #, "14"]
+        llvm: ["16"]
         build: ["Release"] # "RelWithDebInfo"
 
     timeout-minutes: 30
@@ -115,5 +105,5 @@ jobs:
     - name: cmake
       working-directory: build
       run: |
-          cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=/Users/runner/Library/Python/3.12/bin/lit -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+          cmake ../enzyme -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
           cmake --build . --parallel 3

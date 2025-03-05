@@ -17,6 +17,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -32,10 +33,9 @@ struct ArithConstantOpBatchInterface
     : public BatchOpInterface::ExternalModel<ArithConstantOpBatchInterface,
                                              arith::ConstantOp> {
 
-  mlir::Operation *createBatch(Operation *src, IRMapping &mapper,
-                               Operation::CloneOptions options,
-                               std::map<Operation *, Operation *> &opMap,
-                               ArrayRef<int64_t> batchSizes) const {
+  mlir::LogicalResult createBatch(Operation *src, OpBuilder &builder,
+                                  IRMapping &mapper,
+                                  ArrayRef<int64_t> batchSizes) const {
 
     SmallVector<Type> resultTypes(src->getResultTypes().begin(),
                                   src->getResultTypes().end());
@@ -54,7 +54,9 @@ struct ArithConstantOpBatchInterface
     auto cop = mlir::Operation::create(
         src->getLoc(), src->getName(), resultTypes, {}, std::move(attrs),
         OpaqueProperties(nullptr), mlir::BlockRange(), 0);
-    return cop;
+    builder.insert(cop);
+    mapper.map(src->getResult(0), cop->getResult(0));
+    return success();
   }
 };
 
@@ -66,5 +68,12 @@ void mlir::enzyme::registerArithDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     registerInterfaces(context);
     arith::ConstantOp::attachInterface<ArithConstantOpBatchInterface>(*context);
+  });
+}
+
+void mlir::enzyme::registerTensorDialectAutoDiffInterface(
+    DialectRegistry &registry) {
+  registry.addExtension(+[](MLIRContext *context, tensor::TensorDialect *) {
+    registerInterfaces(context);
   });
 }

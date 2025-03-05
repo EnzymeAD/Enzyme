@@ -36,11 +36,15 @@ public:
   MTypeAnalysis &TA;
   MTypeResults TR;
   bool omp;
+  llvm::StringRef postpasses;
+  const llvm::ArrayRef<bool> returnPrimals;
+  const llvm::ArrayRef<bool> returnShadows;
 
   unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
   ArrayRef<DIFFE_TYPE> RetDiffeTypes;
 
+  SmallVector<mlir::Value, 1> getNewFromOriginal(ValueRange originst) const;
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
@@ -48,13 +52,16 @@ public:
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                  MTypeResults TR_, IRMapping &invertedPointers_,
+                 const llvm::ArrayRef<bool> returnPrimals,
+                 const llvm::ArrayRef<bool> returnShadows,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  ArrayRef<DIFFE_TYPE> ReturnActivities,
                  ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 DerivativeMode mode, unsigned width, bool omp);
+                 DerivativeMode mode, unsigned width, bool omp,
+                 llvm::StringRef postpasses);
   void erase(Operation *op) { op->erase(); }
   void replaceOrigOpWith(Operation *op, ValueRange vals) {
     for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
@@ -82,6 +89,16 @@ public:
     auto iface = cast<AutoDiffTypeInterface>(T);
     return iface.getShadowType(width);
   }
+
+  static llvm::SmallVector<mlir::Value, 1>
+  reindex_arguments(llvm::ArrayRef<mlir::Value> vals,
+                    mlir::OperandRange range) {
+    llvm::SmallVector<mlir::Value, 1> results;
+    for (size_t i = 0; i < range.size(); i++) {
+      results.push_back(vals[range.getBeginOperandIndex() + i]);
+    }
+    return results;
+  }
 };
 
 class MDiffeGradientUtils : public MGradientUtils {
@@ -102,24 +119,29 @@ public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, IRMapping &invertedPointers_,
+                      const llvm::ArrayRef<bool> returnPrimals,
+                      const llvm::ArrayRef<bool> returnShadows,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &activevals_,
                       ArrayRef<DIFFE_TYPE> RetActivity,
                       ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeMode mode, unsigned width, bool omp)
+                      DerivativeMode mode, unsigned width, bool omp,
+                      llvm::StringRef postpasses)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
-                       constantvalues_, activevals_, RetActivity, ArgActivity,
-                       origToNew_, origToNewOps_, mode, width, omp),
+                       returnPrimals, returnShadows, constantvalues_,
+                       activevals_, RetActivity, ArgActivity, origToNew_,
+                       origToNewOps_, mode, width, omp, postpasses),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
   static MDiffeGradientUtils *CreateFromClone(
       MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
       FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-      const std::vector<bool> &returnPrimals,
-      const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
-      ArrayRef<DIFFE_TYPE> ArgActivity, mlir::Type additionalArg, bool omp) {
+      const llvm::ArrayRef<bool> returnPrimals,
+      const llvm::ArrayRef<bool> returnShadows,
+      ArrayRef<DIFFE_TYPE> RetActivity, ArrayRef<DIFFE_TYPE> ArgActivity,
+      mlir::Type additionalArg, bool omp, llvm::StringRef postpasses) {
     std::string prefix;
 
     switch (mode) {
@@ -153,9 +175,10 @@ public:
         additionalArg);
     MTypeResults TR; // TODO
     return new MDiffeGradientUtils(
-        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
-        nonconstant_values, RetActivity, ArgActivity, originalToNew,
-        originalToNewOps, mode, width, omp);
+        Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
+        returnShadows, constant_values, nonconstant_values, RetActivity,
+        ArgActivity, originalToNew, originalToNewOps, mode, width, omp,
+        postpasses);
   }
 };
 

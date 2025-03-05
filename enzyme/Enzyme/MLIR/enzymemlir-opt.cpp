@@ -13,11 +13,13 @@
 
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Async/IR/Async.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/Func/Extensions/InlinerExtension.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -27,7 +29,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/InitAllPasses.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
@@ -66,23 +68,28 @@ int main(int argc, char **argv) {
   registry.insert<mlir::omp::OpenMPDialect>();
   registry.insert<mlir::math::MathDialect>();
   registry.insert<mlir::linalg::LinalgDialect>();
+  registry.insert<mlir::tensor::TensorDialect>();
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
 
   mlir::registerenzymePasses();
 
+  mlir::func::registerInlinerExtension(registry);
+
   // Register the standard passes we want.
   mlir::registerCSEPass();
-  mlir::registerConvertAffineToStandardPass();
+  mlir::registerMem2RegPass();
+  mlir::registerLowerAffinePass();
   mlir::registerSCCPPass();
   mlir::registerInlinerPass();
   mlir::registerCanonicalizerPass();
   mlir::registerSymbolDCEPass();
   mlir::registerLoopInvariantCodeMotionPass();
   mlir::registerConvertSCFToOpenMPPass();
+  mlir::registerSCFToControlFlowPass();
   mlir::affine::registerAffinePasses();
-  mlir::registerReconcileUnrealizedCasts();
+  mlir::registerReconcileUnrealizedCastsPass();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);

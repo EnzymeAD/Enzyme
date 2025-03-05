@@ -47,20 +47,17 @@ constexpr auto StructKind = clang::TagTypeKind::Struct;
 constexpr auto StructKind = clang::TagTypeKind::TTK_Struct;
 #endif
 
-#if LLVM_VERSION_MAJOR < 12
-constexpr auto stringkind = clang::StringLiteral::StringKind::Ascii;
-#endif
-
 template <typename ConsumerType>
 class EnzymeAction final : public clang::PluginASTAction {
 protected:
   std::unique_ptr<clang::ASTConsumer>
-  CreateASTConsumer(clang::CompilerInstance &CI, llvm::StringRef InFile) {
+  CreateASTConsumer(clang::CompilerInstance &CI,
+                    llvm::StringRef InFile) override {
     return std::unique_ptr<clang::ASTConsumer>(new ConsumerType(CI));
   }
 
   bool ParseArgs(const clang::CompilerInstance &CI,
-                 const std::vector<std::string> &args) {
+                 const std::vector<std::string> &args) override {
     return true;
   }
 
@@ -84,7 +81,7 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
 };
 
 #if LLVM_VERSION_MAJOR >= 18
-void registerEnzyme(llvm::PassBuilder &PB);
+extern "C" void registerEnzyme(llvm::PassBuilder &PB);
 #endif
 
 class EnzymePlugin final : public clang::ASTConsumer {
@@ -321,35 +318,18 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
     auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), loc, FD, false,
                                   loc, FD->getType(), ExprValueKind::VK_LValue,
                                   FD, TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
     auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
     StringRef cstr = Literal->getString();
     Expr *exprs[2] = {
-#if LLVM_VERSION_MAJOR >= 12
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval, FPOptionsOverride()),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval, FPOptionsOverride())
-#else
-      ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay, DR,
-                               nullptr, rval),
-      ImplicitCastExpr::Create(
-          AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
-          StringLiteral::Create(
-              AST, cstr, stringkind,
-              /*Pascal*/ false,
-              AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
-          nullptr, rval)
-#endif
-    };
+        ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
+                                 DR, nullptr, rval, FPOptionsOverride()),
+        ImplicitCastExpr::Create(
+            AST, AST.getPointerType(CharTy), CastKind::CK_ArrayToPointerDecay,
+            StringLiteral::Create(
+                AST, cstr, stringkind,
+                /*Pascal*/ false,
+                AST.getStringLiteralArrayType(CharTy, cstr.size()), loc),
+            nullptr, rval, FPOptionsOverride())};
     auto IL = new (AST) InitListExpr(AST, loc, exprs, loc);
     V->setInit(IL);
     IL->setType(T);
@@ -367,7 +347,6 @@ struct EnzymeFunctionLikeAttrInfo : public ParsedAttrInfo {
   }
 };
 
-#if LLVM_VERSION_MAJOR >= 12
 static ParsedAttrInfoRegistry::Add<EnzymeFunctionLikeAttrInfo>
     X3("enzyme_function_like", "");
 
@@ -418,7 +397,6 @@ struct EnzymeShouldRecomputeAttrInfo : public ParsedAttrInfo {
 
 static ParsedAttrInfoRegistry::Add<EnzymeShouldRecomputeAttrInfo>
     ESR("enzyme_shouldrecompute", "");
-#endif
 
 struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
   EnzymeInactiveAttrInfo() {
@@ -495,21 +473,12 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
     auto DR = DeclRefExpr::Create(
         AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
         ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
     auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
     Expr *expr = nullptr;
     if (isa<FunctionDecl>(D)) {
-#if LLVM_VERSION_MAJOR >= 12
       expr =
           ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
                                    DR, nullptr, rval, FPOptionsOverride());
-#else
-      expr = ImplicitCastExpr::Create(
-          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
-#endif
     } else {
       expr =
           UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
@@ -608,21 +577,12 @@ struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
     auto DR = DeclRefExpr::Create(
         AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
         ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
     auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
     Expr *expr = nullptr;
     if (isa<FunctionDecl>(D)) {
-#if LLVM_VERSION_MAJOR >= 12
       expr =
           ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
                                    DR, nullptr, rval, FPOptionsOverride());
-#else
-      expr = ImplicitCastExpr::Create(
-          AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
-#endif
     } else {
       expr =
           UnaryOperator::Create(AST, DR, UnaryOperatorKind::UO_AddrOf, FT, rval,
@@ -715,20 +675,11 @@ struct EnzymeSparseAccumulateAttrInfo : public ParsedAttrInfo {
     auto DR = DeclRefExpr::Create(
         AST, NestedNameSpecifierLoc(), loc, cast<ValueDecl>(D), false, loc, T,
         ExprValueKind::VK_LValue, cast<NamedDecl>(D), TemplateArgs);
-#if LLVM_VERSION_MAJOR >= 13
     auto rval = ExprValueKind::VK_PRValue;
-#else
-    auto rval = ExprValueKind::VK_RValue;
-#endif
     Expr *expr = nullptr;
-#if LLVM_VERSION_MAJOR >= 12
     expr =
         ImplicitCastExpr::Create(AST, FT, CastKind::CK_FunctionToPointerDecay,
                                  DR, nullptr, rval, FPOptionsOverride());
-#else
-    expr = ImplicitCastExpr::Create(
-        AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr, rval);
-#endif
 
     if (expr->isValueDependent()) {
       unsigned ID = S.getDiagnostics().getCustomDiagID(

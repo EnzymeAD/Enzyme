@@ -13,6 +13,9 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
+
 #include "llvm/ADT/BreadthFirstIterator.h"
 
 #include "EnzymeLogic.h"
@@ -22,8 +25,8 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
-                      const std::vector<bool> &returnPrimals,
-                      const std::vector<bool> &returnShadows) {
+                      const ArrayRef<bool> returnPrimals,
+                      const ArrayRef<bool> returnShadows) {
   auto inst = oBB->getTerminator();
 
   mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
@@ -57,7 +60,7 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
             ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
         auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
             nBuilder, ret.getLoc());
-        retargs.push_back(gutils->invertPointerM(toret, nBuilder));
+        retargs.push_back(toret);
       }
     }
   }
@@ -78,7 +81,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented) {
+    std::vector<bool> volatile_args, void *augmented, bool omp,
+    llvm::StringRef postpasses) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -91,7 +95,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       fn, RetActivity, ArgActivity,
       // std::map<Argument *, bool>(_uncacheable_args.begin(),
       //                           _uncacheable_args.end()),
-      returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args};
+      returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args,
+      omp};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -100,10 +105,12 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   for (auto act : RetActivity) {
     returnShadows.push_back(act != DIFFE_TYPE::CONSTANT);
   }
+  SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
+  SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
   auto gutils = MDiffeGradientUtils::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, returnPrimals, returnShadows,
+      *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
-      /*omp*/ false);
+      /*omp*/ false, postpasses);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
   insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(
@@ -166,7 +173,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       valid &= res.succeeded();
     }
 
-    createTerminator(gutils, &oBB, returnPrimals, returnShadows);
+    createTerminator(gutils, &oBB, returnPrimalsP, returnShadowsP);
   }
 
   // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
@@ -193,10 +200,19 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   if (!valid)
     return nullptr;
 
-  // if (PostOpt)
-  //  PPC.optimizeIntermediate(nf);
-  // if (EnzymePrint) {
-  //  llvm::errs() << nf << "\n";
-  //}
+  if (postpasses != "") {
+    mlir::PassManager pm(nf->getContext());
+    std::string error_message;
+    // llvm::raw_string_ostream error_stream(error_message);
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
+    if (mlir::failed(result)) {
+      return nullptr;
+    }
+
+    if (!mlir::succeeded(pm.run(nf))) {
+      return nullptr;
+    }
+  }
+
   return nf;
 }

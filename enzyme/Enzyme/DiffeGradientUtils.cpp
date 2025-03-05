@@ -59,11 +59,11 @@ DiffeGradientUtils::DiffeGradientUtils(
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
     bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
-    DerivativeMode mode, unsigned width, bool omp)
+    DerivativeMode mode, bool runtimeActivity, unsigned width, bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn,
-                    shadowReturnUsed, constant_values, origToNew_, mode, width,
-                    omp) {
+                    shadowReturnUsed, constant_values, origToNew_, mode,
+                    runtimeActivity, width, omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
@@ -84,11 +84,11 @@ DiffeGradientUtils::DiffeGradientUtils(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
-    TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool shadowReturn, bool diffeReturnArg,
-    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
-    Type *additionalArg, bool omp) {
+    EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
+    unsigned width, Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool shadowReturn,
+    bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+    ReturnType returnValue, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -162,7 +162,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   auto res = new DiffeGradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
-      mode, width, omp);
+      mode, runtimeActivity, width, omp);
 
   return res;
 }
@@ -187,19 +187,15 @@ AllocaInst *DiffeGradientUtils::getDifferential(Value *val) {
     differentials[val] =
         entryBuilder.CreateAlloca(type, nullptr, val->getName() + "'de");
     auto Alignment =
-        oldFunc->getParent()->getDataLayout().getPrefTypeAlignment(type);
-    differentials[val]->setAlignment(Align(Alignment));
+        oldFunc->getParent()->getDataLayout().getPrefTypeAlign(type);
+    differentials[val]->setAlignment(Alignment);
     ZeroMemory(entryBuilder, type, differentials[val],
                /*isTape*/ false);
   }
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
   if (val->getContext().supportsTypedPointers()) {
-#endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
-#if LLVM_VERSION_MAJOR >= 13
   }
-#endif
 #endif
   return differentials[val];
 }
@@ -231,11 +227,10 @@ Value *DiffeGradientUtils::diffe(Value *val, IRBuilder<> &BuilderM) {
   return BuilderM.CreateLoad(ty, getDifferential(val));
 }
 
-SmallVector<SelectInst *, 4>
-DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
-                               Type *addingType, unsigned start, unsigned size,
-                               llvm::ArrayRef<llvm::Value *> idxs,
-                               llvm::Value *mask) {
+SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
+    Value *val, Value *dif, IRBuilder<> &BuilderM, Type *addingType,
+    unsigned start, unsigned size, llvm::ArrayRef<llvm::Value *> idxs,
+    llvm::Value *mask, size_t ignoreFirstSlicesOfDif) {
   assert(addingType);
   auto &DL = oldFunc->getParent()->getDataLayout();
   Type *VT = val->getType();
@@ -262,7 +257,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   if (start == 0 && size == storeSize && !isa<StructType>(VT)) {
     if (getWidth() == 1) {
       SmallVector<unsigned, 1> eidxs;
-      for (auto idx : idxs) {
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
         eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
       }
       return addToDiffe(val, extractMeta(BuilderM, dif, eidxs), BuilderM,
@@ -274,8 +269,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         SmallVector<unsigned, 1> eidxs = {(unsigned)j};
         lidxs.push_back(
             ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
-        for (auto idx : idxs) {
+        for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
           eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+        }
+        for (auto idx : idxs) {
           lidxs.push_back(idx);
         }
         for (auto v : addToDiffe(val, extractMeta(BuilderM, dif, eidxs),
@@ -308,8 +305,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                          ? min(start + size - (unsigned)SL->getElementOffset(i),
                                (unsigned)subTypeSize)
                          : subTypeSize;
-      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
-                               sub_end - sub_start, lidxs, mask))
+      for (auto v :
+           addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                      sub_end - sub_start, lidxs, mask, ignoreFirstSlicesOfDif))
         res.push_back(v);
     }
     return res;
@@ -336,8 +334,9 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                          ? min(start + size - (unsigned)(i * subTypeSize),
                                (unsigned)subTypeSize)
                          : subTypeSize;
-      for (auto v : addToDiffe(val, dif, BuilderM, addingType, sub_start,
-                               sub_end - sub_start, lidxs, mask))
+      for (auto v :
+           addToDiffe(val, dif, BuilderM, addingType, sub_start,
+                      sub_end - sub_start, lidxs, mask, ignoreFirstSlicesOfDif))
         res.push_back(v);
     }
     return res;
@@ -593,8 +592,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       // store->setAlignment(align);
     } else {
       Type *tys[] = {res->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                         Intrinsic::masked_store, tys);
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
+                                       Intrinsic::masked_store, tys);
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
       assert(align);
       Value *alignv =
@@ -612,8 +611,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       // store->setAlignment(align);
     } else {
       Type *tys[] = {res->getType(), ptr->getType()};
-      auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                         Intrinsic::masked_store, tys);
+      auto F = getIntrinsicDeclaration(oldFunc->getParent(),
+                                       Intrinsic::masked_store, tys);
       auto align = cast<AllocaInst>(ptr)->getAlign().value();
       assert(align);
       Value *alignv =
@@ -709,17 +708,13 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
   }
   Value *tostore = getDifferential(val);
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
   if (toset->getContext().supportsTypedPointers()) {
-#endif
     if (toset->getType() != tostore->getType()->getPointerElementType()) {
       llvm::errs() << "toset:" << *toset << "\n";
       llvm::errs() << "tostore:" << *tostore << "\n";
     }
     assert(toset->getType() == tostore->getType()->getPointerElementType());
-#if LLVM_VERSION_MAJOR >= 13
   }
-#endif
 #endif
   BuilderM.CreateStore(toset, tostore);
 }
@@ -760,15 +755,11 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                UnwrapMode::AttemptFullUnwrapWithLookup);
   Type *T;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
   if (metaforfree->getContext().supportsTypedPointers()) {
-#endif
     T = metaforfree->getType()->getPointerElementType();
-#if LLVM_VERSION_MAJOR >= 15
   } else {
     T = PointerType::getUnqual(metaforfree->getContext());
   }
-#endif
 #else
   T = PointerType::getUnqual(metaforfree->getContext());
 #endif
@@ -804,12 +795,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
   if (addingSize != size) {
     assert(size > addingSize);
-#if LLVM_VERSION_MAJOR >= 12
     addingType =
         VectorType::get(addingType, size / addingSize, /*isScalable*/ false);
-#else
-    addingType = VectorType::get(addingType, size / addingSize);
-#endif
     size = (size / addingSize) * addingSize;
   }
 
@@ -832,13 +819,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 13
   if (origptr->getContext().supportsTypedPointers()) {
-#endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
-#if LLVM_VERSION_MAJOR >= 13
   }
-#endif
 #endif
 
   assert(ptr);
@@ -980,12 +963,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
      */
     AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
     if (auto vt = dyn_cast<VectorType>(addingType)) {
-#if LLVM_VERSION_MAJOR >= 12
       assert(!vt->getElementCount().isScalable());
       size_t numElems = vt->getElementCount().getKnownMinValue();
-#else
-      size_t numElems = vt->getNumElements();
-#endif
       auto rule = [&](Value *dif, Value *ptr) {
         for (size_t i = 0; i < numElems; ++i) {
           auto vdif = BuilderM.CreateExtractElement(dif, i);
@@ -994,7 +973,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
           auto vptr = BuilderM.CreateGEP(addingType, ptr, Idxs);
-#if LLVM_VERSION_MAJOR >= 13
           MaybeAlign alignv = align;
           if (alignv) {
             if (start != 0) {
@@ -1008,28 +986,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           BuilderM.CreateAtomicRMW(op, vptr, vdif, alignv,
                                    AtomicOrdering::Monotonic,
                                    SyncScope::System);
-#else
-          AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
-              op, vptr, vdif, AtomicOrdering::Monotonic, SyncScope::System);
-          if (align) {
-            auto alignv = align.getValue().value();
-            if (start != 0) {
-              assert(alignv != 0);
-              // todo make better alignment calculation
-              if (start % alignv != 0) {
-                alignv = 1;
-              }
-            }
-            rmw->setAlignment(Align(alignv));
-          }
-#endif
         }
       };
       applyChainRule(BuilderM, rule, dif, ptr);
     } else {
       auto rule = [&](Value *dif, Value *ptr) {
         dif = SanitizeDerivatives(orig, dif, BuilderM);
-#if LLVM_VERSION_MAJOR >= 13
         MaybeAlign alignv = align;
         if (alignv) {
           if (start != 0) {
@@ -1042,21 +1004,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         }
         BuilderM.CreateAtomicRMW(op, ptr, dif, alignv,
                                  AtomicOrdering::Monotonic, SyncScope::System);
-#else
-        AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
-            op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
-        if (align) {
-          auto alignv = align.getValue().value();
-          if (start != 0) {
-            assert(alignv != 0);
-            // todo make better alignment calculation
-            if (start % alignv != 0) {
-              alignv = 1;
-            }
-          }
-          rmw->setAlignment(Align(alignv));
-        }
-#endif
       };
       applyChainRule(BuilderM, rule, dif, ptr);
     }
@@ -1132,10 +1079,10 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     applyChainRule(BuilderM, rule, ptr, dif);
   } else {
     Type *tys[] = {addingType, origptr->getType()};
-    auto LF = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                        Intrinsic::masked_load, tys);
-    auto SF = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                        Intrinsic::masked_store, tys);
+    auto LF = getIntrinsicDeclaration(oldFunc->getParent(),
+                                      Intrinsic::masked_load, tys);
+    auto SF = getIntrinsicDeclaration(oldFunc->getParent(),
+                                      Intrinsic::masked_store, tys);
     unsigned aligni = align ? align->value() : 0;
 
     if (aligni != 0)
@@ -1231,10 +1178,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         // are distinct statically as they are allocas/mallocs, if not compare
         // the pointers and conditionally execute.
         if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
-            EnzymeRuntimeActivityCheck && !merge) {
-          Value *shadow = Builder2.CreateICmpNE(
-              lookupM(getNewFromOriginal(origptr), Builder2),
-              lookupM(invertPointerM(origptr, Builder2), Builder2));
+            runtimeActivity && !merge) {
+          Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
+          Value *shadow_val =
+              lookupM(invertPointerM(origptr, Builder2), Builder2);
+          if (getWidth() != 1) {
+            shadow_val = extractMeta(Builder2, shadow_val, 0);
+          }
+          Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
 
           BasicBlock *current = Builder2.GetInsertBlock();
           BasicBlock *conditional =

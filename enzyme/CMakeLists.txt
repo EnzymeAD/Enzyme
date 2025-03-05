@@ -17,11 +17,13 @@ add_definitions(-DENZYME_VERSION_PATCH=${ENZYME_PATCH_VERSION})
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-SET(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch")
-SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
-SET(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
-SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
+if (NOT DEFINED ENZYME_CONFIGURED_WITH_PRESETS)
+  set(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
+  set(CMAKE_CXX_FLAGS_RELEASE "-O2")
+  set(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
+endif()
 
 #SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -fno-omit-frame-pointer -fsanitize=address")
 #SET(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
@@ -29,6 +31,7 @@ SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
@@ -68,17 +71,29 @@ message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
 find_package(LLVM REQUIRED CONFIG)
 
+if (NOT LLVM_ENABLE_PLUGINS)
+  message("LLVM_ENABLE_PLUGINS OFF")
+  message("Setting ENZYME_ENABLE_PLUGINS OFF")
+  set(ENZYME_ENABLE_PLUGINS OFF)
+endif()
+
+if ((NOT ENZYME_EXTERNAL_SHARED_LIB) AND (NOT ENZYME_ENABLE_PLUGINS))
+  message("ENZYME_EXTERNAL_SHARED_LIB OFF")
+  message("ENZYME_ENABLE_PLUGINS OFF")
+  message(SEND_ERROR "You have selected a build without creating the Enzyme plugin, nor Enzyme as a shared library -- and nothing will be built.")
+endif()
+
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
   if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
       message("found llvm match ${CMAKE_MATCH_1} dir ${LLVM_DIR}")
-    if (EXISTS ${LLVM_DIR}/../../../bin/llvm-lit) 
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/../../../bin/llvm-lit) 
+    if (EXISTS ${LLVM_DIR}/../../../bin/llvm-lit)
+      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/../../../bin/llvm-lit)
     else()
       set(LLVM_EXTERNAL_LIT lit)
     endif()
   else()
-    if (EXISTS ${LLVM_DIR}/bin/llvm-lit) 
-      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/bin/llvm-lit) 
+    if (EXISTS ${LLVM_DIR}/bin/llvm-lit)
+      set(LLVM_EXTERNAL_LIT ${LLVM_DIR}/bin/llvm-lit)
     else()
       set(LLVM_EXTERNAL_LIT lit)
     endif()
@@ -192,7 +207,7 @@ if (${Clang_FOUND})
     add_definitions(${CLANG_DEFINITIONS})
 endif()
 else()
-    set(Clang_FOUND 0) 
+    set(Clang_FOUND 0)
 endif()
 message("found Clang ${Clang_FOUND}")
 
@@ -208,7 +223,7 @@ if (DEFINED MLIR_DIR)
         include(AddMLIR)
     endif()
 else()
-    set(MLIR_FOUND 0) 
+    set(MLIR_FOUND 0)
 endif()
 message("found MLIR ${MLIR_FOUND}")
 # include(AddClang)
@@ -220,8 +235,8 @@ message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
 message("found LLVM definitions " ${LLVM_DEFINITIONS})
 message("found LLVM version " ${LLVM_VERSION_MAJOR})
 
-if(LLVM_VERSION_MAJOR LESS 9)
-  message(FATAL_ERROR "LLVM version < 9 is not supported")
+if(LLVM_VERSION_MAJOR LESS 15)
+  message(FATAL_ERROR "LLVM version < 15 is not supported")
 endif()
 
 option(ENZYME_FLANG_VERSION "Build for non-version compliant FLANG" OFF)
@@ -257,20 +272,7 @@ file(READ ${LLVM_IDIR}/llvm/Analysis/TargetLibraryInfo.h INPUT_TEXT)
 string(REPLACE "class TargetLibraryInfo {" "class TargetLibraryInfo {public:" INPUT_TEXT "${INPUT_TEXT}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/TargetLibraryInfo.h" "${INPUT_TEXT}")
 
-if (${LLVM_VERSION_MAJOR} GREATER_EQUAL 11)
 file(READ ${LLVM_IDIR}/llvm/Transforms/Utils/ScalarEvolutionExpander.h INPUT_TEXT)
-else()
-file(READ ${LLVM_IDIR}/llvm/Analysis/ScalarEvolutionExpander.h INPUT_TEXT)
-endif()
-
-if (${LLVM_VERSION_MAJOR} LESS 12)
-string(REPLACE "#define LLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H" "#define LLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H\n#include \"SCEV/ScalarEvolution.h\""  INPUT_TEXT "${INPUT_TEXT}")
-string(REPLACE "LLVM_ANALYSIS" "FAKELLVM_ANALYSIS" INPUT_TEXT "${INPUT_TEXT}")
-string(REPLACE "class SCEVExpander " "namespace fake {\n  class SCEVExpander " INPUT_TEXT "${INPUT_TEXT}")
-string(REPLACE "struct SCEVOperand " "namespace fake {\n  struct SCEVOperand " INPUT_TEXT "${INPUT_TEXT}")
-string(REPLACE "};\n}" "};\n}}" INPUT_TEXT "${INPUT_TEXT}")
-string(REPLACE "const SCEV* S;\n};\n" "const SCEV* S;\n};\n}\n" INPUT_TEXT "${INPUT_TEXT}")
-endif()
 
 find_library(MPFR_LIB_PATH mpfr)
 CHECK_INCLUDE_FILE("mpfr.h" HAS_MPFR_H)
@@ -284,14 +286,15 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 add_subdirectory(tools)
 add_subdirectory(Enzyme)
 add_subdirectory(BCLoad)
-add_subdirectory(test)
+if (ENZYME_ENABLE_PLUGINS)
+    add_subdirectory(test)
+endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks")
+if (ENZYME_ENABLE_PLUGINS AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
     add_subdirectory(benchmarks)
 endif()
-
 
 # Make relative paths absolute (needed later on)
 foreach(p LIB BIN INCLUDE CMAKE)
@@ -301,6 +304,7 @@ if(NOT IS_ABSOLUTE "${${var}}")
 endif()
 endforeach()
 
+if (ENZYME_ENABLE_PLUGINS)
 export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
   FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
@@ -325,6 +329,7 @@ add_custom_target(bundled_includes_target DEPENDS ${bundled_includes})
 add_dependencies(ClangEnzyme-${LLVM_VERSION_MAJOR} bundled_includes_target)
 target_include_directories(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Enzyme/Clang/")
 endif()
+endif()
 
 if (${ENZYME_FLANG} AND ${Clang_FOUND})
 	add_custom_target(link_target ALL
@@ -334,8 +339,10 @@ if (${ENZYME_FLANG} AND ${Clang_FOUND})
   )
 endif()
 
+if (ENZYME_ENABLE_PLUGINS)
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 
 export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
@@ -366,19 +373,19 @@ endif()
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfig.cmake" @ONLY)
-   
+
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake" @ONLY)
 
 configure_file(cmake/EnzymeConfigVersion.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake" @ONLY)
-   
+
 install(FILES
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-   
-install(EXPORT EnzymeTargets 
-  DESTINATION "${INSTALL_CMAKE_DIR}" 
+
+install(EXPORT EnzymeTargets
+  DESTINATION "${INSTALL_CMAKE_DIR}"
   COMPONENT   dev)

@@ -61,10 +61,10 @@ os << "  bool need_" << name << " = false;\n";
 // for the case of multiple inputs
 void get_input_mat(const DagInit *ruleDag, StringSet<> &inputs) {
     for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
-      Init *subArg = ruleDag->getArg(i);
-      if (DagInit *sub_Dag = dyn_cast<DagInit>(subArg))
+      auto subArg = ruleDag->getArg(i);
+      if (auto sub_Dag = dyn_cast<DagInit>(subArg))
           get_input_mat(sub_Dag, inputs);
-      else if (DefInit* def = dyn_cast<DefInit>(subArg)) {
+      else if (auto def = dyn_cast<DefInit>(subArg)) {
           const auto Def = def->getDef();
         if (Def->isSubClassOf("input")) {
           inputs.insert(Def->getValueAsString("name"));
@@ -176,7 +176,7 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      Value *margs[] = {malins, arg_" << name << ", malloc_size, llvm::ConstantInt::getFalse(IntegerType::getInt1Ty(call.getContext()))};\n"
 << "      Type *tys[] = {margs[0]->getType(), margs[1]->getType(),"
 << "                     margs[2]->getType()};\n"
-<< "      auto memcpyF = Intrinsic::getDeclaration(gutils->oldFunc->getParent(), Intrinsic::memcpy, tys);\n"
+<< "      auto memcpyF = getIntrinsicDeclaration(gutils->oldFunc->getParent(), Intrinsic::memcpy, tys);\n"
 << "      BuilderZ.CreateCall(memcpyF, margs);\n"
 << "      cacheValues.push_back(malins);\n"
 << "    }\n";
@@ -272,8 +272,7 @@ uplostr = "        Value *uplo = arg_" + nameVec[dimensions[0]] + ";\n";
         } else if (startty == ArgType::side) {
 os
 << "      Value *normal = is_left(BuilderZ, arg_" << nameVec[dimensions[0]] << ", byRef, cublas);\n"
-<< "      M = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n"
-<< "      N = BuilderZ.CreateSelect(normal, " << dim2 << ", " << dim1 << ");\n";
+<< "      M = N = BuilderZ.CreateSelect(normal, " << dim1 << ", " << dim2 << ");\n";
         } else {
             assert(0 &&" unknown startty");
         }
@@ -418,7 +417,7 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
 << "      getReverseBuilder(Builder2);\n"
 << "      break;\n"
 << "    case DerivativeMode::ForwardModeError:\n"
-<< "      assert(0 && \"blas forward error rules not enabled\");\n"
+<< "      llvm_unreachable(\"blas forward error rules not enabled\");\n"
 << "    case DerivativeMode::ForwardMode:\n"
 << "    case DerivativeMode::ForwardModeSplit:\n"
 << "      Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),\n"

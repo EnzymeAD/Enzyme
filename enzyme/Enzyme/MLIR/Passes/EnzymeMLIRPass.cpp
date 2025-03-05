@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Pass/PassManager.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -30,6 +31,18 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   MEnzymeLogic Logic;
 
   void runOnOperation() override;
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    mlir::OpPassManager pm;
+    mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);
+    if (!mlir::failed(result)) {
+      pm.getDependentDialects(registry);
+    }
+
+    registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
+                    mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
+                    mlir::enzyme::EnzymeDialect>();
+  }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
                                               DerivativeMode mode) {
@@ -139,7 +152,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
     bool freeMemory = true;
-    size_t width = 1;
+    bool omp = false;
+    size_t width = CI.getWidth();
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
@@ -150,13 +164,18 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA, returnPrimals, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+        /*augmented*/ nullptr, omp, postpasses);
     if (!newFunc)
       return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
+    if (dCI.getNumResults() != CI.getNumResults()) {
+      CI.emitError() << "Incorrect number of results for enzyme operation: "
+                     << *CI << " expected " << *dCI;
+      return failure();
+    }
     CI.replaceAllUsesWith(dCI);
     CI->erase();
     return success();
@@ -211,7 +230,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
-
+    bool omp = false;
     auto mode = DerivativeMode::ReverseModeCombined;
     std::vector<DIFFE_TYPE> retType;
     std::vector<bool> returnPrimals;
@@ -259,7 +278,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
     bool freeMemory = true;
-    size_t width = 1;
+    size_t width = CI.getWidth();
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
@@ -271,7 +290,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         Logic.CreateReverseDiff(fn, retType, arg_activities, TA, returnPrimals,
                                 returnShadows, mode, freeMemory, width,
                                 /*addedType*/ nullptr, type_args, volatile_args,
-                                /*augmented*/ nullptr);
+                                /*augmented*/ nullptr, omp, postpasses);
     if (!newFunc)
       return failure();
 

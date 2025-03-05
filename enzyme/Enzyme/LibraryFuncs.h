@@ -53,6 +53,8 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "swift_allocObject")
     return true;
+  if (name == "__size_returning_new_experiment")
+    return true;
   if (name == "__rust_alloc" || name == "__rust_alloc_zeroed")
     return true;
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
@@ -122,6 +124,8 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
                                           const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
   llvm::LibFunc libfunc;
+  if (name == "_ZdlPvmSt11align_val_t")
+    return true;
   if (!TLI.getLibFunc(name, libfunc)) {
     if (name == "free")
       return true;
@@ -217,6 +221,9 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   }
   Value *dst_arg = toZero;
 
+  if (funcName == "__size_returning_new_experiment")
+    dst_arg = bb.CreateExtractValue(dst_arg, 0);
+
   if (dst_arg->getType()->isIntegerTy())
     dst_arg = bb.CreateIntToPtr(dst_arg, getInt8PtrTy(toZero->getContext()));
   else
@@ -227,15 +234,8 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
   auto len_arg =
       bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
-  auto volatile_arg = ConstantInt::getFalse(toZero->getContext());
 
-  Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-  Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-
-  auto memset = cast<CallInst>(bb.CreateCall(
-      Intrinsic::getDeclaration(bb.GetInsertBlock()->getParent()->getParent(),
-                                Intrinsic::memset, tys),
-      nargs));
+  auto memset = bb.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
   memset->addParamAttr(0, Attribute::NonNull);
   if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
     auto derefBytes = CI->getLimitedValue();
@@ -258,7 +258,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
 llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::Value *tofree,
-                                    const llvm::StringRef allocationfn,
+                                    llvm::StringRef allocationfn,
                                     const llvm::DebugLoc &debuglocation,
                                     const llvm::TargetLibraryInfo &TLI,
                                     llvm::CallInst *orig,
@@ -266,10 +266,14 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
 static inline bool isAllocationCall(const llvm::Value *TmpOrig,
                                     llvm::TargetLibraryInfo &TLI) {
-  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
-    return isAllocationFunction(getFuncNameFromCall(CI), TLI);
-  }
-  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallBase>(TmpOrig)) {
+    auto AttrList =
+        CI->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+    if (AttrList.hasAttribute("enzyme_allocation"))
+      return true;
+    if (auto Fn = getFunctionFromCall(CI))
+      if (Fn->hasFnAttribute("enzyme_allocation"))
+        return true;
     return isAllocationFunction(getFuncNameFromCall(CI), TLI);
   }
   return false;
@@ -277,10 +281,7 @@ static inline bool isAllocationCall(const llvm::Value *TmpOrig,
 
 static inline bool isDeallocationCall(const llvm::Value *TmpOrig,
                                       llvm::TargetLibraryInfo &TLI) {
-  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
-    return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
-  }
-  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallBase>(TmpOrig)) {
     return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
   }
   return false;

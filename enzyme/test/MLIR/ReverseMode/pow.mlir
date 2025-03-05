@@ -20,45 +20,24 @@ module {
 }
 
 // CHECK:  func.func private @diffeppow(%[[x:.+]]: f64, %[[dr:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %c9 = arith.constant 9 : index
 // CHECK-NEXT:    %c10 = arith.constant 10 : index
 // CHECK-NEXT:    %c1 = arith.constant 1 : index
 // CHECK-NEXT:    %c0 = arith.constant 0 : index
 // CHECK-NEXT:    %[[one:.+]] = arith.constant 1.0
 // CHECK-NEXT:    %[[zero:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK-NEXT:    %[[xshadow:.+]] = "enzyme.init"() : () -> !enzyme.Gradient<f64>
-// CHECK-NEXT:    "enzyme.set"(%[[xshadow]], %[[zero]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:    %[[itshadow:.+]] = "enzyme.init"() : () -> !enzyme.Gradient<f64>
-// CHECK-NEXT:    "enzyme.set"(%[[itshadow]], %[[zero]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:    %[[xcache:.+]] = "enzyme.init"() : () -> !enzyme.Cache<f64>
-// CHECK-NEXT:    %[[rcache:.+]] = "enzyme.init"() : () -> !enzyme.Cache<f64>
-// CHECK-NEXT:    %[[rshadow:.+]] = "enzyme.init"() : () -> !enzyme.Gradient<f64>
-// CHECK-NEXT:    "enzyme.set"(%[[rshadow]], %[[zero]]) : (!enzyme.Gradient<f64>, f64) -> ()
-
-// CHECK-NEXT:    %{{.+}} = scf.for %[[iv:.+]] = %c0 to %c10 step %c1 iter_args(%[[r_it:.+]] = %[[one]]) -> (f64) {
-// CHECK-NEXT:      "enzyme.push"(%[[rcache]], %[[r_it]]) : (!enzyme.Cache<f64>, f64) -> ()
-// CHECK-NEXT:      "enzyme.push"(%[[xcache]], %[[x]]) : (!enzyme.Cache<f64>, f64) -> ()
+// CHECK-NEXT:    %[[cache:.+]] = tensor.empty() : tensor<10xf64>
+// CHECK-NEXT:    %{{.+}} = scf.for %[[iv:.+]] = %c0 to %c10 step %c1 iter_args(%[[r_it:.+]] = %[[one]], %[[cache_iter:.+]] = %[[cache]]) -> (f64, tensor<10xf64>) {
+// CHECK-NEXT:      %[[cache_new:.+]] = tensor.insert %[[r_it]] into %[[cache_iter]][%[[iv]]] : tensor<10xf64>
 // CHECK-NEXT:      %[[fwd:.+]] = arith.mulf %[[r_it]], %[[x]] : f64
-// CHECK-NEXT:      scf.yield %[[fwd]] : f64
+// CHECK-NEXT:      scf.yield %[[fwd]], %[[cache_new]] : f64, tensor<10xf64>
 // CHECK-NEXT:    }
-// CHECK-NEXT:    "enzyme.set"(%[[rshadow]], %[[dr]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:    scf.for %[[div:.+]] = %c0 to %c10 step %c1 {
-// CHECK-NEXT:      %[[dr_it:.+]] = "enzyme.get"(%[[rshadow]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:      "enzyme.set"(%[[rshadow]], %[[zero]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:      %[[r_cached:.+]] = "enzyme.pop"(%[[rcache]]) : (!enzyme.Cache<f64>) -> f64
-// CHECK-NEXT:      %[[x_cached:.+]] = "enzyme.pop"(%[[xcache]]) : (!enzyme.Cache<f64>) -> f64
-// CHECK-NEXT:      %[[dr_next:.+]] = arith.mulf %[[dr_it]], %[[x_cached]]
-// CHECK-NEXT:      %[[previts:.+]] = "enzyme.get"(%[[itshadow]]) : (!enzyme.Gradient<f64>) -> f64
-// CHECK-NEXT:      %[[postits:.+]] = arith.addf %[[previts]], %[[dr_next]] : f64
-// CHECK-NEXT:      "enzyme.set"(%[[itshadow]], %[[postits]]) : (!enzyme.Gradient<f64>, f64) -> ()
+// CHECK-NEXT:    %{{.+}} = scf.for %[[div:.+]] = %c0 to %c10 step %c1 iter_args(%[[dr_it:.+]] = %[[dr]], %[[rev_idx:.+]] = %c9, %[[dx0:.+]] = %[[zero]]) -> (f64, index, f64) {
+// CHECK-NEXT:      %[[r_cached:.+]] = tensor.extract %1#1[%[[rev_idx]]] : tensor<10xf64>
+// CHECK-NEXT:      %[[dr_next:.+]] = arith.mulf %[[dr_it]], %[[x]] : f64
 // CHECK-NEXT:      %[[dx_next:.+]] = arith.mulf %[[dr_it]], %[[r_cached]] : f64
-// CHECK-NEXT:      %[[dx0:.+]] = "enzyme.get"(%[[xshadow]]) :
 // CHECK-NEXT:      %[[dx1:.+]] = arith.addf %[[dx0]], %[[dx_next]]
-// CHECK-NEXT:      "enzyme.set"(%[[xshadow]], %[[dx1]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:      %[[divp1:.+]] = arith.addi %[[div]], %c1 : index
-// CHECK-NEXT:      %[[last:.+]] = arith.cmpi sge, %[[divp1]], %c10 : index
-// CHECK-NEXT:      "enzyme.set"(%[[itshadow]], %[[zero]]) : (!enzyme.Gradient<f64>, f64) -> ()
-// CHECK-NEXT:      %[[sel:.+]] = arith.select %[[last]], %[[zero]], %12 : f64
-// CHECK-NEXT:      "enzyme.set"(%[[itshadow]], %[[sel]]) : (!enzyme.Gradient<f64>, f64) -> ()
+// CHECK-NEXT:      %[[new_rev_idx:.+]] = arith.subi %[[rev_idx]], %c1 : index
+// CHECK-NEXT:      scf.yield %[[dr_next]], %[[new_rev_idx]], %[[dx1]] : f64, index, f64
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[final:.+]] = "enzyme.get"(%[[xshadow]])
-// CHECK-NEXT:    return %[[final]]
+// CHECK-NEXT:    return %2#2 : f64

@@ -16,6 +16,7 @@ set(LIBS
         MLIREnzymeTransforms
         MLIREnzyme
         MLIROptLib
+	MLIRFuncInlinerExtension
         )
 add_llvm_executable(enzymemlir-opt enzymemlir-opt.cpp)
 

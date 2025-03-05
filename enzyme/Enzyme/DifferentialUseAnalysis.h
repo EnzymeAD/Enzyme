@@ -262,11 +262,7 @@ inline bool is_value_needed_in_reverse(
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier" ||
             name == "julia.write_barrier_binding") {
-#if LLVM_VERSION_MAJOR >= 14
           auto sz = CB->arg_size();
-#else
-          auto sz = CB->getNumArgOperands();
-#endif
           // First pointer is the destination
           for (size_t i = 1; i < sz; i++)
             isStored |= inst == CB->getArgOperand(i);
@@ -372,6 +368,9 @@ inline bool is_value_needed_in_reverse(
     if (auto CI = dyn_cast<CallInst>(user)) {
       auto funcName = getFuncNameFromCall(CI);
       if (funcName == "julia.pointer_from_objref") {
+        primalUsedInShadowPointer = false;
+      }
+      if (funcName == "julia.gc_loaded") {
         primalUsedInShadowPointer = false;
       }
       if (funcName.contains("__enzyme_todense")) {

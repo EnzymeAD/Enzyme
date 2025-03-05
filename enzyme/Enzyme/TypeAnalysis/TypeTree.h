@@ -696,8 +696,8 @@ public:
         if ((size_t)pair.first[0] >= len) {
           llvm::errs() << str() << "\n";
           llvm::errs() << " canonicalizing " << len << "\n";
+          llvm::report_fatal_error("Canonicalization failed");
         }
-        assert((size_t)pair.first[0] < len);
       }
       staging[next][pair.second].insert(pair.first[0]);
     }
@@ -764,7 +764,9 @@ public:
     // Non-combined ones do not conflict, since they were already in
     // a TT which we can assume contained no conflicts.
     mapping = std::move(unCombinedToAdd);
-    minIndices[0] = -1;
+    if (minIndices.size() > 0) {
+      minIndices[0] = -1;
+    }
 
     // Fusing several terms into a minus one can create a conflict
     // if the prior minus one was already in the map

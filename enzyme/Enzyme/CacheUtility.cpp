@@ -194,8 +194,8 @@ std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
       continue;
     if (!Inc)
       continue;
-    if (Inc != Header->getFirstNonPHIOrDbg())
-      Inc->moveBefore(Header->getFirstNonPHIOrDbg());
+    if (Inc != getFirstNonPHIOrDbg(Header))
+      Inc->moveBefore(getFirstNonPHIOrDbg(Header));
     return std::make_pair(PN, Inc);
   }
   llvm::errs() << *Header << "\n";
@@ -246,13 +246,8 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(
-        SE, Header->getParent()->getParent()->getDataLayout(), "enzyme");
-#endif
 
     // We place that at first non phi as it may produce a non-phi instruction
     // and must thus be expanded after all phi's
@@ -489,6 +484,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
 
 bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                               bool ReverseLimit) {
+  assert(BB->getParent() == newFunc);
   Loop *L = LI.getLoopFor(BB);
 
   // Not inside a loop
@@ -721,13 +717,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     if (Limit->getType() != CanonicalIV->getType())
       Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
-                           "enzyme");
-#endif
     LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
@@ -763,13 +754,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
-#else
-    fake::SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
-                           "enzyme");
-#endif
 
     loopContexts[L].maxLimit =
         Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
@@ -1402,18 +1388,14 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   }
 
 #if LLVM_VERSION_MAJOR < 17
-#if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
-#endif
     if (tostore->getType() != loc->getType()->getPointerElementType()) {
       llvm::errs() << "val: " << *val << "\n";
       llvm::errs() << "tostore: " << *tostore << "\n";
       llvm::errs() << "loc: " << *loc << "\n";
     }
     assert(tostore->getType() == loc->getType()->getPointerElementType());
-#if LLVM_VERSION_MAJOR >= 15
   }
-#endif
 #endif
 
   StoreInst *storeinst = v.CreateStore(tostore, loc);

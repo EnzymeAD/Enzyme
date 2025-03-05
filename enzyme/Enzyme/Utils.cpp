@@ -45,6 +45,12 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/TargetParser/Triple.h"
+#else
+#include "llvm/ADT/Triple.h"
+#endif
+
 #include "llvm-c/Core.h"
 
 #include "LibraryFuncs.h"
@@ -96,6 +102,10 @@ llvm::cl::opt<bool> EnzymeMemmoveWarning(
 llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
+
+llvm::cl::opt<bool> EnzymeNonPower2Cache(
+    "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
+    cl::desc("Disable caching of integers which are not a power of 2"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -179,7 +189,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   Value *hasOne = B.CreateICmpNE(
       B.CreateAnd(size, ConstantInt::get(size->getType(), 1, false)),
       ConstantInt::get(size->getType(), 0, false));
-  auto popCnt = Intrinsic::getDeclaration(&M, Intrinsic::ctpop, {types[1]});
+  auto popCnt = getIntrinsicDeclaration(&M, Intrinsic::ctpop, {types[1]});
 
   B.CreateCondBr(
       B.CreateAnd(B.CreateICmpULT(B.CreateCall(popCnt, {size}),
@@ -190,7 +200,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   B.SetInsertPoint(grow);
 
   auto lz =
-      B.CreateCall(Intrinsic::getDeclaration(&M, Intrinsic::ctlz, {types[1]}),
+      B.CreateCall(getIntrinsicDeclaration(&M, Intrinsic::ctlz, {types[1]}),
                    {size, ConstantInt::getTrue(M.getContext())});
   Value *next =
       B.CreateShl(tsize, B.CreateSub(ConstantInt::get(types[1], 64, false), lz,
@@ -203,7 +213,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                      ConstantInt::get(next->getType(), 0),
                      B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
-  if (!custom) {
+  auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+
+  if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
 
@@ -227,7 +240,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                       ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[1]->getType(),
                    margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memcpy, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memcpy, tys);
     B.CreateCall(memsetF, margs);
     if (SubZero) {
       ZeroInit = false;
@@ -250,7 +263,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     Value *margs[] = {B.CreateInBoundsGEP(B.getInt8Ty(), gVal, prevSize),
                       B.getInt8(0), zeroSize, B.getFalse()};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
+    auto memsetF = getIntrinsicDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
@@ -411,7 +424,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     Type *tys[] = {args[0]->getType(), args[2]->getType()};
 
     *ZeroMem = Builder.CreateCall(
-        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), args);
+        getIntrinsicDeclaration(&M, Intrinsic::memset, tys), args);
   }
   return res;
 }
@@ -478,6 +491,8 @@ static inline std::string tofltstr(Type *T) {
     return "double";
   case Type::X86_FP80TyID:
     return "x87d";
+  case Type::BFloatTyID:
+    return "bf16";
   case Type::FP128TyID:
     return "quad";
   case Type::PPC_FP128TyID:
@@ -518,8 +533,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   if (F->empty()) {
     F->setLinkage(Function::LinkageTypes::InternalLinkage);
     F->addFnAttr(Attribute::AlwaysInline);
-    F->addParamAttr(0, Attribute::NoCapture);
-    F->addParamAttr(1, Attribute::NoCapture);
+    addFunctionNoCapture(F, 0);
+    addFunctionNoCapture(F, 1);
 
     BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
     BasicBlock *error = BasicBlock::Create(M.getContext(), "error", F);
@@ -568,6 +583,32 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
   call->setDebugLoc(loc);
 }
 
+Type *BlasInfo::fpType(LLVMContext &ctx, bool to_scalar) const {
+  if (floatType == "d" || floatType == "D") {
+    return Type::getDoubleTy(ctx);
+  } else if (floatType == "s" || floatType == "S") {
+    return Type::getFloatTy(ctx);
+  } else if (floatType == "c" || floatType == "C") {
+    if (to_scalar)
+      return Type::getFloatTy(ctx);
+    return VectorType::get(Type::getFloatTy(ctx), 2, false);
+  } else if (floatType == "z" || floatType == "Z") {
+    if (to_scalar)
+      return Type::getDoubleTy(ctx);
+    return VectorType::get(Type::getDoubleTy(ctx), 2, false);
+  } else {
+    assert(false && "Unreachable");
+    return nullptr;
+  }
+}
+
+IntegerType *BlasInfo::intType(LLVMContext &ctx) const {
+  if (is64)
+    return IntegerType::get(ctx, 64);
+  else
+    return IntegerType::get(ctx, 32);
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
 Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
@@ -605,8 +646,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
+  addFunctionNoCapture(F, 1);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
@@ -789,7 +830,7 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (A->getType()->isPointerTy())
-    F->addParamAttr(1 + ((bool)layout), Attribute::NoCapture);
+    addFunctionNoCapture(F, 1 + ((bool)layout));
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *loop = BasicBlock::Create(M.getContext(), "loop", F);
@@ -892,8 +933,25 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
-  Function *F = cast<Function>(fn.getCallee());
-  attributeKnownFunctions(*F);
+  Value *callVal = fn.getCallee();
+  Function *called = nullptr;
+  while (!called) {
+    if (auto castinst = dyn_cast<ConstantExpr>(callVal))
+      if (castinst->isCast()) {
+        callVal = castinst->getOperand(0);
+        continue;
+      }
+    if (auto fn = dyn_cast<Function>(callVal)) {
+      called = fn;
+      break;
+    }
+    if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
+      callVal = alias->getAliasee();
+      continue;
+    }
+    break;
+  }
+  attributeKnownFunctions(*called);
 
   B.CreateCall(fn, args, bundles);
 }
@@ -947,16 +1005,16 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
-    F->addParamAttr(3, Attribute::NoCapture);
-    F->addParamAttr(5, Attribute::NoCapture);
-    F->addParamAttr(7, Attribute::NoCapture);
+    addFunctionNoCapture(F, 3);
+    addFunctionNoCapture(F, 5);
+    addFunctionNoCapture(F, 7);
     F->addParamAttr(3, Attribute::NoAlias);
     F->addParamAttr(5, Attribute::NoAlias);
     F->addParamAttr(7, Attribute::NoAlias);
     F->addParamAttr(3, Attribute::ReadOnly);
     F->addParamAttr(5, Attribute::ReadOnly);
     if (byRef) {
-      F->addParamAttr(2, Attribute::NoCapture);
+      addFunctionNoCapture(F, 2);
       F->addParamAttr(2, Attribute::NoAlias);
       F->addParamAttr(2, Attribute::ReadOnly);
     }
@@ -1141,8 +1199,8 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
-    F->addParamAttr(2, Attribute::NoCapture);
-    F->addParamAttr(4, Attribute::NoCapture);
+    addFunctionNoCapture(F, 2);
+    addFunctionNoCapture(F, 2);
     F->addParamAttr(2, Attribute::NoAlias);
     F->addParamAttr(4, Attribute::NoAlias);
     F->addParamAttr(2, Attribute::ReadOnly);
@@ -1207,8 +1265,8 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B3.setFastMathFlags(getFast());
     Value *blasA = B3.CreatePointerCast(matA, BlasPT);
     Value *blasB = B3.CreatePointerCast(matB, BlasPT);
-    Value *fastSum = B3.CreateCall(
-        FDot, {blasSize, blasA, blasOne, blasB, blasOne}, bundles);
+    Value *fastSum =
+        B3.CreateCall(FDot, {blasSize, blasA, blasOne, blasB, blasOne});
     B3.CreateBr(end);
 
     IRBuilder<> B4(body);
@@ -1227,7 +1285,7 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     Value *AiDot = B4.CreatePointerCast(Ai, BlasPT);
     Value *BiDot = B4.CreatePointerCast(Bi, BlasPT);
     Value *newDot =
-        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne}, bundles);
+        B4.CreateCall(FDot, {blasm, AiDot, blasOne, BiDot, blasOne});
 
     Value *Anext = B4.CreateNUWAdd(Aidx, lda, "Aidx.next");
     Value *Bnext = B4.CreateNUWAdd(Aidx, m, "Bidx.next");
@@ -1276,9 +1334,9 @@ Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::NoAlias);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
   F->addParamAttr(1, Attribute::NoAlias);
   F->addParamAttr(0, Attribute::WriteOnly);
   F->addParamAttr(1, Attribute::ReadOnly);
@@ -1388,9 +1446,9 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::NoAlias);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
   F->addParamAttr(1, Attribute::NoAlias);
   F->addParamAttr(0, Attribute::WriteOnly);
   F->addParamAttr(1, Attribute::ReadOnly);
@@ -1495,10 +1553,22 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
+  auto callname = getFuncNameFromCall(call);
+  if (callname != "free")
+    name += "_" + callname.str();
+
   SmallVector<Type *, 3> types;
   types.push_back(Ty);
   for (unsigned i = 0; i < width; i++) {
     types.push_back(Ty);
+  }
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 1; i < call->arg_size(); i++)
+#else
+  for (size_t i = 1; i < call->getNumArgOperands(); i++)
+#endif
+  {
+    types.push_back(call->getArgOperand(i)->getType());
   }
 
   FunctionType *FT =
@@ -1528,13 +1598,23 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
+  addFunctionNoCapture(F, 1);
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
 
-  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
+  SmallVector<Value *, 1> args = {first_shadow};
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 1; i < call->arg_size(); i++)
+#else
+  for (size_t i = 1; i < call->getNumArgOperands(); i++)
+#endif
+  {
+    args.push_back(F->arg_begin() + width + i);
+  }
+
+  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, args);
   CI->setAttributes(FreeAttributes);
   CI->setCallingConv(CallingConvention);
 
@@ -1544,7 +1624,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
     IRBuilder<> Free1Builder(free1);
 
     for (unsigned i = 0; i < width; i++) {
-      F->addParamAttr(i + 1, Attribute::NoCapture);
+      addFunctionNoCapture(F, i + 1);
       Argument *shadow = F->arg_begin() + i + 1;
 
       if (i < width - 1) {
@@ -1554,7 +1634,8 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                           ? Free0Builder.CreateAnd(isNotEqual, checkResult)
                           : isNotEqual;
 
-        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
+        args[0] = nextShadow;
+        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, args);
         CI->setAttributes(FreeAttributes);
         CI->setCallingConv(CallingConvention);
       }
@@ -1786,12 +1867,12 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
+  addFunctionNoCapture(F, 0);
   F->addParamAttr(0, Attribute::ReadOnly);
-  F->addParamAttr(1, Attribute::NoCapture);
-  F->addParamAttr(2, Attribute::NoCapture);
+  addFunctionNoCapture(F, 1);
+  addFunctionNoCapture(F, 2);
   F->addParamAttr(2, Attribute::ReadOnly);
-  F->addParamAttr(3, Attribute::NoCapture);
+  addFunctionNoCapture(F, 3);
   F->addParamAttr(3, Attribute::ReadNone);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
@@ -2147,14 +2228,14 @@ bool overwritesToMemoryReadByLoop(
   return true;
 }
 
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
-                              ScalarEvolution &SE, llvm::LoopInfo &LI,
-                              llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                              llvm::TargetLibraryInfo &TLI, ScalarEvolution &SE,
+                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope) {
   using namespace llvm;
-  if (!writesToMemoryReadBy(AA, TLI, maybeReader, maybeWriter))
+  if (!writesToMemoryReadBy(TR, AA, TLI, maybeReader, maybeWriter))
     return false;
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
@@ -2162,7 +2243,10 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   const SCEV *StoreBegin = SE.getCouldNotCompute();
   const SCEV *StoreEnd = SE.getCouldNotCompute();
 
+  Value *loadPtr = nullptr;
+  Value *storePtr = nullptr;
   if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
+    loadPtr = LI->getPointerOperand();
     LoadBegin = SE.getSCEV(LI->getPointerOperand());
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
@@ -2180,6 +2264,7 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
+    storePtr = SI->getPointerOperand();
     StoreBegin = SE.getSCEV(SI->getPointerOperand());
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2199,6 +2284,7 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
+    storePtr = MS->getArgOperand(0);
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2213,6 +2299,7 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
+    storePtr = MS->getArgOperand(0);
     StoreBegin = SE.getSCEV(MS->getArgOperand(0));
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
@@ -2227,6 +2314,7 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
+    loadPtr = MS->getArgOperand(1);
     LoadBegin = SE.getSCEV(MS->getArgOperand(1));
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
@@ -2241,6 +2329,12 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
 
+  if (loadPtr && storePtr)
+    if (auto alias =
+            arePointersGuaranteedNoAlias(TLI, AA, LI, loadPtr, storePtr, true))
+      if (*alias)
+        return false;
+
   if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,
                                     maybeWriter, StoreBegin, StoreEnd, scope))
     return false;
@@ -2249,7 +2343,8 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter) {
   assert(maybeReader->getParent()->getParent() ==
@@ -2272,6 +2367,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
       return false;
     }
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
+      return false;
+
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
       return false;
 
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
@@ -2438,6 +2537,10 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     if (funcName == "jl_array_copy" || funcName == "ijl_array_copy")
       return false;
 
+    if (funcName == "jl_genericmemory_copy_slice" ||
+        funcName == "ijl_genericmemory_copy_slice")
+      return false;
+
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
       return false;
 
@@ -2465,6 +2568,26 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   assert(maybeReader->mayReadFromMemory());
 
   if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+    if (TR) {
+      auto TT = TR->query(li)[{-1}];
+      if (TT != BaseType::Unknown && TT != BaseType::Anything) {
+        if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
+          auto TT2 = TR->query(si->getValueOperand())[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+          auto &dl = li->getParent()->getParent()->getParent()->getDataLayout();
+          auto len =
+              (dl.getTypeSizeInBits(si->getValueOperand()->getType()) + 7) / 8;
+          TT2 = TR->query(si->getPointerOperand()).Lookup(len, dl)[{-1}];
+          if (TT2 != BaseType::Unknown && TT2 != BaseType::Anything) {
+            if (TT != TT2)
+              return false;
+          }
+        }
+      }
+    }
     return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
@@ -2514,7 +2637,11 @@ AllocaInst *getBaseAndOffset(Value *ptr, size_t &offset) {
     }
     if (auto CI = dyn_cast<GetElementPtrInst>(ptr)) {
       auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
       MapVector<Value *, APInt> VariableOffsets;
+#endif
       auto width = sizeof(size_t) * 8;
       APInt Offset(width, 0);
       bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2561,7 +2688,11 @@ findAllUsersOf(Value *AI) {
       }
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         auto &DL = CI->getParent()->getParent()->getParent()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 20
+        SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
         MapVector<Value *, APInt> VariableOffsets;
+#endif
         auto width = sizeof(size_t) * 8;
         APInt Offset(width, 0);
         bool success = collectOffset(cast<GEPOperator>(CI), DL, width,
@@ -2674,22 +2805,33 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
     // all sub uses
     if (auto MTI = dyn_cast<MemTransferInst>(U)) {
       if (auto CI = dyn_cast<ConstantInt>(MTI->getLength())) {
-        if (MTI->getOperand(0) == ptr && suboff == 0 &&
-            CI->getValue().uge(offset + valSz)) {
-          size_t midoffset = 0;
-          auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
-          if (!AI2) {
-            legal = false;
-            return options;
+        if (MTI->getOperand(0) == ptr) {
+          auto storeSz = CI->getValue();
+
+          // If store is before the load would start
+          if ((storeSz + suboff).ule(offset))
+            continue;
+
+          // if store starts after load would start
+          if (offset + valSz <= suboff)
+            continue;
+
+          if (suboff == 0 && CI->getValue().uge(offset + valSz)) {
+            size_t midoffset = 0;
+            auto AI2 = getBaseAndOffset(MTI->getOperand(1), midoffset);
+            if (!AI2) {
+              legal = false;
+              return options;
+            }
+            if (midoffset != 0) {
+              legal = false;
+              return options;
+            }
+            for (const auto &pair3 : findAllUsersOf(AI2)) {
+              todo.emplace_back(std::move(pair3));
+            }
+            continue;
           }
-          if (midoffset != 0) {
-            legal = false;
-            return options;
-          }
-          for (const auto &pair3 : findAllUsersOf(AI2)) {
-            todo.emplace_back(std::move(pair3));
-          }
-          continue;
         }
       }
     }
@@ -2875,9 +3017,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",  "scal",  "axpy",  "gemv",  "gemm",  "spmv",  "syrk",
-      "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy",
-      "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs", "getri"};
+      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk", "nrm2",
+      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv", "syr2k",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv",
+  };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
   const char *suffixes[] = {"", "_", "64_", "_64_"};
@@ -3383,9 +3526,16 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     all = false;
 }
 
+#if LLVM_VERSION_MAJOR >= 20
+bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
+                   SmallMapVector<Value *, APInt, 4> &VariableOffsets,
+                   APInt &ConstantOffset)
+#else
 bool collectOffset(GEPOperator *gep, const DataLayout &DL, unsigned BitWidth,
                    MapVector<Value *, APInt> &VariableOffsets,
-                   APInt &ConstantOffset) {
+                   APInt &ConstantOffset)
+#endif
+{
 #if LLVM_VERSION_MAJOR >= 13
   return gep->collectOffset(DL, BitWidth, VariableOffsets, ConstantOffset);
 #else
@@ -3607,6 +3757,69 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
   }
 }
 
+std::vector<std::tuple<llvm::Type *, size_t, size_t>>
+parseTrueType(const llvm::MDNode *md, DerivativeMode Mode, bool const_src) {
+  std::vector<std::pair<ConcreteType, size_t>> parsed;
+  for (size_t i = 0; i < md->getNumOperands(); i += 2) {
+    ConcreteType base(
+        llvm::cast<llvm::MDString>(md->getOperand(i))->getString(),
+        md->getContext());
+    auto size = llvm::cast<llvm::ConstantInt>(
+                    llvm::cast<llvm::ConstantAsMetadata>(md->getOperand(i + 1))
+                        ->getValue())
+                    ->getSExtValue();
+    parsed.emplace_back(base, size);
+  }
+
+  std::vector<std::tuple<llvm::Type *, size_t, size_t>> toIterate;
+  size_t idx = 0;
+  while (idx < parsed.size()) {
+
+    auto dt = parsed[idx].first;
+    size_t start = parsed[idx].second;
+    size_t end = 0x0fffffff;
+    for (idx = idx + 1; idx < parsed.size(); ++idx) {
+      bool Legal = true;
+      auto tmp = dt;
+      auto next = parsed[idx].first;
+      tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+      // Prevent fusion of {Anything, Float} since anything is an int rule
+      // but float requires zeroing.
+      if ((dt == BaseType::Anything &&
+           (next != BaseType::Anything && next.isKnown())) ||
+          (next == BaseType::Anything &&
+           (dt != BaseType::Anything && dt.isKnown())))
+        Legal = false;
+      if (!Legal) {
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError) {
+          // if both are floats (of any type), forward mode is the same.
+          //   + [potentially zero if const, otherwise copy]
+          // if both are int/pointer (of any type), also the same
+          //   + copy
+          // if known non-constant, also the same
+          //   + copy
+          if ((parsed[idx].first.isFloat() == nullptr) ==
+              (parsed[idx - 1].first.isFloat() == nullptr)) {
+            Legal = true;
+          }
+          if (const_src) {
+            Legal = true;
+          }
+        }
+        if (!Legal) {
+          end = parsed[idx].second;
+          break;
+        }
+      } else
+        dt = tmp;
+    }
+    assert(dt.isKnown());
+    toIterate.emplace_back(dt.isFloat(), start, end - start);
+  }
+  return toIterate;
+}
+
 void dumpModule(llvm::Module *mod) { llvm::errs() << *mod << "\n"; }
 
 void dumpValue(llvm::Value *val) { llvm::errs() << *val << "\n"; }
@@ -3616,3 +3829,207 @@ void dumpBlock(llvm::BasicBlock *blk) { llvm::errs() << *blk << "\n"; }
 void dumpType(llvm::Type *ty) { llvm::errs() << *ty << "\n"; }
 
 void dumpTypeResults(TypeResults &TR) { TR.dump(); }
+
+bool isNVLoad(const llvm::Value *V) {
+  auto II = dyn_cast<IntrinsicInst>(V);
+  if (!II)
+    return false;
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::nvvm_ldu_global_i:
+  case Intrinsic::nvvm_ldu_global_p:
+  case Intrinsic::nvvm_ldu_global_f:
+#if LLVM_VERSION_MAJOR < 20
+  case Intrinsic::nvvm_ldg_global_i:
+  case Intrinsic::nvvm_ldg_global_p:
+  case Intrinsic::nvvm_ldg_global_f:
+#endif
+    return true;
+  default:
+    return false;
+  }
+  return false;
+}
+
+bool notCapturedBefore(llvm::Value *V, Instruction *inst,
+                       size_t checkLoadCaptures) {
+  Instruction *VI = dyn_cast<Instruction>(V);
+  if (!VI)
+    VI = &*inst->getParent()->getParent()->getEntryBlock().begin();
+  else
+    VI = VI->getNextNode();
+  SmallPtrSet<BasicBlock *, 1> regionBetween;
+  {
+    SmallVector<BasicBlock *, 1> todo;
+    todo.push_back(VI->getParent());
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      if (regionBetween.count(cur))
+        continue;
+      regionBetween.insert(cur);
+      if (cur == inst->getParent())
+        continue;
+      for (auto BB : successors(cur))
+        todo.push_back(BB);
+    }
+  }
+  SmallVector<std::tuple<Instruction *, size_t, Value *>, 1> todo;
+  for (auto U : V->users()) {
+    todo.emplace_back(cast<Instruction>(U), checkLoadCaptures, V);
+  }
+  std::set<std::tuple<Value *, size_t, Value *>> seen;
+  while (todo.size()) {
+    auto pair = todo.pop_back_val();
+    if (seen.count(pair))
+      continue;
+    auto UI = std::get<0>(pair);
+    auto level = std::get<1>(pair);
+    auto prev = std::get<2>(pair);
+    if (!regionBetween.count(UI->getParent()))
+      continue;
+    if (UI->getParent() == VI->getParent()) {
+      if (UI->comesBefore(VI))
+        continue;
+    }
+    if (UI->getParent() == inst->getParent())
+      if (inst->comesBefore(UI))
+        continue;
+
+    if (isPointerArithmeticInst(UI, /*includephi*/ true,
+                                /*includebin*/ true)) {
+      for (auto U2 : UI->users()) {
+        auto UI2 = cast<Instruction>(U2);
+        todo.emplace_back(UI2, level, UI);
+      }
+      continue;
+    }
+
+    if (isa<MemSetInst>(UI))
+      continue;
+
+    if (isa<MemTransferInst>(UI)) {
+      if (level == 0)
+        continue;
+      if (UI->getOperand(1) != prev)
+        continue;
+    }
+
+    if (auto CI = dyn_cast<CallBase>(UI)) {
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+      for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+      {
+        if (prev == CI->getArgOperand(i)) {
+          if (isNoCapture(CI, i) && level == 0)
+            continue;
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (isa<CmpInst>(UI)) {
+      continue;
+    }
+    if (isa<LoadInst>(UI)) {
+      if (level) {
+        for (auto U2 : UI->users()) {
+          auto UI2 = cast<Instruction>(U2);
+          todo.emplace_back(UI2, level - 1, UI);
+        }
+      }
+      continue;
+    }
+    // storing into it.
+    if (auto SI = dyn_cast<StoreInst>(UI)) {
+      if (SI->getValueOperand() != prev) {
+        continue;
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::LoopInfo &LI, llvm::Value *op0,
+                             llvm::Value *op1, bool offsetAllowed) {
+  auto lhs = getBaseObject(op0, offsetAllowed);
+  auto rhs = getBaseObject(op1, offsetAllowed);
+
+  if (lhs == rhs) {
+    return false;
+  }
+  if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
+    return {};
+
+  bool noalias_lhs = isNoAlias(lhs);
+  bool noalias_rhs = isNoAlias(rhs);
+
+  bool noalias[2] = {noalias_lhs, noalias_rhs};
+
+  for (int i = 0; i < 2; i++) {
+    Value *start = (i == 0) ? lhs : rhs;
+    Value *end = (i == 0) ? rhs : lhs;
+    if (noalias[i]) {
+      if (noalias[1 - i]) {
+        return true;
+      }
+      if (isa<Argument>(end)) {
+        return true;
+      }
+      if (auto endi = dyn_cast<Instruction>(end)) {
+        if (notCapturedBefore(start, endi, 0)) {
+          return true;
+        }
+      }
+    }
+    if (auto ld = dyn_cast<LoadInst>(start)) {
+      auto base = getBaseObject(ld->getOperand(0), /*offsetAllowed*/ false);
+      if (isAllocationCall(base, TLI)) {
+        if (isa<Argument>(end))
+          return true;
+        if (auto endi = dyn_cast<Instruction>(end))
+          if (isNoAlias(end) || (notCapturedBefore(start, endi, 1))) {
+            Instruction *starti = dyn_cast<Instruction>(start);
+            if (!starti) {
+              if (!isa<Argument>(start))
+                continue;
+              starti =
+                  &cast<Argument>(start)->getParent()->getEntryBlock().front();
+            }
+
+            bool overwritten = false;
+            allInstructionsBetween(
+                LI, starti, endi, [&](Instruction *I) -> bool {
+                  if (!I->mayWriteToMemory())
+                    return /*earlyBreak*/ false;
+
+                  if (writesToMemoryReadBy(nullptr, AA, TLI,
+                                           /*maybeReader*/ ld,
+                                           /*maybeWriter*/ I)) {
+                    overwritten = true;
+                    return /*earlyBreak*/ true;
+                  }
+                  return /*earlyBreak*/ false;
+                });
+
+            if (!overwritten) {
+              return true;
+            }
+          }
+      }
+    }
+  }
+
+  return {};
+}

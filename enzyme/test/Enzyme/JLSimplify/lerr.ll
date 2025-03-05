@@ -26,6 +26,6 @@ top:
   ret i1 %.not
 }
 
-declare noalias {} addrspace(10)* @ijl_alloc_array_2d({} addrspace(10)*, i64, i64)
+declare noalias {} addrspace(10)* @ijl_alloc_array_2d({} addrspace(10)*, i64, i64) "enzyme_allocation"
 
 ; CHECK:   ret i1 false

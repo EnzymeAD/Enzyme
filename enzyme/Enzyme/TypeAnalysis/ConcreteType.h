@@ -79,6 +79,8 @@ public:
         SubType = llvm::Type::getDoubleTy(C);
       } else if (SubName == "fp80") {
         SubType = llvm::Type::getX86_FP80Ty(C);
+      } else if (SubName == "bf16") {
+        SubType = llvm::Type::getBFloatTy(C);
       } else if (SubName == "fp128") {
         SubType = llvm::Type::getFP128Ty(C);
       } else if (SubName == "ppc128") {
@@ -104,6 +106,8 @@ public:
         Result += "@double";
       } else if (SubType->isX86_FP80Ty()) {
         Result += "@fp80";
+      } else if (SubType->isBFloatTy()) {
+        Result += "@bf16";
       } else if (SubType->isFP128Ty()) {
         Result += "@fp128";
       } else if (SubType->isPPC_FP128Ty()) {

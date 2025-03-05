@@ -184,7 +184,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (EnzymeRuntimeActivityCheck) {
+      if (gutils->runtimeActivity) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();
@@ -594,11 +594,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         return true;
       }
       if (shadow) {
-#if LLVM_VERSION_MAJOR >= 14
         auto sz = CI->arg_size();
-#else
-        auto sz = CI->getNumArgOperands();
-#endif
         bool isStored = false;
         // First pointer is the destination
         for (size_t i = 1; i < sz; i++)
@@ -628,12 +624,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-#if LLVM_VERSION_MAJOR >= 14
-    for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-    for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-    {
+    for (size_t i = 0; i < CI->arg_size(); i++) {
       if (val == CI->getArgOperand(i)) {
         if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
@@ -882,7 +873,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
   std::map<Node, Node> parent;
   bfs(G, Recomputes, parent);
 
-  std::deque<Value *> todo;
+  SetVector<Value *> todo;
 
   // Print all edges that are from a reachable vertex to
   // non-reachable vertex in the original graph
@@ -894,20 +885,36 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
           if (Orig.find(Node(N.V, true)) != Orig.end()) {
-            todo.push_back(N.V);
+            todo.insert(N.V);
           }
         }
       }
   }
 
-  // When ambiguous, push to cache the last value in a computation chain
-  // This should be considered in a cost for the max flow
   while (todo.size()) {
     auto V = todo.front();
-    todo.pop_front();
+    todo.remove(V);
     auto found = Orig.find(Node(V, true));
     assert(found != Orig.end());
     const auto &mp = found->second;
+
+    assert(MinReq.count(V));
+
+    // Fix up non-cacheable calls to use their operand(s) instead
+    if (hasNoCache(V)) {
+      assert(!Required.count(V));
+      MinReq.remove(V);
+      for (auto &pair : Orig) {
+        if (pair.second.count(Node(V, false))) {
+          MinReq.insert(pair.first.V);
+          todo.insert(pair.first.V);
+        }
+      }
+      continue;
+    }
+
+    // When ambiguous, push to cache the last value in a computation chain
+    // This should be considered in a cost for the max flow
     if (mp.size() == 1 && !Required.count(V)) {
       bool potentiallyRecursive =
           isa<PHINode>((*mp.begin()).V) &&
@@ -926,29 +933,27 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
           continue;
       }
+      if (auto CI = dyn_cast<CastInst>((*mp.begin()).V)) {
+        if (CI->getType()->isPointerTy() &&
+            CI->getType()->getPointerAddressSpace() == 13)
+          continue;
+      }
+      if (auto G = dyn_cast<GetElementPtrInst>((*mp.begin()).V)) {
+        if (G->getType()->getPointerAddressSpace() == 13)
+          continue;
+      }
+      if (hasNoCache((*mp.begin()).V)) {
+        continue;
+      }
       // If an allocation call, we cannot cache any "capturing" users
       if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
         auto next = (*mp.begin()).V;
         bool noncapture = false;
-        if (isa<LoadInst>(next)) {
+        if (isa<LoadInst>(next) || isNVLoad(next)) {
           noncapture = true;
-        } else if (auto II = dyn_cast<IntrinsicInst>(next)) {
-          if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
-              II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
-              II->getIntrinsicID() == Intrinsic::masked_load)
-            noncapture = true;
         } else if (auto CI = dyn_cast<CallInst>(next)) {
           bool captures = false;
-#if LLVM_VERSION_MAJOR >= 14
-          for (size_t i = 0; i < CI->arg_size(); i++)
-#else
-          for (size_t i = 0; i < CI->getNumArgOperands(); i++)
-#endif
-          {
+          for (size_t i = 0; i < CI->arg_size(); i++) {
             if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
               captures = true;
               break;
@@ -969,10 +974,47 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         auto nnode = (*mp.begin()).V;
         MinReq.insert(nnode);
         if (Orig.find(Node(nnode, true)) != Orig.end())
-          todo.push_back(nnode);
+          todo.insert(nnode);
       }
     }
   }
+
+  // Fix up non-repeatable writing calls that chain within rematerialized
+  // allocations. We could iterate from the keys of the valuemap, but that would
+  // be a non-determinstic ordering.
+  for (auto V : Intermediates) {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found == gutils->rematerializableAllocations.end())
+      continue;
+    if (!found->second.nonRepeatableWritingCall)
+      continue;
+
+    // We are already caching this allocation directly, we're fine
+    if (MinReq.count(V))
+      continue;
+
+    // If we are recomputing a load, we need to fix this.
+    bool needsLoad = false;
+    for (auto load : found->second.loads)
+      if (Intermediates.count(load) && !MinReq.count(load)) {
+        needsLoad = true;
+        break;
+      }
+    for (auto load : found->second.loadLikeCalls)
+      if (Intermediates.count(load.loadCall) && !MinReq.count(load.loadCall)) {
+        needsLoad = true;
+        break;
+      }
+
+    if (!needsLoad)
+      continue;
+
+    // Rewire the uses to cache the allocation directly.
+    // TODO: as further optimization, we can remove potentially unnecessary
+    // values that we are keeping for stores.
+    MinReq.insert(V);
+  }
+
   return;
 }
 
@@ -1034,12 +1076,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
       // Next test if any allocation could be stored into one of the
       // arguments.
       if (!escapingNeededAllocation)
-#if LLVM_VERSION_MAJOR >= 14
-        for (unsigned i = 0; i < call.arg_size(); ++i)
-#else
-        for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
-#endif
-        {
+        for (unsigned i = 0; i < call.arg_size(); ++i) {
           Value *a = call.getOperand(i);
 
           if (EnzymeJuliaAddrLoad && isSpecialPtr(a->getType()))

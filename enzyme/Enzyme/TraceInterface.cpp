@@ -311,7 +311,7 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   assert(dynamicInterface);
 
   auto &M = *F->getParent();
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbg());
+  IRBuilder<> Builder(getFirstNonPHIOrDbg(&F->getEntryBlock()));
 
   getTraceFunction = MaterializeInterfaceFunction(
       Builder, dynamicInterface, getTraceTy(), 0, M, "get_trace");

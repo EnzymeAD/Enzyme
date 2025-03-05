@@ -5,7 +5,7 @@
 
 using namespace llvm;
 
-void registerEnzyme(llvm::PassBuilder &PB);
+extern "C" void registerEnzyme(llvm::PassBuilder &PB);
 
 extern "C" int optMain(int argc, char **argv,
                        llvm::ArrayRef<std::function<void(llvm::PassBuilder &)>>

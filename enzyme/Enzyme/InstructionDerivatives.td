@@ -4,6 +4,20 @@ class ForwardFromSummedReverseInternal<int unused_> {
 }
 def ForwardFromSummedReverse : ForwardFromSummedReverseInternal<0>;
 
+class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
+  bit usesPrimal = usesPrimal_;
+  bit usesShadow = usesShadow_;
+  bit usesCustom = usesCustom_;
+}
+class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
+  string value = val;
+}
+
+class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/0> {
+  string condition = condition_;
+}
+
+def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 
 class Attribute<string name_> {
   string name = name_;
@@ -46,11 +60,6 @@ class InstPattern<dag patternToMatch, string funcName, int minVer_, int maxVer_,
   dag ArgDuals = forwardOps;
 }
 
-class Operation<bit usesPrimal_, bit usesShadow_, bit usesCustom_=0> {
-  bit usesPrimal = usesPrimal_;
-  bit usesShadow = usesShadow_;
-  bit usesCustom = usesCustom_;
-}
 class Inst<string mnemonic>  : Operation</*primal*/1, /*shadow*/0> {
   string name = mnemonic;
 }
@@ -58,9 +67,6 @@ class Inst<string mnemonic>  : Operation</*primal*/1, /*shadow*/0> {
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
 def VectorSize : Operation</*primal*/0, /*shadow*/0> {
-}
-def SelectIfActive : Operation</*primal*/0, /*shadow*/0, /*custom*/1> {
-  
 }
 
 // Define ops to rewrite.
@@ -144,6 +150,11 @@ def CFAdd : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
                     (FAdd $re1, $re2),
                     (FAdd $im1, $im2)
                   )>;
+def CFSub : SubRoutine<(Op (Op $re1, $im1):$z1, (Op $re2, $im2):$z2),
+                  (ArrayRet
+                    (FSub $re1, $re2),
+                    (FSub $im1, $im2)
+                  )>;
 
 def CFMul_splat : SubRoutine<(Op $re1, $im1, $re2, $im2),
                   (ArrayRet
@@ -168,6 +179,12 @@ def CFNeg : SubRoutine<(Op (Op $re, $im):$z),
     (ArrayRet
       (FNeg $re),
       (FNeg $im)
+    )>;
+
+def Complex : SubRoutine<(Op $x),
+    (ArrayRet
+      $x,
+      (ConstantFP<"0"> $x)
     )>;
 
 def Conj : SubRoutine<(Op (Op $re, $im):$z),
@@ -251,6 +268,10 @@ def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
     // x86_fp80 has only 15 exponent bits, but we must also
     // retain the most-significant bit of the mantissa as
     // there is no implicit leading
+  } else if (ty->isBFloatTy()) {
+    tsize = 16;
+    high = tsize - 1;
+    low = high - 8;
   } else if (ty->isFP128Ty()) {
     tsize = 128;
     high = tsize - 1;
@@ -263,9 +284,6 @@ def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
   ConstantInt::get(ity, eval);
 }]>;
 
-class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
-  string value = val;
-}
 def Zero : Operation</*primal*/0, /*shadow*/0> {
 }
 class ConstantCFP<string rval, string ival> : Operation</*primal*/0, /*shadow*/0> {
@@ -322,7 +340,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["hypot", "hypotf", "hypotl"],
+                  ["hypot", "hypotf", "hypotl", "__hypot_finite"],
                   [
                     (FDiv (FMul (DiffeRet), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
                     (FDiv (FMul (DiffeRet), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
@@ -405,6 +423,13 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["atanh", "atanhf", "atanhl", "__nv_atanh", "__nv_atanhf"],
                   [(FDiv (DiffeRet), (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))  )] ,
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["__nv_fast_expf"],
+                  [(FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) )],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -549,6 +574,17 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
+                  ["tgamma"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
                   ["logabsgamma"],
                   [
                   (
@@ -644,6 +680,17 @@ def : CallPattern<(Op $n, $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $n, $z),
+                  ["cmplx_jn","cmplx_yn"],
+                  [
+                    (AssertingInactiveArg),
+					// Reverse mode needs to return the conjugate
+                    (CFMul (DiffeRet), (Conj (CFMul (ConstantCFP<"0.5", "0"> $z), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $z), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $z)))))
+                  ],
+                  (CFMul (Shadow $z), (CFMul (ConstantCFP<"0.5", "0"> $z), (CFSub (Call<(SameFunc), [ReadNone,NoUnwind]> (FSub $n, (ConstantFP<"1"> $n)), $z), (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $n, (ConstantFP<"1"> $n)), $z)))),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x),
                   ["erf","erff","erfl"],
                   [
@@ -664,6 +711,15 @@ def : CallPattern<(Op $x),
                   ["erfc","erfcf","erfcl"],
                   [
                     (FMul (DiffeRet), (FMul (ConstantFP<"-1.1283791670955125738961589031215451716881012586580"> $x), (Intrinsic<"exp"> (FNeg (FMul $x, $x)))))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["erfinv","erfinvf","erfinfvl", "__nv_erfinv","__nv_erfinvf","__nv_erfinfvl", ],
+                  [
+                    (FMul (FMul (ConstantFP<"0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei)), (DiffeRet))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -859,6 +915,24 @@ def : CallPattern<(Op (Op $x, $y):$z),
                   ],
                   (CFDiv (CFNeg (Shadow $z)), (CFMul $z, $z)),
                   [ReadNone, NoUnwind]
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["tanh", "19", ""]],
+                  [(FDiv (DiffeRet), (FMul(Intrinsic<"cosh"> $x):$c, $c))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["sinh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"cosh"> $x))],
+                  (ForwardFromSummedReverse)
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["cosh", "19", ""]],
+                  [(FMul (DiffeRet), (Intrinsic<"sinh"> $x))],
+                  (ForwardFromSummedReverse)
                   >;
 
 def : IntrPattern<(Op $x),
