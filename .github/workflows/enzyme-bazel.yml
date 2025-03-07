@@ -6,55 +6,70 @@ on:
   push:
     branches:
     - main
+    paths:
+      - '.github/workflows/enzyme-bazel.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/BUILD'
+      - 'enzyme/WORKSPACE'
   pull_request:
     branches:
     - main
+    paths:
+      - '.github/workflows/enzyme-bazel.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/BUILD'
+      - 'enzyme/WORKSPACE'
   merge_group:
 
-concurrency: 
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
-  build-linux:
-    name: Bazel ${{ matrix.build }} ${{ matrix.os }}
+  build:
+    name: Enzyme Bazel Build - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    
     strategy:
       fail-fast: false
       matrix:
-        build: ["Release"]
-        llbuild: ["Release"]
-        os: [ubuntu-latest]
-  
+        os:
+          - ubuntu-latest
+        build:
+          - Release
+        llbuild:
+          - Release
     timeout-minutes: 500 
     steps:
-    
-    - name: Prep
-      run: |
-          python -m pip install lit
-    
-    - uses: actions/checkout@v4
-    - uses: actions/checkout@v4
-      with:
-        repository: 'llvm/llvm-project'
-        path: 'llvm-project'
-
-    - name: Cache Bazel
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cache/bazel
-          ~/.cache/bazel-disk-cache
-        key: ${{ runner.os }}-bazel-${{ hashFiles('.bazelversion', '.bazelrc', 'WORKSPACE', 'WORKSPACE.bazel', 'MODULE.bazel') }}
-        restore-keys: |
-          ${{ runner.os }}-bazel-
-
-    - name: Build
-      run: |
+      - name: Install Python dependencies
+        run: python -m pip install lit
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: 'llvm/llvm-project'
+          path: 'llvm-project'
+      - uses: bazel-contrib/setup-bazel@0.14.0
+        name: Set up Bazel
+        with:
+          # Avoid downloading Bazel every time.
+          bazelisk-cache: true
+          # Store build cache per workflow.
+          disk-cache: ${{ github.workflow }}-${{ matrix.os }}-${{ matrix.build }}-${{ matrix.llbuild }}
+          # Share repository cache between workflows.
+          repository-cache: true
+          bazelisk-version: 1.x
+      - name: Build Enzyme
+        run: |
           cd enzyme
-          bazel build --disk_cache=~/.cache/bazel-disk-cache :EnzymeStatic :enzymemlir-opt
-    - name: Test
-      run: |
+          bazel build --color=yes :EnzymeStatic :enzymemlir-opt
+      - name: Test Enzyme
+        run: |
           cd enzyme
-          bazel test --disk_cache=~/.cache/bazel-disk-cache --test_output=errors ...
+          bazel test --color=yes --test_output=errors ...
