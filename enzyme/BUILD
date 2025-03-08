@@ -605,6 +605,7 @@ cc_library(
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:LinalgInterfaces",
         "@llvm-project//mlir:LinalgStructuredOpsIncGen",
         "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
