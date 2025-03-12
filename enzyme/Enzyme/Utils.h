@@ -1237,12 +1237,12 @@ static inline std::vector<ssize_t> getDCEIndices(llvm::Function &F) {
   if (AttrList.hasAttribute("enzyme_dce_indices"))
     res = AttrList.getAttribute("enzyme_dce_indices").getValueAsString();
 
+  std::vector<ssize_t> vinds;
   if (res.size() == 0)
-    llvm_unreachable("Illegal dce indices");
+    return vinds;
 
   llvm::SmallVector<llvm::StringRef> inds;
   res.split(inds, ",");
-  std::vector<ssize_t> vinds;
   for (auto ind : inds) {
     ssize_t Result;
     bool b = ind.getAsInteger(10, Result);
