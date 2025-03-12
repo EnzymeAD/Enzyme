@@ -1230,6 +1230,29 @@ getAllocationIndexFromCall(const llvm::CallBase *op)
 #endif
 }
 
+static inline std::vector<ssize_t> getDCEIndices(llvm::Function &F) {
+  llvm::StringRef res = "";
+  auto AttrList =
+      F.getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_dce_indices"))
+    res = AttrList.getAttribute("enzyme_dce_indices").getValueAsString();
+
+  if (res.size() == 0)
+    llvm_unreachable("Illegal dce indices");
+
+  llvm::SmallVector<llvm::StringRef> inds;
+  res.split(inds, ",");
+  std::vector<ssize_t> vinds;
+  for (auto ind : inds) {
+    ssize_t Result;
+    bool b = ind.getAsInteger(10, Result);
+    (void)b;
+    assert(!b);
+    vinds.push_back(Result);
+  }
+  return vinds;
+}
+
 template <typename T>
 static inline llvm::Function *getDeallocatorFnFromCall(T *op) {
   if (auto MD = hasMetadata(op, "enzyme_deallocator_fn")) {

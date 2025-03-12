@@ -1,4 +1,5 @@
 #include "CustomDCE.h"
+#include "Utils.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Function.h"
@@ -6,8 +7,8 @@
 using namespace llvm;
 
 PreservedAnalyses CustomDCEPass::run(Function &F, FunctionAnalysisManager &AM) {
-  // TODO: Find a way to communicate const arguments here
-  SmallDenseSet<unsigned> constArgs = {1};
+  std::vector<ssize_t> indices = getDCEIndices(F);
+  SmallDenseSet<unsigned> constArgs(indices.begin(), indices.end());
 
   for (const auto &[i, arg] : llvm::enumerate(F.args())) {
     if (!constArgs.contains(i))
