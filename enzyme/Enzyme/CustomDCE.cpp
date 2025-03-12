@@ -6,9 +6,9 @@
 using namespace llvm;
 
 PreservedAnalyses CustomDCEPass::run(Function &F, FunctionAnalysisManager &AM) {
-  errs() << "Hello, running on " << F.getName() << "\n";
   // TODO: Find a way to communicate const arguments here
   SmallDenseSet<unsigned> constArgs = {1};
+
   for (const auto &[i, arg] : llvm::enumerate(F.args())) {
     if (!constArgs.contains(i))
       continue;
@@ -40,7 +40,7 @@ PreservedAnalyses CustomDCEPass::run(Function &F, FunctionAnalysisManager &AM) {
     // Delete any instruction that (transitively) uses the argument, starting
     // with the end of the def-use chains
     for (Instruction *I : llvm::reverse(visited)) {
-      errs() << "Removing instruction " << *I << "\n";
+      // errs() << "Removing instruction " << *I << "\n";
       if (I->use_empty())
         I->eraseFromParent();
       else {

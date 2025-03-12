@@ -633,6 +633,53 @@ bool preserveNVVM(bool Begin, Module &M) {
         }
       }
     }
+    if (g.getName().contains("__enzyme_dce")) {
+      if (g.hasInitializer()) {
+        auto CA = dyn_cast<ConstantAggregate>(g.getInitializer());
+        if (!CA || CA->getNumOperands() != 2) {
+          llvm::errs() << "Use of enzyme_dce must be a constant of size 2\n";
+          llvm_unreachable("enzyme_dce");
+        }
+        Value *V = CA->getOperand(0);
+        Value *indices = CA->getOperand(1);
+        while (auto CE = dyn_cast<ConstantExpr>(indices)) {
+          indices = CE->getOperand(0);
+        }
+
+        StringRef indStr;
+        bool foundInd = false;
+        if (auto GV = dyn_cast<GlobalVariable>(indices))
+          if (GV->isConstant())
+            if (auto C = GV->getInitializer())
+              if (auto CA = dyn_cast<ConstantDataArray>(C))
+                if (CA->getType()->getElementType()->isIntegerTy(8) &&
+                    CA->isCString()) {
+                  indStr = CA->getAsCString();
+                  foundInd = true;
+                }
+
+        if (!foundInd) {
+          llvm::errs() << *indices << "\n";
+          llvm::errs() << "Use of "
+                       << "enzyme_dce"
+                       << "requires a shadow-dead argument indices string"
+                       << "\n";
+          llvm_unreachable("enzyme_dce");
+        }
+
+        auto F = dyn_cast<Function>(V);
+        if (!F) {
+          llvm::errs() << "param of enzyme_dce must be a function " << *V
+                       << "\n";
+          llvm_unreachable("enzyme_dce");
+        }
+        F->addAttribute(
+            AttributeList::FunctionIndex,
+            Attribute::get(g.getContext(), "enzyme_dce_indices", indStr));
+        toErase.push_back(&g);
+        changed = true;
+      }
+    }
     if (g.getName().contains("__enzyme_allocation_like")) {
       if (g.hasInitializer()) {
         auto CA = dyn_cast<ConstantAggregate>(g.getInitializer());
