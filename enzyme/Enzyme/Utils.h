@@ -1230,19 +1230,14 @@ getAllocationIndexFromCall(const llvm::CallBase *op)
 #endif
 }
 
-static inline std::vector<ssize_t> getDCEIndices(llvm::Function &F) {
-  llvm::StringRef res = "";
-  auto AttrList =
-      F.getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
-  if (AttrList.hasAttribute("enzyme_dce_indices"))
-    res = AttrList.getAttribute("enzyme_dce_indices").getValueAsString();
-
+static inline std::vector<ssize_t>
+getDCEIndices(llvm::StringRef commaSepIndices) {
   std::vector<ssize_t> vinds;
-  if (res.size() == 0)
+  if (commaSepIndices.size() == 0)
     return vinds;
 
   llvm::SmallVector<llvm::StringRef> inds;
-  res.split(inds, ",");
+  commaSepIndices.split(inds, ",");
   for (auto ind : inds) {
     ssize_t Result;
     bool b = ind.getAsInteger(10, Result);

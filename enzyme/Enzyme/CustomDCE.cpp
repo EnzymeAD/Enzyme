@@ -3,11 +3,23 @@
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Function.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
+static llvm::cl::opt<std::string>
+    DCEFunc("custom-dce-func", cl::init(""), cl::Hidden,
+            cl::desc("Function to perform DCE on"));
+
+static llvm::cl::opt<std::string>
+    DCEArgs("custom-dce-indices", cl::init(""), cl::Hidden,
+            cl::desc("Comma-separated indices of arguments to DCE"));
+
 PreservedAnalyses CustomDCEPass::run(Function &F, FunctionAnalysisManager &AM) {
-  std::vector<ssize_t> indices = getDCEIndices(F);
+  if (F.getName() != DCEFunc)
+    return PreservedAnalyses::all();
+
+  std::vector<ssize_t> indices = getDCEIndices(DCEArgs);
   if (indices.empty())
     return PreservedAnalyses::all();
 
