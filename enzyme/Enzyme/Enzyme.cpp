@@ -3279,6 +3279,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "CustomDCE.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
@@ -3687,6 +3688,10 @@ void registerEnzyme(llvm::PassBuilder &PB) {
         }
         if (Name == "jl-inst-simplify") {
           FPM.addPass(JLInstSimplifyNewPM());
+          return true;
+        }
+        if (Name == "custom-dce") {
+          FPM.addPass(CustomDCEPass());
           return true;
         }
         return false;
