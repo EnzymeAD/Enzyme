@@ -4620,8 +4620,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   bool subsequent_calls_may_write = mode != DerivativeMode::ForwardMode &&
-                                    mode != DerivativeMode::ForwardModeError &&
-                                    mode != DerivativeMode::ReverseModeCombined;
+                                    mode != DerivativeMode::ForwardModeError;
   std::vector<bool> overwritten_args;
   FnTypeInfo type_args(fn);
   if (isRealloc) {
