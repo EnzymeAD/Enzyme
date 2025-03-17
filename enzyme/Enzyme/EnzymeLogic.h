@@ -142,20 +142,24 @@ public:
 ///  Only allowed to be DUP_ARG or CONSTANT. DUP_NONEED is not allowed,
 ///  set returnValue to false instead.
 ///  \p constant_args is the activity info of the arguments
+///  \p subsequent_calls_may_write denotes whether some followup call may
+///     write to accessible memory (and thus can potentially overwrite a load
+///     made in this function).
+///  \p overwritten_args marks whether an argument may be overwritten
+///  before loads in the generated function (and thus cannot be cached).
 ///  \p returnValue is whether the primal's return should also be returned.
 ///  \p dretUsed is whether the shadow return value should also be returned.
 ///  Only allowed to be true if retType is CDIFFE_TYPE::DUP_ARG.
 ///  \p additionalArg is the type (or null) of an additional type in the
 ///  signature to hold the tape.
 ///  \p typeInfo is the type info information about the calling context
-///  \p _overwritten_args marks whether an argument may be overwritten
-///  before loads in the generated function (and thus cannot be cached).
 ///  \p AtomicAdd is whether to perform all adjoint
 ///  updates to memory in an atomic way
 struct ReverseCacheKey {
   llvm::Function *todiff;
   DIFFE_TYPE retType;
   const std::vector<DIFFE_TYPE> constant_args;
+  bool subsequent_calls_may_write;
   std::vector<bool> overwritten_args;
   bool returnUsed;
   bool shadowReturnUsed;
@@ -169,7 +173,7 @@ struct ReverseCacheKey {
   bool runtimeActivity;
 
   ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
-    return {todiff,      retType,          constant_args,  overwritten_args,
+    return {todiff,      retType,          constant_args,  subsequent_calls_may_write, overwritten_args,
             returnUsed,  shadowReturnUsed, mode,           width,
             freeMemory,  AtomicAdd,        additionalType, forceAnonymousTape,
             newTypeInfo, runtimeActivity};
@@ -208,6 +212,11 @@ struct ReverseCacheKey {
     if (std::lexicographical_compare(
             rhs.constant_args.begin(), rhs.constant_args.end(),
             constant_args.begin(), constant_args.end()))
+      return false;
+
+    if (subsequent_calls_may_write < rhs.subsequent_calls_may_write)
+      return true;
+    if (rhs.subsequent_calls_may_write < subsequent_calls_may_write)
       return false;
 
     if (std::lexicographical_compare(
@@ -431,6 +440,7 @@ public:
   struct AugmentedCacheKey {
     llvm::Function *fn;
     DIFFE_TYPE retType;
+    bool subsequent_calls_may_write;
     const std::vector<DIFFE_TYPE> constant_args;
     std::vector<bool> overwritten_args;
     bool returnUsed;
@@ -460,6 +470,11 @@ public:
       if (std::lexicographical_compare(
               rhs.constant_args.begin(), rhs.constant_args.end(),
               constant_args.begin(), constant_args.end()))
+        return false;
+
+      if (subsequent_calls_may_write < rhs.subsequent_calls_may_write)
+        return true;
+      if (rhs.subsequent_calls_may_write < subsequent_calls_may_write)
         return false;
 
       if (std::lexicographical_compare(

@@ -139,6 +139,7 @@ struct CacheAnalysis {
   DominatorTree &OrigDT;
   TargetLibraryInfo &TLI;
   const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks;
+  const bool subsequent_calls_may_write;
   const std::vector<bool> &overwritten_args;
   DerivativeMode mode;
   std::map<Value *, bool> seen;
@@ -279,13 +280,14 @@ struct CacheAnalysis {
           return false;
 
     // Only use invariant load data if either, we are not using Julia
-    // or we are in combined mode. The reason for this is that Julia
+    // or we can guarantee that no following instruction will write to memory.
+    // The reason for this is that Julia
     // incorrectly has invariant load info for a function, which specifies
     // the load value won't change over the course of a function, but
     // may change from a caller.
     bool checkFunction = true;
     if (li.hasMetadata(LLVMContext::MD_invariant_load)) {
-      if (!EnzymeJuliaAddrLoad || mode == DerivativeMode::ReverseModeCombined)
+      if (!EnzymeJuliaAddrLoad || !subsequent_calls_may_write)
         return false;
       else
         checkFunction = false;
@@ -330,7 +332,7 @@ struct CacheAnalysis {
     // If not running combined, check if pointer operand is overwritten
     // by a subsequent call (i.e. not this function).
     bool can_modref = false;
-    if (mode != DerivativeMode::ReverseModeCombined)
+    if (subsequent_calls_may_write)
       can_modref = is_value_mustcache_from_origin(obj);
 
     if (!can_modref && checkFunction) {
@@ -440,7 +442,7 @@ struct CacheAnalysis {
     return can_modref_map;
   }
 
-  std::vector<bool>
+  std::pair<bool, std::vector<bool>>
   compute_overwritten_args_for_one_callsite(CallInst *callsite_op) {
     auto Fn = getFunctionFromCall(callsite_op);
     if (!Fn)
@@ -528,6 +530,9 @@ struct CacheAnalysis {
       args_safe.push_back(init_safe);
     }
 
+
+    bool next_subsequent_inst_may_write = subsequent_calls_may_write;
+
     // Second, we check for memory modifications that can occur in the
     // continuation of the
     //   callee inside the parent function.
@@ -564,6 +569,7 @@ struct CacheAnalysis {
       if (!inst2->mayWriteToMemory())
         return false;
 
+      next_subsequent_inst_may_write = true;
       for (unsigned i = 0; i < args.size(); ++i) {
         if (!args_safe[i])
           continue;
@@ -626,7 +632,7 @@ struct CacheAnalysis {
       }
     }
 
-    return overwritten_args;
+    return std::make_pair(next_subsequent_inst_may_write, overwritten_args);
   }
 
   // Given a function and the arguments passed to it by its caller that are
@@ -634,9 +640,9 @@ struct CacheAnalysis {
   //   the set of uncacheable arguments for each callsite inside the function. A
   //   pointer argument is uncacheable at a callsite if the memory pointed to
   //   might be modified after that callsite.
-  std::map<CallInst *, const std::vector<bool>>
+  std::map<CallInst *, const std::pair<bool, std::vector<bool>>>
   compute_overwritten_args_for_callsites() {
-    std::map<CallInst *, const std::vector<bool>> overwritten_args_map;
+    std::map<CallInst *, const std::pair<bool, std::vector<bool>>> overwritten_args_map;
 
     for (auto &B : *oldFunc) {
       if (unnecessaryBlocks.count(&B))
