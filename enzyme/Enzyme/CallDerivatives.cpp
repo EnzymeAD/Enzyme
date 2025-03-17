@@ -2205,7 +2205,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall) {
+    bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
+    CallInst *const newCall) {
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =

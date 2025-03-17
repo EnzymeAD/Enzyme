@@ -152,11 +152,13 @@ struct CacheAnalysis {
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
       const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks,
+      bool subsequent_calls_may_write,
       const std::vector<bool> &overwritten_args, DerivativeMode mode, bool omp)
       : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree),
         rematerializableAllocations(rematerializableAllocations), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
         TLI(TLI), unnecessaryBlocks(unnecessaryBlocks),
+        subsequent_calls_may_write(subsequent_calls_may_write),
         overwritten_args(overwritten_args), mode(mode), omp(omp) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
@@ -530,7 +532,6 @@ struct CacheAnalysis {
       args_safe.push_back(init_safe);
     }
 
-
     bool next_subsequent_inst_may_write = subsequent_calls_may_write;
 
     // Second, we check for memory modifications that can occur in the
@@ -640,9 +641,10 @@ struct CacheAnalysis {
   //   the set of uncacheable arguments for each callsite inside the function. A
   //   pointer argument is uncacheable at a callsite if the memory pointed to
   //   might be modified after that callsite.
-  std::map<CallInst *, const std::pair<bool, std::vector<bool>>>
+  std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
   compute_overwritten_args_for_callsites() {
-    std::map<CallInst *, const std::pair<bool, std::vector<bool>>> overwritten_args_map;
+    std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
+        overwritten_args_map;
 
     for (auto &B : *oldFunc) {
       if (unnecessaryBlocks.count(&B))
@@ -660,7 +662,7 @@ struct CacheAnalysis {
           // For all other calls, we compute the uncacheable args for this
           // callsite.
           overwritten_args_map.insert(
-              std::pair<CallInst *, const std::vector<bool>>(
+              std::pair<CallInst *, std::pair<bool, const std::vector<bool>>>(
                   op, compute_overwritten_args_for_one_callsite(op)));
         }
       }
@@ -1935,8 +1937,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
-    const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
-    bool runtimeActivity, unsigned width, bool AtomicAdd, bool omp) {
+    bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
+    bool forceAnonymousTape, bool runtimeActivity, unsigned width,
+    bool AtomicAdd, bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
@@ -1948,12 +1951,19 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
            !todiff->getReturnType()->isVoidTy());
 
   FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
-  AugmentedCacheKey tup = {todiff,        retType,
-                           constant_args, _overwritten_args,
-                           returnUsed,    shadowReturnUsed,
-                           oldTypeInfo,   forceAnonymousTape,
-                           AtomicAdd,     omp,
-                           width,         runtimeActivity};
+  AugmentedCacheKey tup = {todiff,
+                           retType,
+                           constant_args,
+                           subsequent_calls_may_write,
+                           _overwritten_args,
+                           returnUsed,
+                           shadowReturnUsed,
+                           oldTypeInfo,
+                           forceAnonymousTape,
+                           AtomicAdd,
+                           omp,
+                           width,
+                           runtimeActivity};
 
   if (_overwritten_args.size() != todiff->arg_size()) {
     std::string s;
@@ -2044,8 +2054,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
       auto &aug = CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
-          shadowReturnUsed, oldTypeInfo_, _overwritten_args, forceAnonymousTape,
-          runtimeActivity, width, AtomicAdd, omp);
+          shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
+          _overwritten_args, forceAnonymousTape, runtimeActivity, width,
+          AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2357,9 +2368,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    *gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
-                   _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
-  const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
-      CA.compute_overwritten_args_for_callsites();
+                   subsequent_calls_may_write, _overwritten_argsPP,
+                   DerivativeMode::ReverseModePrimal, omp);
+  const std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
+      overwritten_args_map = CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
 
   const std::map<Instruction *, bool> can_modref_map =
@@ -3669,7 +3681,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
-          key.overwritten_args,
+          key.subsequent_calls_may_write, key.overwritten_args,
           /*forceAnonymousTape*/ false, key.runtimeActivity, key.width,
           key.AtomicAdd, omp);
 
@@ -4100,10 +4112,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    *gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
-                   _overwritten_argsPP, key.mode, omp);
-  const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
-      (augmenteddata) ? augmenteddata->overwritten_args_map
-                      : CA.compute_overwritten_args_for_callsites();
+                   key.subsequent_calls_may_write, _overwritten_argsPP,
+                   key.mode, omp);
+  const std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
+      overwritten_args_map =
+          (augmenteddata) ? augmenteddata->overwritten_args_map
+                          : CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
 
   const std::map<Instruction *, bool> can_modref_map =
@@ -4466,7 +4480,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     DerivativeMode mode, bool freeMemory, bool runtimeActivity, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
-    const std::vector<bool> _overwritten_args,
+    bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
 
   TimeTraceScope timeScope("CreateForwardDiff", todiff->getName());
@@ -4489,9 +4503,17 @@ Function *EnzymeLogic::CreateForwardDiff(
       mode != DerivativeMode::ForwardModeError)
     assert(_overwritten_args.size() == todiff->arg_size());
 
-  ForwardCacheKey tup = {
-      todiff, retType, constant_args, _overwritten_args, returnUsed,
-      mode,   width,   additionalArg, oldTypeInfo,       runtimeActivity};
+  ForwardCacheKey tup = {todiff,
+                         retType,
+                         constant_args,
+                         subsequent_calls_may_write,
+                         _overwritten_args,
+                         returnUsed,
+                         mode,
+                         width,
+                         additionalArg,
+                         oldTypeInfo,
+                         runtimeActivity};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -4757,9 +4779,9 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
         *gutils->OrigLI, *gutils->OrigDT, TLI, guaranteedUnreachable,
-        _overwritten_argsPP, mode, omp);
-    const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
-        CA.compute_overwritten_args_for_callsites();
+        subsequent_calls_may_write, _overwritten_argsPP, mode, omp);
+    const std::map<CallInst *, std::pair<bool, const std::vector<bool>>>
+        overwritten_args_map = CA.compute_overwritten_args_for_callsites();
     gutils->overwritten_args_map_ptr = &overwritten_args_map;
     can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(
         CA.compute_uncacheable_load_map());
