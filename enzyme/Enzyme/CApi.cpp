@@ -638,7 +638,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .todiff = cast<Function>(unwrap(todiff)),
           .retType = (DIFFE_TYPE)retType,
           .constant_args = nconstant_args,
-          .subsequent_calls_may_write = subsequent_calls_may_write,
+          .subsequent_calls_may_write = (bool)subsequent_calls_may_write,
           .overwritten_args = overwritten_args,
           .returnUsed = (bool)returnValue,
           .shadowReturnUsed = (bool)dretUsed,
