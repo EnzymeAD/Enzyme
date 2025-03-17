@@ -174,7 +174,7 @@ public:
   llvm::SmallPtrSet<llvm::Instruction *, 4> unnecessaryIntermediates;
 
   const std::map<llvm::Instruction *, bool> *can_modref_map;
-  const std::map<llvm::CallInst *, const std::vector<bool>>
+  const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       *overwritten_args_map_ptr;
   const llvm::SmallPtrSetImpl<const llvm::Value *> *unnecessaryValuesP;
 

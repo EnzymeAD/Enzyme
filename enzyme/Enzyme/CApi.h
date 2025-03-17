@@ -209,8 +209,8 @@ LLVMValueRef EnzymeCreateForwardDiff(
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
     CDerivativeMode mode, uint8_t freeMemory, uint8_t runtimeActivity,
     unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t *_overwritten_args, size_t overwritten_args_size,
-    EnzymeAugmentedReturnPtr augmented);
+    uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
+    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented);
 
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
@@ -219,8 +219,9 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity,
     unsigned width, uint8_t freeMemory, LLVMTypeRef additionalArg,
     uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
-    uint8_t *_overwritten_args, size_t overwritten_args_size,
-    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd);
+    uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
+    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented,
+    uint8_t AtomicAdd);
 
 void EnzymeRegisterCallHandler(const char *Name,
                                CustomAugmentedFunctionForward FwdHandle,
