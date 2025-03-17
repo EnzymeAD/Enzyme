@@ -3663,32 +3663,32 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       bool emitReverse = true;
       if (EnzymeJuliaAddrLoad) {
-        if (auto prev = dyn_cast_or_nullptr<CallBase>(call.getPrevNode())) {
-           if (auto F = prev->getCalledFunction())
+        if (auto prev = dyn_cast_or_null<CallBase>(FI.getPrevNode())) {
+          if (auto F = prev->getCalledFunction())
             if (F->getName() == "julia.safepoint")
-               emitReverse = false;
+              emitReverse = false;
         }
-        if (auto prev = dyn_cast_or_nullptr<CallBase>(call.getNextNode())) {
-           if (auto F = prev->getCalledFunction())
+        if (auto prev = dyn_cast_or_null<CallBase>(FI.getNextNode())) {
+          if (auto F = prev->getCalledFunction())
             if (F->getName() == "julia.safepoint")
-               emitReverse = false;
+              emitReverse = false;
         }
-      } 
+      }
       if (emitReverse) {
-          IRBuilder<> Builder2(&FI);
-          getReverseBuilder(Builder2);
-          auto order = FI.getOrdering();
-          switch (order) {
-          case AtomicOrdering::Acquire:
-            order = AtomicOrdering::Release;
-            break;
-          case AtomicOrdering::Release:
-            order = AtomicOrdering::Acquire;
-            break;
-          default:
-            break;
-          }
-          Builder2.CreateFence(order, FI.getSyncScopeID());
+        IRBuilder<> Builder2(&FI);
+        getReverseBuilder(Builder2);
+        auto order = FI.getOrdering();
+        switch (order) {
+        case AtomicOrdering::Acquire:
+          order = AtomicOrdering::Release;
+          break;
+        case AtomicOrdering::Release:
+          order = AtomicOrdering::Acquire;
+          break;
+        default:
+          break;
+        }
+        Builder2.CreateFence(order, FI.getSyncScopeID());
       }
     }
     }
