@@ -4038,6 +4038,6 @@ bool isTargetNVPTX(llvm::Module &M) {
   return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
          M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
 #else
-  return M.getTargetTriple().find("nvptx") != std::string::npos
+  return M.getTargetTriple().find("nvptx") != std::string::npos;
 #endif
 }
