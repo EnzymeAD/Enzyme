@@ -26,6 +26,8 @@ class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
 
+std::unique_ptr<Pass> createProbProgPass();
+
 std::unique_ptr<Pass> createBatchPass();
 
 std::unique_ptr<Pass> createDifferentiateWrapperPass();
