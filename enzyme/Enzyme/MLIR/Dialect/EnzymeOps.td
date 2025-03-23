@@ -230,16 +230,6 @@ def SampleOp : Enzyme_Op<"sample",
   }];
 }
 
-// def NewTraceOp : Enzyme_Op<"newtrace", [DeclareOpInterfaceMethods<SimpleOpInterface>]> {
-//   let summary = "Create a new, empty Trace object.";
-//   let description = [{
-//   The `enzyme.newtrace` operation constructs a new, empty Trace object.
-//   }];
-//   let arguments = (ins);
-//   let results = (outs Trace:$trace);
-//   let assemblyFormat = "newtrace";
-// }
-
 def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Trace a probabilistic function";
   let description = [{
