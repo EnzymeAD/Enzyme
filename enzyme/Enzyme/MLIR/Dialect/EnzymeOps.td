@@ -149,6 +149,17 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
+def Trace : Enzyme_Type<"Trace"> {
+  let summary = "Trace for ProbProg pass";
+  let description = [{
+    Mutable storage for recording all sampled variables, their values, computed log-likelihoods,
+    and the final returned result from executing a traced probabilistic function.
+  }];
+  let parameters = (ins "Type":$type);
+  let mnemonic = "Trace";
+  let assemblyFormat = "`<` $type `>`";
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
@@ -210,7 +221,7 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
 
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
+  let summary = "Sample from a distribution";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
   let results = (outs Variadic<AnyType>:$outputs);
 
@@ -218,5 +229,38 @@ def SampleOp : Enzyme_Op<"sample",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 }
+
+// def NewTraceOp : Enzyme_Op<"newtrace", [DeclareOpInterfaceMethods<SimpleOpInterface>]> {
+//   let summary = "Create a new, empty Trace object.";
+//   let description = [{
+//   The `enzyme.newtrace` operation constructs a new, empty Trace object.
+//   }];
+//   let arguments = (ins);
+//   let results = (outs Trace:$trace);
+//   let assemblyFormat = "newtrace";
+// }
+
+def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Trace a probabilistic function";
+  let description = [{
+  Execute a probabilistic function specified by a symbol reference,
+  using the provided inputs, and updates the given trace object (passed as the first input)
+  with the sampled values, computed log-likelihoods, and the function's final returned result.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  // Return an updated trace object.
+  let results = (outs AnyType:$trace, Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 
 #endif // ENZYME_OPS
