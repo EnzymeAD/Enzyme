@@ -169,6 +169,25 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// ForwardDiffOp
+//===----------------------------------------------------------------------===//
+class FwdDeadGrad final : public OpRewritePattern<ForwardDiffOp> {
+public:
+  using OpRewritePattern<ForwardDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ForwardDiffOp op,
+                                PatternRewriter &rewriter) const override {
+    LLVM_DEBUG(llvm::dbgs() << "Triggered activity rewrite for fwddiff" << "\n"); 
+    return failure();
+  }
+};
+
+void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                                MLIRContext *context) {
+  patterns.add<FwdDeadGrad>(context);
+}
+
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
