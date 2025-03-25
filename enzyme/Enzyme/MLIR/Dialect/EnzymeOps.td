@@ -160,6 +160,16 @@ def Trace : Enzyme_Type<"Trace"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
+def ChoiceMap : Enzyme_Type<"ChoiceMap"> {
+  let summary = "Choice map for ProbProg pass";
+  let description = [{
+    Immutable storage for recording constraints on the sampled variables.
+  }];
+  let parameters = (ins "Type":$type);
+  let mnemonic = "ChoiceMap";
+  let assemblyFormat = "`<` $type `>`";
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
@@ -230,25 +240,25 @@ def SampleOp : Enzyme_Op<"sample",
   }];
 }
 
-def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Trace a probabilistic function";
   let description = [{
-  Execute a probabilistic function specified by a symbol reference,
-  using the provided inputs, and updates the given trace object (passed as the first input)
-  with the sampled values, computed log-likelihoods, and the function's final returned result.
+  Execute a probabilistic function specified by a symbol reference using the provided arguments,
+  and a set of constraints on the sampled variables (if provided). Return the execution trace
+  (if provided) and the log-likelihood of the execution trace.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    Optional<Trace>:$oldTrace,
+    Optional<ChoiceMap>:$constraints
   );
 
-  // Return an updated trace object.
-  let results = (outs AnyType:$trace, Variadic<AnyType>:$outputs);
+  let results = (outs AnyType:$newTrace, Variadic<AnyType>:$weights);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `[` ($constraints^ `:` type($constraints))? `]` `[` ($oldTrace^ `:` type($oldTrace))? `]` attr-dict `:` functional-type($inputs, results)
   }];
 }
 
