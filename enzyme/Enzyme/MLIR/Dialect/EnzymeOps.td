@@ -232,11 +232,16 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    FlatSymbolRefAttr:$logpdf,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` $logpdf attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -252,7 +257,8 @@ def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterfac
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     Optional<Trace>:$oldTrace,
-    Optional<ChoiceMap>:$constraints
+    Optional<ChoiceMap>:$constraints,
+    DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs AnyType:$newTrace, Variadic<AnyType>:$weights);
