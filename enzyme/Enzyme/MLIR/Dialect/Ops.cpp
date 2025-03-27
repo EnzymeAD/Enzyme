@@ -172,20 +172,91 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 // ForwardDiffOp
 //===----------------------------------------------------------------------===//
-class FwdDeadGrad final : public OpRewritePattern<ForwardDiffOp> {
+class FwdDeadPrimal final : public OpRewritePattern<ForwardDiffOp> {
 public:
   using OpRewritePattern<ForwardDiffOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(ForwardDiffOp op,
+  LogicalResult matchAndRewrite(ForwardDiffOp uop,
                                 PatternRewriter &rewriter) const override {
-    LLVM_DEBUG(llvm::dbgs() << "Triggered activity rewrite for fwddiff" << "\n"); 
-    return failure();
+
+    // Adjust return value attributes (dup -> dupnoneed)
+    auto retActivityAttr = uop.getRetActivity();
+    auto out_idx = 0;
+    SmallVector<mlir::Value, 2> outs_args;
+    SmallVector<Type, 2> out_ty;
+    SmallVector<mlir::enzyme::ActivityAttr, 2> ret_act_args;
+    bool changed = false;
+
+    for (auto [idx, act] : llvm::enumerate(retActivityAttr)) {
+      auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+      auto val = iattr.getValue();
+      mlir::Value res = uop.getOutputs()[out_idx];
+
+      switch (val) {
+      case mlir::enzyme::Activity::enzyme_active:
+        outs_args.push_back(res);
+        out_ty.push_back(res.getType());
+        ret_act_args.push_back(iattr);
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        if (!res.use_empty()) {
+          outs_args.push_back(res);
+          out_ty.push_back(res.getType());
+          ret_act_args.push_back(iattr);
+        } else {
+          changed = true;
+          // discard return, change attr
+          auto new_dup = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(), mlir::enzyme::Activity::enzyme_dupnoneed);
+          ret_act_args.push_back(new_dup);
+        }
+
+        out_idx++;
+
+        // derivative
+        res = uop.getOutputs()[out_idx];
+        out_ty.push_back(res.getType());
+        outs_args.push_back(res);
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        outs_args.push_back(res);
+        out_ty.push_back(res.getType());
+        ret_act_args.push_back(iattr);
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        outs_args.push_back(res);
+        out_ty.push_back(res.getType());
+        ret_act_args.push_back(iattr);
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        assert(0 && "unsupported arg activenoneed");
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        assert(0 && "fwddiff arg cannot be constnoneed");
+        break;
+      }
+
+      out_idx++;
+    }
+
+    // early exit if no change
+    if (!changed)
+      return failure();
+
+    ArrayAttr newRetActivityAttr = ArrayAttr::get(
+        rewriter.getContext(),
+        llvm::ArrayRef<Attribute>(ret_act_args.begin(), ret_act_args.end()));
+    rewriter.create<mlir::enzyme::ForwardDiffOp>(uop.getLoc(),out_ty,uop.getInputs(),uop.getFnAttr(),uop.getActivityAttr(),newRetActivityAttr,uop.getWidthAttr());
+    rewriter.replaceOpWithNewOp<mlir::enzyme::ForwardDiffOp>(
+        uop, out_ty, uop.getInputs(), uop.getFnAttr(), uop.getActivityAttr(),
+        newRetActivityAttr, uop.getWidthAttr());
+    return success();
   }
 };
 
 void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                 MLIRContext *context) {
-  patterns.add<FwdDeadGrad>(context);
+  patterns.add<FwdDeadPrimal>(context);
 }
 
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
