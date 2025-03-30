@@ -29,7 +29,7 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 
 
 class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
-: AttrDef<Enzyme_Dialect, name, traits> {
+    : AttrDef<Enzyme_Dialect, name, traits> {
   let mnemonic = attrMnemonic;
 }
 
@@ -37,15 +37,15 @@ def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let summary = "A pseudo alias class represents a memory allocation passed into a function.";
 
   let parameters = (ins
-      "FlatSymbolRefAttr":$function,
-      "unsigned":$argNumber,
-      "unsigned":$depth
-      );
+    "FlatSymbolRefAttr":$function,
+    "unsigned":$argNumber,
+    "unsigned":$depth
+  );
 
   let builders = [
     AttrBuilderWithInferredContext<(ins "FlatSymbolRefAttr":$function,
-        "unsigned":$argNumber,
-        "unsigned":$depth), [{
+                                        "unsigned":$argNumber,
+                                        "unsigned":$depth), [{
       return $_get(function.getContext(), function, argNumber, depth);
     }]>
   ];
@@ -63,57 +63,58 @@ def Activity : I32EnumAttr<"Activity",
       I32EnumAttrCase<"enzyme_activenoneed",  4>,
       I32EnumAttrCase<"enzyme_constnoneed",  5>,
     ]> {
-      let genSpecializedAttr = 0;
-      let cppNamespace = "::mlir::enzyme";
-    }
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::enzyme";
+}
 
 def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
 
 def ActivityArrayAttr : TypedArrayAttrBase<
-ActivityAttr, "Array of argument activity states">;
+    ActivityAttr, "Array of argument activity states">;
 
 def PlaceholderOp : Enzyme_Op<"placeholder",
     [Pure]> {
-      let results = (outs AnyType:$output);
-    }
+  let results = (outs AnyType:$output);
+}
 
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-      let summary = "Perform forward mode AD on a funcop";
-      let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width); 
-      let results = (outs Variadic<AnyType>:$outputs);
+  let summary = "Perform forward mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width); 
+  let results = (outs Variadic<AnyType>:$outputs);
 
-      let assemblyFormat = [{
-        $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-      }];
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
 
-      // Define activity optimizations as canonicalization 
-      let hasCanonicalizer = 1;
-    }
+  // Define activity optimizations as canonicalization 
+  let hasCanonicalizer = 1;
+}
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-      let summary = "Perform reverse mode AD on a funcop";
-      let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width);
-      let results = (outs Variadic<AnyType>:$outputs);
+  let summary = "Perform reverse mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width);
+  let results = (outs Variadic<AnyType>:$outputs);
 
-      let assemblyFormat = [{
-        $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-      }];
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
 
+  let hasCanonicalizer = 1;
 
-    }
+}
 
 def BatchOp : Enzyme_Op<"batch",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-      let summary = "Perform reverse mode AD on a funcop";
-      let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DenseI64ArrayAttr:$batch_shape);
-      let results = (outs Variadic<AnyType>:$outputs);
+  let summary = "Perform reverse mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DenseI64ArrayAttr:$batch_shape);
+  let results = (outs Variadic<AnyType>:$outputs);
 
-      let assemblyFormat = [{
-        $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-      }];
-    }
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
 
 def PushOp : Enzyme_Op<"push"> {
   let summary = "Push value to cache or ShadowedGradient";
@@ -129,10 +130,10 @@ def PopOp : Enzyme_Op<"pop"> {
 
 def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
-      let summary = "Create enzyme.gradient and enzyme.cache";
-      let arguments = (ins );
-      let results = (outs AnyType);
-    }
+  let summary = "Create enzyme.gradient and enzyme.cache";
+  let arguments = (ins );
+  let results = (outs AnyType);
+}
 
 def Cache : Enzyme_Type<"Cache"> {
   let summary = "Cache for reverse pass";
@@ -156,53 +157,53 @@ def Gradient : Enzyme_Type<"Gradient"> {
 
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
-      let summary = "Store the current value of the gradient";
-      let arguments = (ins Arg<AnyType, "the reference to store to",
-          [MemWrite]>:$gradient, AnyType : $value);
-      let results = (outs );
-    }
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+  let summary = "Store the current value of the gradient";
+  let arguments = (ins Arg<AnyType, "the reference to store to",
+                           [MemWrite]>:$gradient, AnyType : $value);
+  let results = (outs );
+}
 
 def GetOp : Enzyme_Op<"get",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-    DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
-      let summary = "Load current value of gradient";
-      let arguments = (ins Arg<AnyType, "the reference to load from",
-          [MemRead]>:$gradient);
-      let results = (outs AnyType);
-    }
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+  let summary = "Load current value of gradient";
+  let arguments = (ins Arg<AnyType, "the reference to load from",
+                           [MemRead]>:$gradient);
+  let results = (outs AnyType);
+}
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
     Arguments<(ins Variadic<AnyType>:$values)> {
-      let summary = "Linalg add to operation";
-      let description = [{
-        TODO
-      }];
-      let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
-      let hasCustomAssemblyFormat = 0;
-      let hasVerifier = 0;
-    }
+  let summary = "Linalg add to operation";
+  let description = [{
+    TODO
+  }];
+  let builders = [OpBuilder<(ins), [{ /* nothing to do */ }]>];
+  let hasCustomAssemblyFormat = 0;
+  let hasVerifier = 0;
+}
 
 def GenericAdjointOp : Enzyme_Op<"genericAdjoint", [AttrSizedOperandSegments]> {
   let description = [{ }];
 
   let arguments = (ins Variadic<AnyType>:$inputs,
-      Variadic<AnyShaped>:$outputs,
-      AffineMapArrayAttr:$indexing_maps,
-      ArrayAttr:$iterator_types,
-      OptionalAttr<StrAttr>:$doc,
-      OptionalAttr<StrAttr>:$library_call);
+                       Variadic<AnyShaped>:$outputs,
+                       AffineMapArrayAttr:$indexing_maps,
+                       ArrayAttr:$iterator_types,
+                       OptionalAttr<StrAttr>:$doc,
+                       OptionalAttr<StrAttr>:$library_call);
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   let regions = (region AnyRegion:$region);
-
+  
 }
 
 def BroadcastOp : Enzyme_Op<"broadcast"> {
   let description = [{
-    Broadcast the operand by adding extra dimensions with sizes provided by the `shape` attribute to the front.
-      For scalar operands, ranked tensor is created.
+  Broadcast the operand by adding extra dimensions with sizes provided by the `shape` attribute to the front.
+  For scalar operands, ranked tensor is created.
 
-      NOTE: Only works for scalar and *ranked* tensor operands for now.
+  NOTE: Only works for scalar and *ranked* tensor operands for now.
   }];
 
   let arguments = (ins AnyType:$input, DenseI64ArrayAttr:$shape);
@@ -215,13 +216,13 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
 
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-      let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
-      let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
-      let results = (outs Variadic<AnyType>:$outputs);
+  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
+  let results = (outs Variadic<AnyType>:$outputs);
 
-      let assemblyFormat = [{
-        $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-      }];
-    }
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
 
 #endif // ENZYME_OPS
