@@ -465,18 +465,9 @@ public:
         outs_args.push_back(res);
         break;
       case mlir::enzyme::Activity::enzyme_const:
-
-        if (!res.use_empty()) {
-          outs_args.push_back(res);
-          out_ty.push_back(res.getType());
-          newRetActivityArgs.push_back(iattr);
-        } else {
-          changed = true;
-          auto new_constnn = mlir::enzyme::ActivityAttr::get(
-              rewriter.getContext(),
-              mlir::enzyme::Activity::enzyme_constnoneed);
-          newRetActivityArgs.push_back(new_constnn);
-        }
+        outs_args.push_back(res);
+        out_ty.push_back(res.getType());
+        newRetActivityArgs.push_back(iattr);
         break;
       case mlir::enzyme::Activity::enzyme_dupnoneed:
         if (!res.use_empty()) {
@@ -484,11 +475,13 @@ public:
           out_ty.push_back(res.getType());
           newRetActivityArgs.push_back(iattr);
         } else {
-          changed = true;
-          auto new_constnn = mlir::enzyme::ActivityAttr::get(
-              rewriter.getContext(),
-              mlir::enzyme::Activity::enzyme_constnoneed);
-          newRetActivityArgs.push_back(new_constnn);
+          if (!isMutable(res.getType())) {
+            changed = true;
+            auto new_constnn = mlir::enzyme::ActivityAttr::get(
+                rewriter.getContext(),
+                mlir::enzyme::Activity::enzyme_constnoneed);
+            newRetActivityArgs.push_back(new_constnn);
+          }
         }
         break;
       case mlir::enzyme::Activity::enzyme_activenoneed:
