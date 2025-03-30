@@ -19,8 +19,8 @@ module {
   func.func @dsq2(%x : f64, %dx : f64) -> f64 {
     %p,%r = enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dup>] } : (f64, f64) -> (f64,f64)
   
-    // CHECK: %[[VAL:.*]]:2 = enzyme.fwddiff @square(%arg0, %arg1) {{.*ret_activity = \[#enzyme<activity enzyme_dup>\]}}
-    // CHECK: return %[[VAL]]#0 : f64
+    // CHECK: %[[VAL:.*]] = enzyme.fwddiff @square(%arg0, %arg1) {{.*ret_activity = \[#enzyme<activity enzyme_const>\]}}
+    // CHECK: return %[[VAL]] : f64
     return %p : f64
   }
 }
