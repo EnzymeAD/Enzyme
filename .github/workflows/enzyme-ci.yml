@@ -4,7 +4,29 @@ on:
   push:
     branches:
       - main
+    paths:
+      - '.github/workflows/enzyme-ci.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   pull_request:
+    branches:
+    - main
+    paths:
+      - '.github/workflows/enzyme-ci.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   merge_group:
 
 jobs:
@@ -24,28 +46,28 @@ jobs:
     steps:
     - name: add llvm 
       run: |
-          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
-          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
+          sudo apt-get install -y cmake ninja-build llvm-${{ matrix.llvm }}-dev
           sudo python3 -m pip install --upgrade pip lit
     - uses: actions/checkout@v4
     - name: mkdir
-      run: rm -rf build && mkdir build
+      run: mkdir build
     - name: cmake
       working-directory: build
-      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
-    - name: make
+      run: cmake -G Ninja ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+    - name: build
       working-directory: build
-      run: make -j `nproc`
-    - name: make check-typeanalysis
+      run: ninja
+    - name: check-typeanalysis
       working-directory: build
-      run: make -j `nproc` check-typeanalysis
-    - name: make check-activityanalysis
+      run: ninja check-typeanalysis
+    - name: ninja check-activityanalysis
       working-directory: build
-      run: make -j `nproc` check-activityanalysis
-    - name: make check-enzyme
+      run: ninja check-activityanalysis
+    - name: check-enzyme
       working-directory: build
-      run: make  -j `nproc` check-enzyme-bench
+      run: ninja check-enzyme-bench
   
   build-macos:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} macOS
@@ -60,28 +82,25 @@ jobs:
     timeout-minutes: 30 
     steps:
     - name: add llvm 
-      run: |
-          brew update
-          brew install llvm@${{ matrix.llvm }} make cmake
-          sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
+      run: brew install llvm@${{ matrix.llvm }} ninja cmake lit
     - uses: actions/checkout@v4
     - name: mkdir
-      run: rm -rf build && mkdir build
+      run: mkdir build
     - name: cmake
       working-directory: build
-      run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`find /Users/runner/Library/Python/ -iname lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
-    - name: make
+      run: cmake -G Ninja ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+    - name: build
       working-directory: build
-      run: make -j 3
-    - name: make check-typeanalysis
+      run: ninja
+    - name: check-typeanalysis
       working-directory: build
-      run: make -j 3 check-typeanalysis
-    - name: make check-activityanalysis
+      run: ninja check-typeanalysis
+    - name: check-activityanalysis
       working-directory: build
-      run: make -j 3 check-activityanalysis
-    - name: make check-enzyme
+      run: ninja check-activityanalysis
+    - name: check-enzyme
       working-directory: build
-      run: make -j3 check-enzyme-bench
+      run: ninja check-enzyme-bench
 
   build-xcode:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} macOS XCode
@@ -96,12 +115,10 @@ jobs:
     timeout-minutes: 30
     steps:
     - name: add llvm
-      run: |
-          brew install llvm@${{ matrix.llvm }} make cmake gcc
-          sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
+      run: brew install llvm@${{ matrix.llvm }} make cmake lit
     - uses: actions/checkout@v4
     - name: mkdir
-      run: rm -rf build && mkdir build
+      run: mkdir build
     - name: cmake
       working-directory: build
       run: |
