@@ -44,46 +44,77 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                     mlir::enzyme::EnzymeDialect>();
   }
 
-  template <typename T>
-  LogicalResult HandleProbProg(SymbolTableCollection &symbolTable, T CI) {
-    if (mlir::isa<enzyme::SampleOp>(CI)) {
-      auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-      auto fn = cast<FunctionOpInterface>(symbolOp);
+  LogicalResult HandleTrace(SymbolTableCollection &symbolTable,
+                            enzyme::TraceOp CI) {
+    auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
 
-      if (fn.getNumArguments() != CI.getNumOperands()) {
-        CI.emitError() << "Incorrect number of arguments for enzyme operation: "
-                       << *CI << " expected " << fn.getNumArguments()
-                       << " but got " << CI.getNumOperands();
-        return failure();
-      }
+    MTypeAnalysis TA;
+    auto type_args = TA.getAnalyzedTypeInfo(fn);
+    bool freeMemory = true;
+    bool omp = false;
 
-      OpBuilder builder(CI);
-      auto res = builder.create<func::CallOp>(
-          CI.getLoc(), fn.getName(), fn.getResultTypes(), CI.getOperands());
+    FunctionOpInterface newFunc = Logic.CreateTrace(
+        fn, {}, {}, TA, {}, {}, freeMemory, 0, /*addedType*/ nullptr, type_args,
+        {}, /*augmented*/ nullptr, omp, "");
+    if (!newFunc)
+      return failure();
 
-      if (res.getNumResults() != CI.getNumResults()) {
-        CI.emitError() << "Incorrect number of results for enzyme operation: "
-                       << res.getNumResults() << " expected "
-                       << CI.getNumResults();
-        return failure();
-      }
+    llvm::errs() << "Creating new function\n";
+    newFunc.dump();
 
-      res->setAttr("name", CI.getNameAttr());
-
-      CI.replaceAllUsesWith(res);
-      CI->erase();
-    } else {
-      CI.emitError() << "Unsupported ProbProg operation: " << *CI;
+    OpBuilder builder(CI);
+    auto tCI =
+        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
+                                     newFunc.getResultTypes(), CI.getInputs());
+    if (tCI.getNumResults() != CI.getNumResults()) {
+      CI.emitError() << "Incorrect number of results for enzyme operation: "
+                     << *CI << " expected " << *tCI;
       return failure();
     }
+
+    CI->replaceAllUsesWith(tCI);
+    CI->erase();
+
+    // if (isa<enzyme::SampleOp>(CI)) {
+    //   auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI,
+    //   CI.getFnAttr()); auto fn = cast<FunctionOpInterface>(symbolOp);
+
+    //   if (fn.getNumArguments() != CI.getNumOperands()) {
+    //     CI.emitError() << "Incorrect number of arguments for enzyme
+    //     operation: "
+    //                    << *CI << " expected " << fn.getNumArguments()
+    //                    << " but got " << CI.getNumOperands();
+    //     return failure();
+    //   }
+
+    //   OpBuilder builder(CI);
+    //   auto res = builder.create<func::CallOp>(
+    //       CI.getLoc(), fn.getName(), fn.getResultTypes(), CI.getOperands());
+
+    //   if (res.getNumResults() != CI.getNumResults()) {
+    //     CI.emitError() << "Incorrect number of results for enzyme operation:
+    //     "
+    //                    << res.getNumResults() << " expected "
+    //                    << CI.getNumResults();
+    //     return failure();
+    //   }
+
+    //   // res->setAttr("name", CI.getNameAttr());
+
+    //   CI.replaceAllUsesWith(res);
+    //   CI->erase();
+    // } else {
+    //   CI.emitError() << "Unsupported ProbProg operation: " << *CI;
+    //   return failure();
+    // }
     return success();
   }
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
-
-    op->walk([&](enzyme::SampleOp sop) {
-      auto res = HandleProbProg(symbolTable, sop);
+    op->walk([&](enzyme::TraceOp top) {
+      auto res = HandleTrace(symbolTable, top);
       if (!res.succeeded()) {
         signalPassFailure();
         return;
