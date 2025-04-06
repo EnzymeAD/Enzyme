@@ -2180,4 +2180,8 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::LoopInfo &LI, llvm::Value *op0,
                              llvm::Value *op1, bool offsetAllowed = false);
 
+// Return true if the module has a triple indicating an nvptx target, false
+// otherwise.
+bool isTargetNVPTX(llvm::Module &M);
+
 #endif // ENZYME_UTILS_H

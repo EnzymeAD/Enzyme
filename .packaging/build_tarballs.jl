@@ -26,6 +26,9 @@ platforms = expand_cxxstring_abis(supported_platforms())
 # Exclude aarch64 FreeBSD for the time being
 filter!(p -> !(Sys.isfreebsd(p) && arch(p) == "aarch64"), platforms)
 
+# Disable riscv for now
+platforms = filter!(p -> arch(p) != "riscv64", platforms)
+
 # Bash recipe for building across all platforms
 script = raw"""
 cd Enzyme

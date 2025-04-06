@@ -4,10 +4,36 @@ on:
   push:
     branches: 
     - main
+    paths:
+      - '.github/workflows/fortran.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   pull_request:
     branches: 
     - main
+    paths:
+      - '.github/workflows/fortran.yml'
+      - 'enzyme/Enzyme/**'
+      - 'enzyme/includes/**'
+      - 'enzyme/test/**'
+      - 'enzyme/tools/**'
+      - 'enzyme/benchmarks/**'
+      - 'enzyme/cmake/**'
+      - 'enzyme/CMakeLists.txt'
+      - 'enzyme/CMakePresets.json'
   merge_group:
+
+concurrency:
+   # Skip intermediate builds: always.
+   # Cancel intermediate builds: only if it is a pull request build.
+   group: ${{ github.workflow }}-${{ github.ref }}
+   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
     
 jobs:
   build-and-test-fortran:
@@ -17,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         build: ["Release", "Debug"]
-        os: [ubuntu-20.04]
+        os: [ubuntu-22.04]
         llvm: [15]
         include:
           - llvm: 15
@@ -28,7 +54,7 @@ jobs:
     - name: add llvm
       run: |
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
-        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
         sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip
         sudo python3 -m pip install --upgrade pip lit
     - name: add intel tools
