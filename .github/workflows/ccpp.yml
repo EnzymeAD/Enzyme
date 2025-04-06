@@ -4,29 +4,9 @@ on:
   push:
     branches:
     - main
-    paths:
-      - '.github/workflows/ccpp.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/benchmarks/**'
-      - 'enzyme/cmake/**'
-      - 'enzyme/CMakeLists.txt'
-      - 'enzyme/CMakePresets.json'
   pull_request:
     branches:
     - main
-    paths:
-      - '.github/workflows/ccpp.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/benchmarks/**'
-      - 'enzyme/cmake/**'
-      - 'enzyme/CMakeLists.txt'
-      - 'enzyme/CMakePresets.json'
   merge_group:
     
 concurrency:
