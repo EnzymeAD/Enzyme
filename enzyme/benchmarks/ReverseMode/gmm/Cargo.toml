@@ -1,0 +1,28 @@
+[package]
+name = "gmmrs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["lib"]
+
+[features]
+libm = ["dep:libm"]
+
+[profile.release]
+lto = "fat"
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+strip = true
+#overflow-checks = false
+
+[profile.dev]
+lto = "fat"
+
+[dependencies]
+libm = { version = "0.2.8", optional = true }
+
+[workspace]
