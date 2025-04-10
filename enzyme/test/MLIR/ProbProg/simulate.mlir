@@ -5,8 +5,8 @@ module {
   func.func private @normal_logpdf(%value : f64, %mean : f64, %stddev : f64) -> f64
 
   func.func @test(%mean : f64, %stddev : f64) -> f64 {
-    %s = enzyme.sample @normal(%mean, %stddev) @normal_logpdf { name="s" } : (f64, f64) -> (f64)
-    %t = enzyme.sample @normal(%s, %stddev) @normal_logpdf { name="t" } : (f64, f64) -> (f64)
+    %s = enzyme.sample @normal(%mean, %stddev) @normal_logpdf { name="s" } : (f64, f64) -> f64
+    %t = enzyme.sample @normal(%s, %stddev) @normal_logpdf { name="t" } : (f64, f64) -> f64
     return %t : f64
   }
 
