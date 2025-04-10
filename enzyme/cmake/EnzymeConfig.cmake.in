@@ -2,21 +2,23 @@
 
 get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
 
-if("C" IN_LIST languages)
-    if ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-        message("project languages: ${languages}")
-        message(WARNING "C compiler ID equals ${CMAKE_C_COMPILER_ID}\n"
-        "C compiler: ${CMAKE_C_COMPILER}\n"
-        "Using Enzyme without an LLVM based C compiler.")
+if(ENZYME_WARN_COMPILER)
+    if("C" IN_LIST languages)
+        if ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+            message("project languages: ${languages}")
+            message(WARNING "C compiler ID equals ${CMAKE_C_COMPILER_ID}\n"
+            "C compiler: ${CMAKE_C_COMPILER}\n"
+            "Using Enzyme without an LLVM based C compiler.")
+        endif()
     endif()
-endif()
 
-if("CXX" IN_LIST languages)
-    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-        message("project languages: ${languages}")
-        message(WARNING "C++ compiler equals ${CMAKE_CXX_COMPILER_ID}\n"
-        "C++ compiler: ${CMAKE_CXX_COMPILER}\n"
-        "Using Enzyme without an LLVM based C++ compiler.")
+    if("CXX" IN_LIST languages)
+        if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+            message("project languages: ${languages}")
+            message(WARNING "C++ compiler equals ${CMAKE_CXX_COMPILER_ID}\n"
+            "C++ compiler: ${CMAKE_CXX_COMPILER}\n"
+            "Using Enzyme without an LLVM based C++ compiler.")
+        endif()
     endif()
 endif()
 
