@@ -50,15 +50,10 @@ double logsumexp(double const* vect, int sz)
 
 // LSTM OBJECTIVE
 // The LSTM model
-void lstm_model(
-    int hsize,
-    double const* __restrict weight,
-    double const* __restrict bias,
-    double* __restrict hidden,
-    double* __restrict cell,
-    double const* __restrict input
-)
-{
+void lstm_model_restrict(int hsize, double const *__restrict weight,
+                         double const *__restrict bias,
+                         double *__restrict hidden, double *__restrict cell,
+                         double const *__restrict input) {
     // TODO NOTE THIS
     //__builtin_assume(hsize > 0);
 
@@ -94,16 +89,9 @@ void lstm_model(
 }
 
 // Predict LSTM output given an input
-void lstm_predict(
-    int l,
-    int b,
-    double const* __restrict w,
-    double const* __restrict w2,
-    double* __restrict s,
-    double const* __restrict x,
-    double* __restrict x2
-)
-{
+void lstm_predict_restrict(int l, int b, double const *__restrict w,
+                           double const *__restrict w2, double *__restrict s,
+                           double const *__restrict x, double *__restrict x2) {
     int i;
     for (i = 0; i < b; i++)
     {
@@ -113,7 +101,8 @@ void lstm_predict(
     double* xp = x2;
     for (i = 0; i <= 2 * l * b - 1; i += 2 * b)
     {
-        lstm_model(b, &(w[i * 4]), &(w[(i + b) * 4]), &(s[i]), &(s[i + b]), xp);
+        lstm_model_restrict(b, &(w[i * 4]), &(w[(i + b) * 4]), &(s[i]),
+                            &(s[i + b]), xp);
         xp = &(s[i]);
     }
 
@@ -124,17 +113,12 @@ void lstm_predict(
 }
 
 // LSTM objective (loss function)
-void lstm_objective(
-    int l,
-    int c,
-    int b,
-    double const* __restrict main_params,
-    double const* __restrict extra_params,
-    double* __restrict state,
-    double const* __restrict sequence,
-    double* __restrict loss
-)
-{
+void cxx_restrict_lstm_objective(int l, int c, int b,
+                                 double const *__restrict main_params,
+                                 double const *__restrict extra_params,
+                                 double *__restrict state,
+                                 double const *__restrict sequence,
+                                 double *__restrict loss) {
     int i, t;
     double total = 0.0;
     int count = 0;
@@ -147,7 +131,8 @@ void lstm_objective(
     __builtin_assume(b>0);
     for (t = 0; t <= (c - 1) * b - 1; t += b)
     {
-        lstm_predict(l, b, main_params, extra_params, state, input, ypred);
+        lstm_predict_restrict(l, b, main_params, extra_params, state, input,
+                              ypred);
         lse = logsumexp(ypred, b);
         for (i = 0; i < b; i++)
         {
@@ -177,32 +162,17 @@ void __enzyme_autodiff(...) noexcept;
 
 // *      tapenade -b -o lstm_tapenade -head "lstm_objective(loss)/(main_params extra_params)" lstm.c
 
-void dlstm_objective(
-    int l,
-    int c,
-    int b,
-    double const* main_params,
-    double* dmain_params,
-    double const* extra_params,
-    double* dextra_params,
-    double* state,
-    double const* sequence,
-    double* loss,
-    double* dloss
-)
-{
-    __enzyme_autodiff(lstm_objective,
-        enzyme_const, l,
-        enzyme_const, c,
-        enzyme_const, b,
-        enzyme_dup, main_params, dmain_params,
-        enzyme_dup, extra_params, dextra_params,
-        enzyme_const, state,
-        enzyme_const, sequence,
-        enzyme_dupnoneed, loss, dloss
-    );
+void dlstm_objective_restrict(int l, int c, int b, double const *main_params,
+                              double *dmain_params, double const *extra_params,
+                              double *dextra_params, double *state,
+                              double const *sequence, double *loss,
+                              double *dloss) {
+    __enzyme_autodiff(cxx_restrict_lstm_objective, enzyme_const, l,
+                      enzyme_const, c, enzyme_const, b, enzyme_dup, main_params,
+                      dmain_params, enzyme_dup, extra_params, dextra_params,
+                      enzyme_const, state, enzyme_const, sequence,
+                      enzyme_dupnoneed, loss, dloss);
 }
-
 }
 
 
@@ -728,3 +698,5 @@ void adept_dlstm_objective(int l, int c, int b, const double *main_params, doubl
 
 }
 #endif
+
+#include "lstm_mayalias.h"
