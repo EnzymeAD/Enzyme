@@ -6,6 +6,10 @@ dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
 clean:
 	rm -f *.ll *.o results.txt results.json
+	cargo +enzyme clean
+
+$(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a: src/lib.rs Cargo.toml
+	RUSTFLAGS="-Z autodiff=Enable" cargo +enzyme rustc --release --lib --crate-type=staticlib --features=libm
 
 %-unopt.ll: %.cpp
 	clang++ $(BENCH) $(PTR) $^ -pthread -O2 -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
@@ -16,8 +20,8 @@ clean:
 %-opt.ll: %-raw.ll
 	opt $^ -o $@ -S
 
-ba.o: ba-opt.ll
+ba.o: ba-opt.ll $(dir)/benchmarks/ReverseMode/ba/target/release/libbars.a
 	clang++ $(BENCH) -pthread -O2 $^ -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o $@ $(BENCHLINK) -lpthread -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
 
 results.json: ba.o
-	./$^
+	numactl -C 1 ./$^

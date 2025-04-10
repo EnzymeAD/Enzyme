@@ -7,6 +7,9 @@ dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 clean:
 	rm -f *.ll *.o results.txt results.json
 
+$(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a: src/lib.rs Cargo.toml
+	RUSTFLAGS="-Z autodiff=Enable" cargo +enzyme rustc --release --lib --crate-type=staticlib
+
 %-unopt.ll: %.cpp
 	clang++ $(BENCH) $(PTR) $^ -pthread -O2 -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
@@ -16,7 +19,7 @@ clean:
 %-opt.ll: %-raw.ll
 	opt $^ -o $@ -S
 
-fft.o: fft-opt.ll
+fft.o: fft-opt.ll $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
 	clang++ $(BENCH) -pthread -O2 $^ -o $@ $(BENCHLINK) -lpthread -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
 	#clang++ $(LOAD) $(BENCH) fft.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o fft.o -lpthread $(BENCHLINK) -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
 

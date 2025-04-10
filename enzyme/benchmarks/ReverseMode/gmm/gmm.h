@@ -28,9 +28,9 @@ extern "C" {
 // wishart: wishart distribution parameters
 // err: 1 output
 void gmm_objective(
-    int d,
-    int k,
-    int n,
+    size_t d,
+    size_t k,
+    size_t n,
     double const* alphas,
     double const* means,
     double const* icf,
