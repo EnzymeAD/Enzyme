@@ -261,12 +261,61 @@ def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterfac
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs AnyType:$newTrace, Variadic<AnyType>:$weights);
+  let results = (outs Trace:$newTrace, Variadic<AnyType>:$weights);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `[` ($constraints^ `:` type($constraints))? `]` `[` ($oldTrace^ `:` type($oldTrace))? `]` attr-dict `:` functional-type($inputs, results)
   }];
 }
 
+def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Simulate a probabilistic function to generate execution trace";
+  let description = [{
+  TODO
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$newTrace);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def insertChoiceToMapOp : Enzyme_Op<"insertChoiceToMap"> {
+  let summary = "Insert a choice into the choice map";
+  let description = [{
+  Insert a constraint on a sampled variable into the choice map.
+  }];
+
+  let arguments = (ins
+    ChoiceMap:$choiceMap,
+    AnyType:$choice,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs ChoiceMap:$newChoiceMap);
+}
+
+def insertSampleToTraceOp : Enzyme_Op<"insertSampleToTrace"> {
+  let summary = "Insert a sample into the execution trace";
+  let description = [{
+  Insert a sampled into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    AnyType:$choice,
+    AnyType:$logpdf,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$newTrace);
+}
 
 #endif // ENZYME_OPS

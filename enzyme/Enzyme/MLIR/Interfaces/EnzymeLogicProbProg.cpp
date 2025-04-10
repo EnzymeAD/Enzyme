@@ -27,13 +27,10 @@ using namespace mlir::enzyme;
 //===----------------------------------------------------------------------===//
 //===----------------------------------------------------------------------===//
 
-FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateTrace(
-    FunctionOpInterface fn, std::vector<DIFFE_TYPE> RetActivity,
-    std::vector<DIFFE_TYPE> ArgActivity, MTypeAnalysis &TA,
-    std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
-    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented, bool omp,
-    llvm::StringRef postpasses) {
+FunctionOpInterface
+mlir::enzyme::MEnzymeLogic::CreateTrace(FunctionOpInterface fn,
+                                        MTypeAnalysis &TA, bool freeMemory,
+                                        MFnTypeInfo type_args) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Tracing empty function");
@@ -66,7 +63,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateTrace(
   Operation *parent = fn->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);
   table.insert(NewF);
-  SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
+  // SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
   IRMapping originalToNew;
   std::map<Operation *, Operation *> originalToNewOps;
