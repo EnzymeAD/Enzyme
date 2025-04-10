@@ -153,11 +153,23 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
       auto retloc = block.getTerminator()->getLoc();
       if (auto brOp = dyn_cast<cf::BranchOp>(term)) {
-        SmallVector<Value, 4> newOperands(term->getOperands().begin(),
-                                          term->getOperands().end());
+        SmallVector<Value, 4> newOperands(brOp.getOperands().begin(),
+                                          brOp.getOperands().end());
         newOperands.insert(newOperands.begin(), blockTrace[&block]);
         brOp->replaceAllUsesWith(
             b.create<cf::BranchOp>(retloc, brOp.getDest(), newOperands));
+      } else if (auto condBrOp = dyn_cast<cf::CondBranchOp>(term)) {
+        SmallVector<Value, 4> newTrueOperands(
+            condBrOp.getTrueDestOperands().begin(),
+            condBrOp.getTrueDestOperands().end());
+        newTrueOperands.insert(newTrueOperands.begin(), blockTrace[&block]);
+        SmallVector<Value, 4> newFalseOperands(
+            condBrOp.getFalseDestOperands().begin(),
+            condBrOp.getFalseDestOperands().end());
+        newFalseOperands.insert(newFalseOperands.begin(), blockTrace[&block]);
+        condBrOp->replaceAllUsesWith(b.create<cf::CondBranchOp>(
+            retloc, condBrOp.getCondition(), condBrOp.getTrueDest(),
+            newTrueOperands, condBrOp.getFalseDest(), newFalseOperands));
       } else if (auto retOp = dyn_cast<func::ReturnOp>(term)) {
         retOp->replaceAllUsesWith(
             b.create<func::ReturnOp>(retloc, blockTrace[&block]));
