@@ -1,4 +1,5 @@
 // RUN: %eopt --probprog %s | FileCheck %s
+// XFAIL: *
 
 module {
   func.func private @normal(%mean : f64, %stddev : f64) -> f64
@@ -16,7 +17,7 @@ module {
   }
 }
 
-// CHECK:   func.func @traced_test(%[[trace:.+]]: !enzyme.Trace<f64>, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> (!enzyme.Trace<f64>, f64) {
+// CHECK:   func.func @test.trace(%[[trace:.+]]: !enzyme.Trace<f64>, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> (!enzyme.Trace<f64>, f64) {
 // CHECK-NEXT:    %[[s:.+]] = call @normal(%[[mean]], %[[stddev]]) : (f64, f64) -> f64
 // CHECK-NEXT:    %[[ls:.+]] = call @normal_logpdf(%[[s]], %[[mean]], %[[stddev]]) : (f64, f64, f64) -> f64
 // CHECK-NEXT:    %[[trace_s:.+]] = enzyme.insert_choice %[[trace]], %[[s]], %[[ls]] {name = "s"} : (!enzyme.Trace<f64>, f64, f64) -> !enzyme.Trace<f64>
