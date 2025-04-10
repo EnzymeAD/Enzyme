@@ -34,37 +34,56 @@ struct LSTMOutput {
 };
 
 extern "C" {
-    void dlstm_objective(
-        int l,
-        int c,
-        int b,
-        double const* main_params,
-        double* dmain_params,
-        double const* extra_params,
-        double* dextra_params,
-        double* state,
-        double const* sequence,
-        double* loss,
-        double* dloss
-    );
+void rust_unsafe_dlstm_objective(int l, int c, int b, double const *main_params,
+                                 double *dmain_params,
+                                 double const *extra_params,
+                                 double *dextra_params, double *state,
+                                 double const *sequence, double *loss,
+                                 double *dloss);
 
-    void lstm_objective_b(int l, int c, int b, const double *main_params, double *
-        main_paramsb, const double *extra_params, double *extra_paramsb,
-        double *state, const double *sequence, double *loss, double *lossb);
+void rust_unsafe_lstm_objective(int l, int c, int b, double const *main_params,
+                                double const *extra_params, double *state,
+                                double const *sequence, double *loss);
 
-    void adept_dlstm_objective(
-        int l,
-        int c,
-        int b,
-        double const* main_params,
-        double* dmain_params,
-        double const* extra_params,
-        double* dextra_params,
-        double* state,
-        double const* sequence,
-        double* loss,
-        double* dloss
-    );
+void rust_safe_lstm_objective(int l, int c, int b, double const *main_params,
+                              double const *extra_params, double *state,
+                              double const *sequence, double *loss);
+
+void cxx_restrict_lstm_objective(int l, int c, int b, double const *main_params,
+                                 double const *extra_params, double *state,
+                                 double const *sequence, double *loss);
+
+void cxx_mayalias_lstm_objective(int l, int c, int b, double const *main_params,
+                                 double const *extra_params, double *state,
+                                 double const *sequence, double *loss);
+
+void rust_safe_dlstm_objective(int l, int c, int b, double const *main_params,
+                               double *dmain_params, double const *extra_params,
+                               double *dextra_params, double *state,
+                               double const *sequence, double *loss,
+                               double *dloss);
+
+void dlstm_objective_mayalias(int l, int c, int b, double const *main_params,
+                              double *dmain_params, double const *extra_params,
+                              double *dextra_params, double *state,
+                              double const *sequence, double *loss,
+                              double *dloss);
+
+void dlstm_objective_restrict(int l, int c, int b, double const *main_params,
+                              double *dmain_params, double const *extra_params,
+                              double *dextra_params, double *state,
+                              double const *sequence, double *loss,
+                              double *dloss);
+
+void lstm_objective_b(int l, int c, int b, const double *main_params,
+                      double *main_paramsb, const double *extra_params,
+                      double *extra_paramsb, double *state,
+                      const double *sequence, double *loss, double *lossb);
+
+void adept_dlstm_objective(int l, int c, int b, double const *main_params,
+                           double *dmain_params, double const *extra_params,
+                           double *dextra_params, double *state,
+                           double const *sequence, double *loss, double *dloss);
 }
 
 void read_lstm_instance(const string& fn,
@@ -177,10 +196,55 @@ void calculate_jacobian(struct LSTMInput &input, struct LSTMOutput &result)
     }
 }
 
+double calculate_mayalias_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        cxx_mayalias_lstm_objective(
+            input.l, input.c, input.b, input.main_params.data(),
+            input.extra_params.data(), input.state.data(),
+            input.sequence.data(), &loss);
+    }
+    return loss;
+}
+
+double calculate_restrict_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        cxx_restrict_lstm_objective(
+            input.l, input.c, input.b, input.main_params.data(),
+            input.extra_params.data(), input.state.data(),
+            input.sequence.data(), &loss);
+    }
+    return loss;
+}
+
+double calculate_unsafe_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        rust_unsafe_lstm_objective(
+            input.l, input.c, input.b, input.main_params.data(),
+            input.extra_params.data(), input.state.data(),
+            input.sequence.data(), &loss);
+    }
+    return loss;
+}
+
+double calculate_safe_primal(struct LSTMInput &input) {
+    double loss = 0.0;
+    for (int i = 0; i < 100; i++) {
+        rust_safe_lstm_objective(input.l, input.c, input.b,
+                                 input.main_params.data(),
+                                 input.extra_params.data(), input.state.data(),
+                                 input.sequence.data(), &loss);
+    }
+    return loss;
+}
+
 int main(const int argc, const char* argv[]) {
     printf("starting main\n");
 
-    std::vector<std::string> paths = { "lstm_l2_c1024.txt", "lstm_l4_c1024.txt", "lstm_l2_c4096.txt", "lstm_l4_c4096.txt" };
+    //std::vector<std::string> paths = { "lstm_l2_c1024.txt", "lstm_l4_c1024.txt", "lstm_l2_c4096.txt", "lstm_l4_c4096.txt" };
+    std::vector<std::string> paths = { "lstm_l4_c4096.txt" };
     
     std::ofstream jsonfile("results.json", std::ofstream::trunc);
     json test_results;
@@ -227,16 +291,17 @@ int main(const int argc, const char* argv[]) {
 
     {
 
-    struct LSTMInput input = {};
+     struct LSTMInput input = {};
 
     // Read instance
-    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
-                       input.sequence);
+     read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+     input.main_params, input.extra_params, input.state,
+                        input.sequence);
 
-    std::vector<double> state = std::vector<double>(input.state.size());
+     std::vector<double> state = std::vector<double>(input.state.size());
 
-    int Jcols = 8 * input.l * input.b + 3 * input.b;
-    struct LSTMOutput result = { 0, std::vector<double>(Jcols) };
+     int Jcols = 8 * input.l * input.b + 3 * input.b;
+     struct LSTMOutput result = { 0, std::vector<double>(Jcols) };
 
     {
       struct timeval start, end;
@@ -274,14 +339,81 @@ int main(const int argc, const char* argv[]) {
     {
       struct timeval start, end;
       gettimeofday(&start, NULL);
-      calculate_jacobian<dlstm_objective>(input, result);
+      calculate_jacobian<dlstm_objective_restrict>(input, result);
       gettimeofday(&end, NULL);
-      printf("Enzyme combined %0.6f\n", tdiff(&start, &end));
+      printf("Enzyme restrict combined %0.6f\n", tdiff(&start, &end));
       json enzyme;
-       enzyme["name"] = "Enzyme combined";
-       enzyme["runtime"] = tdiff(&start, &end);
-       for (unsigned i = result.gradient.size() - 5;
-            i < result.gradient.size(); i++) {
+      enzyme["name"] = "Enzyme restrict combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
+        printf("%f ", result.gradient[i]);
+        enzyme["result"].push_back(result.gradient[i]);
+      }
+      test_suite["tools"].push_back(enzyme);
+
+      printf("\n");
+    }
+    }
+
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<dlstm_objective_mayalias>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme mayalias combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme mayalias combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
+        printf("%f ", result.gradient[i]);
+        enzyme["result"].push_back(result.gradient[i]);
+       }
+       test_suite["tools"].push_back(enzyme);
+       
+       printf("\n");
+    }
+    }
+
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = { 0, std::vector<double>(Jcols) };
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<rust_safe_dlstm_objective>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme (safe Rust) combined %0.6f\n", tdiff(&start, &end));
+      json enzyme;
+      enzyme["name"] = "Enzyme (safe Rust) combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+           i++) {
          printf("%f ", result.gradient[i]);
          enzyme["result"].push_back(result.gradient[i]);
        }
@@ -291,6 +423,161 @@ int main(const int argc, const char* argv[]) {
     }
 
     }
+
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       calculate_jacobian<rust_unsafe_dlstm_objective>(input, result);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (unsafe Rust) combined %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (unsafe Rust) combined";
+       enzyme["runtime"] = tdiff(&start, &end);
+       for (unsigned i = result.gradient.size() - 5; i < result.gradient.size();
+            i++) {
+         printf("%f ", result.gradient[i]);
+         enzyme["result"].push_back(result.gradient[i]);
+       }
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       double res = calculate_mayalias_primal(input);
+       gettimeofday(&end, NULL);
+       printf("C++ mayalias primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "C++ mayalias primal";
+       enzyme["runtime"] = tdiff(&start, &end);
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       double res = calculate_restrict_primal(input);
+       gettimeofday(&end, NULL);
+       printf("C++ restrict primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "C++ restrict primal";
+       enzyme["runtime"] = tdiff(&start, &end);
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       double res =calculate_unsafe_primal(input);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (unsafe Rust) primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (unsafe Rust) primal";
+       enzyme["runtime"] = tdiff(&start, &end);
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+    {
+
+    struct LSTMInput input = {};
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+                       input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    std::vector<double> state = std::vector<double>(input.state.size());
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+
+    {
+       struct timeval start, end;
+       gettimeofday(&start, NULL);
+       double res = calculate_safe_primal(input);
+       gettimeofday(&end, NULL);
+       printf("Enzyme (safe Rust) primal %0.6f\n", tdiff(&start, &end));
+       json enzyme;
+       enzyme["name"] = "Enzyme (safe Rust) primal";
+       enzyme["runtime"] = tdiff(&start, &end);
+       printf("%f ", res);
+       enzyme["result"].push_back(res);
+       test_suite["tools"].push_back(enzyme);
+
+       printf("\n");
+    }
+    }
+
     test_suite["llvm-version"] = __clang_version__;
     test_suite["mode"] = "ReverseMode";
     test_suite["batch-size"] = 1;
