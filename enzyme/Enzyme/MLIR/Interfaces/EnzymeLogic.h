@@ -220,6 +220,9 @@ public:
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
                     void *augmented, bool omp, llvm::StringRef postpasses);
 
+  FunctionOpInterface CreateTrace(FunctionOpInterface fn, MTypeAnalysis &TA,
+                                  bool freeMemory, MFnTypeInfo type_args);
+
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
