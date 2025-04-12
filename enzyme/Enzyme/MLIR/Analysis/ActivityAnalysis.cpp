@@ -1585,9 +1585,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // TODO: this needs to go through type interfaces.
   //
   bool containsPointer = true;
-  Type vectorTypeOrSelf = LLVM::isCompatibleVectorType(Val.getType())
-                              ? LLVM::getVectorElementType(Val.getType())
-                              : Val.getType();
+  Type vectorTypeOrSelf =
+      isa<mlir::VectorType>(Val.getType())
+          ? cast<mlir::VectorType>(Val.getType()).getElementType()
+          : Val.getType();
   if (LLVM::isCompatibleFloatingPointType(vectorTypeOrSelf))
     containsPointer = false;
   // if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
