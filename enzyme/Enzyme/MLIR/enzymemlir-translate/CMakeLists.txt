@@ -19,6 +19,7 @@ target_link_libraries(enzymemlir-translate
   MLIRSPIRVDialect
   MLIRTranslateLib
   MLIRSupport
+  "ZLIB::ZLIB"
   )
 
 mlir_check_link_libraries(enzymemlir-translate)
