@@ -302,10 +302,10 @@ def insertChoiceToMapOp : Enzyme_Op<"insertChoiceToMap"> {
   let results = (outs ChoiceMap:$newChoiceMap);
 }
 
-def insertSampleToTraceOp : Enzyme_Op<"insertSampleToTrace"> {
-  let summary = "Insert a sample into the execution trace";
+def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+  let summary = "Add a sample into the execution trace";
   let description = [{
-  Insert a sampled into the execution trace.
+  Add a sampled into the execution trace.
   }];
 
   let arguments = (ins
@@ -315,7 +315,7 @@ def insertSampleToTraceOp : Enzyme_Op<"insertSampleToTrace"> {
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$newTrace);
+  let results = (outs );
 }
 
 #endif // ENZYME_OPS

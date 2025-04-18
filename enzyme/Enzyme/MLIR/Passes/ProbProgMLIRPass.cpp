@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
-#include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/ProbProgUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
@@ -54,48 +54,11 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
       llvm_unreachable("Tracing empty function");
     }
 
-    // Assume the same trace object base type as the traced function return
-    // type.
-    auto traceType = enzyme::TraceType::get(
-        fn.getContext(),
-        fn.getFunctionType().cast<mlir::FunctionType>().getResult(0));
+    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate);
+    FunctionOpInterface NewF = putils->newFunc;
 
-    auto originalInputs =
-        fn.getFunctionType().cast<mlir::FunctionType>().getInputs();
-    SmallVector<mlir::Type, 4> ArgTypes(originalInputs.begin(),
-                                        originalInputs.end());
-
-    OpBuilder builder(fn.getContext());
-    auto FTy = builder.getFunctionType(ArgTypes, {traceType});
-
-    auto NewF = cast<FunctionOpInterface>(fn->cloneWithoutRegions());
-    SymbolTable::setSymbolName(NewF, fn.getName().str() + ".simulate");
-    NewF.setType(FTy);
-
-    Operation *parent = fn->getParentWithTrait<OpTrait::SymbolTable>();
-    SymbolTable table(parent);
-    table.insert(NewF);
-
-    IRMapping originalToNew;
-    std::map<Operation *, Operation *> originalToNewOps;
-    cloneInto(&fn.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
-              originalToNewOps);
-
-    DenseMap<Block *, Value> blockTrace;
-
-    // Ensure the execution trace is passed through.
-    for (auto &block : NewF.getFunctionBody()) {
-      if (&block == &NewF.getFunctionBody().front()) {
-        OpBuilder b(&block, block.begin());
-        auto initOp = b.create<enzyme::InitOp>(block.getTerminator()->getLoc(),
-                                               traceType);
-        blockTrace[&block] = initOp.getResult();
-      } else {
-        block.insertArgument(block.args_begin(), traceType,
-                             block.getTerminator()->getLoc());
-        blockTrace[&block] = block.getArgument(0);
-      }
-    }
+    // Initialize execution trace object
+    putils->initTrace();
 
     // Process SampleOps to produce the trace
     SmallVector<Operation *, 4> toErase;
@@ -103,39 +66,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
       for (auto &op : block) {
         if (auto sampleOp = dyn_cast<enzyme::SampleOp>(op)) {
           OpBuilder b(sampleOp);
-          auto distFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-          auto inputs = sampleOp.getInputs();
-          auto nameAttr = sampleOp.getNameAttr();
-
-          // 1. Insert distribution function call
-          auto distCall =
-              b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
-                                     distFn.getResultTypes(), inputs);
-          Value sampleVal = distCall.getResult(0);
-
-          // 2. Insert logpdf function call
-          SmallVector<Value, 4> logpdfInputs;
-          logpdfInputs.push_back(sampleVal);
-          for (auto input : inputs)
-            logpdfInputs.push_back(input);
-          auto logpdfCall =
-              b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
-                                     logpdfFn.getResultTypes(), logpdfInputs);
-          Value logpdfVal = logpdfCall.getResult(0);
-
-          // 3. Record the computed sample and logpdf in the trace
-          Value trace = blockTrace[&block];
-          auto traceCall = b.create<enzyme::insertSampleToTraceOp>(
-              sampleOp.getLoc(), traceType, trace, sampleVal, logpdfVal,
-              nameAttr);
-          blockTrace[&block] = traceCall.getResult();
-
-          sampleOp.replaceAllUsesWith(distCall);
+          putils->processSampleOp(sampleOp, b, symbolTable);
           toErase.push_back(sampleOp);
         }
       }
@@ -145,41 +76,16 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
       op->erase();
     }
 
-    // Update terminators to make sure the trace is propagated. Return only the
-    // trace.
     for (auto &block : NewF.getFunctionBody()) {
       OpBuilder b(&block, block.end());
       auto term = block.getTerminator();
 
       auto retloc = block.getTerminator()->getLoc();
-      if (auto brOp = dyn_cast<cf::BranchOp>(term)) {
-        SmallVector<Value, 4> newOperands(brOp.getOperands().begin(),
-                                          brOp.getOperands().end());
-        newOperands.insert(newOperands.begin(), blockTrace[&block]);
-        brOp->replaceAllUsesWith(
-            b.create<cf::BranchOp>(retloc, brOp.getDest(), newOperands));
-      } else if (auto condBrOp = dyn_cast<cf::CondBranchOp>(term)) {
-        SmallVector<Value, 4> newTrueOperands(
-            condBrOp.getTrueDestOperands().begin(),
-            condBrOp.getTrueDestOperands().end());
-        newTrueOperands.insert(newTrueOperands.begin(), blockTrace[&block]);
-        SmallVector<Value, 4> newFalseOperands(
-            condBrOp.getFalseDestOperands().begin(),
-            condBrOp.getFalseDestOperands().end());
-        newFalseOperands.insert(newFalseOperands.begin(), blockTrace[&block]);
-        condBrOp->replaceAllUsesWith(b.create<cf::CondBranchOp>(
-            retloc, condBrOp.getCondition(), condBrOp.getTrueDest(),
-            newTrueOperands, condBrOp.getFalseDest(), newFalseOperands));
-      } else if (auto retOp = dyn_cast<func::ReturnOp>(term)) {
+      if (auto retOp = dyn_cast<func::ReturnOp>(term)) {
         retOp->replaceAllUsesWith(
-            b.create<func::ReturnOp>(retloc, blockTrace[&block]));
-      } else {
-        fn.emitError() << "Unsupported terminator found in traced function: "
-                       << *term;
-        return failure();
+            b.create<func::ReturnOp>(retloc, putils->getTrace()));
+        retOp->erase();
       }
-
-      term->erase();
     }
 
     if (!NewF)
@@ -187,6 +93,8 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
     llvm::errs() << "Creating new function\n";
     NewF.dump();
+
+    delete putils;
 
     OpBuilder b(CI);
     auto tCI = b.create<func::CallOp>(CI.getLoc(), NewF.getName(),
