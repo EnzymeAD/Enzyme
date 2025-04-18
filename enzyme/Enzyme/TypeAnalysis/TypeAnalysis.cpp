@@ -3940,9 +3940,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nearbyint:
   case Intrinsic::round:
   case Intrinsic::sqrt:
+#if LLVM_VERSION_MAJOR >= 21
+  case Intrinsic::nvvm_fabs:
+  case Intrinsic::nvvm_fabs_ftz:
+#else
   case Intrinsic::nvvm_fabs_f:
   case Intrinsic::nvvm_fabs_d:
   case Intrinsic::nvvm_fabs_ftz_f:
+  case Intrinsic::nvvm_fabs_ftz_d:
+#endif
   case Intrinsic::fabs:
     // No direction check as always valid
     updateAnalysis(
