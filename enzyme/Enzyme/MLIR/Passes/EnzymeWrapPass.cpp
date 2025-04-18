@@ -91,11 +91,11 @@ struct DifferentiateWrapperPass
     std::vector<DIFFE_TYPE> RetActivity =
         parseActivityString(retTys.getValue());
     if (RetActivity.size() !=
-        fn.getFunctionType().cast<FunctionType>().getNumResults()) {
+        cast<FunctionType>(fn.getFunctionType()).getNumResults()) {
       fn->emitError()
           << "Incorrect number of ret activity states for function, found "
           << RetActivity.size() << " expected "
-          << fn.getFunctionType().cast<FunctionType>().getNumResults();
+          << cast<FunctionType>(fn.getFunctionType()).getNumResults();
       return;
     }
     std::vector<bool> returnPrimal;

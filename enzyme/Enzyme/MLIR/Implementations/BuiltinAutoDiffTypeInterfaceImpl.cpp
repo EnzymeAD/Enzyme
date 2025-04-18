@@ -46,7 +46,7 @@ class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
                                FloatTypeInterface<ConcreteType>, ConcreteType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    auto fltType = self.cast<ConcreteType>();
+    auto fltType = cast<ConcreteType>(self);
     return builder.create<arith::ConstantFloatOp>(
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
@@ -76,7 +76,7 @@ class TensorTypeInterface
                                                   TensorType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    auto tenType = self.cast<TensorType>();
+    auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
 
     if (auto F = dyn_cast<FloatType>(ET)) {
@@ -105,7 +105,7 @@ public:
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    auto tenType = self.cast<TensorType>();
+    auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
     auto iface = cast<AutoDiffTypeInterface>(ET);
     return iface.createAddOp(builder, loc, a, b);
@@ -113,7 +113,7 @@ public:
 
   Value createConjOp(Type self, OpBuilder &builder, Location loc,
                      Value a) const {
-    auto tenType = self.cast<TensorType>();
+    auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
     auto iface = cast<AutoDiffTypeInterface>(ET);
     auto added = iface.createConjOp(builder, loc, a);
@@ -168,7 +168,7 @@ class ComplexTypeInterface
                                                   ComplexType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    auto fltType = self.cast<ComplexType>().getElementType().cast<FloatType>();
+    auto fltType = cast<FloatType>(cast<ComplexType>(self).getElementType());
     mlir::Attribute attrs[2] = {
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};

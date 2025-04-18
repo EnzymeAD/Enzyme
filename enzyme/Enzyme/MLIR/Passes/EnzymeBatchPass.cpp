@@ -183,7 +183,7 @@ static FunctionOpInterface batchCloneFunction(
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   assert(!F.getFunctionBody().empty());
 
-  auto FTy = F.getFunctionType().cast<FunctionType>();
+  auto FTy = cast<FunctionType>(F.getFunctionType());
 
   llvm::SmallVector<mlir::Type> RetTypes;
   RetTypes.reserve(FTy.getNumResults());

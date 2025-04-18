@@ -8,7 +8,7 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width) {
-  if (auto iface = type.dyn_cast<AutoDiffTypeInterface>())
+  if (auto iface = dyn_cast<AutoDiffTypeInterface>(type))
     return iface.getShadowType(width);
   llvm::errs() << " type does not have autodifftypeinterface: " << type << "\n";
   exit(1);
@@ -204,7 +204,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
-      F.getFunctionType().cast<mlir::FunctionType>(), mode, width,
+      cast<mlir::FunctionType>(F.getFunctionType()), mode, width,
       additionalArg, returnPrimals, returnShadows, RetActivity, ArgActivity);
 
   /*
@@ -244,7 +244,7 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        if (i == ArgActivity.size() - 1)
+        if ((size_t)i == ArgActivity.size() - 1)
           dval = blk.addArgument(getShadowType(val.getType(), width),
                                  val.getLoc());
         else
@@ -256,7 +256,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     }
     auto retloc = blk.getTerminator()->getLoc();
     for (auto &&[Ty, activity] :
-         llvm::zip(F.getFunctionType().cast<mlir::FunctionType>().getResults(),
+         llvm::zip(cast<mlir::FunctionType>(F.getFunctionType()).getResults(),
                    RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
         blk.addArgument(getShadowType(Ty, width), retloc);
