@@ -2542,9 +2542,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
     return true;
   }
 
-  return isOperationInactiveFromOrigin(TR, val.getDefiningOp(),
-                                       cast<OpResult>(val).getResultNumber(),
-                                       inactArg);
+  return isOperationInactiveFromOrigin(
+      TR, val.getDefiningOp(), cast<OpResult>(val).getResultNumber(), inactArg);
 }
 
 bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
@@ -3336,8 +3335,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
         if (llvm::all_of(I->getResults(), [&](Value val) {
-              return isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>(val.getType())
-                         ||
+              return isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>(
+                         val.getType()) ||
                      ConstantValues.count(val);
             })) {
           if (EnzymePrintActivity) {

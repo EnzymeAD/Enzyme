@@ -73,9 +73,8 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
         if (!gutils->isConstantValue(op)) {
           newVals.push_back(gutils->invertPointerM(op, builder));
         } else {
-          Type retTy =
-              cast<AutoDiffTypeInterface>(arg.getType()).getShadowType(
-                  gutils->width);
+          Type retTy = cast<AutoDiffTypeInterface>(arg.getType())
+                           .getShadowType(gutils->width);
           auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
               builder, op.getLoc());
           newVals.push_back(toret);

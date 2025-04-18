@@ -139,11 +139,12 @@ struct LoweredCache {
 
   Value emitPop(Location loc, OpBuilder &b, FlatSymbolRefAttr popFn) const {
     return b
-        .create<func::CallOp>(loc, popFn, /*results=*/
-                              cast<ShapedType>(cast<ShapedType>(elements.getType())
-                                  .getElementType())
-                                  .getElementType(),
-                              ValueRange{elements, size, capacity})
+        .create<func::CallOp>(
+            loc, popFn, /*results=*/
+            cast<ShapedType>(
+                cast<ShapedType>(elements.getType()).getElementType())
+                .getElementType(),
+            ValueRange{elements, size, capacity})
         .getResult(0);
   }
 
@@ -186,11 +187,12 @@ struct LoweredCache {
 
   Value emitGet(Location loc, OpBuilder &b, FlatSymbolRefAttr getFn) const {
     return b
-        .create<func::CallOp>(loc, getFn, /*results=*/
-                              cast<ShapedType>(cast<ShapedType>(elements.getType())
-                                  .getElementType())
-                                  .getElementType(),
-                              ValueRange{elements, size, capacity})
+        .create<func::CallOp>(
+            loc, getFn, /*results=*/
+            cast<ShapedType>(
+                cast<ShapedType>(elements.getType()).getElementType())
+                .getElementType(),
+            ValueRange{elements, size, capacity})
         .getResult(0);
   }
   static std::optional<LoweredCache>
@@ -351,8 +353,7 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
                          loweredCache.value().emitGet(loc, rewriter, getFn));
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
-      auto memrefType =
-          cast<MemRefType>(getTypeConverter()->convertType(type));
+      auto memrefType = cast<MemRefType>(getTypeConverter()->convertType(type));
       auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
           op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::LoadOp>(op,

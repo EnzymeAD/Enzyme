@@ -204,8 +204,8 @@ FunctionOpInterface CloneFunctionWithReturns(
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
-      cast<mlir::FunctionType>(F.getFunctionType()), mode, width,
-      additionalArg, returnPrimals, returnShadows, RetActivity, ArgActivity);
+      cast<mlir::FunctionType>(F.getFunctionType()), mode, width, additionalArg,
+      returnPrimals, returnShadows, RetActivity, ArgActivity);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
