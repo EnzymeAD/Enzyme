@@ -202,7 +202,7 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
   auto shapeAttr = builder.getDenseI64ArrayAttr(shape);
   auto resultTy = input.getType();
   for (auto s : llvm::reverse(shape)) {
-    resultTy = resultTy.cast<AutoDiffTypeInterface>().getShadowType(s);
+    resultTy = cast<AutoDiffTypeInterface>(resultTy).getShadowType(s);
   }
   build(builder, result, resultTy, input, shapeAttr);
 }

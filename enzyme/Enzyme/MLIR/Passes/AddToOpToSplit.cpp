@@ -47,8 +47,8 @@ Operation *getAddToOp(linalg::GenericOp &adjoint) {
 }
 
 bool isMemrefCacheType(Type type) {
-  if (auto memrefType = type.dyn_cast<MemRefType>()) {
-    return memrefType.getElementType().isa<CacheType>();
+  if (auto memrefType = dyn_cast<MemRefType>(type)) {
+    return isa<CacheType>(memrefType.getElementType());
   }
   return false;
 }
@@ -130,7 +130,7 @@ struct AddToOpToSplitPass
 
       builder.setInsertionPoint(adjoint);
 
-      for (int i = 0; i < addToOp->getNumOperands(); i++) {
+      for (size_t i = 0; i < addToOp->getNumOperands(); i++) {
         processGenericDuplication(adjoint.getOperation(), builder, loc, i);
       }
       adjoint->erase();

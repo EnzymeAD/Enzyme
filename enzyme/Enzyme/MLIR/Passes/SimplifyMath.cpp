@@ -70,7 +70,7 @@ bool isZero(mlir::Value v) {
   matchPattern(v, m_Constant(&lhs));
   if (lhs) {
     for (auto e : lhs) {
-      if (!e.cast<FloatAttr>().getValue().isZero())
+      if (!cast<FloatAttr>(e).getValue().isZero())
         return false;
     }
     return true;

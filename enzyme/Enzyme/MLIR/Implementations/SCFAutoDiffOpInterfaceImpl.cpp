@@ -200,11 +200,9 @@ struct ForOpEnzymeOpsRemover
         }
       }
 
-      auto newType =
-          info.cachedType()
-              .cast<AutoDiffTypeInterface>()
-              .getShadowType(numIters.value_or(mlir::ShapedType::kDynamic))
-              .cast<ShapedType>();
+      auto newType = cast<ShapedType>(
+          cast<AutoDiffTypeInterface>(info.cachedType())
+              .getShadowType(numIters.value_or(mlir::ShapedType::kDynamic)));
 
       SmallVector<Value> dynamicDims;
 
@@ -343,8 +341,8 @@ struct ForOpEnzymeOpsRemover
       Value cache = info.initOp.getResult();
 
       auto newType =
-          info.cachedType().cast<AutoDiffTypeInterface>().getShadowType(
-              numIters.value_or(ShapedType::kDynamic));
+          cast<AutoDiffTypeInterface>(info.cachedType())
+              .getShadowType(numIters.value_or(ShapedType::kDynamic));
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);

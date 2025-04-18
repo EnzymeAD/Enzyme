@@ -881,7 +881,7 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
 static Value getUnderlyingObject(mlir::Value value, unsigned maxLookup) {
   // TODO: this should become a MLIR interface.
   for (unsigned i = 0; maxLookup == 0 || i < maxLookup; ++i) {
-    if (!value.getType().isa<MemRefType, LLVM::LLVMPointerType>())
+    if (!isa<MemRefType, LLVM::LLVMPointerType>(value.getType()))
       return value;
 
     if (auto gep = value.getDefiningOp<LLVM::GEPOp>()) {
@@ -918,7 +918,7 @@ static bool mayWriteToMemory(Operation *op) {
 }
 
 static FunctionOpInterface getFunctionIfArgument(Value value) {
-  auto arg = value.dyn_cast<BlockArgument>();
+  auto arg = dyn_cast<BlockArgument>(value);
   if (!arg)
     return nullptr;
 
@@ -1295,11 +1295,11 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
   // }
 
   // Void values are definitionally inactive
-  if (Val.getType().isa<LLVM::LLVMVoidType>())
+  if (isa<LLVM::LLVMVoidType>(Val.getType()))
     return true;
 
   // Token values are definitionally inactive
-  if (Val.getType().isa<LLVM::LLVMTokenType>())
+  if (isa<LLVM::LLVMTokenType>(Val.getType()))
     return true;
 
   /// If we've already shown this value to be inactive
@@ -1324,7 +1324,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     }
   }
 
-  if (auto arg = Val.dyn_cast<BlockArgument>()) {
+  if (auto arg = dyn_cast<BlockArgument>(Val)) {
     // All arguments must be marked constant/nonconstant ahead of time
     if (auto funcIface = dyn_cast_or_null<FunctionOpInterface>(
             arg.getParentBlock()->getParentOp()))
@@ -1616,7 +1616,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // If we are derived from an argument our activity is equal to the
       // activity of the argument by definition
       if (auto func = getFunctionIfArgument(TmpOrig)) {
-        if (!func.getArgAttr(TmpOrig.cast<BlockArgument>().getArgNumber(),
+        if (!func.getArgAttr(cast<BlockArgument>(TmpOrig).getArgNumber(),
                              LLVM::LLVMDialect::getByValAttrName())) {
           bool res = isConstantValue(TR, TmpOrig);
           if (res) {
@@ -1651,7 +1651,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
 
       // If our origin is a load of a known inactive (say inactive argument), we
       // are also inactive
-      if (auto blockArg = TmpOrig.dyn_cast<BlockArgument>()) {
+      if (auto blockArg = dyn_cast<BlockArgument>(TmpOrig)) {
         // Not taking fast path in case blocks argument sources are recursive.
         Value active = nullptr;
         for (Value V : getPotentialIncomingValues(blockArg)) {
@@ -1919,7 +1919,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
         // No defining op means the value is a block argument and blocks don't
         // have their own memory semantics.
         if (!op || (!mayReadFromMemory(op) && !mayAllocateMemory(op))) {
-          if (directions == UP && !Val.isa<BlockArgument>()) {
+          if (directions == UP && !isa<BlockArgument>(Val)) {
             if (isValueInactiveFromOrigin(TR, Val)) {
               if (EnzymePrintActivity)
                 llvm::errs() << " Non-function value inactive from origin("
@@ -2527,7 +2527,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
   // Must be an analyzer only searching up
   assert(directions == UP);
 
-  if (auto arg = val.dyn_cast<BlockArgument>()) {
+  if (auto arg = dyn_cast<BlockArgument>(val)) {
     for (auto v : getPotentialIncomingValues(arg)) {
       if (!isConstantValue(TR, v)) {
         if (EnzymePrintActivity) {
@@ -2542,9 +2542,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromOrigin(
     return true;
   }
 
-  return isOperationInactiveFromOrigin(TR, val.getDefiningOp(),
-                                       val.cast<OpResult>().getResultNumber(),
-                                       inactArg);
+  return isOperationInactiveFromOrigin(
+      TR, val.getDefiningOp(), cast<OpResult>(val).getResultNumber(), inactArg);
 }
 
 bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
@@ -2897,7 +2896,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
              // FIXME: this was a llvm::ConstantInt, should not be a hardcoded
              // assumption that ints are not active.
              (SI.getValue().getDefiningOp<LLVM::ConstantOp>() &&
-              SI.getValue().getType().isa<IntegerType>())))
+              isa<IntegerType>(SI.getValue().getType()))))
           continue;
         if (UA == UseActivity::None) {
           // If storing into itself, all potential uses are taken care of
@@ -3336,8 +3335,8 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
         if (llvm::all_of(I->getResults(), [&](Value val) {
-              return val.getType()
-                         .isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>() ||
+              return isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>(
+                         val.getType()) ||
                      ConstantValues.count(val);
             })) {
           if (EnzymePrintActivity) {

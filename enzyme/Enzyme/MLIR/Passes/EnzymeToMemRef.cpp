@@ -70,7 +70,7 @@ struct LoweredCache {
           Value oldElements =
               thenBuilder.create<memref::LoadOp>(loc, elementsField);
           Value newElements = thenBuilder.create<memref::AllocOp>(
-              loc, oldElements.getType().cast<MemRefType>(), newCapacity);
+              loc, cast<MemRefType>(oldElements.getType()), newCapacity);
           thenBuilder.create<memref::CopyOp>(loc, oldElements, newElements);
           thenBuilder.create<memref::DeallocOp>(loc, oldElements);
           thenBuilder.create<memref::StoreOp>(loc, newElements, elementsField);
@@ -139,13 +139,12 @@ struct LoweredCache {
 
   Value emitPop(Location loc, OpBuilder &b, FlatSymbolRefAttr popFn) const {
     return b
-        .create<func::CallOp>(loc, popFn, /*results=*/
-                              elements.getType()
-                                  .cast<ShapedType>()
-                                  .getElementType()
-                                  .cast<ShapedType>()
-                                  .getElementType(),
-                              ValueRange{elements, size, capacity})
+        .create<func::CallOp>(
+            loc, popFn, /*results=*/
+            cast<ShapedType>(
+                cast<ShapedType>(elements.getType()).getElementType())
+                .getElementType(),
+            ValueRange{elements, size, capacity})
         .getResult(0);
   }
 
@@ -188,20 +187,19 @@ struct LoweredCache {
 
   Value emitGet(Location loc, OpBuilder &b, FlatSymbolRefAttr getFn) const {
     return b
-        .create<func::CallOp>(loc, getFn, /*results=*/
-                              elements.getType()
-                                  .cast<ShapedType>()
-                                  .getElementType()
-                                  .cast<ShapedType>()
-                                  .getElementType(),
-                              ValueRange{elements, size, capacity})
+        .create<func::CallOp>(
+            loc, getFn, /*results=*/
+            cast<ShapedType>(
+                cast<ShapedType>(elements.getType()).getElementType())
+                .getElementType(),
+            ValueRange{elements, size, capacity})
         .getResult(0);
   }
   static std::optional<LoweredCache>
   getFromEnzymeCache(Location loc, const TypeConverter *typeConverter,
                      Value enzymeCache, OpBuilder &b) {
-    assert(enzymeCache.getType().isa<enzyme::CacheType>());
-    auto cacheType = enzymeCache.getType().cast<enzyme::CacheType>();
+    assert(isa<enzyme::CacheType>(enzymeCache.getType()));
+    auto cacheType = cast<enzyme::CacheType>(enzymeCache.getType());
     SmallVector<Type> resultTypes;
     if (failed(typeConverter->convertType(cacheType, resultTypes))) {
       return {};
@@ -225,16 +223,16 @@ struct InitOpConversion : public OpConversionPattern<enzyme::InitOp> {
     // Gradients lower to single element MemRefs, while caches lower to
     // variable-sized MemRefs.
 
-    if (op.getType().isa<enzyme::GradientType>()) {
+    if (isa<enzyme::GradientType>(op.getType())) {
       auto memrefType =
-          getTypeConverter()->convertType(op.getType()).cast<MemRefType>();
+          cast<MemRefType>(getTypeConverter()->convertType(op.getType()));
       Value buffer = rewriter.create<memref::AllocOp>(op.getLoc(), memrefType);
       rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, op.getType(),
                                                               buffer);
       return success();
     }
 
-    if (op.getType().isa<enzyme::CacheType>()) {
+    if (isa<enzyme::CacheType>(op.getType())) {
       SmallVector<Type> resultTypes;
       if (failed(getTypeConverter()->convertType(op.getType(), resultTypes))) {
         op.emitError() << "Failed to convert type " << op.getType();
@@ -244,11 +242,11 @@ struct InitOpConversion : public OpConversionPattern<enzyme::InitOp> {
       Value capacity = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
       Value initialSize =
           rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
-      auto dataType = resultTypes[0].cast<MemRefType>();
-      auto sizeType = resultTypes[1].cast<MemRefType>();
-      auto capacityType = resultTypes[2].cast<MemRefType>();
+      auto dataType = cast<MemRefType>(resultTypes[0]);
+      auto sizeType = cast<MemRefType>(resultTypes[1]);
+      auto capacityType = cast<MemRefType>(resultTypes[2]);
       Value buffer = rewriter.create<memref::AllocOp>(
-          op.getLoc(), dataType.getElementType().cast<MemRefType>(),
+          op.getLoc(), cast<MemRefType>(dataType.getElementType()),
           /*dynamicSize=*/capacity);
       Value bufferField =
           rewriter.create<memref::AllocaOp>(op.getLoc(), dataType);
@@ -324,8 +322,7 @@ struct SetOpConversion : public OpConversionPattern<enzyme::SetOp> {
       return failure();
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
-      auto memrefType =
-          getTypeConverter()->convertType(type).cast<MemRefType>();
+      auto memrefType = cast<MemRefType>(getTypeConverter()->convertType(type));
       auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
           op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::StoreOp>(op, op.getValue(),
@@ -356,8 +353,7 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
                          loweredCache.value().emitGet(loc, rewriter, getFn));
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
-      auto memrefType =
-          getTypeConverter()->convertType(type).cast<MemRefType>();
+      auto memrefType = cast<MemRefType>(getTypeConverter()->convertType(type));
       auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
           op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::LoadOp>(op,
@@ -374,7 +370,7 @@ struct EnzymeToMemRefPass
     RewritePatternSet patterns(context);
     TypeConverter typeConverter;
     typeConverter.addConversion([](Type type) -> std::optional<Type> {
-      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
+      if (type.isIntOrIndexOrFloat() || isa<MemRefType>(type))
         return type;
       return {};
     });

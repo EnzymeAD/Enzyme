@@ -27,10 +27,10 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     size_t num = 1;
     for (auto sz : T.getShape())
       num *= sz;
-    APFloat apvalue(T.getElementType().cast<FloatType>().getFloatSemantics(),
+    APFloat apvalue(cast<FloatType>(T.getElementType()).getFloatSemantics(),
                     value);
     SmallVector<APFloat> supportedValues(num, apvalue);
-    return DenseFPElementsAttr::get(type.cast<ShapedType>(), supportedValues);
+    return DenseFPElementsAttr::get(cast<ShapedType>(type), supportedValues);
   }
   auto T = cast<FloatType>(type);
   APFloat apvalue(T.getFloatSemantics(), value);
@@ -73,10 +73,9 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
         if (!gutils->isConstantValue(op)) {
           newVals.push_back(gutils->invertPointerM(op, builder));
         } else {
-          Type retTy =
-              arg.getType().cast<AutoDiffTypeInterface>().getShadowType(
-                  gutils->width);
-          auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+          Type retTy = cast<AutoDiffTypeInterface>(arg.getType())
+                           .getShadowType(gutils->width);
+          auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
               builder, op.getLoc());
           newVals.push_back(toret);
         }
@@ -148,7 +147,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
                   dyn_cast<AutoDiffTypeInterface>(operand.get().getType())) {
             if (!iface.isMutable()) {
               Type retTy = iface.getShadowType(gutils->width);
-              auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+              auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
                   builder, operand.get().getLoc());
               newOperands.push_back(toret);
               continue;
