@@ -297,6 +297,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     Value *rep = std::get<0>(cur);
     Value *prev = std::get<1>(cur);
     Value *inst = std::get<2>(cur);
+    llvm::errs() << " todo inst: " << *inst << "\n";
     if (auto ASC = dyn_cast<AddrSpaceCastInst>(inst)) {
       auto AS = cast<PointerType>(rep->getType())->getAddressSpace();
       if (AS == ASC->getDestAddressSpace()) {
@@ -360,17 +361,21 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       bool allReplaced = true;
       for (size_t i = 0; i < NumOperands; i++) {
-        if (!replacedOperands[i])
+        if (!replacedOperands[i]) {
           allReplaced = false;
+        }
       }
       if (!allReplaced) {
         bool remainingArePHIs = true;
         for (auto v : Todo) {
-          if (isa<PHINode>(std::get<2>(v)))
+          if (isa<PHINode>(std::get<2>(v))) {
+          } else {
             remainingArePHIs = false;
+          }
         }
         if (!remainingArePHIs) {
-          Todo.push_back(cur);
+          Todo.insert(Todo.begin(), cur);
+          llvm::errs() << " continuing\n";
           continue;
         }
       } else {
@@ -385,6 +390,11 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
               std::make_tuple((Value *)nP, (Value *)P, cast<Instruction>(U)));
         }
         toErase.push_back(P);
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != P)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
         continue;
       }
     }
@@ -488,8 +498,6 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto I = dyn_cast<Instruction>(inst))
       llvm::errs() << *I->getParent()->getParent() << "\n";
-    llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
-                 << "\n";
     llvm_unreachable("Illegal address space propagation");
   }
 
@@ -1006,19 +1014,18 @@ Function *CreateMPIWrapper(Function *F) {
   auto FT = FunctionType::get(F->getReturnType(), types, false);
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
-  llvm::Attribute::AttrKind attrs[] = {
-    Attribute::WillReturn,
-    Attribute::MustProgress,
+  llvm::Attribute::AttrKind attrs[] = {Attribute::WillReturn,
+                                       Attribute::MustProgress,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::ReadOnly,
+                                       Attribute::ReadOnly,
 #endif
-    Attribute::Speculatable,
-    Attribute::NoUnwind,
-    Attribute::AlwaysInline,
-    Attribute::NoFree,
-    Attribute::NoSync,
+                                       Attribute::Speculatable,
+                                       Attribute::NoUnwind,
+                                       Attribute::AlwaysInline,
+                                       Attribute::NoFree,
+                                       Attribute::NoSync,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::InaccessibleMemOnly
+                                       Attribute::InaccessibleMemOnly
 #endif
   };
   for (auto attr : attrs) {
