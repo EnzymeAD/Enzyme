@@ -1014,18 +1014,19 @@ Function *CreateMPIWrapper(Function *F) {
   auto FT = FunctionType::get(F->getReturnType(), types, false);
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
-  llvm::Attribute::AttrKind attrs[] = {Attribute::WillReturn,
-                                       Attribute::MustProgress,
+  llvm::Attribute::AttrKind attrs[] = {
+    Attribute::WillReturn,
+    Attribute::MustProgress,
 #if LLVM_VERSION_MAJOR < 16
-                                       Attribute::ReadOnly,
+    Attribute::ReadOnly,
 #endif
-                                       Attribute::Speculatable,
-                                       Attribute::NoUnwind,
-                                       Attribute::AlwaysInline,
-                                       Attribute::NoFree,
-                                       Attribute::NoSync,
+    Attribute::Speculatable,
+    Attribute::NoUnwind,
+    Attribute::AlwaysInline,
+    Attribute::NoFree,
+    Attribute::NoSync,
 #if LLVM_VERSION_MAJOR < 16
-                                       Attribute::InaccessibleMemOnly
+    Attribute::InaccessibleMemOnly
 #endif
   };
   for (auto attr : attrs) {
