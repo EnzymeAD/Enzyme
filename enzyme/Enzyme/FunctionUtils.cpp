@@ -346,44 +346,46 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto P = dyn_cast<PHINode>(inst)) {
       auto NumOperands = P->getNumIncomingValues();
-      SmallVector<Value*, 1> replacedOperands(NumOperands, nullptr);
-      for (size_t i=0; i<NumOperands; i++)
-	      if (P->getOperand(i) == prev)
-      replacedOperands[i] = rep;
+      SmallVector<Value *, 1> replacedOperands(NumOperands, nullptr);
+      for (size_t i = 0; i < NumOperands; i++)
+        if (P->getOperand(i) == prev)
+          replacedOperands[i] = rep;
       for (auto tval : Todo) {
-        if (std::get<2>(tval) != P) continue;
-      for (size_t i=0; i<NumOperands; i++)
-	      if (P->getOperand(i) == std::get<1>(tval)) {
-	        replacedOperands[i] = std::get<0>(tval);
-	      }
-        
-     }
+        if (std::get<2>(tval) != P)
+          continue;
+        for (size_t i = 0; i < NumOperands; i++)
+          if (P->getOperand(i) == std::get<1>(tval)) {
+            replacedOperands[i] = std::get<0>(tval);
+          }
+      }
       bool allReplaced = true;
-      for (size_t i=0; i<NumOperands; i++) {
-        if (!replacedOperands[i]) allReplaced = false;
+      for (size_t i = 0; i < NumOperands; i++) {
+        if (!replacedOperands[i])
+          allReplaced = false;
       }
       if (!allReplaced) {
-	bool remainingArePHIs = true;
-	for (auto v : Todo) {
-	  if (isa<PHINode>(std::get<2>(v))) remainingArePHIs = false;
-	}
-	if (!remainingArePHIs) {
-	  Todo.push_back(cur);
-	  continue;
-	}
+        bool remainingArePHIs = true;
+        for (auto v : Todo) {
+          if (isa<PHINode>(std::get<2>(v)))
+            remainingArePHIs = false;
+        }
+        if (!remainingArePHIs) {
+          Todo.push_back(cur);
+          continue;
+        }
       } else {
-      IRBuilder<> B(P->getParent()->getFirstNonPHIOrDbgOrLifetime());
-      auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
-      for (size_t i=0; i<NumOperands; i++) {
-        nP->addIncoming(replacedOperands[i], P->getIncomingBlock(i));
-      }
-      nP->takeName(P);
-      for (auto U : P->users()) {
-        Todo.push_back(
-            std::make_tuple((Value *)nP, (Value *)P, cast<Instruction>(U)));
-      }
-      toErase.push_back(P);
-	  continue;
+        IRBuilder<> B(P->getParent()->getFirstNonPHIOrDbgOrLifetime());
+        auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
+        for (size_t i = 0; i < NumOperands; i++) {
+          nP->addIncoming(replacedOperands[i], P->getIncomingBlock(i));
+        }
+        nP->takeName(P);
+        for (auto U : P->users()) {
+          Todo.push_back(
+              std::make_tuple((Value *)nP, (Value *)P, cast<Instruction>(U)));
+        }
+        toErase.push_back(P);
+        continue;
       }
     }
     if (auto II = dyn_cast<IntrinsicInst>(inst)) {
