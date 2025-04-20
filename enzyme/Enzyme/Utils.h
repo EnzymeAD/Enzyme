@@ -363,6 +363,11 @@ enum class ProbProgMode {
   Condition = 2,
 };
 
+enum class MProbProgMode {
+  Simulate = 0,
+  Trace = 1, // TODO: handle variants
+};
+
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis

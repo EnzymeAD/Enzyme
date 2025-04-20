@@ -1,0 +1,128 @@
+//===- ProbProgUtils.cpp - Utilities for probprog interfaces
+//--------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "Interfaces/ProbProgUtils.h"
+#include "Dialect/Ops.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
+
+// TODO: this shouldn't depend on specific dialects except Enzyme.
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+
+#include "CloneFunction.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Dominance.h"
+#include "llvm/ADT/BreadthFirstIterator.h"
+
+using namespace mlir;
+using namespace mlir::enzyme;
+
+Type mlir::enzyme::MProbProgUtils::getIndexType() {
+  return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
+}
+
+Value mlir::enzyme::MProbProgUtils::initTrace() {
+  OpBuilder builder(initializationBlock, initializationBlock->begin());
+  auto init = builder.create<enzyme::InitOp>(
+      (initializationBlock->rbegin())->getLoc(), traceType);
+  trace = init.getResult();
+  return trace;
+}
+
+// Trace
+Value mlir::enzyme::MProbProgUtils::getTrace() { return trace; }
+
+void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
+                                     SymbolTableCollection &symbolTable) {
+  auto distFn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+  auto logpdfFn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getLogpdfAttr()));
+  auto inputs = sampleOp.getInputs();
+  auto nameAttr = sampleOp.getNameAttr();
+
+  // 1. Insert distribution function call
+  auto distCall = b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
+                                         distFn.getResultTypes(), inputs);
+  Value sampleVal = distCall.getResult(0);
+
+  // 2. Insert logpdf function call
+  SmallVector<Value, 4> logpdfInputs;
+  logpdfInputs.push_back(sampleVal);
+  for (auto input : inputs)
+    logpdfInputs.push_back(input);
+  auto logpdfCall =
+      b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
+                             logpdfFn.getResultTypes(), logpdfInputs);
+  Value logpdfVal = logpdfCall.getResult(0);
+
+  // 3. Record the computed sample and logpdf in the trace
+  b.create<enzyme::addSampleToTraceOp>(sampleOp.getLoc(), trace, sampleVal,
+                                       logpdfVal, nameAttr);
+
+  // 4. Replace the sample op with the distribution call
+  sampleOp.replaceAllUsesWith(distCall);
+}
+
+MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
+                                                MProbProgMode mode) {
+  if (toeval.getFunctionBody().empty()) {
+    llvm::errs() << toeval << "\n";
+    llvm_unreachable("Creating MProbProgUtils from empty function");
+  }
+
+  std::string suffix;
+
+  // Assuming that trace object base type is the traced function's FIRST return
+  // type.
+  auto traceType = enzyme::TraceType::get(
+      toeval.getContext(),
+      toeval.getFunctionType().cast<mlir::FunctionType>().getResult(0));
+
+  auto originalInputs =
+      toeval.getFunctionType().cast<mlir::FunctionType>().getInputs();
+  SmallVector<mlir::Type, 4> ArgTypes;
+  SmallVector<mlir::Type, 4> ResultTypes;
+
+  switch (mode) {
+  case MProbProgMode::Simulate:
+    suffix = "simulate";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(traceType);
+    break;
+  case MProbProgMode::Trace:
+    suffix = "trace";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end()); // TODO
+    ResultTypes.push_back(traceType);                              // TODO
+    break;
+  default:
+    llvm_unreachable("Invalid MProbProgMode\n");
+  }
+
+  OpBuilder builder(toeval.getContext());
+  auto FTy = builder.getFunctionType(ArgTypes, ResultTypes);
+
+  auto NewF = cast<FunctionOpInterface>(toeval->cloneWithoutRegions());
+  SymbolTable::setSymbolName(NewF, toeval.getName().str() + "." + suffix);
+  NewF.setType(FTy);
+
+  Operation *parent = toeval->getParentWithTrait<OpTrait::SymbolTable>();
+  SymbolTable table(parent);
+  table.insert(NewF);
+
+  IRMapping originalToNew;
+  std::map<Operation *, Operation *> originalToNewOps;
+  cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
+            originalToNewOps);
+
+  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode,
+                            traceType);
+}
