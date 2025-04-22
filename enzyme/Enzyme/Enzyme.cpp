@@ -1947,6 +1947,22 @@ public:
       return false;
     }
     assert(args.size() == newFunc->getFunctionType()->getNumParams());
+    for (size_t i = 0; i < args.size(); i++) {
+      if (args[i]->getType() != newFunc->getFunctionType()->getParamType(i)) {
+        llvm::errs() << *CI << "\n";
+        llvm::errs() << *newFunc << "\n";
+        for (auto arg : args) {
+          llvm::errs() << " + " << *arg << "\n";
+        }
+        auto modestr = to_string(mode);
+        EmitFailure("BadArgumentType", CI->getDebugLoc(), CI,
+                    "Incorrect argument type passed to __enzyme_autodiff mode=",
+                    modestr, " at index ", i, " expected ",
+                    *newFunc->getFunctionType()->getParamType(i), " found ",
+                    *args[i]->getType());
+        return false;
+      }
+    }
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
