@@ -297,7 +297,6 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     Value *rep = std::get<0>(cur);
     Value *prev = std::get<1>(cur);
     Value *inst = std::get<2>(cur);
-    llvm::errs() << " todo inst: " << *inst << "\n";
     if (auto ASC = dyn_cast<AddrSpaceCastInst>(inst)) {
       auto AS = cast<PointerType>(rep->getType())->getAddressSpace();
       if (AS == ASC->getDestAddressSpace()) {
