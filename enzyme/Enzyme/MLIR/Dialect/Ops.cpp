@@ -214,21 +214,11 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
 LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
-  {
-    auto global =
-        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-    if (!global)
-      return emitOpError("'")
-             << getFn() << "' does not reference a valid global funcOp";
-  }
-
-  {
-    auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
-        *this, getLogpdfAttr());
-    if (!global)
-      return emitOpError("'")
-             << getLogpdf() << "' does not reference a valid global funcOp";
-  }
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
 
   return success();
 }

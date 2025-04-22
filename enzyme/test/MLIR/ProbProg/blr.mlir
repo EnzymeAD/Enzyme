@@ -3,7 +3,6 @@
 // Bayesian linear regression: https://www.gen.dev/tutorials/intro-to-modeling/tutorial
 module {
   func.func private @normal(%mean : f64, %stddev : f64) -> f64
-  func.func private @normal_logpdf(%value : f64, %mean : f64, %stddev : f64) -> f64
 
   func.func @line_model(%xs : memref<?xf64>, %n : index) -> f64 {
     // Sample the slope and intercept
@@ -13,8 +12,8 @@ module {
     %c1 = arith.constant 1.0 : f64
     %c2 = arith.constant 2.0 : f64
     %i = arith.constant 0 : index
-    %slope = enzyme.sample @normal(%c0, %c1) @normal_logpdf { name = "slope" } : (f64, f64) -> f64
-    %intercept = enzyme.sample @normal(%c0, %c2) @normal_logpdf { name = "intercept" } : (f64, f64) -> f64
+    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope" } : (f64, f64) -> f64
+    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept" } : (f64, f64) -> f64
     cf.br ^loop(%i, %pnan : index, f64)
 
   ^loop(%i1 : index, %prev_y : f64):
@@ -29,7 +28,7 @@ module {
     %y_mean = arith.addf %prod, %intercept : f64
 
     // Sample an observation for y
-    %y_sample = enzyme.sample @normal(%y_mean, %c0_1) @normal_logpdf { name = "y" } : (f64, f64) -> f64
+    %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y" } : (f64, f64) -> f64
 
     %one = arith.constant 1 : index
     %next_i = arith.addi %i2, %one : index
@@ -54,11 +53,9 @@ module {
 // CHECK-NEXT:   %[[c2:.+]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:   %[[i:.+]] = arith.constant 0 : index
 // CHECK-NEXT:   %[[slope:.+]] = call @normal(%[[c0]], %[[c1]]) : (f64, f64) -> f64
-// CHECK-NEXT:   %[[lslope:.+]] = call @normal_logpdf(%[[slope]], %[[c0]], %[[c1]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[slope]], %[[lslope]]) <{name = "slope"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[slope]]) <{name = "slope"}> : (!enzyme.Trace<f64>, f64) -> ()
 // CHECK-NEXT:   %[[intercept:.+]] = call @normal(%[[c0]], %[[c2]]) : (f64, f64) -> f64
-// CHECK-NEXT:   %[[lintercept:.+]] = call @normal_logpdf(%[[intercept]], %[[c0]], %[[c2]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[intercept]], %[[lintercept]]) <{name = "intercept"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[intercept]]) <{name = "intercept"}> : (!enzyme.Trace<f64>, f64) -> ()
 // CHECK-NEXT:   cf.br ^[[loop:.+]](%[[i]], %[[pnan]] : index, f64)
 
 // CHECK-NEXT: ^[[loop]](%[[i1:.+]]: index, %[[prev_y:.+]]: f64):
@@ -70,8 +67,7 @@ module {
 // CHECK-NEXT:   %[[prod:.+]] = arith.mulf %[[slope]], %[[x]] : f64
 // CHECK-NEXT:   %[[y_mean:.+]] = arith.addf %[[prod]], %[[intercept]] : f64
 // CHECK-NEXT:   %[[y_sample:.+]] = call @normal(%[[y_mean]], %[[c0_1]]) : (f64, f64) -> f64
-// CHECK-NEXT:   %[[ly:.+]] = call @normal_logpdf(%[[y_sample]], %[[y_mean]], %[[c0_1]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[y_sample]], %[[ly]]) <{name = "y"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[y_sample]]) <{name = "y"}> : (!enzyme.Trace<f64>, f64) -> ()
 // CHECK-NEXT:   %[[one:.+]] = arith.constant 1 : index
 // CHECK-NEXT:   %[[i_next:.+]] = arith.addi %[[i2]], %[[one]] : index
 // CHECK-NEXT:   cf.br ^[[loop]](%[[i_next]], %[[y_sample]] : index, f64)

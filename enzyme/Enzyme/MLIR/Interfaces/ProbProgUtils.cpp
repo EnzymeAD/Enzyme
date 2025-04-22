@@ -44,8 +44,6 @@ void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                                      SymbolTableCollection &symbolTable) {
   auto distFn = cast<FunctionOpInterface>(
       symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-  auto logpdfFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getLogpdfAttr()));
   auto inputs = sampleOp.getInputs();
   auto nameAttr = sampleOp.getNameAttr();
 
@@ -54,21 +52,11 @@ void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                                          distFn.getResultTypes(), inputs);
   Value sampleVal = distCall.getResult(0);
 
-  // 2. Insert logpdf function call
-  SmallVector<Value, 4> logpdfInputs;
-  logpdfInputs.push_back(sampleVal);
-  for (auto input : inputs)
-    logpdfInputs.push_back(input);
-  auto logpdfCall =
-      b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
-                             logpdfFn.getResultTypes(), logpdfInputs);
-  Value logpdfVal = logpdfCall.getResult(0);
-
-  // 3. Record the computed sample and logpdf in the trace
+  // 2. Record the computed sample in the trace
   b.create<enzyme::addSampleToTraceOp>(sampleOp.getLoc(), trace, sampleVal,
-                                       logpdfVal, nameAttr);
+                                       nameAttr);
 
-  // 4. Replace the sample op with the distribution call
+  // 3. Replace the sample op with the distribution call
   sampleOp.replaceAllUsesWith(distCall);
 }
 

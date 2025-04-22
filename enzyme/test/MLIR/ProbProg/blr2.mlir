@@ -4,7 +4,6 @@
 // Bayesian linear regression: https://www.gen.dev/tutorials/intro-to-modeling/tutorial
 module {
   func.func private @normal(%mean : f64, %stddev : f64) -> f64
-  func.func private @normal_logpdf(%value : f64, %mean : f64, %stddev : f64) -> f64
 
   func.func @line_model(%xs : memref<?xf64>, %n : index) -> f64 {
     // Sample the slope and intercept
@@ -15,15 +14,15 @@ module {
     %c2 = arith.constant 2.0 : f64
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
-    %slope = enzyme.sample @normal(%c0, %c1) @normal_logpdf { name = "slope" } : (f64, f64) -> f64
-    %intercept = enzyme.sample @normal(%c0, %c2) @normal_logpdf { name = "intercept" } : (f64, f64) -> f64
+    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope" } : (f64, f64) -> f64
+    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept" } : (f64, f64) -> f64
 
     %final = scf.for %i = %zero to %n step %one
              iter_args(%prev_y = %pnan) -> (f64) {
       %x = memref.load %xs[%i] : memref<?xf64>
       %prod = arith.mulf %slope, %x : f64
       %y_mean = arith.addf %prod, %intercept : f64
-      %y_sample = enzyme.sample @normal(%y_mean, %c0_1) @normal_logpdf { name = "y" } : (f64, f64) -> f64
+      %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y" } : (f64, f64) -> f64
       scf.yield %y_sample : f64
     }
     return %final : f64
@@ -45,18 +44,15 @@ module {
 // CHECK-NEXT:   %[[zero:.+]] = arith.constant 0 : index
 // CHECK-NEXT:   %[[one:.+]] = arith.constant 1 : index
 // CHECK-NEXT:   %[[slope:.+]] = call @normal(%[[c0]], %[[c1]]) : (f64, f64) -> f64
-// CHECK-NEXT:   %[[lslope:.+]] = call @normal_logpdf(%[[slope]], %[[c0]], %[[c1]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[slope]], %[[lslope]]) <{name = "slope"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[slope]], %[[c0]]) <{name = "slope"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
 // CHECK-NEXT:   %[[intercept:.+]] = call @normal(%[[c0]], %[[c2]]) : (f64, f64) -> f64
-// CHECK-NEXT:   %[[lintercept:.+]] = call @normal_logpdf(%[[intercept]], %[[c0]], %[[c2]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[intercept]], %[[lintercept]]) <{name = "intercept"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[intercept]], %[[c0]]) <{name = "intercept"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
 // CHECK-NEXT:   %[[final:.+]] = scf.for %[[i:.+]] = %[[zero]] to %[[n]] step %[[one]] iter_args(%[[prev_y:.+]] = %[[pnan]]) -> (f64) {
 // CHECK-NEXT:       %[[x:.+]] = memref.load %[[xs]][%[[i]]] : memref<?xf64>
 // CHECK-NEXT:       %[[prod:.+]] = arith.mulf %[[slope]], %[[x]] : f64
 // CHECK-NEXT:       %[[y_mean:.+]] = arith.addf %[[prod]], %[[intercept]] : f64
 // CHECK-NEXT:       %[[y_sample:.+]] = call @normal(%[[y_mean]], %[[c0_1]]) : (f64, f64) -> f64
-// CHECK-NEXT:       %[[ly:.+]] = call @normal_logpdf(%[[y_sample]], %[[y_mean]], %[[c0_1]]) : (f64, f64, f64) -> f64
-// CHECK-NEXT:       "enzyme.addSampleToTrace"(%[[trace]], %[[y_sample]], %[[ly]]) <{name = "y"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
+// CHECK-NEXT:       "enzyme.addSampleToTrace"(%[[trace]], %[[y_sample]], %[[c0]]) <{name = "y"}> : (!enzyme.Trace<f64>, f64, f64) -> ()
 // CHECK-NEXT:       scf.yield %[[y_sample]] : f64
 // CHECK-NEXT:     }
 // CHECK-NEXT:   return %[[trace]] : !enzyme.Trace<f64>

@@ -234,14 +234,13 @@ def SampleOp : Enzyme_Op<"sample",
   let summary = "Sample from a distribution";
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
-    FlatSymbolRefAttr:$logpdf,
     Variadic<AnyType>:$inputs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` $logpdf attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -310,8 +309,7 @@ def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
 
   let arguments = (ins
     Trace:$trace,
-    AnyType:$choice,
-    AnyType:$logpdf,
+    AnyType:$sample,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
