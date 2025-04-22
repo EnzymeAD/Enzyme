@@ -86,6 +86,9 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
+
+  // Define activity optimizations as canonicalization 
+  let hasCanonicalizer = 1;
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
