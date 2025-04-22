@@ -185,8 +185,6 @@ static inline bool isMutable(Type type) {
   return false;
 }
 
-
-
 /**
  *
  * Modifies return activites for the FwdDiffOp
