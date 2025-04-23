@@ -242,7 +242,7 @@ const static unsigned constantIntrinsics[] = {
 };
 
 static Operation *getFunctionFromCall(CallOpInterface iface) {
-  auto symbol = iface.getCallableForCallee().dyn_cast<SymbolRefAttr>();
+  auto symbol = dyn_cast<SymbolRefAttr>(iface.getCallableForCallee());
   if (!symbol)
     return nullptr;
 
@@ -2660,7 +2660,7 @@ bool mlir::enzyme::ActivityAnalyzer::isOperationInactiveFromOrigin(
     //                  << *inst << "\n";
     //   return true;
     // }
-    Value callVal = call.getCallableForCallee().dyn_cast<Value>();
+    Value callVal = dyn_cast<Value>(call.getCallableForCallee());
     if (callVal)
       if (isConstantValue(TR, callVal)) {
         if (EnzymePrintActivity)
@@ -3245,7 +3245,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         // the function is only active if the function stored into
         // the allocation is active (all functions not explicitly marked
         // inactive), or one of the args to the call is active
-        Value operand = call.getCallableForCallee().dyn_cast<Value>();
+        Value operand = dyn_cast<Value>(call.getCallableForCallee());
         assert(operand);
 
         bool toContinue = false;
