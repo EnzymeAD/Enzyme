@@ -53,6 +53,20 @@ def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
 }
 
+def GenFnAttr : Enzyme_Attr<"GenFn", "gen"> {
+  let summary = "Marks a function as a generative function";
+  let description = [{
+    This attribute marks a function as a generative function.
+ }];
+
+  let parameters = (ins
+    "BoolAttr":$dynamic,
+    "StringAttr":$name
+  );
+
+  let assemblyFormat = "`<` params `>`";
+}
+
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
     [

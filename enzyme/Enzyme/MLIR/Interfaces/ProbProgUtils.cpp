@@ -77,10 +77,16 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
 
   auto originalInputs =
       toeval.getFunctionType().cast<mlir::FunctionType>().getInputs();
+  auto originalResults = toeval.getFunctionType().cast<mlir::FunctionType>().getResults();
   SmallVector<mlir::Type, 4> ArgTypes;
   SmallVector<mlir::Type, 4> ResultTypes;
 
   switch (mode) {
+  case MProbProgMode::Call:
+    suffix = "call";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.append(originalResults.begin(), originalResults.end());
+    break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
     ArgTypes.append(originalInputs.begin(), originalInputs.end());

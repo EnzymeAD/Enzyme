@@ -44,6 +44,45 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                     mlir::enzyme::EnzymeDialect>();
   }
 
+  LogicalResult HandleCall(SymbolTableCollection &symbolTable,
+                           func::CallOp CI) {
+    auto fn = cast<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(CI, CI.getCalleeAttr()));
+
+    assert(fn->hasAttr("enzyme.gen") &&
+           "Handled function is not marked as generative");
+
+    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Call);
+    FunctionOpInterface NewF = putils->newFunc;
+
+    // Replace SampleOps with distribution function calls
+    SmallVector<Operation *, 4> toErase;
+    NewF.walk([&](enzyme::SampleOp sampleOp) {
+      OpBuilder b(sampleOp);
+      auto distFn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+      auto distCall = b.create<func::CallOp>(
+          sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+          sampleOp.getOperands());
+      sampleOp.replaceAllUsesWith(distCall);
+
+      toErase.push_back(sampleOp);
+    });
+
+    for (Operation *op : toErase) {
+      op->erase();
+    }
+
+    OpBuilder b(CI);
+    auto newCallOp = b.create<func::CallOp>(
+        CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
+
+    CI->replaceAllUsesWith(newCallOp);
+    CI->erase();
+
+    return success();
+  }
+
   LogicalResult HandleSimulate(SymbolTableCollection &symbolTable,
                                enzyme::SimulateOp CI) {
     auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
@@ -142,6 +181,20 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
+    op->walk([&](func::CallOp cop) {
+      if (SymbolRefAttr calledFn =
+              cop.getCallableForCallee().dyn_cast<SymbolRefAttr>()) {
+        Operation *symbolOp =
+            symbolTable.lookupNearestSymbolFrom(cop, calledFn);
+        if (symbolOp && symbolOp->hasAttr("enzyme.gen")) {
+          auto res = HandleCall(symbolTable, cop);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
+        }
+      }
+    });
     op->walk([&](enzyme::SimulateOp sop) {
       auto res = HandleSimulate(symbolTable, sop);
       if (!res.succeeded()) {
