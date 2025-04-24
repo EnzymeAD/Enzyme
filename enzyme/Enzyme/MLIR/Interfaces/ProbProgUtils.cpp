@@ -73,11 +73,12 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   // type.
   auto traceType = enzyme::TraceType::get(
       toeval.getContext(),
-      toeval.getFunctionType().cast<mlir::FunctionType>().getResult(0));
+      cast<mlir::FunctionType>(toeval.getFunctionType()).getResult(0));
 
   auto originalInputs =
-      toeval.getFunctionType().cast<mlir::FunctionType>().getInputs();
-  auto originalResults = toeval.getFunctionType().cast<mlir::FunctionType>().getResults();
+      cast<mlir::FunctionType>(toeval.getFunctionType()).getInputs();
+  auto originalResults =
+      cast<mlir::FunctionType>(toeval.getFunctionType()).getResults();
   SmallVector<mlir::Type, 4> ArgTypes;
   SmallVector<mlir::Type, 4> ResultTypes;
 

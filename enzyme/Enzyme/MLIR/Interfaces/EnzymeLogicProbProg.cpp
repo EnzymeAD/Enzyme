@@ -39,16 +39,16 @@ mlir::enzyme::MEnzymeLogic::CreateTrace(FunctionOpInterface fn,
   // Assume the same trace object base type as the traced function return type.
   auto traceType = enzyme::TraceType::get(
       fn.getContext(),
-      fn.getFunctionType().cast<mlir::FunctionType>().getResult(0));
+      cast<mlir::FunctionType>(fn.getFunctionType()).getResult(0));
 
   auto originalInputs =
-      fn.getFunctionType().cast<mlir::FunctionType>().getInputs();
+      cast<mlir::FunctionType>(fn.getFunctionType()).getInputs();
   SmallVector<mlir::Type, 4> ArgTypes(originalInputs.begin(),
                                       originalInputs.end());
   ArgTypes.insert(ArgTypes.begin(), traceType);
 
   auto originalResults =
-      fn.getFunctionType().cast<mlir::FunctionType>().getResults();
+      cast<mlir::FunctionType>(fn.getFunctionType()).getResults();
   SmallVector<mlir::Type, 4> RetTypes(originalResults.begin(),
                                       originalResults.end());
   RetTypes.insert(RetTypes.begin(), traceType);
