@@ -1817,7 +1817,7 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
           if (intrinsic == MLIRDerivatives) {
             os << curIndent << INDENT
                << "tmp = "
-                  "tmp.getType().cast<AutoDiffTypeInterface>().createConjOp("
+                  "cast<AutoDiffTypeInterface>(tmp.getType()).createConjOp("
                   "builder, op.getLoc(), tmp);\n";
           }
 

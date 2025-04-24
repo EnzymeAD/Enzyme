@@ -118,7 +118,7 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
 
   if (isConstantValue(v)) {
     if (auto iface =
-            getShadowType(v.getType()).dyn_cast<AutoDiffTypeInterface>()) {
+            dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()))) {
       OpBuilder::InsertionGuard guard(Builder2);
       if (auto op = v.getDefiningOp())
         Builder2.setInsertionPoint(getNewFromOriginal(op));
@@ -160,7 +160,7 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
                                                  mlir::Value toset,
                                                  OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
-  auto iface = oval.getType().cast<AutoDiffTypeInterface>();
+  auto iface = cast<AutoDiffTypeInterface>(oval.getType());
   if (!iface.isMutable()) {
     auto shadow = getDifferential(oval);
     BuilderM.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
@@ -172,7 +172,7 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
 void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval,
                                                   OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
-  auto iface = getShadowType(oval.getType()).cast<AutoDiffTypeInterface>();
+  auto iface = cast<AutoDiffTypeInterface>(getShadowType(oval.getType()));
   assert(!iface.isMutable());
   setDiffe(oval, iface.createNullValue(BuilderM, oval.getLoc()), BuilderM);
 }

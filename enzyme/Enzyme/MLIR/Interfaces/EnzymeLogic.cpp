@@ -56,9 +56,8 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
       if (!gutils->isConstantValue(ret)) {
         retargs.push_back(gutils->invertPointerM(ret, nBuilder));
       } else {
-        Type retTy =
-            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-        auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+        Type retTy = cast<AutoDiffTypeInterface>(ret.getType()).getShadowType();
+        auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
             nBuilder, ret.getLoc());
         retargs.push_back(toret);
       }

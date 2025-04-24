@@ -33,7 +33,7 @@ public:
   TypeTree query(Value) const { return TypeTree(); }
   ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
                        bool pointerIntSame = false) const {
-    if (val.getType().isa<IntegerType, IndexType>()) {
+    if (isa<IntegerType, IndexType>(val.getType())) {
       return BaseType::Integer;
     }
     if (errIfNotFound) {

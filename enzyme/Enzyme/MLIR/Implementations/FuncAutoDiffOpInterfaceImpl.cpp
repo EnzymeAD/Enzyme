@@ -136,7 +136,7 @@ public:
     for (auto res : callOp.getResults()) {
       RetActivity.push_back(
           gutils->isConstantValue(res) ? DIFFE_TYPE::CONSTANT
-          : res.getType().cast<AutoDiffTypeInterface>().isMutable()
+          : cast<AutoDiffTypeInterface>(res.getType()).isMutable()
               ? DIFFE_TYPE::DUP_ARG
               : DIFFE_TYPE::OUT_DIFF);
     }
@@ -145,7 +145,7 @@ public:
     for (auto arg : callOp.getOperands()) {
       ArgActivity.push_back(
           gutils->isConstantValue(arg) ? DIFFE_TYPE::CONSTANT
-          : arg.getType().cast<AutoDiffTypeInterface>().isMutable()
+          : cast<AutoDiffTypeInterface>(arg.getType()).isMutable()
               ? DIFFE_TYPE::DUP_ARG
               : DIFFE_TYPE::OUT_DIFF);
     }
