@@ -376,6 +376,9 @@ protected:
                                OpBuilder::InsertPoint previous) override;
   void notifyOperationErased(Operation *op) override;
 
+  void notifyMatchFailure(Location loc,
+                          function_ref<void(Diagnostic &)> reasonCallback);
+
 private:
   void addToWorklist(Operation *op);
 
@@ -430,6 +433,12 @@ void PostOrderWalkDriver::notifyOperationErased(Operation *op) {
   if (!isa<EnzymeOpsRemoverOpInterface>(op))
     return;
   worklist.remove(op);
+}
+
+void PostOrderWalkDriver::notifyMatchFailure(
+    Location loc, function_ref<void(Diagnostic &)> reasonCallback) {
+  auto diag = mlir::emitError(loc);
+  reasonCallback(*diag.getUnderlyingDiagnostic());
 }
 
 void PostOrderWalkDriver::initializeWorklist() {
