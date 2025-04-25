@@ -76,6 +76,7 @@ struct DifferentiateWrapperPass
     auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
     std::string postpasses = "";
+    bool verifyPostPasses = true;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
@@ -123,13 +124,14 @@ struct DifferentiateWrapperPass
                                         returnPrimal, mode, freeMemory, width,
                                         /*addedType*/ nullptr, type_args,
                                         volatile_args,
-                                        /*augmented*/ nullptr, omp, postpasses);
+                                        /*augmented*/ nullptr, omp, postpasses,
+                                        verifyPostPasses);
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr, omp, postpasses);
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses);
     }
     if (!newFunc) {
       signalPassFailure();

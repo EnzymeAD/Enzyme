@@ -209,7 +209,8 @@ public:
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses);
+                    void *augmented, bool omp, llvm::StringRef postpasses,
+                    bool verifyPostPasses);
 
   FunctionOpInterface
   CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
@@ -218,7 +219,8 @@ public:
                     std::vector<bool> returnShadows, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses);
+                    void *augmented, bool omp, llvm::StringRef postpasses,
+                    bool verifyPostPasses);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
