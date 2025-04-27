@@ -213,14 +213,13 @@ public:
                     bool verifyPostPasses);
 
   FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    std::vector<bool> returnPrimals,
-                    std::vector<bool> returnShadows, DerivativeMode mode,
-                    bool freeMemory, size_t width, mlir::Type addedType,
-                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses,
-                    bool verifyPostPasses);
+  CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+      MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
+      bool omp, llvm::StringRef postpasses, bool verifyPostPasses);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,

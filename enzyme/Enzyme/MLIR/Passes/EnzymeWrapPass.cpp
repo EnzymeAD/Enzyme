@@ -120,12 +120,11 @@ struct DifferentiateWrapperPass
 
     FunctionOpInterface newFunc;
     if (mode == DerivativeMode::ForwardMode) {
-      newFunc = Logic.CreateForwardDiff(fn, RetActivity, ArgActivity, TA,
-                                        returnPrimal, mode, freeMemory, width,
-                                        /*addedType*/ nullptr, type_args,
-                                        volatile_args,
-                                        /*augmented*/ nullptr, omp, postpasses,
-                                        verifyPostPasses);
+      newFunc = Logic.CreateForwardDiff(
+          fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
+          width,
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses);
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
