@@ -212,8 +212,7 @@ public:
                     void *augmented, bool omp, llvm::StringRef postpasses,
                     bool verifyPostPasses);
 
-  FunctionOpInterface
-  CreateReverseDiff(
+  FunctionOpInterface CreateReverseDiff(
       FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
       std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
       std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
