@@ -52,7 +52,7 @@ list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp T
 
 if (ENZYME_ENABLE_PLUGINS)
         # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
-        if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
+        if ((WIN32 OR CYGWIN OR APPLE) AND LLVM_LINK_LLVM_DYLIB)
             add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
                 ${ENZYME_SRC}
                 PARTIAL_SOURCES_INTENDED
