@@ -72,6 +72,8 @@ message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
 find_package(LLVM REQUIRED CONFIG)
 
+string(REPLACE "/Users/runner/work/rust/rust/src/llvm-project/llvm/include" "/Users/runner/work/rust/rust/build/aarch64-apple-darwin/llvm/build/include" LLVM_INCLUDE_DIRS "${LLVM_INCLUDE_DIRS}")
+
 if (NOT LLVM_ENABLE_PLUGINS)
   message("LLVM_ENABLE_PLUGINS OFF")
   message("Setting ENZYME_ENABLE_PLUGINS OFF")
