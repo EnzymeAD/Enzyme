@@ -147,7 +147,7 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
     # Add -L LLVM_DIR to the linker flags, since just -lLLVM is too unreliable.
     set_target_properties(Enzyme-${LLVM_VERSION_MAJOR} PROPERTIES
-        LINK_FLAGS "-v -L${LLVM_DIR}/../..")
+        LINK_FLAGS "-L${LLVM_DIR}/../..")
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
