@@ -14,6 +14,7 @@ if (APPLE)
     set(BC_LOAD_FLAGS2 "${BC_LOAD_FLAGS2} --sysroot=${CMAKE_OSX_SYSROOT}")
 endif()
 
+if (ENZYME_ENABLE_PLUGINS)
 if (NOT ("${BC_LOAD_HEADER}" STREQUAL ""))
     add_custom_target(blasheaders mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/gsl" && cp ${BC_LOAD_HEADER} "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -129,5 +130,6 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         LIBRARY DESTINATION lib COMPONENT shlib
         PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
         COMPONENT dev)
+endif()
 endif()
 endif()
