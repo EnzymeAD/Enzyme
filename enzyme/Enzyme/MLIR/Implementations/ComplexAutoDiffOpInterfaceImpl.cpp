@@ -41,9 +41,10 @@ bool isZero(mlir::Value v) {
 }
 
 struct ComplexAddSimplifyMathInterface
-    : public MathSimplifyInterface::ExternalModel<ComplexAddSimplifyMathInterface,
-                                             complex::AddOp> {
-  mlir::LogicalResult simplifyMath(Operation *src, PatternRewriter &rewriter) const {
+    : public MathSimplifyInterface::ExternalModel<
+          ComplexAddSimplifyMathInterface, complex::AddOp> {
+  mlir::LogicalResult simplifyMath(Operation *src,
+                                   PatternRewriter &rewriter) const {
     auto op = cast<complex::AddOp>(src);
 
     if (isZero(op.getLhs())) {
@@ -61,9 +62,10 @@ struct ComplexAddSimplifyMathInterface
 };
 
 struct ComplexSubSimplifyMathInterface
-    : public MathSimplifyInterface::ExternalModel<ComplexSubSimplifyMathInterface,
-                                             complex::SubOp> {
-  mlir::LogicalResult simplifyMath(Operation *src, PatternRewriter &rewriter) const {
+    : public MathSimplifyInterface::ExternalModel<
+          ComplexSubSimplifyMathInterface, complex::SubOp> {
+  mlir::LogicalResult simplifyMath(Operation *src,
+                                   PatternRewriter &rewriter) const {
     auto op = cast<complex::SubOp>(src);
 
     if (isZero(op.getRhs())) {

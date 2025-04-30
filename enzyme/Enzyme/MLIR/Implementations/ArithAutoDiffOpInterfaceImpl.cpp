@@ -61,9 +61,10 @@ struct ArithConstantOpBatchInterface
 };
 
 struct ArithAddFSimplifyMathInterface
-    : public MathSimplifyInterface::ExternalModel<ArithAddFSimplifyMathInterface,
-                                             arith::AddFOp> {
-  mlir::LogicalResult simplifyMath(Operation *src, PatternRewriter &rewriter) const {
+    : public MathSimplifyInterface::ExternalModel<
+          ArithAddFSimplifyMathInterface, arith::AddFOp> {
+  mlir::LogicalResult simplifyMath(Operation *src,
+                                   PatternRewriter &rewriter) const {
     auto op = cast<arith::AddFOp>(src);
 
     if (matchPattern(op.getLhs(), m_AnyZeroFloat())) {
@@ -81,9 +82,10 @@ struct ArithAddFSimplifyMathInterface
 };
 
 struct ArithSubFSimplifyMathInterface
-    : public MathSimplifyInterface::ExternalModel<ArithAddFSimplifyMathInterface,
-                                             arith::SubFOp> {
-  mlir::LogicalResult simplifyMath(Operation *src, PatternRewriter &rewriter) const {
+    : public MathSimplifyInterface::ExternalModel<
+          ArithAddFSimplifyMathInterface, arith::SubFOp> {
+  mlir::LogicalResult simplifyMath(Operation *src,
+                                   PatternRewriter &rewriter) const {
     auto op = cast<arith::SubFOp>(src);
 
     if (matchPattern(op.getRhs(), m_AnyZeroFloat())) {

@@ -11,11 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
-#include "Interfaces/AutoDiffOpInterface.h"
 
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -26,13 +26,14 @@ using namespace enzyme;
 using llvm::errs;
 namespace {
 
-struct ApplySimplificationPattern : public OpInterfaceRewritePattern<enzyme::MathSimplifyInterface> {
-  using OpInterfaceRewritePattern<enzyme::MathSimplifyInterface>::OpInterfaceRewritePattern;
+struct ApplySimplificationPattern
+    : public OpInterfaceRewritePattern<enzyme::MathSimplifyInterface> {
+  using OpInterfaceRewritePattern<
+      enzyme::MathSimplifyInterface>::OpInterfaceRewritePattern;
 
   LogicalResult matchAndRewrite(enzyme::MathSimplifyInterface op,
                                 PatternRewriter &rewriter) const override {
     return op.simplifyMath(rewriter);
-
   }
 };
 
@@ -42,8 +43,7 @@ struct MathematicSimplification
   void runOnOperation() override {
 
     RewritePatternSet patterns(&getContext());
-    patterns.insert<ApplySimplificationPattern>(
-        &getContext());
+    patterns.insert<ApplySimplificationPattern>(&getContext());
 
     GreedyRewriteConfig config;
     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
