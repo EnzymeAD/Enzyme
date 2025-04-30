@@ -28,6 +28,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"",
       /*description=*/"Optimization passes to apply to generated derivative functions"
     >,
+    Option<
+      /*C++ variable name=*/"verifyPostPasses",
+      /*CLI argument=*/"verifyPostPasses",
+      /*type=*/"bool",
+      /*default=*/"true",
+      /*description=*/"Whether or not to run verifier for the postpasses pass manager."
+    >,
   ];
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }

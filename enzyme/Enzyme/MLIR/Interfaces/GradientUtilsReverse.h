@@ -37,7 +37,7 @@ public:
                         IRMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
                         DerivativeMode mode_, unsigned width, bool omp,
-                        llvm::StringRef postpasses);
+                        llvm::StringRef postpasses, bool verifyPostPasses);
 
   IRMapping mapReverseModeBlocks;
 
@@ -71,7 +71,7 @@ public:
       const ArrayRef<bool> returnPrimals, const ArrayRef<bool> returnShadows,
       llvm::ArrayRef<DIFFE_TYPE> retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, mlir::Type additionalArg,
-      bool omp, llvm::StringRef postpasses);
+      bool omp, llvm::StringRef postpasses, bool verifyPostPasses);
 };
 
 } // namespace enzyme

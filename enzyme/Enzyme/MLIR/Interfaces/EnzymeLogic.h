@@ -209,16 +209,16 @@ public:
                     std::vector<bool> returnPrimals, DerivativeMode mode,
                     bool freeMemory, size_t width, mlir::Type addedType,
                     MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses);
+                    void *augmented, bool omp, llvm::StringRef postpasses,
+                    bool verifyPostPasses);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    std::vector<bool> returnPrimals,
-                    std::vector<bool> returnShadows, DerivativeMode mode,
-                    bool freeMemory, size_t width, mlir::Type addedType,
-                    MFnTypeInfo type_args, std::vector<bool> volatile_args,
-                    void *augmented, bool omp, llvm::StringRef postpasses);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+      MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
+      bool omp, llvm::StringRef postpasses, bool verifyPostPasses);
 
   FunctionOpInterface CreateTrace(FunctionOpInterface fn, MTypeAnalysis &TA,
                                   bool freeMemory, MFnTypeInfo type_args);

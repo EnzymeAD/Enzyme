@@ -155,9 +155,9 @@ endif()
 
 if (APPLE)
 # Darwin-specific linker flags for loadable modules.
+if (ENZYME_ENABLE_PLUGINS)
 set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
     LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
-if (ENZYME_ENABLE_PLUGINS)
 if (${Clang_FOUND})
 set_target_properties(ClangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
