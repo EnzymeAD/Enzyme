@@ -15,6 +15,7 @@
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -25,96 +26,13 @@ using namespace enzyme;
 using llvm::errs;
 namespace {
 
-struct AddSimplify : public OpRewritePattern<arith::AddFOp> {
-  using OpRewritePattern<arith::AddFOp>::OpRewritePattern;
+struct ApplySimplificationPattern : public OpInterfaceRewritePattern<enzyme::MathSimplifyInterface> {
+  using OpInterfaceRewritePattern<enzyme::MathSimplifyInterface>::OpInterfaceRewritePattern;
 
-  LogicalResult matchAndRewrite(arith::AddFOp op,
-                                PatternRewriter &rewriter) const final {
+  LogicalResult matchAndRewrite(enzyme::MathSimplifyInterface op,
+                                PatternRewriter &rewriter) const override {
+    return op.simplifyMath(rewriter);
 
-    if (matchPattern(op.getLhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOp(op, op.getRhs());
-      return success();
-    }
-
-    if (matchPattern(op.getRhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOp(op, op.getLhs());
-      return success();
-    }
-
-    return failure();
-  }
-};
-
-struct SubSimplify : public OpRewritePattern<arith::SubFOp> {
-  using OpRewritePattern<arith::SubFOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(arith::SubFOp op,
-                                PatternRewriter &rewriter) const final {
-
-    if (matchPattern(op.getRhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOp(op, op.getLhs());
-      return success();
-    }
-
-    if (matchPattern(op.getLhs(), m_AnyZeroFloat())) {
-      rewriter.replaceOpWithNewOp<arith::NegFOp>(op, op.getRhs());
-      return success();
-    }
-
-    return failure();
-  }
-};
-
-bool isZero(mlir::Value v) {
-  ArrayAttr lhs;
-  matchPattern(v, m_Constant(&lhs));
-  if (lhs) {
-    for (auto e : lhs) {
-      if (!cast<FloatAttr>(e).getValue().isZero())
-        return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-struct CAddSimplify : public OpRewritePattern<complex::AddOp> {
-  using OpRewritePattern<complex::AddOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(complex::AddOp op,
-                                PatternRewriter &rewriter) const final {
-
-    if (isZero(op.getLhs())) {
-      rewriter.replaceOp(op, op.getRhs());
-      return success();
-    }
-
-    if (isZero(op.getRhs())) {
-      rewriter.replaceOp(op, op.getLhs());
-      return success();
-    }
-
-    return failure();
-  }
-};
-
-struct CSubSimplify : public OpRewritePattern<complex::SubOp> {
-  using OpRewritePattern<complex::SubOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(complex::SubOp op,
-                                PatternRewriter &rewriter) const final {
-
-    if (isZero(op.getRhs())) {
-      rewriter.replaceOp(op, op.getLhs());
-      return success();
-    }
-
-    if (isZero(op.getLhs())) {
-      rewriter.replaceOpWithNewOp<complex::NegOp>(op, op.getRhs());
-      return success();
-    }
-
-    return failure();
   }
 };
 
@@ -124,7 +42,7 @@ struct MathematicSimplification
   void runOnOperation() override {
 
     RewritePatternSet patterns(&getContext());
-    patterns.insert<AddSimplify, SubSimplify, CAddSimplify, CSubSimplify>(
+    patterns.insert<ApplySimplificationPattern>(
         &getContext());
 
     GreedyRewriteConfig config;
