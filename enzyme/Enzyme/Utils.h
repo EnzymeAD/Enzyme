@@ -364,7 +364,7 @@ enum class ProbProgMode {
 };
 
 enum class MProbProgMode {
-  Call = 0,
+  Generate = 0,
   Simulate = 1,
   Trace = 2, // TODO: handle variants
 };

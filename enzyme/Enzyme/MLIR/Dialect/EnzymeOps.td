@@ -287,7 +287,9 @@ def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterfac
 def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Simulate a probabilistic function to generate execution trace";
   let description = [{
-  TODO
+  Simulate a probabilistic function to generate execution trace
+  by replacing all SampleOps with distribution calls and inserting
+  sampled values into the choice map.
   }];
 
   let arguments = (ins
@@ -319,9 +321,9 @@ def insertChoiceToMapOp : Enzyme_Op<"insertChoiceToMap"> {
 }
 
 def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
-  let summary = "Add a sample into the execution trace";
+  let summary = "Add a sampled value into the execution trace";
   let description = [{
-  Add a sampled into the execution trace.
+  Add a sampled value into the execution trace.
   }];
 
   let arguments = (ins
@@ -332,5 +334,24 @@ def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
 
   let results = (outs );
 }
+
+def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Generate a sample from a probabilistic function";
+  let description = [{
+  Generate a sample from a probabilistic function by replacing all SampleOps with distribution calls.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+} 
 
 #endif // ENZYME_OPS

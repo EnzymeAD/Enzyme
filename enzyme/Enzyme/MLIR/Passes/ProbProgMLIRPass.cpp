@@ -44,15 +44,12 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                     mlir::enzyme::EnzymeDialect>();
   }
 
-  LogicalResult HandleCall(SymbolTableCollection &symbolTable,
-                           func::CallOp CI) {
+  LogicalResult HandleGenerate(SymbolTableCollection &symbolTable,
+                               enzyme::GenerateOp CI) {
     auto fn = cast<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(CI, CI.getCalleeAttr()));
+        symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
 
-    assert(fn->hasAttr("enzyme.gen") &&
-           "Handled function is not marked as generative");
-
-    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Call);
+    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Generate);
     FunctionOpInterface NewF = putils->newFunc;
 
     // Replace SampleOps with distribution function calls
@@ -181,18 +178,11 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
-    op->walk([&](func::CallOp cop) {
-      if (SymbolRefAttr calledFn =
-              cop.getCallableForCallee().dyn_cast<SymbolRefAttr>()) {
-        Operation *symbolOp =
-            symbolTable.lookupNearestSymbolFrom(cop, calledFn);
-        if (symbolOp && symbolOp->hasAttr("enzyme.gen")) {
-          auto res = HandleCall(symbolTable, cop);
-          if (!res.succeeded()) {
-            signalPassFailure();
-            return;
-          }
-        }
+    op->walk([&](enzyme::GenerateOp cop) {
+      auto res = HandleGenerate(symbolTable, cop);
+      if (!res.succeeded()) {
+        signalPassFailure();
+        return;
       }
     });
     op->walk([&](enzyme::SimulateOp sop) {

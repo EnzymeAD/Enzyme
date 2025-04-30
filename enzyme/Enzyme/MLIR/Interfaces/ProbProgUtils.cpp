@@ -83,8 +83,8 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   SmallVector<mlir::Type, 4> ResultTypes;
 
   switch (mode) {
-  case MProbProgMode::Call:
-    suffix = "call";
+  case MProbProgMode::Generate:
+    suffix = "generate";
     ArgTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
