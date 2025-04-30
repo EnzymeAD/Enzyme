@@ -218,6 +218,14 @@ public:
     for (auto [idx, act] : llvm::enumerate(retActivity)) {
       auto iattr = cast<ActivityAttr>(act);
       auto val = iattr.getValue();
+
+      // const_noneed does not have a value associated with it
+      // so we can't index into outputs.
+      if (val == Activity::enzyme_constnoneed) {
+        newRetActivityArgs.push_back(iattr);
+        continue;
+      }
+
       mlir::Value res = uop.getOutputs()[out_idx];
 
       switch (val) {
