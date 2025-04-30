@@ -39,3 +39,5 @@ declare void @free(ptr nocapture)
 declare ptr @calloc(i64)
 
 declare void @__enzyme_autodiff_ZN2ad23d_lstm_unsafe_objective17hfdae8b2443372ae4E(...)
+
+; CHECK: define internal void @diffelstm_predict
