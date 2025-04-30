@@ -3616,12 +3616,26 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           }
         }
       } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
-        auto NSI = NB.CreateSwitch(
-            lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
-            remap(SI->getDefaultDest()));
-        for (auto cas : SI->cases()) {
-          if (!notForAnalysis.count(cas.getCaseSuccessor()))
-            NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
+        BasicBlock *newDest = nullptr;
+        if (!notForAnalysis.count(SI->getDefaultDest()))
+          newDest = remap(SI->getDefaultDest());
+        else {
+          for (auto cas : SI->cases()) {
+            if (!notForAnalysis.count(cas.getCaseSuccessor()))
+              newDest = remap(cas.getCaseSuccessor());
+            break;
+          }
+        }
+        if (!newDest) {
+          NB.CreateUnreachable();
+        } else {
+          auto NSI = NB.CreateSwitch(
+              lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
+              newDest);
+          for (auto cas : SI->cases()) {
+            if (!notForAnalysis.count(cas.getCaseSuccessor()))
+              NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
+          }
         }
       } else {
         assert(isa<UnreachableInst>(TI));
