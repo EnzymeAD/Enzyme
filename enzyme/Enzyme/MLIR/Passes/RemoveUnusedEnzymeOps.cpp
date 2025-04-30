@@ -296,7 +296,7 @@ static void applyPatterns(Operation *op) {
                   InitSimplify>(op->getContext());
 
   GreedyRewriteConfig config;
-  config.enableFolding();
+  config.fold = true;
   (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
 
