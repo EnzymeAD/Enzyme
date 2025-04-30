@@ -341,6 +341,10 @@ public:
       auto new_val = new_act.getValue();
 
       if (old_val == new_val) {
+        // don't index into op if its a const_noneed
+        if (old_val == Activity::enzyme_constnoneed) {
+          continue;
+        }
         // replace use
         uop.getOutputs()[oldIdx++].replaceAllUsesWith(
             newOp.getOutputs()[newIdx++]);

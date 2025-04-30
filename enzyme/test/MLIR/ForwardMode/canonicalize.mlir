@@ -41,6 +41,16 @@ module {
     // CHECK: enzyme.fwddiff @square(%arg0, %arg1) {{.*ret_activity = \[#enzyme<activity enzyme_constnoneed>\]}}
     return %cst : f64
   }
+
+
+  // -----
+
+  func.func @dsq6(%x : f64, %dx : f64) -> f64 {
+    %cst = arith.constant 1.0000e+1 : f64  
+    enzyme.fwddiff @square(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_constnoneed>] } : (f64, f64) -> ()
+    // CHECK: enzyme.fwddiff @square(%arg0, %arg1) {{.*ret_activity = \[#enzyme<activity enzyme_constnoneed>\]}}
+    return %cst : f64
+  }
   
   // -----
   // Greedy test  
