@@ -169,7 +169,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     for (int i = 0; i < 2; i++)
       if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
         addFunctionNoCapture(&F, i);
-        F.addParamAttr(i, Attribute::WriteOnly);
+        F.addParamAttr(i, Attribute::ReadOnly);
       }
   }
 
