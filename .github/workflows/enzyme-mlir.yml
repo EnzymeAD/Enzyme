@@ -19,7 +19,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [openstack22]
+        os: [openstack22-large]
 
     timeout-minutes: 500
 
