@@ -96,18 +96,40 @@ bool mayExecuteBefore(Block *blk, Operation *check, Operation *end) {
 }
 
 bool mayExecuteBetween(Operation *start, Operation *check, Operation *end) {
+  Block *blk = start->getBlock();
+  auto checkAnc = check;
+  while (checkAnc && checkAnc->getBlock() != blk)
+    checkAnc = checkAnc->getParentOp();
 
-  for (auto op = start->getNextNode(); op != nullptr; op = op->getNextNode()) {
-    // This check op has been found after start in its block
-    if (op->isAncestor(check)) {
-      return true;
-    }
-    if (op->isAncestor(end)) {
-      return false;
-    }
+  auto endAnc = end;
+  while (endAnc && endAnc->getBlock() != blk)
+    endAnc = endAnc->getParentOp();
+
+  // Both operations are either the same, or in a joint parent (which could
+  // rerun)
+  if (checkAnc && checkAnc == endAnc)
+    return true;
+
+  if (checkAnc) {
+    if (checkAnc->isBeforeInBlock(start))
+      checkAnc = nullptr;
+  }
+  if (endAnc) {
+    if (endAnc->isBeforeInBlock(start))
+      endAnc = nullptr;
   }
 
-  Block *blk = start->getBlock();
+  if (checkAnc && endAnc) {
+    if (checkAnc->isBeforeInBlock(endAnc))
+      return true;
+    else
+      return false;
+  }
+
+  if (checkAnc)
+    return true;
+  if (endAnc)
+    return false;
 
   auto reg = blk->getParent();
   if (reg->isAncestor(end->getParentRegion())) {
