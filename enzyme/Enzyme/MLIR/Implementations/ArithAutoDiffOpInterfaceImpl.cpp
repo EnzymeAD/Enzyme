@@ -83,7 +83,7 @@ struct ArithAddFSimplifyMathInterface
 
 struct ArithSubFSimplifyMathInterface
     : public MathSimplifyInterface::ExternalModel<
-          ArithAddFSimplifyMathInterface, arith::SubFOp> {
+          ArithSubFSimplifyMathInterface, arith::SubFOp> {
   mlir::LogicalResult simplifyMath(Operation *src,
                                    PatternRewriter &rewriter) const {
     auto op = cast<arith::SubFOp>(src);
