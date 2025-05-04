@@ -8,8 +8,10 @@ endif()
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
 if (NOT TBL_LINKED_LIBS)
+message(STATUS "No TBL_LINKED_LIBS found")
 else()
-list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
+message(STATUS "TBL_LINKED_LIBS (test): ${TBL_LINKED_LIBS}")
+#list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
 set_property(TARGET LLVMSupport PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_LIBS})
 endif()
 
@@ -170,10 +172,10 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         string(STRIP "${llvm_ldflags}" llvm_ldflags)
         message(STATUS "Linking against LLVM ldflags: ${llvm_ldflags}")
         set_target_properties(Enzyme-${LLVM_VERSION_MAJOR} PROPERTIES LINK_FLAGS ${llvm_ldflags})
-        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE ${llvm_libraries})
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} ${llvm_libraries})
         
         llvm_map_components_to_libnames(llvm_librariess Passes Support)
-        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE ${llvm_librariess})
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} ${llvm_librariess})
     endif()
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
