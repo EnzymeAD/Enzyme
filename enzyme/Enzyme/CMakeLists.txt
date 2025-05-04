@@ -162,13 +162,18 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --libs all
                     OUTPUT_VARIABLE llvm_libraries)
         string(STRIP "${llvm_libraries}" llvm_libraries)
+        message(STATUS "Linking against LLVM libraries: ${llvm_libraries}")
         # In theory, adding --libs should also add all the -l flags,
         # but it isn't picked up correctly by clang, so we call target_link_libraries
         execute_process(COMMAND ${LLVM_TOOLS_BINARY_DIR}/llvm-config --ldflags
                     OUTPUT_VARIABLE llvm_ldflags)
         string(STRIP "${llvm_ldflags}" llvm_ldflags)
+        message(STATUS "Linking against LLVM ldflags: ${llvm_ldflags}")
         set_target_properties(Enzyme-${LLVM_VERSION_MAJOR} PROPERTIES LINK_FLAGS ${llvm_ldflags})
         target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE ${llvm_libraries})
+        
+        llvm_map_components_to_libnames(llvm_librariess Passes Support)
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE ${llvm_librariess})
     endif()
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
