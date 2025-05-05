@@ -2726,7 +2726,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
-    for (auto [pattern, act] : zip_equal(patterns, hasActivity)) {
+    for (auto [pattern, act] : zip(patterns, hasActivity)) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
