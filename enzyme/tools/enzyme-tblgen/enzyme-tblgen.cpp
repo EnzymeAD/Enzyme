@@ -2625,7 +2625,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         os << "                   public ActivityOpInterface::ExternalModel<"
            << opName << "Activity, " << dialect << "::" << opName << "> {\n";
         os << "  bool isInactive(mlir::Operation *) const { return false; }\n";
-        os << "  bool isArgInactive(mlir::Operation *op, size_t arg) const {\n";
+        os << "  bool isArgInactive(mlir::Operation *, size_t arg) const {\n";
 
         for (auto argOpEn : enumerate(*argOps)) {
           if (isArgInactive(argOpEn.value())) {
