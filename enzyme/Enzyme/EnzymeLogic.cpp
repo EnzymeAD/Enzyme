@@ -1294,12 +1294,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
 #endif
   }
 
@@ -1310,12 +1308,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
 #endif
   }
 
@@ -1707,14 +1703,10 @@ void clearFunctionAttributes(Function *f) {
 
   Attribute::AttrKind fnattrs[] = {
 #if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory,
+      Attribute::Memory,
 #endif
-    Attribute::ReadOnly,
-    Attribute::ReadNone,
-    Attribute::WriteOnly,
-    Attribute::WillReturn,
-    Attribute::OptimizeNone
-  };
+      Attribute::ReadOnly,   Attribute::ReadNone,    Attribute::WriteOnly,
+      Attribute::WillReturn, Attribute::OptimizeNone};
   for (auto attr : fnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
@@ -1730,17 +1722,13 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    Attribute::Range,
+      Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2580,16 +2568,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    llvm::Attribute::Range,
+      llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
@@ -3642,15 +3628,26 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   if (hasMetadata(key.todiff, "enzyme_gradient")) {
     std::set<llvm::Type *> seen;
-#ifndef NDEBUG
     DIFFE_TYPE subretType = whatType(key.todiff->getReturnType(),
                                      DerivativeMode::ReverseModeGradient,
                                      /*intAreConstant*/ false, seen);
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
-    assert(subretType == key.retType);
-#endif
+    if (subretType != key.retType) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "The required return activity calling into function: "
+         << key.todiff->getName() << " was " << to_string(key.retType)
+         << " but the assumed (default) return activity was "
+         << to_string(subretType) << "\n";
+      if (context.req) {
+        ss << " at context: " << *context.req;
+      }
+      if (EmitNoDerivativeError(ss.str(), key.todiff, context)) {
+        return nullptr;
+      }
+    }
 
     if (key.mode == DerivativeMode::ReverseModeCombined) {
       auto res = getDefaultFunctionTypeForGradient(
