@@ -2485,7 +2485,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "                    calleeName = \"<Unknown>\";\n"
          << "                }\n"
          << "            }\n"
-         << "#if LLVM_VERSION_MAJOR >= 16\n"
+         << "#if LLVM_VERSION_MAJOR >= 17\n"
          << "            Value *moduleNameValue = "
             "Builder2.CreateGlobalString(moduleName);\n"
          << "            Value *functionNameValue = "

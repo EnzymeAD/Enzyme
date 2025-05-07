@@ -84,7 +84,7 @@ void TraceGenerator::visitFunction(Function &F) {
       continue;
 
     auto arg = fn->arg_begin() + i;
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 17
     auto name = Builder.CreateGlobalString(arg->getName());
 #else
     auto name = Builder.CreateGlobalStringPtr(arg->getName());
@@ -312,7 +312,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Trace: {
     auto trace = tutils->CreateTrace(Builder);
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 17
     auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
 #else
@@ -332,7 +332,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Condition: {
     auto trace = tutils->CreateTrace(Builder);
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 17
     auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
 #else
