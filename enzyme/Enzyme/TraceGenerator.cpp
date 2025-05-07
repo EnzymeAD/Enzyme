@@ -84,7 +84,11 @@ void TraceGenerator::visitFunction(Function &F) {
       continue;
 
     auto arg = fn->arg_begin() + i;
+#if LLVM_VERSION_MAJOR >= 16
     auto name = Builder.CreateGlobalString(arg->getName());
+#else
+    auto name = Builder.CreateGlobalStringPtr(arg->getName());
+#endif
 
     auto Outlined = [](IRBuilder<> &OutlineBuilder, TraceUtils *OutlineTutils,
                        ArrayRef<Value *> Arguments) {
@@ -96,19 +100,11 @@ void TraceGenerator::visitFunction(Function &F) {
         Builder, Outlined, Builder.getVoidTy(), {name, arg}, false,
         "outline_insert_argument");
 
-#if LLVM_VERSION_MAJOR >= 14
     call->addAttributeAtIndex(
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_insert_argument"));
     call->addAttributeAtIndex(AttributeList::FunctionIndex,
                               Attribute::get(F.getContext(), "enzyme_active"));
-#else
-    call->addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(F.getContext(), "enzyme_insert_argument"));
-    call->addAttribute(AttributeList::FunctionIndex,
-                       Attribute::get(F.getContext(), "enzyme_active"));
-#endif
     if (autodiff) {
       auto gradient_setter = ValueAsMetadata::get(
           tutils->interface->insertArgumentGradient(Builder));
@@ -146,11 +142,7 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
                                   ArrayRef<Value *>(Args).slice(1),
                                   "likelihood." + call.getName());
 
-#if LLVM_VERSION_MAJOR >= 14
   score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
-#else
-  score->addAttribute(AttributeList::FunctionIndex, activity_attribute);
-#endif
 
   auto log_prob_sum = Builder.CreateLoad(
       Builder.getDoubleTy(), tutils->getLikelihood(), "log_prob_sum");
@@ -173,21 +165,12 @@ void TraceGenerator::handleObserveCall(CallInst &call, CallInst *new_call) {
         Builder, OutlinedTrace, Builder.getVoidTy(), trace_args, false,
         "outline_insert_choice");
 
-#if LLVM_VERSION_MAJOR >= 14
     trace_call->addAttributeAtIndex(
         AttributeList::FunctionIndex,
         Attribute::get(call.getContext(), "enzyme_inactive"));
     trace_call->addAttributeAtIndex(
         AttributeList::FunctionIndex,
         Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
-#else
-    trace_call->addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(call.getContext(), "enzyme_inactive"));
-    trace_call->addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
-#endif
   }
 
   if (!call.getType()->isVoidTy()) {
@@ -241,17 +224,11 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
       call.getContext(),
       is_random_var_active ? "enzyme_active" : "enzyme_inactive_val");
 
-#if LLVM_VERSION_MAJOR >= 14
   sample_call->addAttributeAtIndex(
       AttributeList::FunctionIndex,
       Attribute::get(call.getContext(), "enzyme_sample"));
   sample_call->addAttributeAtIndex(AttributeList::FunctionIndex,
                                    activity_attribute);
-#else
-  sample_call->addAttribute(AttributeList::FunctionIndex,
-                            Attribute::get(call.getContext(), "enzyme_sample"));
-  sample_call->addAttribute(AttributeList::FunctionIndex, activity_attribute);
-#endif
 
   if (autodiff &&
       (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition)) {
@@ -270,11 +247,7 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
                                   ArrayRef<Value *>(Args).slice(1),
                                   "likelihood." + call.getName());
 
-#if LLVM_VERSION_MAJOR >= 14
   score->addAttributeAtIndex(AttributeList::FunctionIndex, activity_attribute);
-#else
-  score->addAttribute(AttributeList::FunctionIndex, activity_attribute);
-#endif
 
   auto log_prob_sum = Builder.CreateLoad(
       Builder.getDoubleTy(), tutils->getLikelihood(), "log_prob_sum");
@@ -298,21 +271,12 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
         Builder, OutlinedTrace, Builder.getVoidTy(), trace_args, false,
         "outline_insert_choice");
 
-#if LLVM_VERSION_MAJOR >= 14
     trace_call->addAttributeAtIndex(
         AttributeList::FunctionIndex,
         Attribute::get(call.getContext(), "enzyme_inactive"));
     trace_call->addAttributeAtIndex(
         AttributeList::FunctionIndex,
         Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
-#else
-    trace_call->addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(call.getContext(), "enzyme_inactive"));
-    trace_call->addAttribute(
-        AttributeList::FunctionIndex,
-        Attribute::get(call.getContext(), "enzyme_notypeanalysis"));
-#endif
   }
 
   sample_call->takeName(new_call);
@@ -348,8 +312,13 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Trace: {
     auto trace = tutils->CreateTrace(Builder);
+#if LLVM_VERSION_MAJOR >= 16
     auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
+#else
+    auto address = Builder.CreateGlobalStringPtr(
+        (call.getName() + "." + called->getName()).str());
+#endif
 
     SmallVector<Value *, 2> args_and_trace(args);
     args_and_trace.push_back(tutils->getLikelihood());
@@ -363,8 +332,13 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Condition: {
     auto trace = tutils->CreateTrace(Builder);
+#if LLVM_VERSION_MAJOR >= 16
     auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
+#else
+    auto address = Builder.CreateGlobalStringPtr(
+        (call.getName() + "." + called->getName()).str());
+#endif
 
     Instruction *hasCall =
         tutils->HasCall(Builder, address, "has.call." + call.getName());
