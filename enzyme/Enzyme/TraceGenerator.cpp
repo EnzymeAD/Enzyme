@@ -84,7 +84,7 @@ void TraceGenerator::visitFunction(Function &F) {
       continue;
 
     auto arg = fn->arg_begin() + i;
-    auto name = Builder.CreateGlobalStringPtr(arg->getName());
+    auto name = Builder.CreateGlobalString(arg->getName());
 
     auto Outlined = [](IRBuilder<> &OutlineBuilder, TraceUtils *OutlineTutils,
                        ArrayRef<Value *> Arguments) {
@@ -348,7 +348,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Trace: {
     auto trace = tutils->CreateTrace(Builder);
-    auto address = Builder.CreateGlobalStringPtr(
+    auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
 
     SmallVector<Value *, 2> args_and_trace(args);
@@ -363,7 +363,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   }
   case ProbProgMode::Condition: {
     auto trace = tutils->CreateTrace(Builder);
-    auto address = Builder.CreateGlobalStringPtr(
+    auto address = Builder.CreateGlobalString(
         (call.getName() + "." + called->getName()).str());
 
     Instruction *hasCall =
