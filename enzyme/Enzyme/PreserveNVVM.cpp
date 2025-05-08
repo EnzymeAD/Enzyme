@@ -852,10 +852,12 @@ bool preserveNVVM(bool Begin, Module &M) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
-  for (auto &F : M) {
+  for (auto &F : llvm::make_early_inc_range(M)) {
     if (Begin) {
       changed |= attributeKnownFunctions(F);
     }
+  }
+  for (auto &F : M) {
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {
       changed = true;
