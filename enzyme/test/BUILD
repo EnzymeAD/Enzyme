@@ -1,5 +1,5 @@
 # Enzyme tests.
-
+# Placeholder: load sh_binary
 load("@llvm-project//llvm:lit_test.bzl", "package_path")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
