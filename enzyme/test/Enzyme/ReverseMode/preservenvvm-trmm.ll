@@ -50,4 +50,4 @@ attributes #1 = { "frame-pointer"="all" "no-trapping-math"="true" "stack-protect
 !2 = !{i32 7, !"frame-pointer", i32 2}
 !3 = !{!"google3 clang version 9999.0.0 (7752e0a10b25da2f2eadbed10606bd5454dbca05)"}
 
-// CHECK: declare dso_local void @dtrmm_
+; CHECK: declare dso_local void @dtrmm_
