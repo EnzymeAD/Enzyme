@@ -520,9 +520,9 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
   // clang-format on
-  if (isInactiveCall(CB)) {
-    return true;
-  }
+if (isInactiveCall(CB)) {
+  return true;
+}
   if (CB.hasFnAttr("enzyme_inactive_inst")) {
     return true;
   }
@@ -3243,9 +3243,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             NU = UseActivity::None;
         }
 
-
         if (EnzymePrintActivity) {
-          llvm::errs() << "Adding users of value " << *I << " now with sub UA " << to_string(UA) << "\n";
+          llvm::errs() << "Adding users of value " << *I << " now with sub UA "
+                       << to_string(UA) << "\n";
         }
         for (auto u : I->users()) {
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
@@ -3270,7 +3270,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
         }
         if (EnzymePrintActivity) {
-          llvm::errs() << "Adding users2 of value " << *I << " now with sub UA " << to_string(UA) << "\n";
+          llvm::errs() << "Adding users2 of value " << *I << " now with sub UA "
+                       << to_string(UA) << "\n";
         }
         continue;
       }
