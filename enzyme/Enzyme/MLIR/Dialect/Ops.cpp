@@ -452,3 +452,158 @@ LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   return success();
 }
+
+/**
+ *
+ * Modifies return activities for the AutoDiffOp
+ * The activity promotion flow is as follows
+ * (depending on variable use):
+ *
+ *           -----> enzyme_activenoneed ----
+ *          /                               \
+ * enzyme_active                             ---> enzyme_constnoneed
+ *          \                              /
+ *           ------> enzyme_const --------
+ *
+ */
+class ReverseRetOpt final : public OpRewritePattern<AutoDiffOp> {
+public:
+  using OpRewritePattern<AutoDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AutoDiffOp uop,
+                               PatternRewriter &rewriter) const override {
+    if (uop.getOutputs().size() == 0)
+      return failure();
+
+    auto retActivity = uop.getRetActivity();
+    auto out_idx = 0;
+    SmallVector<mlir::Value, 2> outs_args;
+    SmallVector<Type, 2> out_ty;
+    SmallVector<ActivityAttr, 2> newRetActivityArgs;
+    bool changed = false;
+
+    for (auto [idx, act] : llvm::enumerate(retActivity)) {
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+
+      // const_noneed does not have a value associated with it
+      // so we can't index into outputs.
+      if (val == Activity::enzyme_constnoneed) {
+        newRetActivityArgs.push_back(iattr);
+        continue;
+      }
+
+      mlir::Value res = uop.getOutputs()[out_idx];
+
+      switch (val) {
+      case Activity::enzyme_active:
+        if (!res.use_empty()) {
+          outs_args.push_back(res);
+          out_ty.push_back(res.getType());
+          newRetActivityArgs.push_back(iattr);
+        } else {
+          changed = true;
+          auto new_activenn = ActivityAttr::get(
+              rewriter.getContext(),
+              Activity::enzyme_activenoneed);
+          newRetActivityArgs.push_back(new_activenn);
+        }
+        break;
+
+      case Activity::enzyme_const:
+        if (!res.use_empty()) {
+          outs_args.push_back(res);
+          out_ty.push_back(res.getType());
+          newRetActivityArgs.push_back(iattr);
+        } else {
+          changed = true;
+          auto new_constnn = ActivityAttr::get(
+              rewriter.getContext(),
+              Activity::enzyme_constnoneed);
+          newRetActivityArgs.push_back(new_constnn);
+        }
+        break;
+
+      case Activity::enzyme_activenoneed:
+        if (!res.use_empty()) {
+          outs_args.push_back(res);
+          out_ty.push_back(res.getType());
+          newRetActivityArgs.push_back(iattr);
+        } else {
+          if (!isMutable(res.getType())) {
+            changed = true;
+            auto new_constnn = ActivityAttr::get(
+                rewriter.getContext(),
+                Activity::enzyme_constnoneed);
+            newRetActivityArgs.push_back(new_constnn);
+          }
+        }
+        break;
+
+      case Activity::enzyme_constnoneed:
+        outs_args.push_back(res);
+        out_ty.push_back(res.getType());
+        newRetActivityArgs.push_back(iattr);
+        break;
+
+      default:
+        llvm_unreachable("unexpected activity arg");
+      }
+
+      out_idx++;
+    }
+
+    if (!changed)
+      return failure();
+
+    ArrayAttr newRetActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                      llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
+                                              newRetActivityArgs.end()));
+
+    AutoDiffOp newOp = rewriter.create<AutoDiffOp>(
+        uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(),
+        uop.getActivityAttr(), newRetActivity, uop.getWidthAttr());
+
+    // Map old uses of uop to newOp
+    auto oldIdx = 0;
+    auto newIdx = 0;
+    for (auto [idx, old_act, new_act] :
+         llvm::enumerate(retActivity, newRetActivityArgs)) {
+
+      auto iattr = cast<ActivityAttr>(old_act);
+      auto old_val = iattr.getValue();
+      auto new_val = new_act.getValue();
+
+      if (old_val == new_val) {
+        // don't index into op if its a const_noneed
+        if (old_val == Activity::enzyme_constnoneed) {
+          continue;
+        }
+        // replace use
+        uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+            newOp.getOutputs()[newIdx++]);
+      } else {
+        // handle all substitutions
+        if (new_val == Activity::enzyme_activenoneed &&
+            old_val == Activity::enzyme_active) {
+          ++oldIdx; // skip active
+        } else if (new_val == Activity::enzyme_constnoneed &&
+                   old_val == Activity::enzyme_const) {
+          ++oldIdx; // skip const
+        } else if (new_val == Activity::enzyme_constnoneed &&
+                   old_val == Activity::enzyme_activenoneed) {
+          ++oldIdx; // skip active noneed
+        }
+      }
+    }
+
+    rewriter.eraseOp(uop);
+    return success();
+  }
+};
+
+void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                           MLIRContext *context) {
+  patterns.add<ReverseRetOpt>(context);
+}
