@@ -520,8 +520,9 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
   // clang-format on
-  if (isInactiveCall(CB))
+  if (isInactiveCall(CB)) {
     return true;
+  }
   if (CB.hasFnAttr("enzyme_inactive_inst")) {
     return true;
   }
@@ -534,8 +535,9 @@ static const StringSet<> KnownInactiveFunctionInsts = {
   }
 
   auto funcName = getFuncNameFromCall(&CB);
-  if (KnownInactiveFunctionInsts.count(funcName))
+  if (KnownInactiveFunctionInsts.count(funcName)) {
     return true;
+  }
 
   if (isAllocationFunction(funcName, TLI) ||
       isDeallocationFunction(funcName, TLI)) {
@@ -654,8 +656,9 @@ static inline void propagateArgumentInformation(
     return;
   }
 
+  // Only the 1-st arg impacts activity
   if (Name == "julia.gc_loaded") {
-    propagateFromOperand(CI.getArgOperand(0));
+    propagateFromOperand(CI.getArgOperand(1));
     return;
   }
 
@@ -3006,7 +3009,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (ConstantArg && UA != UseActivity::AllStores) {
         if (EnzymePrintActivity) {
           llvm::errs() << "Value found constant callinst use:" << *val
-                       << " user " << *call << "\n";
+                       << " user " << *call << " parent " << *parent << "\n";
         }
         continue;
       }
@@ -3240,6 +3243,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             NU = UseActivity::None;
         }
 
+
+        if (EnzymePrintActivity) {
+          llvm::errs() << "Adding users of value " << *I << " now with sub UA " << to_string(UA) << "\n";
+        }
         for (auto u : I->users()) {
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
         }
@@ -3261,6 +3268,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         for (auto u : I->users()) {
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
+        }
+        if (EnzymePrintActivity) {
+          llvm::errs() << "Adding users2 of value " << *I << " now with sub UA " << to_string(UA) << "\n";
         }
         continue;
       }
