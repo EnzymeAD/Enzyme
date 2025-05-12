@@ -2749,19 +2749,25 @@ bool AdjointGenerator::handleKnownCallDerivatives(
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
-          SmallVector<Value *, 1> iargs;
-          IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-          for (auto &arg : call.args()) {
-            if (!gutils->isConstantValue(arg)) {
-              Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-              applyChainRule(
-                  BuilderZ,
-                  [&](Value *ptrshadow) { iargs.push_back(ptrshadow); },
-                  ptrshadow);
+          for (int i = 0; i < gutils->getWidth(); i++) {
+            SmallVector<Value *, 1> iargs;
+            IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
+            bool first = true;
+            for (auto &arg : call.args()) {
+              if (!gutils->isConstantValue(arg)) {
+                Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+                if (gutils->getWidth() > 1) {
+                  ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
+                }
+              } else {
+                if (first)
+                  break;
+              }
+              first = false;
             }
-          }
-          if (iargs.size()) {
-            BuilderZ.CreateCall(called, iargs);
+            if (iargs.size()) {
+              BuilderZ.CreateCall(called, iargs);
+            }
           }
         }
 
