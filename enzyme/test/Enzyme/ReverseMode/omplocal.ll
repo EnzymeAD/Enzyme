@@ -78,6 +78,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   %"m'ai" = alloca double, i64 1, align 16
 ; CHECK-NEXT:   %0 = bitcast double* %"m'ai" to i8*
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %0, i8 0, i64 8, i1 false)
+; CHECK-NEXT:   call void @julia.write_barrier(double* %"m'ai")
 ; CHECK-NEXT:   %t = call i64 @omp_get_thread_num()
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"out'", i64 %t
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"gep'ipg", align 8
