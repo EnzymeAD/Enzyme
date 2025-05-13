@@ -59,16 +59,24 @@ attributes #0 = { readnone }
 
 declare double @__enzyme_autodiff(double (double)*, ...)
 
-; CHECK: adfdasfdsaf
-; CHECK: define internal { double } @diffeadd4(double %x, double %differeturn)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call { double } @fixgradient_add2(double %x, double %differeturn)
-; CHECK-NEXT:   ret { double } %0
-; CHECK-NEXT: }
+// CHECK: define internal { double } @diffeadd4(double %x, double %differeturn)
+// CHECK-NEXT: entry:
+// CHECK-NEXT:   %0 = call { double } @fixgradient_add2(double %x)
+// CHECK-NEXT:   %1 = extractvalue { double } %0, 0
+// CHECK-NEXT:   %2 = fadd fast double %differeturn, %1
+// CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
+// CHECK-NEXT:   ret { double } %3
+// CHECK-NEXT: }
 
-; CHECK: define internal { double } @fixgradient_add2(double %arg0, double %arg1)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call { {}, double } @augment_add2(double %arg0)
-; CHECK-NEXT:   %1 = call { double } @gradient_add2(double %arg0, double %arg1, {} undef)
-; CHECK-NEXT:   ret { double } %1
-; CHECK-NEXT: }
+// CHECK: define internal { double } @fixgradient_add2(double %arg0)
+// CHECK-NEXT: entry:
+// CHECK-NEXT:   %0 = call { {}, double } @augment_add2(double %arg0)
+// CHECK-NEXT:   %1 = call { double } @fixgradient_add2.1(double %arg0, {} {{(undef|poison)}})
+// CHECK-NEXT:   ret { double } %1
+// CHECK-NEXT: }
+
+// CHECK: define internal { double } @fixgradient_add2.1(double %arg0, {} %postarg0)
+// CHECK-NEXT: entry:
+// CHECK-NEXT:   %0 = call { double } @gradient_add2(double %arg0, double 0.000000e+00, {} %postarg0)
+// CHECK-NEXT:   ret { double } %0
+// CHECK-NEXT: }
