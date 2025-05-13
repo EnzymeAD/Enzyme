@@ -1301,12 +1301,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
 #endif
   }
 
@@ -1317,12 +1315,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
 #endif
   }
 
@@ -1714,14 +1710,10 @@ void clearFunctionAttributes(Function *f) {
 
   Attribute::AttrKind fnattrs[] = {
 #if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory,
+      Attribute::Memory,
 #endif
-    Attribute::ReadOnly,
-    Attribute::ReadNone,
-    Attribute::WriteOnly,
-    Attribute::WillReturn,
-    Attribute::OptimizeNone
-  };
+      Attribute::ReadOnly,   Attribute::ReadNone,    Attribute::WriteOnly,
+      Attribute::WillReturn, Attribute::OptimizeNone};
   for (auto attr : fnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
@@ -1737,17 +1729,13 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    Attribute::Range,
+      Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2588,16 +2576,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    llvm::Attribute::Range,
+      llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
@@ -3656,7 +3642,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
-    if (subretType != key.retType) {
+
+    if (subretType == DIFFE_TYPE::OUT_DIFF &&
+        key.retType == DIFFE_TYPE::CONSTANT) {
+      hasconstant = true;
+    } else if (subretType != key.retType) {
       std::string str;
       raw_string_ostream ss(str);
       ss << "The required return activity calling into function: "
@@ -3824,6 +3814,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
       }
 
+      auto nextRetType = key.retType;
+      if (nextRetType == DIFFE_TYPE::CONSTANT &&
+          subretType == DIFFE_TYPE::OUT_DIFF) {
+        nextRetType = DIFFE_TYPE::OUT_DIFF;
+      }
+
       auto revfn = CreatePrimalAndGradient(
           context,
           (ReverseCacheKey){.todiff = key.todiff,
@@ -3849,6 +3845,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           arg++;
           if (cidx == DIFFE_TYPE::DUP_ARG || cidx == DIFFE_TYPE::DUP_NONEED)
             arg++;
+        }
+        if (nextRetType != key.retType) {
+          arg++;
         }
         while (arg != revfn->arg_end()) {
           dupargs.push_back(arg->getType());
@@ -3890,6 +3889,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         act_idx++;
       }
       size_t pa = 0;
+      if (nextRetType != key.retType) {
+        revargs.push_back(getUndefinedValueForType(*revfn->getParent(),
+                                                   key.todiff->getReturnType(),
+                                                   /*forceZero*/ true));
+      }
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
         arg->setName("postarg" + Twine(pa));
