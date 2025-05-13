@@ -3771,7 +3771,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (tape) {
         revargs.push_back(tape);
       }
-      if (!revfn->getFunctionType()->isVarArg() && revfn->getFunctionType()->getNumParams() != revargs.size()) {
+      if (!revfn->getFunctionType()->isVarArg() &&
+          revfn->getFunctionType()->getNumParams() != revargs.size()) {
         llvm::errs() << " todiff: " << *key.todiff << "\n";
         llvm::errs() << " revfn: " << *revfn << "\n";
         llvm::errs() << " NewF: " << *NewF << "\n";
