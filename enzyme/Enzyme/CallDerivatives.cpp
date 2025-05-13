@@ -2749,9 +2749,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
+          IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
           for (int i = 0; i < gutils->getWidth(); i++) {
             SmallVector<Value *, 1> iargs;
-            IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
             bool first = true;
             for (auto &arg : call.args()) {
               if (!gutils->isConstantValue(arg)) {
@@ -2759,6 +2759,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 if (gutils->getWidth() > 1) {
                   ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
                 }
+		iargs.push_back(ptrshadow);
               } else {
                 if (first)
                   break;
