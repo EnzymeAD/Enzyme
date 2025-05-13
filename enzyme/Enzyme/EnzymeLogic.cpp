@@ -3771,6 +3771,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (tape) {
         revargs.push_back(tape);
       }
+      if (!revfn->getFunctionType()->isVarArg() && revfn->getFunctionType()->getNumParams() != revargs.size()) {
+        llvm::errs() << " todiff: " << *key.todiff << "\n";
+        llvm::errs() << " revfn: " << *revfn << "\n";
+        llvm::errs() << " NewF: " << *NewF << "\n";
+        llvm::errs() << " key rettype: " << to_string(key.retType) << "\n";
+        for (auto arg : revargs) {
+          llvm::errs() << " + revarg: " << *arg << "\n";
+        }
+      }
       auto revcal = bb.CreateCall(revfn, revargs);
       revcal->setCallingConv(revfn->getCallingConv());
 
