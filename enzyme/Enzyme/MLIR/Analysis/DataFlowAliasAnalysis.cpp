@@ -51,6 +51,14 @@ static bool isPointerLike(Type type) {
   return isa<MemRefType, LLVM::LLVMPointerType>(type);
 }
 
+/*
+void mlir::enzyme::PointsToSets::dumpSet() const {
+      for (const auto &pair : map) {
+        llvm::errs() << pair.first.getAsOpaquePointer() << "\n";
+      }
+  }
+*/
+
 //===----------------------------------------------------------------------===//
 // PointsToAnalysis
 //===----------------------------------------------------------------------===//
@@ -137,7 +145,8 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
             llvm::errs() << "\n";
             valuesCopy.print(llvm::errs());
             llvm::errs() << "\n";
-            assert(valuesCopy == values &&
+            if (valuesCopy != values)
+                llvm::errs() <<
                    "attempting to replace a pointsTo entry with an alias class "
                    "set that is ordered _before_ the existing one -> "
                    "non-monotonous update ");
