@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
+#include <llvm/IR/GlobalValue.h>
 #include <memory>
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -1483,26 +1484,49 @@ public:
 
   bool HandleTruncateValue(CallInst *CI, bool isTruncate) {
     IRBuilder<> Builder(CI);
-    if (CI->arg_size() != 3) {
+    unsigned ArgSize = CI->arg_size();
+    if (ArgSize != 4 && ArgSize != 3) {
       EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
                   "Had incorrect number of args to __enzyme_truncate_value",
                   *CI, " - expected 3");
       return false;
     }
-    auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
-    assert(Cfrom);
-    auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
-    assert(Cto);
-    auto Addr = CI->getArgOperand(0);
-    RequestContext context(CI, &Builder);
-    bool res = Logic.CreateTruncateValue(
-        context, Addr,
-        getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
-        getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()),
-        isTruncate);
-    if (!res)
-      return false;
-    return true;
+    if (ArgSize == 3) {
+      auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+      assert(Cfrom);
+      auto Cto = cast<ConstantInt>(CI->getArgOperand(2));
+      assert(Cto);
+      auto Addr = CI->getArgOperand(0);
+      RequestContext context(CI, &Builder);
+      bool res = Logic.CreateTruncateValue(
+          context, Addr,
+          getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+          getDefaultFloatRepr((unsigned)Cto->getValue().getZExtValue()),
+          isTruncate);
+      if (!res)
+        return false;
+      return true;
+    } else if (ArgSize == 4) {
+      auto Cfrom = cast<ConstantInt>(CI->getArgOperand(1));
+      assert(Cfrom);
+      auto Cto_exponent = cast<ConstantInt>(CI->getArgOperand(2));
+      assert(Cto_exponent);
+      auto Cto_significand = cast<ConstantInt>(CI->getArgOperand(3));
+      assert(Cto_significand);
+      auto Addr = CI->getArgOperand(0);
+      RequestContext context(CI, &Builder);
+      bool res = Logic.CreateTruncateValue(
+          context, Addr,
+          getDefaultFloatRepr((unsigned)Cfrom->getValue().getZExtValue()),
+          FloatRepresentation(
+              (unsigned)Cto_exponent->getValue().getZExtValue(),
+              (unsigned)Cto_significand->getValue().getZExtValue()),
+          isTruncate);
+      if (!res)
+        return false;
+      return true;
+    }
+    llvm_unreachable("??");
   }
 
   bool HandleBatch(CallInst *CI) {
@@ -2261,7 +2285,7 @@ public:
 #endif
       RemapFunction(F, Mapping,
                     RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
-      TruncatedFunc->deleteBody();
+      TruncatedFunc->eraseFromParent();
     }
     return true;
   }

@@ -31,6 +31,7 @@
 #define ENZYME_LOGIC_H
 
 #include <algorithm>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -440,9 +441,14 @@ public:
   std::string mangleFrom() const { return from.to_string(); }
 };
 
+typedef std::map<std::tuple<std::string, unsigned, unsigned>,
+                 llvm::GlobalValue *>
+    UniqDebugLocStrsTy;
+
 class EnzymeLogic {
 public:
   PreProcessCache PPC;
+  UniqDebugLocStrsTy UniqDebugLocStrs;
 
   /// \p PostOpt is whether to perform basic
   ///  optimization of the function after synthesis

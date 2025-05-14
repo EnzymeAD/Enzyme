@@ -8,13 +8,26 @@ entry:
   ret double %call
 }
 
+define double @tester2(double %x, double %y) {
+entry:
+  %call = tail call double @__hypot_finite(double %x, double %y)
+  ret double %call
+}
+
 define double @test_derivative(double %x, double %y) {
 entry:
   %0 = tail call double (...) @__enzyme_fwddiff(double (double, double)* nonnull @tester, double %x, double 1.000000e+00, double %y, double 1.000000e+00)
   ret double %0
 }
 
+define double @test_derivative2(double %x, double %y) {
+entry:
+  %0 = tail call double (...) @__enzyme_fwddiff(double (double, double)* nonnull @tester2, double %x, double 1.000000e+00, double %y, double 1.000000e+00)
+  ret double %0
+}
+
 declare double @hypot(double, double)
+declare double @__hypot_finite(double, double)
 
 ; Function Attrs: nounwind
 declare double @__enzyme_fwddiff(...)

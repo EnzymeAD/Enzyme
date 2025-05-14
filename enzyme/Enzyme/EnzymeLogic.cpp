@@ -42,6 +42,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cmath>
+#include <llvm-c/Core.h>
+#include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Transforms/Instrumentation.h>
+#include <tuple>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -1733,14 +1737,10 @@ void clearFunctionAttributes(Function *f) {
     Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2583,13 +2583,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
@@ -4994,6 +4992,8 @@ protected:
   Type *fromType;
   Type *toType;
   LLVMContext &ctx;
+  EnzymeLogic &Logic;
+  Value *UnknownLoc;
 
 private:
   std::string getOriginalFPRTName(std::string Name) {
@@ -5017,7 +5017,7 @@ private:
         ArgTypes.push_back(Arg->getType());
       FunctionType *FnTy =
           FunctionType::get(RetTy, ArgTypes, /*is_vararg*/ false);
-      F = Function::Create(FnTy, Function::ExternalLinkage, MangledName, M);
+      F = Function::Create(FnTy, Function::WeakODRLinkage, MangledName, M);
     }
     if (F->isDeclaration()) {
       BasicBlock *Entry = BasicBlock::Create(F->getContext(), "entry", F);
@@ -5026,6 +5026,9 @@ private:
         ClonedI->setOperand(It, F->getArg(It));
       auto Return = ReturnInst::Create(F->getContext(), ClonedI, Entry);
       ClonedI->insertBefore(Return);
+      F->setLinkage(GlobalValue::WeakODRLinkage);
+      // Clear invalidated debug metadata now that we defined the function
+      F->clearMetadata();
     }
   }
 
@@ -5046,22 +5049,40 @@ private:
 
   CallInst *createFPRTGeneric(llvm::IRBuilderBase &B, std::string Name,
                               const SmallVectorImpl<Value *> &ArgsIn,
-                              llvm::Type *RetTy) {
+                              llvm::Type *RetTy, Value *LocStr) {
     SmallVector<Value *, 5> Args(ArgsIn.begin(), ArgsIn.end());
     Args.push_back(B.getInt64(truncation.getTo().exponentWidth));
     Args.push_back(B.getInt64(truncation.getTo().significandWidth));
     Args.push_back(B.getInt64(truncation.getMode()));
+#if LLVM_VERSION_MAJOR <= 14
+    Args.push_back(B.CreateBitCast(LocStr, NullPtr->getType()));
+#else
+    Args.push_back(LocStr);
+#endif
+
     auto FprtFunc = getFPRTFunc(Name, Args, RetTy);
-    return cast<CallInst>(B.CreateCall(FprtFunc, Args));
+    // Explicitly assign a dbg location if it didn't exist, as the FPRT
+    // functions are inlineable and the backend fails if the callsite does not
+    // have dbg metadata
+    // TODO consider using InstrumentationIRBuilder
+    Function *ContainingF = B.GetInsertBlock()->getParent();
+    if (!B.getCurrentDebugLocation() && ContainingF->getSubprogram())
+      B.SetCurrentDebugLocation(DILocation::get(ContainingF->getContext(), 0, 0,
+                                                ContainingF->getSubprogram()));
+    auto *CI = cast<CallInst>(B.CreateCall(FprtFunc, Args));
+
+    return CI;
   }
 
 public:
-  TruncateUtils(FloatTruncation truncation, Module *M)
-      : truncation(truncation), M(M), ctx(M->getContext()) {
+  TruncateUtils(FloatTruncation truncation, Module *M, EnzymeLogic &Logic)
+      : truncation(truncation), M(M), ctx(M->getContext()), Logic(Logic) {
     fromType = truncation.getFromType(ctx);
     toType = truncation.getToType(ctx);
     if (fromType == toType)
       assert(truncation.isToFPRT());
+
+    UnknownLoc = getUniquedLocStr(nullptr);
   }
 
   Type *getFromType() { return fromType; }
@@ -5072,23 +5093,54 @@ public:
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "const", Args, getToType());
+    return createFPRTGeneric(B, "const", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTNewCall(llvm::IRBuilderBase &B, Value *V) {
     assert(V->getType() == getFromType());
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "new", Args, getToType());
+    return createFPRTGeneric(B, "new", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTGetCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "get", Args, getToType());
+    return createFPRTGeneric(B, "get", Args, getToType(), UnknownLoc);
   }
   CallInst *createFPRTDeleteCall(llvm::IRBuilderBase &B, Value *V) {
     SmallVector<Value *, 1> Args;
     Args.push_back(V);
-    return createFPRTGeneric(B, "delete", Args, B.getVoidTy());
+    return createFPRTGeneric(B, "delete", Args, B.getVoidTy(), UnknownLoc);
+  }
+  // This will result in a unique string for each location, which means the
+  // runtime can check whether two operations are the same with a simple pointer
+  // comparison. However, we need LTO for this to be the case across different
+  // compilation units.
+  GlobalValue *getUniquedLocStr(Instruction *I) {
+    std::string FileName = "unknown";
+    unsigned LineNo = 0;
+    unsigned ColNo = 0;
+
+    if (I) {
+      DILocation *DL = I->getDebugLoc();
+      if (DL) {
+        FileName = DL->getFilename();
+        LineNo = DL->getLine();
+        ColNo = DL->getColumn();
+      }
+    }
+
+    auto Key = std::make_tuple(FileName, LineNo, ColNo);
+    auto It = Logic.UniqDebugLocStrs.find(Key);
+
+    if (It != Logic.UniqDebugLocStrs.end())
+      return It->second;
+
+    std::string LocStr =
+        FileName + ":" + std::to_string(LineNo) + ":" + std::to_string(ColNo);
+    auto GV = createPrivateGlobalForString(*M, LocStr, true);
+    Logic.UniqDebugLocStrs[Key] = GV;
+
+    return GV;
   }
   CallInst *createFPRTOpCall(llvm::IRBuilderBase &B, llvm::Instruction &I,
                              llvm::Type *RetTy,
@@ -5111,21 +5163,28 @@ public:
             "Unexpected indirect call inst for conversion to FPRT");
     } else if (auto CI = dyn_cast<FCmpInst>(&I)) {
       Name = "fcmp_" + std::string(CI->getPredicateName(CI->getPredicate()));
+    } else if (auto UO = dyn_cast<UnaryOperator>(&I)) {
+      Name = "unaryop_" + std::string(UO->getOpcodeName());
     } else {
       llvm_unreachable("Unexpected instruction for conversion to FPRT");
     }
     createOriginalFPRTFunc(I, Name, ArgsIn, RetTy);
-    return createFPRTGeneric(B, Name, ArgsIn, RetTy);
+    return createFPRTGeneric(B, Name, ArgsIn, RetTy, getUniquedLocStr(&I));
   }
 };
 
+// TODO we need to handle cases where constant aggregates are used and they
+// contain constant fp's in them.
+//
+// e.g. store {0 : i64, 1.0: f64} %ptr
+//
+// Currently in mem mode the float will remain unconverted and we will likely
+// crash somewhere.
 class TruncateGenerator : public llvm::InstVisitor<TruncateGenerator>,
                           public TruncateUtils {
 private:
   ValueToValueMapTy &originalToNewFn;
   FloatTruncation truncation;
-  Function *oldFunc;
-  Function *newFunc;
   TruncateMode mode;
   EnzymeLogic &Logic;
   LLVMContext &ctx;
@@ -5134,36 +5193,43 @@ public:
   TruncateGenerator(ValueToValueMapTy &originalToNewFn,
                     FloatTruncation truncation, Function *oldFunc,
                     Function *newFunc, EnzymeLogic &Logic)
-      : TruncateUtils(truncation, newFunc->getParent()),
+      : TruncateUtils(truncation, newFunc->getParent(), Logic),
         originalToNewFn(originalToNewFn), truncation(truncation),
-        oldFunc(oldFunc), newFunc(newFunc), mode(truncation.getMode()),
-        Logic(Logic), ctx(newFunc->getContext()) {}
+        mode(truncation.getMode()), Logic(Logic), ctx(newFunc->getContext()) {}
 
-  void checkHandled(llvm::Instruction &inst) {
-    // TODO
-    // if (all_of(inst.getOperandList(),
-    //            [&](Use *use) { return use->get()->getType() == fromType; }))
-    //   todo(inst);
+  void todo(llvm::Instruction &I) {
+    if (all_of(I.operands(),
+               [&](Use &U) { return U.get()->getType() != fromType; }) &&
+        I.getType() != fromType)
+      return;
+
+    switch (mode) {
+    case TruncMemMode:
+      llvm::errs() << I << "\n";
+      EmitFailure("FPEscaping", I.getDebugLoc(), &I, "FP value escapes!");
+      break;
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      EmitWarning(
+          "UnhandledTrunc", I,
+          "Operation not handled - it will be executed in the original way.",
+          I);
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
   }
 
-  // TODO
-  void handleTrunc();
-  void hendleIntToFloat();
-  void handleFloatToInt();
-
-  void visitInstruction(llvm::Instruction &inst) {
+  void visitInstruction(llvm::Instruction &I) {
     using namespace llvm;
 
-    // TODO explicitly handle all instructions rather than using the catch all
-    // below
-
-    switch (inst.getOpcode()) {
+    switch (I.getOpcode()) {
       // #include "InstructionDerivatives.inc"
     default:
       break;
     }
 
-    checkHandled(inst);
+    todo(I);
   }
 
   Value *truncate(IRBuilder<> &B, Value *v) {
@@ -5190,17 +5256,24 @@ public:
     llvm_unreachable("Unknown trunc mode");
   }
 
-  void todo(llvm::Instruction &I) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "cannot handle unknown instruction\n" << I;
-    if (CustomErrorHandler) {
-      IRBuilder<> Builder2(getNewFromOriginal(&I));
-      CustomErrorHandler(ss.str().c_str(), wrap(&I), ErrorType::NoTruncate,
-                         this, nullptr, wrap(&Builder2));
+  void visitUnaryOperator(UnaryOperator &I) {
+    switch (I.getOpcode()) {
+    case UnaryOperator::FNeg: {
+      if (I.getOperand(0)->getType() != getFromType())
+        return;
+
+      auto newI = getNewFromOriginal(&I);
+      IRBuilder<> B(newI);
+      SmallVector<Value *, 2> Args = {newI->getOperand(0)};
+      auto nres = createFPRTOpCall(B, I, newI->getType(), Args);
+      nres->takeName(newI);
+      nres->copyIRFlags(newI);
+      newI->replaceAllUsesWith(nres);
+      newI->eraseFromParent();
       return;
-    } else {
-      EmitFailure("NoTruncate", I.getDebugLoc(), &I, ss.str());
+    }
+    default:
+      todo(I);
       return;
     }
   }
@@ -5221,8 +5294,8 @@ public:
       auto truncRHS = truncate(B, RHS);
 
       SmallVector<Value *, 2> Args;
-      Args.push_back(LHS);
-      Args.push_back(RHS);
+      Args.push_back(truncLHS);
+      Args.push_back(truncRHS);
       Instruction *nres;
       if (truncation.isToFPRT())
         nres = createFPRTOpCall(B, CI, B.getInt1Ty(), Args);
@@ -5250,13 +5323,32 @@ public:
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
   }
+  // TODO Is there a possibility we GEP a const and get a FP value?
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) { return; }
-  void visitPHINode(llvm::PHINode &phi) { return; }
   void visitCastInst(llvm::CastInst &CI) {
+    // TODO Try to follow fps through trunc/exts
     switch (mode) {
     case TruncMemMode: {
-      if (CI.getSrcTy() == getFromType() || CI.getDestTy() == getFromType())
-        todo(CI);
+      auto newI = getNewFromOriginal(&CI);
+      auto newSrc = newI->getOperand(0);
+      if (CI.getSrcTy() == getFromType()) {
+        IRBuilder<> B(newI);
+        if (isa<Constant>(newSrc))
+          return;
+        newI->setOperand(0, createFPRTGetCall(B, newSrc));
+        EmitWarning("FPNoFollow", CI, "Will not follow FP through this cast.",
+                    CI);
+      } else if (CI.getDestTy() == getFromType()) {
+        IRBuilder<> B(newI->getNextNode());
+        EmitWarning("FPNoFollow", CI, "Will not follow FP through this cast.",
+                    CI);
+        auto nres = createFPRTNewCall(B, newI);
+        nres->takeName(newI);
+        nres->copyIRFlags(newI);
+        newI->replaceUsesWithIf(nres,
+                                [&](Use &U) { return U.getUser() != nres; });
+        originalToNewFn[const_cast<const Value *>(cast<Value>(&CI))] = nres;
+      }
       return;
     }
     case TruncOpMode:
@@ -5267,6 +5359,8 @@ public:
   void visitSelectInst(llvm::SelectInst &SI) {
     switch (mode) {
     case TruncMemMode: {
+      if (SI.getType() != getFromType())
+        return;
       auto newI = getNewFromOriginal(&SI);
       IRBuilder<> B(newI);
       auto newT = truncate(B, getNewFromOriginal(SI.getTrueValue()));
@@ -5400,11 +5494,31 @@ public:
     newI->eraseFromParent();
     return true;
   }
+
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
     handleIntrinsic(II, II.getIntrinsicID());
   }
 
-  void visitReturnInst(llvm::ReturnInst &I) { return; }
+  void visitReturnInst(llvm::ReturnInst &I) {
+    switch (mode) {
+    case TruncMemMode: {
+      if (I.getNumOperands() == 0)
+        return;
+      if (I.getReturnValue()->getType() != getFromType())
+        return;
+      auto newI = cast<llvm::ReturnInst>(getNewFromOriginal(&I));
+      IRBuilder<> B(newI);
+      if (isa<ConstantFP>(newI->getOperand(0)))
+        newI->setOperand(0, createFPRTConstCall(B, newI->getReturnValue()));
+      return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
+  }
 
   void visitBranchInst(llvm::BranchInst &I) { return; }
   void visitSwitchInst(llvm::SwitchInst &I) { return; }
@@ -5419,6 +5533,23 @@ public:
                         llvm::Value *orig_val, llvm::MaybeAlign prevalign,
                         bool isVolatile, llvm::AtomicOrdering ordering,
                         llvm::SyncScope::ID syncScope, llvm::Value *mask) {
+    switch (mode) {
+    case TruncMemMode: {
+      if (orig_val->getType() != getFromType())
+        return;
+      if (!isa<ConstantFP>(orig_val))
+        return;
+      auto newI = getNewFromOriginal(&I);
+      IRBuilder<> B(newI);
+      newI->setOperand(0, createFPRTConstCall(B, getNewFromOriginal(orig_val)));
+      return;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
     return;
   }
 
@@ -5497,17 +5628,55 @@ public:
 
     if (mode != TruncOpFullModuleMode) {
       RequestContext ctx(&CI, &BuilderZ);
-      auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
-      newCall->setCalledOperand(val);
+      Function *Func = CI.getCalledFunction();
+      if (Func && !Func->empty()) {
+        auto val = GetShadow(ctx, getNewFromOriginal(CI.getCalledOperand()));
+        newCall->setCalledOperand(val);
+      } else {
+        switch (mode) {
+        case TruncMemMode:
+          EmitWarning("FPNoFollow", CI,
+                      "Will not follow FP through this function call as the "
+                      "definition is not available.",
+                      CI);
+          break;
+        case TruncOpMode:
+        case TruncOpFullModuleMode:
+          EmitWarning("FPNoFollow", CI,
+                      "Will not truncate flops in this function call as the "
+                      "definition is not available.",
+                      CI);
+          break;
+        default:
+          llvm_unreachable("Unknown trunc mode");
+        }
+      }
     }
     return;
   }
-  void visitFPTruncInst(FPTruncInst &I) { return; }
-  void visitFPExtInst(FPExtInst &I) { return; }
-  void visitFPToUIInst(FPToUIInst &I) { return; }
-  void visitFPToSIInst(FPToSIInst &I) { return; }
-  void visitUIToFPInst(UIToFPInst &I) { return; }
-  void visitSIToFPInst(SIToFPInst &I) { return; }
+  void visitPHINode(llvm::PHINode &PN) {
+    switch (mode) {
+    case TruncMemMode: {
+      if (PN.getType() != getFromType())
+        return;
+      auto NewPN = cast<llvm::PHINode>(getNewFromOriginal(&PN));
+      IRBuilder<> B(
+          NewPN->getParent()->getParent()->getEntryBlock().getFirstNonPHI());
+      for (unsigned It = 0; It < NewPN->getNumIncomingValues(); It++) {
+        if (isa<ConstantFP>(NewPN->getIncomingValue(It))) {
+          NewPN->setOperand(
+              It, createFPRTConstCall(B, NewPN->getIncomingValue(It)));
+        }
+      }
+      break;
+    }
+    case TruncOpMode:
+    case TruncOpFullModuleMode:
+      break;
+    default:
+      llvm_unreachable("Unknown trunc mode");
+    }
+  }
 };
 
 bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
@@ -5519,7 +5688,8 @@ bool EnzymeLogic::CreateTruncateValue(RequestContext context, Value *v,
 
   Value *converted = nullptr;
   auto truncation = FloatTruncation(from, to, TruncMemMode);
-  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent());
+  TruncateUtils TU(truncation, B.GetInsertBlock()->getParent()->getParent(),
+                   *this);
   if (isTruncate)
     converted = TU.createFPRTNewCall(B, v);
   else
