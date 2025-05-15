@@ -3659,10 +3659,10 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res) {
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils,
-                                   llvm::IRBuilder<> &Builder2) {
+                                   llvm::IRBuilder<> &Builder2, llvm::Value *condition) {
   if (CustomErrorHandler) {
     return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils, nullptr,
+                                     ErrorType::NoDerivative, gutils, wrap(condition),
                                      wrap(&Builder2)));
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
