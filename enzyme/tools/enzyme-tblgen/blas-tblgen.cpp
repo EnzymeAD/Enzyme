@@ -386,7 +386,11 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
        << "      rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
        << name << ", arg_" << name << ", \"rt.tmp.inactive.\" \"" << name
        << "\");\n"
-       << "      if (Mode == DerivativeMode::ForwardMode || Mode == DerivativeMode::ForwardModeSplit) anyRuntimeActivity = anyRuntimeActivity ? BuilderZ.CreateOr(anyRuntimeActivity, rt_inactive_" << name << ") : rt_inactive_" << name << ";\n"
+       << "      if (Mode == DerivativeMode::ForwardMode || Mode == "
+          "DerivativeMode::ForwardModeSplit) anyRuntimeActivity = "
+          "anyRuntimeActivity ? BuilderZ.CreateOr(anyRuntimeActivity, "
+          "rt_inactive_"
+       << name << ") : rt_inactive_" << name << ";\n"
        << "    }\n";
   }
   // Blas functions return one float XOR modify one output arg.
@@ -414,19 +418,25 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
       os << "active_" << name << ") {\n"
          << "      rt_inactive_" << name << " = BuilderZ.CreateOr(rt_inactive_"
          << name << ", rt_inactive_out, \"rt.inactive.\" \"" << name << "\");\n"
-       << "      if (Mode == DerivativeMode::ForwardMode || Mode == DerivativeMode::ForwardModeSplit) anyRuntimeActivity = anyRuntimeActivity ? BuilderZ.CreateOr(anyRuntimeActivity, rt_inactive_" << name << ") : rt_inactive_" << name << ";\n"
+         << "      if (Mode == DerivativeMode::ForwardMode || Mode == "
+            "DerivativeMode::ForwardModeSplit) anyRuntimeActivity = "
+            "anyRuntimeActivity ? BuilderZ.CreateOr(anyRuntimeActivity, "
+            "rt_inactive_"
+         << name << ") : rt_inactive_" << name << ";\n"
          << "    }\n";
     }
   }
 
-  os << "    if ((Mode == DerivativeMode::ForwardMode || Mode == DerivativeMode::ForwardModeSplit) && anyRuntimeActivity) {\n"
+  os << "    if ((Mode == DerivativeMode::ForwardMode || Mode == "
+        "DerivativeMode::ForwardModeSplit) && anyRuntimeActivity) {\n"
      << "      std::string s;\n"
      << "      llvm::raw_string_ostream ss(s);\n"
      << "      ss << \"" << pattern.getName() << "\" << \"\\n\";\n"
      << "      ss << \"Runtime Activity not yet implemented for Forward-Mode "
         "BLAS calls\" << "
         "\"\\n\";\n"
-     << "      EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ, anyRuntimeActivity);\n"
+     << "      EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ, "
+        "anyRuntimeActivity);\n"
      << "    }\n";
 
   os << "  }\n";
