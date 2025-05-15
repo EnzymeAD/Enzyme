@@ -209,7 +209,8 @@ class GradientUtils;
 struct RequestContext;
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
-                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B,
+                                   llvm::Value *condition = nullptr);
 bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
                            RequestContext &ctx);
 
