@@ -3648,7 +3648,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
-    if (subretType != key.retType) {
+
+    if (subretType == DIFFE_TYPE::OUT_DIFF &&
+        key.retType == DIFFE_TYPE::CONSTANT) {
+      hasconstant = true;
+    } else if (subretType != key.retType) {
       std::string str;
       raw_string_ostream ss(str);
       ss << "The required return activity calling into function: "
@@ -3760,6 +3764,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (tape) {
         revargs.push_back(tape);
       }
+      if (!revfn->getFunctionType()->isVarArg() &&
+          revfn->getFunctionType()->getNumParams() != revargs.size()) {
+        llvm::errs() << " todiff: " << *key.todiff << "\n";
+        llvm::errs() << " revfn: " << *revfn << "\n";
+        llvm::errs() << " NewF: " << *NewF << "\n";
+        llvm::errs() << " key rettype: " << to_string(key.retType) << "\n";
+        for (auto arg : revargs) {
+          llvm::errs() << " + revarg: " << *arg << "\n";
+        }
+      }
       auto revcal = bb.CreateCall(revfn, revargs);
       revcal->setCallingConv(revfn->getCallingConv());
 
@@ -3817,11 +3831,17 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
       }
 
+      auto nextRetType = key.retType;
+      if (nextRetType == DIFFE_TYPE::CONSTANT &&
+          subretType == DIFFE_TYPE::OUT_DIFF) {
+        nextRetType = DIFFE_TYPE::OUT_DIFF;
+      }
+
       auto revfn = CreatePrimalAndGradient(
           context,
           (ReverseCacheKey){
               .todiff = key.todiff,
-              .retType = key.retType,
+              .retType = nextRetType,
               .constant_args = next_constant_args,
               .overwritten_args = key.overwritten_args,
               .returnUsed = key.returnUsed,
@@ -3843,6 +3863,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           arg++;
           if (cidx == DIFFE_TYPE::DUP_ARG || cidx == DIFFE_TYPE::DUP_NONEED)
             arg++;
+        }
+        if (nextRetType != key.retType) {
+          arg++;
         }
         while (arg != revfn->arg_end()) {
           dupargs.push_back(arg->getType());
@@ -3884,6 +3907,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         act_idx++;
       }
       size_t pa = 0;
+      if (nextRetType != key.retType) {
+        revargs.push_back(getUndefinedValueForType(*revfn->getParent(),
+                                                   key.todiff->getReturnType(),
+                                                   /*forceZero*/ true));
+      }
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
         arg->setName("postarg" + Twine(pa));
