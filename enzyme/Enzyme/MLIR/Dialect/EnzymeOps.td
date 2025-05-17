@@ -86,6 +86,9 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
+
+  // Define activity optimizations as canonicalization 
+  let hasCanonicalizer = 1;
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
@@ -206,6 +209,17 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   let builders = [
     OpBuilder<(ins "Value":$input, "ArrayRef<int64_t>":$shape)>
   ];
+}
+
+def SampleOp : Enzyme_Op<"sample",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
 }
 
 #endif // ENZYME_OPS

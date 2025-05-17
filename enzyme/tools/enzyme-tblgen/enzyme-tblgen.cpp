@@ -1817,7 +1817,7 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
           if (intrinsic == MLIRDerivatives) {
             os << curIndent << INDENT
                << "tmp = "
-                  "tmp.getType().cast<AutoDiffTypeInterface>().createConjOp("
+                  "cast<AutoDiffTypeInterface>(tmp.getType()).createConjOp("
                   "builder, op.getLoc(), tmp);\n";
           }
 
@@ -2620,6 +2620,49 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
   }
 
   if (intrinsic == MLIRDerivatives) {
+    SmallVector<bool> hasActivity(patterns.size(), false);
+    for (auto patternEn : enumerate(patterns)) {
+      size_t patternIdx = patternEn.index();
+      auto &pattern = patternEn.value();
+      auto opName = pattern->getValueAsString("opName");
+      auto dialect = pattern->getValueAsString("dialect");
+
+      auto argOps = pattern->getValueAsListInit("ArgDerivatives");
+
+      auto isArgInactive = [](const llvm::Init *arg) -> bool {
+        if (auto resultRoot = dyn_cast<DagInit>(arg)) {
+          auto opName = resultRoot->getOperator()->getAsString();
+          auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+          if (opName == "InactiveArgSpec" ||
+              Def->isSubClassOf("InactiveArgSpec")) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      if (llvm::any_of(*argOps, isArgInactive)) {
+        hasActivity[patternIdx] = true;
+
+        os << "struct " << opName << "Activity : \n";
+        os << "                   public ActivityOpInterface::ExternalModel<"
+           << opName << "Activity, " << dialect << "::" << opName << "> {\n";
+        os << "  bool isInactive(mlir::Operation *) const { return false; }\n";
+        os << "  bool isArgInactive(mlir::Operation *, size_t arg) const {\n";
+
+        for (auto argOpEn : enumerate(*argOps)) {
+          if (isArgInactive(argOpEn.value())) {
+            size_t argIdx = argOpEn.index();
+            os << "    if (arg == " << argIdx << ") { return true; }\n";
+          }
+        }
+
+        os << "    return false;\n  }\n";
+
+        os << "};\n";
+      }
+    }
+
     const auto &actpatterns =
         recordKeeper.getAllDerivedDefinitions("InactiveOp");
     for (auto &pattern : actpatterns) {
@@ -2706,13 +2749,16 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         recordKeeper.getAllDerivedDefinitions("AllocationOp");
 
     os << "void registerInterfaces(MLIRContext* context) {\n";
-    for (const Record *pattern : patterns) {
+    for (auto [pattern, act] : zip(patterns, hasActivity)) {
       auto opName = pattern->getValueAsString("opName");
       auto dialect = pattern->getValueAsString("dialect");
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "FwdDerivative>(*context);\n";
       os << "  " << dialect << "::" << opName << "::attachInterface<" << opName
          << "RevDerivative>(*context);\n";
+      if (act)
+        os << "  " << dialect << "::" << opName << "::attachInterface<"
+           << opName << "Activity>(*context);\n";
     }
     for (const Record *pattern : actpatterns) {
       auto opName = pattern->getValueAsString("opName");

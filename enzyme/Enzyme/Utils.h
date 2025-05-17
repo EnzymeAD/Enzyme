@@ -211,7 +211,8 @@ class GradientUtils;
 struct RequestContext;
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
-                                   GradientUtils *gutils, llvm::IRBuilder<> &B);
+                                   GradientUtils *gutils, llvm::IRBuilder<> &B,
+                                   llvm::Value *condition = nullptr);
 bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
                            RequestContext &ctx);
 
@@ -2080,7 +2081,7 @@ getFirstNonPHIOrDbgOrLifetime(llvm::BasicBlock *B) {
 }
 
 static inline void addCallSiteNoCapture(llvm::CallBase *call, size_t idx) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   call->addParamAttr(
       idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
                                 llvm::CaptureInfo::none().toIntValue()));
@@ -2090,7 +2091,7 @@ static inline void addCallSiteNoCapture(llvm::CallBase *call, size_t idx) {
 }
 
 static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   call->addParamAttr(
       idx, llvm::Attribute::get(call->getContext(), llvm::Attribute::Captures,
                                 llvm::CaptureInfo::none().toIntValue()));
@@ -2103,7 +2104,7 @@ static inline void addFunctionNoCapture(llvm::Function *call, size_t idx) {
 addFunctionNoCapture(llvm::LLVMContext &ctx, llvm::AttributeList list,
                      size_t idx) {
   unsigned idxs = {(unsigned)idx};
-#if LLVM_VERSION_MAJOR >= 20
+#if LLVM_VERSION_MAJOR > 20
   return list.addParamAttribute(
       ctx, idxs,
       llvm::Attribute::get(ctx, llvm::Attribute::Captures,
@@ -2189,5 +2190,9 @@ llvm::Optional<bool>
 arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::LoopInfo &LI, llvm::Value *op0,
                              llvm::Value *op1, bool offsetAllowed = false);
+
+// Return true if the module has a triple indicating an nvptx target, false
+// otherwise.
+bool isTargetNVPTX(llvm::Module &M);
 
 #endif // ENZYME_UTILS_H

@@ -186,7 +186,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
-    bool omp, llvm::StringRef postpasses) {
+    bool omp, llvm::StringRef postpasses, bool verifyPostPasses) {
 
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -217,7 +217,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
-      retType, constants, addedType, omp, postpasses);
+      retType, constants, addedType, omp, postpasses, verifyPostPasses);
 
   ReverseCachedFunctions[tup] = gutils->newFunc;
 
@@ -259,6 +259,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   if (postpasses != "") {
     mlir::PassManager pm(nf->getContext());
+    pm.enableVerifier(verifyPostPasses);
     std::string error_message;
     // llvm::raw_string_ostream error_stream(error_message);
     mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);

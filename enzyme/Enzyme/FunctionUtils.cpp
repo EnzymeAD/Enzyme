@@ -348,6 +348,59 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       toErase.push_back(GEP);
       continue;
     }
+    if (auto P = dyn_cast<PHINode>(inst)) {
+      auto NumOperands = P->getNumIncomingValues();
+      SmallVector<Value *, 1> replacedOperands(NumOperands, nullptr);
+      for (size_t i = 0; i < NumOperands; i++)
+        if (P->getOperand(i) == prev)
+          replacedOperands[i] = rep;
+      for (auto tval : Todo) {
+        if (std::get<2>(tval) != P)
+          continue;
+        for (size_t i = 0; i < NumOperands; i++)
+          if (P->getOperand(i) == std::get<1>(tval)) {
+            replacedOperands[i] = std::get<0>(tval);
+          }
+      }
+      bool allReplaced = true;
+      for (size_t i = 0; i < NumOperands; i++) {
+        if (!replacedOperands[i]) {
+          allReplaced = false;
+        }
+      }
+      if (!allReplaced) {
+        bool remainingArePHIs = true;
+        for (auto v : Todo) {
+          if (isa<PHINode>(std::get<2>(v))) {
+          } else {
+            remainingArePHIs = false;
+          }
+        }
+        if (!remainingArePHIs) {
+          Todo.insert(Todo.begin(), cur);
+          llvm::errs() << " continuing\n";
+          continue;
+        }
+      } else {
+        IRBuilder<> B(&(*P->getParent()->getFirstNonPHIOrDbgOrLifetime()));
+        auto nP = B.CreatePHI(rep->getType(), P->getNumOperands());
+        for (size_t i = 0; i < NumOperands; i++) {
+          nP->addIncoming(replacedOperands[i], P->getIncomingBlock(i));
+        }
+        nP->takeName(P);
+        for (auto U : P->users()) {
+          Todo.push_back(
+              std::make_tuple((Value *)nP, (Value *)P, cast<Instruction>(U)));
+        }
+        toErase.push_back(P);
+        for (int i = Todo.size() - 1; i >= 0; i--) {
+          if (std::get<2>(Todo[i]) != P)
+            continue;
+          Todo.erase(Todo.begin() + i);
+        }
+        continue;
+      }
+    }
     if (auto II = dyn_cast<IntrinsicInst>(inst)) {
       if (isIntelSubscriptIntrinsic(*II)) {
 
@@ -448,8 +501,6 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto I = dyn_cast<Instruction>(inst))
       llvm::errs() << *I->getParent()->getParent() << "\n";
-    llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
-                 << "\n";
     llvm_unreachable("Illegal address space propagation");
   }
 
@@ -2470,7 +2521,7 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
     for (auto &z : pair.second) {
       if (auto inst = dyn_cast<Instruction>(z.first->getArgOperand(0)))
         if (!DT.dominates(inst, First))
-          legal = true;
+          legal = false;
     }
     if (!legal)
       continue;

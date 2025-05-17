@@ -201,4 +201,22 @@ def EnzymeOpsRemoverOpInterface : OpInterface<"EnzymeOpsRemoverOpInterface"> {
   ];
 }
 
+def MathSimplifyInterface : OpInterface<"MathSimplifyInterface"> {
+  let description = [{
+    Simplify add/subtract with zero
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+      Simplify add/subtract with zero
+    }],
+    /*retTy=*/"::mlir::LogicalResult",
+    /*methodName=*/"simplifyMath",
+    /*args=*/(ins "::mlir::PatternRewriter &": $rewriter)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES

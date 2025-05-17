@@ -1130,3 +1130,21 @@ def : InstPattern<(Op $x), "Freeze", 10, 0,
                   >;
 
 include "BlasDerivatives.td"                  
+
+def : IntrPattern<(Op $x),
+                  [["acos", "19", ""]],
+                  [(FNeg (FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))))]  ,
+                  (ForwardFromSummedReverse)                
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["atan", "19", ""]],
+                  [(FDiv (DiffeRet), (FAdd (FMul $x, $x), (ConstantFP<"1.0"> $x)))]  ,
+                  (ForwardFromSummedReverse)                
+                  >;
+
+def : IntrPattern<(Op $x),
+                  [["asin", "19", ""]],
+                  [(FDiv (DiffeRet), (Intrinsic<"sqrt"> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x))))]  ,
+                  (ForwardFromSummedReverse)                
+                  >;

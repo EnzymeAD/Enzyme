@@ -62,7 +62,7 @@ private:
   TypeResults &TR = gutils->TR;
   std::function<unsigned(llvm::Instruction *, CacheType, llvm::IRBuilder<> &)>
       getIndex;
-  const std::map<llvm::CallInst *, const std::vector<bool>>
+  const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       overwritten_args_map;
   const AugmentedReturn *augmentedReturn;
   const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
@@ -80,7 +80,7 @@ public:
       std::function<unsigned(llvm::Instruction *, CacheType,
                              llvm::IRBuilder<> &)>
           getIndex,
-      const std::map<llvm::CallInst *, const std::vector<bool>>
+      const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
           overwritten_args_map,
       const AugmentedReturn *augmentedReturn,
       const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
@@ -3661,20 +3661,35 @@ public:
       break;
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined: {
-      IRBuilder<> Builder2(&FI);
-      getReverseBuilder(Builder2);
-      auto order = FI.getOrdering();
-      switch (order) {
-      case AtomicOrdering::Acquire:
-        order = AtomicOrdering::Release;
-        break;
-      case AtomicOrdering::Release:
-        order = AtomicOrdering::Acquire;
-        break;
-      default:
-        break;
+      bool emitReverse = true;
+      if (EnzymeJuliaAddrLoad) {
+        if (auto prev = dyn_cast_or_null<CallBase>(FI.getPrevNode())) {
+          if (auto F = prev->getCalledFunction())
+            if (F->getName() == "julia.safepoint")
+              emitReverse = false;
+        }
+        if (auto prev = dyn_cast_or_null<CallBase>(FI.getNextNode())) {
+          if (auto F = prev->getCalledFunction())
+            if (F->getName() == "julia.safepoint")
+              emitReverse = false;
+        }
       }
-      Builder2.CreateFence(order, FI.getSyncScopeID());
+      if (emitReverse) {
+        IRBuilder<> Builder2(&FI);
+        getReverseBuilder(Builder2);
+        auto order = FI.getOrdering();
+        switch (order) {
+        case AtomicOrdering::Acquire:
+          order = AtomicOrdering::Release;
+          break;
+        case AtomicOrdering::Release:
+          order = AtomicOrdering::Acquire;
+          break;
+        default:
+          break;
+        }
+        Builder2.CreateFence(order, FI.getSyncScopeID());
+      }
     }
     }
     eraseIfUnused(FI);
@@ -3799,7 +3814,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
@@ -3919,7 +3934,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
@@ -3998,7 +4013,7 @@ public:
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::sadd_with_overflow ||
+            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
             ID == Intrinsic::smul_with_overflow ||
             ID == Intrinsic::umul_with_overflow ||
@@ -4051,9 +4066,10 @@ public:
       }
     }
 
-    assert(overwritten_args_map.find(&call) != overwritten_args_map.end());
-    const std::vector<bool> &overwritten_args =
-        overwritten_args_map.find(&call)->second;
+    auto found_ow = overwritten_args_map.find(&call);
+    assert(found_ow != overwritten_args_map.end());
+    const bool subsequent_calls_may_write = found_ow->second.first;
+    const std::vector<bool> &overwritten_args = found_ow->second.second;
 
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
@@ -4197,7 +4213,8 @@ public:
             RequestContext(&call, &BuilderZ), cast<Function>(called),
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*return is used*/ false,
-            /*shadowReturnUsed*/ false, nextTypeInfo, overwritten_args, false,
+            /*shadowReturnUsed*/ false, nextTypeInfo,
+            subsequent_calls_may_write, overwritten_args, false,
             gutils->runtimeActivity, gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
@@ -4412,6 +4429,7 @@ public:
                 .todiff = cast<Function>(called),
                 .retType = subretType,
                 .constant_args = argsInverted,
+                .subsequent_calls_may_write = subsequent_calls_may_write,
                 .overwritten_args = overwritten_args,
                 .returnUsed = false,
                 .shadowReturnUsed = false,
@@ -4730,6 +4748,7 @@ public:
 
   void recursivelyHandleSubfunction(llvm::CallInst &call,
                                     llvm::Function *called,
+                                    bool subsequent_calls_may_write,
                                     const std::vector<bool> &overwritten_args,
                                     bool shadowReturnUsed,
                                     DIFFE_TYPE subretType, bool subretused) {
@@ -4922,7 +4941,7 @@ public:
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
             gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
-            overwritten_args,
+            subsequent_calls_may_write, overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
       } else {
@@ -5310,8 +5329,8 @@ public:
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
-              overwritten_args, false, gutils->runtimeActivity,
-              gutils->getWidth(), gutils->AtomicAdd);
+              subsequent_calls_may_write, overwritten_args, false,
+              gutils->runtimeActivity, gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -5752,21 +5771,22 @@ public:
 
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           RequestContext(&call, &Builder2),
-          (ReverseCacheKey){.todiff = cast<Function>(called),
-                            .retType = subretType,
-                            .constant_args = argsInverted,
-                            .overwritten_args = overwritten_args,
-                            .returnUsed = replaceFunction && subretused,
-                            .shadowReturnUsed =
-                                shadowReturnUsed && replaceFunction,
-                            .mode = subMode,
-                            .width = gutils->getWidth(),
-                            .freeMemory = true,
-                            .AtomicAdd = gutils->AtomicAdd,
-                            .additionalType = tape ? tape->getType() : nullptr,
-                            .forceAnonymousTape = false,
-                            .typeInfo = nextTypeInfo,
-                            .runtimeActivity = gutils->runtimeActivity},
+          (ReverseCacheKey){
+              .todiff = cast<Function>(called),
+              .retType = subretType,
+              .constant_args = argsInverted,
+              .subsequent_calls_may_write = subsequent_calls_may_write,
+              .overwritten_args = overwritten_args,
+              .returnUsed = replaceFunction && subretused,
+              .shadowReturnUsed = shadowReturnUsed && replaceFunction,
+              .mode = subMode,
+              .width = gutils->getWidth(),
+              .freeMemory = true,
+              .AtomicAdd = gutils->AtomicAdd,
+              .additionalType = tape ? tape->getType() : nullptr,
+              .forceAnonymousTape = false,
+              .typeInfo = nextTypeInfo,
+              .runtimeActivity = gutils->runtimeActivity},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
@@ -6007,6 +6027,7 @@ public:
 
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,
+                                  bool subsequent_calls_may_write,
                                   const std::vector<bool> &overwritten_args,
                                   llvm::CallInst *const newCall);
 
@@ -6041,11 +6062,16 @@ public:
     assert(overwritten_args_map.find(&call) != overwritten_args_map.end() ||
            Mode == DerivativeMode::ForwardMode ||
            Mode == DerivativeMode::ForwardModeError);
+    const bool subsequent_calls_may_write =
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError)
+            ? false
+            : overwritten_args_map.find(&call)->second.first;
     const std::vector<bool> &overwritten_args =
         (Mode == DerivativeMode::ForwardMode ||
          Mode == DerivativeMode::ForwardModeError)
             ? std::vector<bool>()
-            : overwritten_args_map.find(&call)->second;
+            : overwritten_args_map.find(&call)->second.second;
 
     auto called = getFunctionFromCall(&call);
     StringRef funcName = getFuncNameFromCall(&call);
@@ -6286,7 +6312,8 @@ public:
       }
     }
 
-    if (handleKnownCallDerivatives(call, called, funcName, overwritten_args,
+    if (handleKnownCallDerivatives(call, called, funcName,
+                                   subsequent_calls_may_write, overwritten_args,
                                    newCall))
       return;
 
@@ -6487,9 +6514,9 @@ public:
       return;
     }
 
-    return recursivelyHandleSubfunction(call, called, overwritten_args,
-                                        shadowReturnUsed, subretType,
-                                        subretused);
+    return recursivelyHandleSubfunction(
+        call, called, subsequent_calls_may_write, overwritten_args,
+        shadowReturnUsed, subretType, subretused);
   }
 };
 

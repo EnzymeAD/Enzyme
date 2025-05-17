@@ -71,74 +71,75 @@ if(ENZYME_ENABLE_FPOPT)
 endif()
 
 
-# on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
-if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
-    add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC}
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-	LINK_COMPONENTS
-	LLVM
-    )
-if (${Clang_FOUND})
-    add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymeClang.cpp
-        Clang/EnzymePassLoader.cpp
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-	LINK_COMPONENTS
-	LLVM
-    ${ENZYME_LINK_TARGETS}
-    )
-target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-endif()
-        add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-	LINK_COMPONENTS
-	LLVM
-    )
-target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-else()
-    add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC}
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        opt
-    )
-if (${Clang_FOUND})
-    add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymeClang.cpp
-        Clang/EnzymePassLoader.cpp
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        clang
-    )
-target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
-endif()
-    add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
-        ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
-        PARTIAL_SOURCES_INTENDED
-        MODULE
-        DEPENDS
-        intrinsics_gen
-        PLUGIN_TOOL
-        opt
-    )
-target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+if (ENZYME_ENABLE_PLUGINS)
+        # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
+        if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
+            add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
+                ${ENZYME_SRC}
+                PARTIAL_SOURCES_INTENDED
+                MODULE
+                DEPENDS
+                intrinsics_gen
+        	LINK_COMPONENTS
+        	LLVM
+            )
+            if (${Clang_FOUND})
+                add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
+                    ${ENZYME_SRC} Clang/EnzymeClang.cpp
+                    Clang/EnzymePassLoader.cpp
+                    PARTIAL_SOURCES_INTENDED
+                    MODULE
+                    DEPENDS
+                    intrinsics_gen
+            	LINK_COMPONENTS
+            	LLVM
+                )
+                    target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+            endif()
+                    add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
+                    ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+                    PARTIAL_SOURCES_INTENDED
+                    MODULE
+                    DEPENDS
+                    intrinsics_gen
+            	LINK_COMPONENTS
+            	LLVM
+                )
+            target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+        else()
+             add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
+                 ${ENZYME_SRC}
+                 PARTIAL_SOURCES_INTENDED
+                 MODULE
+                 DEPENDS
+                 intrinsics_gen
+                 PLUGIN_TOOL
+                 opt
+             )
+             if (${Clang_FOUND})
+                 add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
+                     ${ENZYME_SRC} Clang/EnzymeClang.cpp
+                     Clang/EnzymePassLoader.cpp
+                     PARTIAL_SOURCES_INTENDED
+                     MODULE
+                     DEPENDS
+                     intrinsics_gen
+                     PLUGIN_TOOL
+                     clang
+                 )
+             target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+             endif()
+                 add_llvm_library( LLDEnzyme-${LLVM_VERSION_MAJOR}
+                     ${ENZYME_SRC} Clang/EnzymePassLoader.cpp
+                     PARTIAL_SOURCES_INTENDED
+                     MODULE
+                     DEPENDS
+                     intrinsics_gen
+                     PLUGIN_TOOL
+                     opt
+                 )
+             target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
+        endif()
 endif()
 
 if (${ENZYME_STATIC_LIB})
@@ -175,6 +176,7 @@ endif()
 
 if (APPLE)
 # Darwin-specific linker flags for loadable modules.
+if (ENZYME_ENABLE_PLUGINS)
 set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
     LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 if (${Clang_FOUND})
@@ -183,6 +185,7 @@ set_target_properties(ClangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
 endif()
 set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+endif()
 endif()
 
 add_library(LLDEnzymeFlags INTERFACE)
@@ -207,6 +210,7 @@ target_link_options(LLDEnzymePrintFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme
 add_library(LLDEnzymeNoStrictAliasingFlags INTERFACE)
 target_link_options(LLDEnzymeNoStrictAliasingFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-enzyme-strict-aliasing=0")
 
+if (ENZYME_ENABLE_PLUGINS)
 # this custom target exists to prevent CMake from incorrectly assuming that
 # targets that link depend on LLDEnzyme-XX can be built at the same time or
 # before LLDEnzyme-XX has finished.
@@ -242,6 +246,8 @@ install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     LIBRARY DESTINATION lib COMPONENT shlib
     COMPONENT dev)
 
+endif()
+    
 if (ENZYME_MLIR)
     add_subdirectory(MLIR)
 endif()

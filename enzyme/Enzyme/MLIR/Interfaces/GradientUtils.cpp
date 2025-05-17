@@ -37,15 +37,17 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses)
+    DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses,
+    bool verifyPostPasses)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
-      TA(TA_), TR(TR_), omp(omp), postpasses(postpasses),
-      returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
-      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {}
+      TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
+      postpasses(postpasses), returnPrimals(returnPrimals),
+      returnShadows(returnShadows), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      RetDiffeTypes(ReturnActivity) {}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {
@@ -118,7 +120,7 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
 
   if (isConstantValue(v)) {
     if (auto iface =
-            getShadowType(v.getType()).dyn_cast<AutoDiffTypeInterface>()) {
+            dyn_cast<AutoDiffTypeInterface>(getShadowType(v.getType()))) {
       OpBuilder::InsertionGuard guard(Builder2);
       if (auto op = v.getDefiningOp())
         Builder2.setInsertionPoint(getNewFromOriginal(op));
@@ -160,7 +162,7 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
                                                  mlir::Value toset,
                                                  OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
-  auto iface = oval.getType().cast<AutoDiffTypeInterface>();
+  auto iface = cast<AutoDiffTypeInterface>(oval.getType());
   if (!iface.isMutable()) {
     auto shadow = getDifferential(oval);
     BuilderM.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
@@ -172,7 +174,7 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
 void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval,
                                                   OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
-  auto iface = getShadowType(oval.getType()).cast<AutoDiffTypeInterface>();
+  auto iface = cast<AutoDiffTypeInterface>(getShadowType(oval.getType()));
   assert(!iface.isMutable());
   setDiffe(oval, iface.createNullValue(BuilderM, oval.getLoc()), BuilderM);
 }

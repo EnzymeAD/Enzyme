@@ -59,7 +59,7 @@ SmallVector<AffineMap> getIndexingMapsArray(enzyme::GenericAdjointOp &op) {
   auto attr = op.getIndexingMapsAttr();
   SmallVector<AffineMap> indexingMaps;
   for (auto map : attr.getValue()) {
-    indexingMaps.push_back(map.cast<AffineMapAttr>().getValue());
+    indexingMaps.push_back(cast<AffineMapAttr>(map).getValue());
   }
   return indexingMaps;
 }

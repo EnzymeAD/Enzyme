@@ -290,7 +290,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
         } else
           assert("Unknown mode");
       }
-    } else {
+    } else if (isTargetNVPTX(M)) {
       llvm::errs() << M << "\n";
       llvm::errs() << "Use of " << handlername
                    << " must be a "
@@ -852,10 +852,12 @@ bool preserveNVVM(bool Begin, Module &M) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
-  for (auto &F : M) {
+  for (auto &F : llvm::make_early_inc_range(M)) {
     if (Begin) {
       changed |= attributeKnownFunctions(F);
     }
+  }
+  for (auto &F : M) {
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {
       changed = true;

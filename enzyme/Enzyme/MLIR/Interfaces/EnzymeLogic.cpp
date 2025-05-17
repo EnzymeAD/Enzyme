@@ -56,9 +56,8 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
       if (!gutils->isConstantValue(ret)) {
         retargs.push_back(gutils->invertPointerM(ret, nBuilder));
       } else {
-        Type retTy =
-            ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
-        auto toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(
+        Type retTy = cast<AutoDiffTypeInterface>(ret.getType()).getShadowType();
+        auto toret = cast<AutoDiffTypeInterface>(retTy).createNullValue(
             nBuilder, ret.getLoc());
         retargs.push_back(toret);
       }
@@ -82,7 +81,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
     std::vector<bool> volatile_args, void *augmented, bool omp,
-    llvm::StringRef postpasses) {
+    llvm::StringRef postpasses, bool verifyPostPasses) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -110,7 +109,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
-      /*omp*/ false, postpasses);
+      /*omp*/ false, postpasses, verifyPostPasses);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
   insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(
@@ -202,6 +201,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   if (postpasses != "") {
     mlir::PassManager pm(nf->getContext());
+    pm.enableVerifier(verifyPostPasses);
     std::string error_message;
     // llvm::raw_string_ostream error_stream(error_message);
     mlir::LogicalResult result = mlir::parsePassPipeline(postpasses, pm);

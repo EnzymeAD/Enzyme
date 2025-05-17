@@ -2205,7 +2205,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
-    const std::vector<bool> &overwritten_args, CallInst *const newCall) {
+    bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
+    CallInst *const newCall) {
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =
@@ -2748,19 +2749,26 @@ bool AdjointGenerator::handleKnownCallDerivatives(
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
-          SmallVector<Value *, 1> iargs;
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-          for (auto &arg : call.args()) {
-            if (!gutils->isConstantValue(arg)) {
-              Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-              applyChainRule(
-                  BuilderZ,
-                  [&](Value *ptrshadow) { iargs.push_back(ptrshadow); },
-                  ptrshadow);
+          for (int i = 0; i < gutils->getWidth(); i++) {
+            SmallVector<Value *, 1> iargs;
+            bool first = true;
+            for (auto &arg : call.args()) {
+              if (!gutils->isConstantValue(arg)) {
+                Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+                if (gutils->getWidth() > 1) {
+                  ptrshadow = gutils->extractMeta(BuilderZ, ptrshadow, i);
+                }
+                iargs.push_back(ptrshadow);
+              } else {
+                if (first)
+                  break;
+              }
+              first = false;
             }
-          }
-          if (iargs.size()) {
-            BuilderZ.CreateCall(called, iargs);
+            if (iargs.size()) {
+              BuilderZ.CreateCall(called, iargs);
+            }
           }
         }
 

@@ -3810,11 +3810,12 @@ void attachFPOptMetadata(llvm::Instruction *After,
 llvm::Value *EmitNoDerivativeError(const std::string &message,
                                    llvm::Instruction &inst,
                                    GradientUtils *gutils,
-                                   llvm::IRBuilder<> &Builder2) {
+                                   llvm::IRBuilder<> &Builder2,
+                                   llvm::Value *condition) {
   if (CustomErrorHandler) {
     return unwrap(CustomErrorHandler(message.c_str(), wrap(&inst),
-                                     ErrorType::NoDerivative, gutils, nullptr,
-                                     wrap(&Builder2)));
+                                     ErrorType::NoDerivative, gutils,
+                                     wrap(condition), wrap(&Builder2)));
   } else if (EnzymeRuntimeError) {
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
@@ -4182,4 +4183,13 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   }
 
   return {};
+}
+
+bool isTargetNVPTX(llvm::Module &M) {
+#if LLVM_VERSION_MAJOR > 20
+  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
+         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
+#else
+  return M.getTargetTriple().find("nvptx") != std::string::npos;
+#endif
 }

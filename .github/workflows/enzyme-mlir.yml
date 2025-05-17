@@ -19,7 +19,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [openstack22]
+        os: [openstack22-large]
 
     timeout-minutes: 500
 
@@ -36,7 +36,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
-        ref: 'ff24e9a19e3db330dd6412aac9d1d6c0b416697f'
+        ref: '8d8a3d9fdcbe823b94e2821b7beb8ead5288b14e'
         path: 'llvm-project'
 
     - name: Get MLIR commit hash

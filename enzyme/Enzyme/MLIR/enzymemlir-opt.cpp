@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
   // Register the standard passes we want.
   mlir::registerCSEPass();
   mlir::registerMem2RegPass();
-  mlir::registerConvertAffineToStandardPass();
+  mlir::registerLowerAffinePass();
   mlir::registerSCCPPass();
   mlir::registerInlinerPass();
   mlir::registerCanonicalizerPass();
@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
   mlir::registerConvertSCFToOpenMPPass();
   mlir::registerSCFToControlFlowPass();
   mlir::affine::registerAffinePasses();
-  mlir::registerReconcileUnrealizedCasts();
+  mlir::registerReconcileUnrealizedCastsPass();
 
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);

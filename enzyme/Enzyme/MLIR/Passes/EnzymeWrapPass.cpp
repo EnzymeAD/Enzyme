@@ -76,6 +76,7 @@ struct DifferentiateWrapperPass
     auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
     std::string postpasses = "";
+    bool verifyPostPasses = true;
 
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
@@ -91,11 +92,11 @@ struct DifferentiateWrapperPass
     std::vector<DIFFE_TYPE> RetActivity =
         parseActivityString(retTys.getValue());
     if (RetActivity.size() !=
-        fn.getFunctionType().cast<FunctionType>().getNumResults()) {
+        cast<FunctionType>(fn.getFunctionType()).getNumResults()) {
       fn->emitError()
           << "Incorrect number of ret activity states for function, found "
           << RetActivity.size() << " expected "
-          << fn.getFunctionType().cast<FunctionType>().getNumResults();
+          << cast<FunctionType>(fn.getFunctionType()).getNumResults();
       return;
     }
     std::vector<bool> returnPrimal;
@@ -119,17 +120,17 @@ struct DifferentiateWrapperPass
 
     FunctionOpInterface newFunc;
     if (mode == DerivativeMode::ForwardMode) {
-      newFunc = Logic.CreateForwardDiff(fn, RetActivity, ArgActivity, TA,
-                                        returnPrimal, mode, freeMemory, width,
-                                        /*addedType*/ nullptr, type_args,
-                                        volatile_args,
-                                        /*augmented*/ nullptr, omp, postpasses);
+      newFunc = Logic.CreateForwardDiff(
+          fn, RetActivity, ArgActivity, TA, returnPrimal, mode, freeMemory,
+          width,
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses);
     } else {
       newFunc = Logic.CreateReverseDiff(
           fn, RetActivity, ArgActivity, TA, returnPrimal, returnShadow, mode,
           freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr, omp, postpasses);
+          /*augmented*/ nullptr, omp, postpasses, verifyPostPasses);
     }
     if (!newFunc) {
       signalPassFailure();

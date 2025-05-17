@@ -187,7 +187,7 @@ inline void emitBlasDiffUse(const RecordKeeper &RK, llvm::raw_ostream &os) {
   os << "          gutils->overwritten_args_map_ptr->find(const_cast<CallInst "
         "*>(CI));\n";
   os << "        assert(found != gutils->overwritten_args_map_ptr->end());\n";
-  os << "        overwritten_args_ptr = &found->second;\n";
+  os << "        overwritten_args_ptr = &found->second.second;\n";
   os << "      }\n";
   os << "      BlasInfo blas = *blasMetaData;\n";
   for (auto &&newPattern : newBlasPatterns) {

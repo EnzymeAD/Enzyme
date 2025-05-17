@@ -3616,12 +3616,26 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
           }
         }
       } else if (auto SI = dyn_cast<SwitchInst>(TI)) {
-        auto NSI = NB.CreateSwitch(
-            lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
-            remap(SI->getDefaultDest()));
-        for (auto cas : SI->cases()) {
-          if (!notForAnalysis.count(cas.getCaseSuccessor()))
-            NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
+        BasicBlock *newDest = nullptr;
+        if (!notForAnalysis.count(SI->getDefaultDest()))
+          newDest = remap(SI->getDefaultDest());
+        else {
+          for (auto cas : SI->cases()) {
+            if (!notForAnalysis.count(cas.getCaseSuccessor()))
+              newDest = remap(cas.getCaseSuccessor());
+            break;
+          }
+        }
+        if (!newDest) {
+          NB.CreateUnreachable();
+        } else {
+          auto NSI = NB.CreateSwitch(
+              lookupM(getNewFromOriginal(SI->getCondition()), NB, available),
+              newDest);
+          for (auto cas : SI->cases()) {
+            if (!notForAnalysis.count(cas.getCaseSuccessor()))
+              NSI->addCase(cas.getCaseValue(), remap(cas.getCaseSuccessor()));
+          }
         }
       } else {
         assert(isa<UnreachableInst>(TI));
@@ -4618,6 +4632,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         isRealloc = true;
     }
   }
+
+  bool subsequent_calls_may_write = mode != DerivativeMode::ForwardMode &&
+                                    mode != DerivativeMode::ForwardModeError;
   std::vector<bool> overwritten_args;
   FnTypeInfo type_args(fn);
   if (isRealloc) {
@@ -4685,7 +4702,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        runtimeActivity, width, nullptr, type_args, overwritten_args,
+        runtimeActivity, width, nullptr, type_args, subsequent_calls_may_write,
+        overwritten_args,
         /*augmented*/ nullptr);
 
     assert(newf);
@@ -4714,11 +4732,13 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         context, fn, retType, /*constant_args*/ types, TA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
-        /*shadowReturnUsed*/ false, type_args, overwritten_args,
+        /*shadowReturnUsed*/ false, type_args, subsequent_calls_may_write,
+        overwritten_args,
         /*forceAnonymousTape*/ true, runtimeActivity, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         context, fn, retType, types, TA, false, mode, /*freeMemory*/ true,
-        runtimeActivity, width, nullptr, type_args, overwritten_args,
+        runtimeActivity, width, nullptr, type_args, subsequent_calls_may_write,
+        overwritten_args,
         /*augmented*/ &augdata);
 
     assert(newf);
@@ -4756,13 +4776,16 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                            retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         context, fn, retType, /*constant_args*/ types, TA, returnUsed,
-        shadowReturnUsed, type_args, overwritten_args,
+        shadowReturnUsed, type_args, subsequent_calls_may_write,
+        overwritten_args,
         /*forceAnonymousTape*/ true, runtimeActivity, width, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         context,
         (ReverseCacheKey){.todiff = fn,
                           .retType = retType,
                           .constant_args = types,
+                          .subsequent_calls_may_write =
+                              subsequent_calls_may_write,
                           .overwritten_args = overwritten_args,
                           .returnUsed = false,
                           .shadowReturnUsed = false,

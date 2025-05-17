@@ -169,7 +169,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
     for (int i = 0; i < 2; i++)
       if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
         addFunctionNoCapture(&F, i);
-        F.addParamAttr(i, Attribute::WriteOnly);
+        F.addParamAttr(i, Attribute::ReadOnly);
       }
   }
 
@@ -739,6 +739,7 @@ public:
     StringSet<> ActiveRandomVariables;
     std::vector<bool> overwritten_args;
     bool runtimeActivity;
+    bool subsequent_calls_may_write;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -773,6 +774,10 @@ public:
     unsigned byRefSize = 0;
     bool primalReturn = false;
     bool runtimeActivity = false;
+    bool subsequent_calls_may_write =
+        mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError &&
+        mode != DerivativeMode::ReverseModeCombined;
     StringSet<> ActiveRandomVariables;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
@@ -1353,11 +1358,26 @@ public:
       return {};
     }
 
-    return Options({differet, tape, dynamic_interface, trace, observations,
-                    likelihood, diffeLikelihood, width, allocatedTapeSize,
-                    freeMemory, returnUsed, tapeIsPointer, differentialReturn,
-                    diffeTrace, retType, primalReturn, ActiveRandomVariables,
-                    overwritten_args, runtimeActivity});
+    return Options({differet,
+                    tape,
+                    dynamic_interface,
+                    trace,
+                    observations,
+                    likelihood,
+                    diffeLikelihood,
+                    width,
+                    allocatedTapeSize,
+                    freeMemory,
+                    returnUsed,
+                    tapeIsPointer,
+                    differentialReturn,
+                    diffeTrace,
+                    retType,
+                    primalReturn,
+                    ActiveRandomVariables,
+                    overwritten_args,
+                    runtimeActivity,
+                    subsequent_calls_may_write});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -1670,6 +1690,7 @@ public:
     auto &retType = options.retType;
     auto &overwritten_args = options.overwritten_args;
     auto primalReturn = options.primalReturn;
+    auto subsequent_calls_may_write = options.subsequent_calls_may_write;
 
     auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
@@ -1698,7 +1719,8 @@ public:
             context, fn, retType, constants, TA,
             /*should return*/ primalReturn, mode, freeMemory,
             options.runtimeActivity, width,
-            /*addedType*/ nullptr, type_args, overwritten_args,
+            /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
+            overwritten_args,
             /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
@@ -1706,7 +1728,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          overwritten_args, forceAnonymousTape, options.runtimeActivity, width,
+          subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
+          options.runtimeActivity, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1744,7 +1767,8 @@ public:
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory,
           options.runtimeActivity, width,
-          /*addedType*/ tapeType, type_args, overwritten_args, aug);
+          /*addedType*/ tapeType, type_args, subsequent_calls_may_write,
+          overwritten_args, aug);
       break;
     }
     case DerivativeMode::ReverseModeCombined:
@@ -1754,6 +1778,8 @@ public:
           (ReverseCacheKey){.todiff = fn,
                             .retType = retType,
                             .constant_args = constants,
+                            .subsequent_calls_may_write =
+                                subsequent_calls_may_write,
                             .overwritten_args = overwritten_args,
                             .returnUsed = primalReturn,
                             .shadowReturnUsed = false,
@@ -1779,8 +1805,8 @@ public:
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
-          type_args, overwritten_args, forceAnonymousTape,
-          options.runtimeActivity, width,
+          type_args, subsequent_calls_may_write, overwritten_args,
+          forceAnonymousTape, options.runtimeActivity, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1822,6 +1848,8 @@ public:
             (ReverseCacheKey){.todiff = fn,
                               .retType = retType,
                               .constant_args = constants,
+                              .subsequent_calls_may_write =
+                                  subsequent_calls_may_write,
                               .overwritten_args = overwritten_args,
                               .returnUsed = false,
                               .shadowReturnUsed = false,
@@ -1919,6 +1947,22 @@ public:
       return false;
     }
     assert(args.size() == newFunc->getFunctionType()->getNumParams());
+    for (size_t i = 0; i < args.size(); i++) {
+      if (args[i]->getType() != newFunc->getFunctionType()->getParamType(i)) {
+        llvm::errs() << *CI << "\n";
+        llvm::errs() << *newFunc << "\n";
+        for (auto arg : args) {
+          llvm::errs() << " + " << *arg << "\n";
+        }
+        auto modestr = to_string(mode);
+        EmitFailure("BadArgumentType", CI->getDebugLoc(), CI,
+                    "Incorrect argument type passed to __enzyme_autodiff mode=",
+                    modestr, " at index ", i, " expected ",
+                    *newFunc->getFunctionType()->getParamType(i), " found ",
+                    *args[i]->getType());
+        return false;
+      }
+    }
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
@@ -3665,10 +3709,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-  augmentPassBuilder(PB);
-#endif
+extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
+                                              bool augment = false) {
+  if (augment) {
+    augmentPassBuilder(PB);
+  }
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -3705,6 +3750,14 @@ extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
         }
         return false;
       });
+}
+
+extern "C" void registerEnzyme(llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+  registerEnzymeAndPassPipeline(PB, /*augment*/ true);
+#else
+  registerEnzymeAndPassPipeline(PB, /*augment*/ false);
+#endif
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
