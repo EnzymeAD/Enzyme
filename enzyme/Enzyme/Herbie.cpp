@@ -4025,7 +4025,9 @@ bool improveViaHerbie(
     if (llvm::sys::fs::createUniqueDirectory("herbie_output_%%%%%%%%%%%%%%%%",
                                              tmpout)) {
       llvm::errs() << "Failed to create a unique output directory.\n";
-      llvm::sys::fs::remove(tmpin);
+      if (auto EC = llvm::sys::fs::remove(tmpin))
+        llvm::errs() << "Warning: Failed to remove temporary input file: "
+                     << EC.message() << "\n";
       continue;
     }
 
