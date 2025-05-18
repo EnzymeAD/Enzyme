@@ -875,7 +875,7 @@ void topoSort(const SetVector<Instruction *> &insts,
     }
   }
 
-  llvm::reverse(instsSorted);
+  std::reverse(instsSorted.begin(), instsSorted.end());
 }
 
 enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
@@ -1099,8 +1099,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
     if (calledFunc && calledFunc->isIntrinsic()) {
       Intrinsic::ID intrinsicID = calledFunc->getIntrinsicID();
       if (intrinsicID != Intrinsic::not_intrinsic) {
-        Function *newFunc =
-            Intrinsic::getDeclaration(CI->getModule(), intrinsicID, newType);
+        Function *newFunc = Intrinsic::getOrInsertDeclaration(
+            CI->getModule(), intrinsicID, newType);
         newI = Builder.CreateCall(newFunc, newArgs);
       } else {
         llvm::errs() << "PT: Unknown intrinsic: " << *CI << "\n";
@@ -4669,7 +4669,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue().value()) &&
+                            otherCompCost.getValue()) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4770,7 +4770,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue().value()) &&
+                            otherCompCost.getValue()) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4808,7 +4808,7 @@ bool accuracyDPSolver(
 
     json::Object costAccMap;
     for (const auto &pair : costToAccuracyMap) {
-      costAccMap[std::to_string(pair.first.getValue().value())] = pair.second;
+      costAccMap[std::to_string(pair.first.getValue())] = pair.second;
     }
     jsonObj["costToAccuracyMap"] = std::move(costAccMap);
 
@@ -4835,8 +4835,7 @@ bool accuracyDPSolver(
             step.item);
         stepsArray.push_back(std::move(stepObj));
       }
-      costSolMap[std::to_string(pair.first.getValue().value())] =
-          std::move(stepsArray);
+      costSolMap[std::to_string(pair.first.getValue())] = std::move(stepsArray);
     }
     jsonObj["costToSolutionMap"] = std::move(costSolMap);
 
@@ -4913,7 +4912,7 @@ bool accuracyDPSolver(
   if (!llvm::sys::fs::exists(budgetsFile)) {
     std::string budgetsStr;
     for (const auto &pair : costToAccuracyMap) {
-      budgetsStr += std::to_string(pair.first.getValue().value()) + ",";
+      budgetsStr += std::to_string(pair.first.getValue()) + ",";
     }
 
     if (!budgetsStr.empty())
