@@ -3905,12 +3905,94 @@ bool improveViaHerbie(
 
   bool success = false;
 
+  auto processHerbieOutput = [&](const std::string &content) -> bool {
+    Expected<json::Value> parsed = json::parse(content);
+    if (!parsed) {
+      llvm::errs() << "Failed to parse Herbie result!\n";
+      return false;
+    }
+
+    json::Object *obj = parsed->getAsObject();
+    json::Array &tests = *obj->getArray("tests");
+
+    for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
+      auto &test = *tests[testIndex].getAsObject();
+
+      StringRef bestExpr = test.getString("output").value();
+      if (bestExpr == "#f") {
+        continue;
+      }
+
+      StringRef ID = test.getString("name").value();
+      int index = std::stoi(ID.str());
+      if (index >= AOs.size()) {
+        llvm::errs() << "Invalid AO index: " << index << "\n";
+        continue;
+      }
+
+      ApplicableOutput &AO = AOs[index];
+      auto &seenExprSet = seenExprs[index];
+
+      double bits = test.getNumber("bits").value();
+      json::Array &costAccuracy = *test.getArray("cost-accuracy");
+
+      json::Array &initial = *costAccuracy[0].getAsArray();
+      double initialCostVal = initial[0].getAsNumber().value();
+      double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
+      double initialCost = 1.0;
+
+      AO.initialHerbieCost = initialCost;
+      AO.initialHerbieAccuracy = initialAccuracy;
+
+      if (seenExprSet.count(bestExpr.str()) == 0) {
+        seenExprSet.insert(bestExpr.str());
+
+        json::Array &best = *costAccuracy[1].getAsArray();
+        double bestCost = best[0].getAsNumber().value() / initialCostVal;
+        double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
+
+        RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
+        bestCandidate.CompCost = getCompCost(
+            bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+            cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        AO.candidates.push_back(bestCandidate);
+      }
+
+      json::Array &alternatives = *costAccuracy[2].getAsArray();
+
+      // Handle alternatives
+      for (size_t j = 0; j < alternatives.size(); ++j) {
+        json::Array &entry = *alternatives[j].getAsArray();
+        StringRef expr = entry[2].getAsString().value();
+
+        if (seenExprSet.count(expr.str()) != 0) {
+          continue;
+        }
+        seenExprSet.insert(expr.str());
+
+        double cost = entry[0].getAsNumber().value() / initialCostVal;
+        double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
+
+        RewriteCandidate candidate(cost, accuracy, expr.str());
+        candidate.CompCost =
+            getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                        cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        AO.candidates.push_back(candidate);
+      }
+
+      setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
+    }
+    return true;
+  };
+
   for (size_t baseArgsIndex = 0; baseArgsIndex < BaseArgsList.size();
        ++baseArgsIndex) {
     const auto &BaseArgs = BaseArgsList[baseArgsIndex];
     std::string content;
-    bool cached = false;
+
+    // Try to get cached Herbie output first
     std::string cacheFilePath;
+    bool cached = false;
 
     if (!FPOptCachePath.empty()) {
       cacheFilePath = FPOptCachePath + "/cachedHerbieOutput_" +
@@ -3927,93 +4009,16 @@ bool improveViaHerbie(
       }
     }
 
+    // If we have cached output, process it directly
     if (cached) {
       llvm::errs() << "Herbie output: " << content << "\n";
-
-      Expected<json::Value> parsed = json::parse(content);
-      if (!parsed) {
-        llvm::errs() << "Failed to parse Herbie result!\n";
-        continue;
-      }
-
-      json::Object *obj = parsed->getAsObject();
-      json::Array &tests = *obj->getArray("tests");
-
-      for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
-        auto &test = *tests[testIndex].getAsObject();
-
-        StringRef bestExpr = test.getString("output").value();
-        StringRef ID = test.getString("name").value();
-
-        if (bestExpr == "#f") {
-          continue;
-        }
-
-        int index = std::stoi(ID.str());
-        if (index >= AOs.size()) {
-          llvm::errs() << "Invalid AO index: " << index << "\n";
-          continue;
-        }
-
-        ApplicableOutput &AO = AOs[index];
-        auto &seenExprSet = seenExprs[index];
-
-        double bits = test.getNumber("bits").value();
-        json::Array &costAccuracy = *test.getArray("cost-accuracy");
-
-        json::Array &initial = *costAccuracy[0].getAsArray();
-        double initialCost = 1.0;
-        double initialCostVal = initial[0].getAsNumber().value();
-        double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
-
-        AO.initialHerbieCost = initialCost;
-        AO.initialHerbieAccuracy = initialAccuracy;
-
-        if (seenExprSet.count(bestExpr.str()) == 0) {
-          seenExprSet.insert(bestExpr.str());
-
-          json::Array &best = *costAccuracy[1].getAsArray();
-          double bestCost = best[0].getAsNumber().value() / initialCostVal;
-          double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
-
-          RewriteCandidate bestCandidate(bestCost, bestAccuracy,
-                                         bestExpr.str());
-          bestCandidate.CompCost = getCompCost(
-              bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-              cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-          AO.candidates.push_back(bestCandidate);
-        }
-
-        json::Array &alternatives = *costAccuracy[2].getAsArray();
-
-        // Handle alternatives
-        for (size_t j = 0; j < alternatives.size(); ++j) {
-          json::Array &entry = *alternatives[j].getAsArray();
-          StringRef expr = entry[2].getAsString().value();
-
-          if (seenExprSet.count(expr.str()) != 0) {
-            continue;
-          }
-          seenExprSet.insert(expr.str());
-
-          double cost = entry[0].getAsNumber().value() / initialCostVal;
-          double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
-
-          RewriteCandidate candidate(cost, accuracy, expr.str());
-          candidate.CompCost =
-              getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-          AO.candidates.push_back(candidate);
-        }
-
-        setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
-
+      if (processHerbieOutput(content)) {
         success = true;
       }
-
       continue;
     }
 
+    // No cached result, need to run Herbie
     SmallString<32> tmpin, tmpout;
 
     if (llvm::sys::fs::createUniqueFile("herbie_input_%%%%%%%%%%%%%%%%", tmpin,
@@ -4098,6 +4103,7 @@ bool improveViaHerbie(
 
     llvm::errs() << "Herbie output: " << content << "\n";
 
+    // Save output to cache if needed
     if (!FPOptCachePath.empty()) {
       if (auto EC = llvm::sys::fs::create_directories(FPOptCachePath, true))
         llvm::errs() << "Warning: Could not create cache directory: "
@@ -4113,83 +4119,8 @@ bool improveViaHerbie(
       }
     }
 
-    Expected<json::Value> parsed = json::parse(content);
-    if (!parsed) {
-      llvm::errs() << "Failed to parse Herbie result!\n";
-      continue;
-    }
-
-    json::Object *obj = parsed->getAsObject();
-    json::Array &tests = *obj->getArray("tests");
-
-    for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
-      auto &test = *tests[testIndex].getAsObject();
-
-      StringRef bestExpr = test.getString("output").value();
-
-      if (bestExpr == "#f") {
-        continue;
-      }
-
-      StringRef ID = test.getString("name").value();
-      int index = std::stoi(ID.str());
-      if (index >= AOs.size()) {
-        llvm::errs() << "Invalid AO index: " << index << "\n";
-        continue;
-      }
-
-      ApplicableOutput &AO = AOs[index];
-      auto &seenExprSet = seenExprs[index];
-
-      double bits = test.getNumber("bits").value();
-      json::Array &costAccuracy = *test.getArray("cost-accuracy");
-
-      json::Array &initial = *costAccuracy[0].getAsArray();
-      double initialCostVal = initial[0].getAsNumber().value();
-      double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
-      double initialCost = 1.0;
-
-      AO.initialHerbieCost = initialCost;
-      AO.initialHerbieAccuracy = initialAccuracy;
-
-      if (seenExprSet.count(bestExpr.str()) == 0) {
-        seenExprSet.insert(bestExpr.str());
-
-        json::Array &best = *costAccuracy[1].getAsArray();
-        double bestCost = best[0].getAsNumber().value() / initialCostVal;
-        double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
-
-        RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
-        bestCandidate.CompCost = getCompCost(
-            bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-            cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-        AO.candidates.push_back(bestCandidate);
-      }
-
-      json::Array &alternatives = *costAccuracy[2].getAsArray();
-
-      // Handle alternatives
-      for (size_t j = 0; j < alternatives.size(); ++j) {
-        json::Array &entry = *alternatives[j].getAsArray();
-        StringRef expr = entry[2].getAsString().value();
-
-        if (seenExprSet.count(expr.str()) != 0) {
-          continue;
-        }
-        seenExprSet.insert(expr.str());
-
-        double cost = entry[0].getAsNumber().value() / initialCostVal;
-        double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
-
-        RewriteCandidate candidate(cost, accuracy, expr.str());
-        candidate.CompCost =
-            getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-                        cast<Instruction>(AO.oldOutput)->getFastMathFlags());
-        AO.candidates.push_back(candidate);
-      }
-
-      setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
-
+    // Process the output
+    if (processHerbieOutput(content)) {
       success = true;
     }
   }
