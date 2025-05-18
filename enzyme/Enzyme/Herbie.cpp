@@ -188,6 +188,13 @@ static cl::opt<int64_t> FPOptComputationCostBudget(
 static cl::opt<unsigned> FPOptMaxFPCCDepth(
     "fpopt-max-fpcc-depth", cl::init(99999), cl::Hidden,
     cl::desc("The maximum depth of a floating-point connected component"));
+static cl::opt<unsigned> FPOptMaxExprDepth(
+    "fpopt-max-expr-depth", cl::init(100), cl::Hidden,
+    cl::desc(
+        "The maximum depth of expression construction; abort if exceeded"));
+static cl::opt<unsigned> FPOptMaxExprLength(
+    "fpopt-max-expr-length", cl::init(10000), cl::Hidden,
+    cl::desc("The maximum length of an expression; abort if exceeded"));
 static cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
                     cl::desc("The random seed used in the FPOpt pass"));
@@ -268,7 +275,8 @@ public:
   }
 
   virtual std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+      unsigned depth = 0) {
     std::string msg = "Unexpected invocation of `toFullExpression` on an "
                       "unmaterialized " +
                       op + " FPNode";
@@ -690,16 +698,26 @@ public:
   bool hasSymbol() const override { return !symbol.empty(); }
 
   std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
-      override {
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+      unsigned depth = 0) override {
     if (input) {
       assert(hasSymbol() && "FPLLValue has no symbol!");
       return symbol;
     } else {
       assert(!operands.empty() && "FPNode has no operands!");
+
+      if (depth > FPOptMaxExprDepth) {
+        std::string msg =
+            "Expression depth exceeded maximum allowed depth of " +
+            std::to_string(FPOptMaxExprDepth) + " for " + op +
+            "; consider disabling loop unrolling";
+
+        llvm_unreachable(msg.c_str());
+      }
+
       std::string expr = "(" + (op == "neg" ? "-" : op);
       for (auto operand : operands) {
-        expr += " " + operand->toFullExpression(valueToNodeMap);
+        expr += " " + operand->toFullExpression(valueToNodeMap, depth + 1);
       }
       expr += ")";
       return expr;
@@ -757,8 +775,8 @@ public:
       : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
   std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
-      override {
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+      unsigned depth = 0) override {
     return strValue;
   }
 
@@ -2915,11 +2933,16 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
   }
 
   // find the shortest distance from inputs to each operation
-  for (auto &input : CC.inputs) {
+  for (auto input : CC.inputs) {
+    if (isa<Constant>(input)) {
+      continue;
+    }
+
     SmallVector<std::pair<Instruction *, int>, 8> todo;
     for (auto user : input->users()) {
-      if (auto *I = dyn_cast<Instruction>(user); I && CC.operations.count(I)) {
-        todo.emplace_back(I, 1);
+      if (auto *I = dyn_cast<Instruction>(user)) {
+        if (CC.operations.count(I))
+          todo.emplace_back(I, 1);
       }
     }
 
@@ -2967,7 +2990,7 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
       auto operands =
           isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
       for (auto &operand : operands) {
-        if (newCC.inputs.count(operand) || isa<ConstantFP>(operand)) {
+        if (newCC.inputs.count(operand) || isa<Constant>(operand)) {
           continue;
         }
 
@@ -5528,6 +5551,13 @@ B2:
             "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
         if (EnzymePrintHerbie)
           llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+
+        if (herbieInput.length() > FPOptMaxExprLength) {
+          llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
+                       << " since expression length exceeds limit of "
+                       << FPOptMaxExprLength << "\n";
+          continue;
+        }
 
         herbieInputs.push_back(herbieInput);
         newAOs.push_back(AO);
