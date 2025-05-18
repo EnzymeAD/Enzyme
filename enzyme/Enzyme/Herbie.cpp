@@ -6,20 +6,15 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
 #include "llvm/Demangle/Demangle.h"
 
-#include "llvm/ExecutionEngine/Orc/LLJIT.h"
-#include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
-
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
@@ -31,7 +26,6 @@
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
@@ -45,11 +39,9 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
-#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <limits>
-#include <numeric>
 #include <random>
 #include <regex>
 #include <sstream>
@@ -4040,8 +4032,12 @@ bool improveViaHerbie(
     std::ofstream input(tmpin.c_str());
     if (!input) {
       llvm::errs() << "Failed to open input file.\n";
-      llvm::sys::fs::remove(tmpin);
-      llvm::sys::fs::remove(tmpout);
+      if (auto EC = llvm::sys::fs::remove(tmpin))
+        llvm::errs() << "Warning: Failed to remove temporary input file: "
+                     << EC.message() << "\n";
+      if (auto EC = llvm::sys::fs::remove(tmpout))
+        llvm::errs() << "Warning: Failed to remove temporary output directory: "
+                     << EC.message() << "\n";
       continue;
     }
     for (const auto &expr : inputExprs) {
@@ -4077,25 +4073,33 @@ bool improveViaHerbie(
     std::remove(tmpin.c_str());
     if (ExecutionFailed) {
       llvm::errs() << "Execution failed: " << ErrMsg << "\n";
-      llvm::sys::fs::remove(tmpout);
+      if (auto EC = llvm::sys::fs::remove(tmpout))
+        llvm::errs() << "Warning: Failed to remove temporary output directory: "
+                     << EC.message() << "\n";
       continue;
     }
 
     std::ifstream output((tmpout + "/results.json").str());
     if (!output) {
       llvm::errs() << "Failed to open output file.\n";
-      llvm::sys::fs::remove(tmpout);
+      if (auto EC = llvm::sys::fs::remove(tmpout))
+        llvm::errs() << "Warning: Failed to remove temporary output directory: "
+                     << EC.message() << "\n";
       continue;
     }
     content.assign((std::istreambuf_iterator<char>(output)),
                    std::istreambuf_iterator<char>());
     output.close();
-    llvm::sys::fs::remove(tmpout.c_str());
+    if (auto EC = llvm::sys::fs::remove(tmpout))
+      llvm::errs() << "Warning: Failed to remove temporary output directory: "
+                   << EC.message() << "\n";
 
     llvm::errs() << "Herbie output: " << content << "\n";
 
     if (!FPOptCachePath.empty()) {
-      llvm::sys::fs::create_directories(FPOptCachePath, true);
+      if (auto EC = llvm::sys::fs::create_directories(FPOptCachePath, true))
+        llvm::errs() << "Warning: Could not create cache directory: "
+                     << EC.message() << "\n";
       std::ofstream cacheFile(cacheFilePath);
       if (!cacheFile) {
         llvm_unreachable("Failed to open cache file for writing");
@@ -5087,7 +5091,9 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   }
 
   if (!FPOptCachePath.empty()) {
-    llvm::sys::fs::create_directories(FPOptCachePath, true);
+    if (auto EC = llvm::sys::fs::create_directories(FPOptCachePath, true))
+      llvm::errs() << "Warning: Could not create cache directory: "
+                   << EC.message() << "\n";
   }
 
   // F.print(llvm::errs());
