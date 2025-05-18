@@ -1180,8 +1180,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
 struct PTCandidate {
   // Only one PT candidate per FPCC can be applied
   SmallVector<PrecisionChange, 1> changes;
-  double accuracyCost;
-  InstructionCost CompCost;
+  double accuracyCost = std::numeric_limits<double>::quiet_NaN();
+  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
   std::string desc;
   std::unordered_map<FPNode *, double> perOutputAccCost;
   std::unordered_map<FPNode *, SmallVector<double, 4>> errors;
@@ -5568,6 +5568,13 @@ B2:
 
       const auto &PTFuncs = getPTFuncs();
 
+      // Check if we have a cached DP table
+      bool cached = false;
+      std::string cacheFilePath = FPOptCachePath + "/table.json";
+      if (!FPOptCachePath.empty() && llvm::sys::fs::exists(cacheFilePath)) {
+        cached = true;
+      }
+
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
@@ -5617,7 +5624,12 @@ B2:
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
-          candidate.CompCost = getCompCost(component, TTI, candidate);
+
+          // Skip candidate evaluation if we have a cached DP table
+          if (!cached) {
+            candidate.CompCost = getCompCost(component, TTI, candidate);
+          }
+
           ACC.candidates.push_back(std::move(candidate));
         }
       }
@@ -5661,12 +5673,20 @@ B2:
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
-          candidate.CompCost = getCompCost(component, TTI, candidate);
+
+          // Skip candidate evaluation if we have a cached DP table
+          if (!cached) {
+            candidate.CompCost = getCompCost(component, TTI, candidate);
+          }
+
           ACC.candidates.push_back(std::move(candidate));
         }
       }
 
-      setUnifiedAccuracyCost(ACC, valueToNodeMap, symbolToValueMap);
+      // Skip candidate evaluation if we have a cached DP table
+      if (!cached) {
+        setUnifiedAccuracyCost(ACC, valueToNodeMap, symbolToValueMap);
+      }
 
       ACCs.push_back(std::move(ACC));
     }
