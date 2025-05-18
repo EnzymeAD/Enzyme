@@ -2936,10 +2936,10 @@ InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
 
 struct RewriteCandidate {
   // Only one rewrite candidate per output `llvm::Value` can be applied
-  InstructionCost CompCost;
-  double herbieCost; // Unused for now
-  double herbieAccuracy;
-  double accuracyCost;
+  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
+  double herbieCost = std::numeric_limits<double>::quiet_NaN();
+  double herbieAccuracy = std::numeric_limits<double>::quiet_NaN();
+  double accuracyCost = std::numeric_limits<double>::quiet_NaN();
   std::string expr;
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
@@ -3078,13 +3078,14 @@ public:
   FPCC *component;
   Value *oldOutput;
   std::string expr;
-  double grad;
-  unsigned executions;
-  const TargetTransformInfo *TTI;
-  double initialAccCost;           // Requires manual initialization
-  InstructionCost initialCompCost; // Requires manual initialization
-  double initialHerbieCost;        // Requires manual initialization
-  double initialHerbieAccuracy;    // Requires manual initialization
+  double grad = std::numeric_limits<double>::quiet_NaN();
+  unsigned executions = 0;
+  const TargetTransformInfo *TTI = nullptr;
+  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
+  InstructionCost initialCompCost =
+      std::numeric_limits<InstructionCost>::quiet_NaN();
+  double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
+  double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   SmallVector<RewriteCandidate> candidates;
   SmallPtrSet<Instruction *, 8> erasableInsts;
 
@@ -3211,9 +3212,10 @@ class ApplicableFPCC {
 public:
   FPCC *component;
   const TargetTransformInfo &TTI;
-  double initialAccCost; // Requires manual initialization
-  InstructionCost initialCompCost;
-  unsigned executions; // Requires manual initialization
+  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
+  InstructionCost initialCompCost =
+      std::numeric_limits<InstructionCost>::quiet_NaN();
+  unsigned executions = 0;
   std::unordered_map<FPNode *, double> perOutputInitialAccCost;
 
   SmallVector<PTCandidate, 8> candidates;
@@ -3905,7 +3907,8 @@ bool improveViaHerbie(
 
   bool success = false;
 
-  auto processHerbieOutput = [&](const std::string &content) -> bool {
+  auto processHerbieOutput = [&](const std::string &content,
+                                 bool skipEvaluation = false) -> bool {
     Expected<json::Value> parsed = json::parse(content);
     if (!parsed) {
       llvm::errs() << "Failed to parse Herbie result!\n";
@@ -3952,9 +3955,11 @@ bool improveViaHerbie(
         double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
 
         RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
-        bestCandidate.CompCost = getCompCost(
-            bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-            cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        if (!skipEvaluation) {
+          bestCandidate.CompCost = getCompCost(
+              bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+              cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        }
         AO.candidates.push_back(bestCandidate);
       }
 
@@ -3974,13 +3979,17 @@ bool improveViaHerbie(
         double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
 
         RewriteCandidate candidate(cost, accuracy, expr.str());
-        candidate.CompCost =
-            getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-                        cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        if (!skipEvaluation) {
+          candidate.CompCost =
+              getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
+                          cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+        }
         AO.candidates.push_back(candidate);
       }
 
-      setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
+      if (!skipEvaluation) {
+        setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
+      }
     }
     return true;
   };
@@ -4012,7 +4021,8 @@ bool improveViaHerbie(
     // If we have cached output, process it directly
     if (cached) {
       llvm::errs() << "Herbie output: " << content << "\n";
-      if (processHerbieOutput(content)) {
+      // Skip evaluation for cached results
+      if (processHerbieOutput(content, true)) {
         success = true;
       }
       continue;
