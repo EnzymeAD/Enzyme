@@ -487,6 +487,24 @@ public:
             {"pow",
              [](IRBuilder<> &b, Module *M,
                 const SmallVectorImpl<Value *> &ops) -> Value * {
+               // Use powi when possible
+               if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
+                 double value = CF->getValueAPF().convertToDouble();
+                 if (value == std::floor(value) && value >= INT_MIN &&
+                     value <= INT_MAX) {
+                   int exp = static_cast<int>(value);
+                   SmallVector<Type *, 1> overloadedTypes = {
+                       ops[0]->getType(), Type::getInt32Ty(M->getContext())};
+                   Function *powiFunc = Intrinsic::getOrInsertDeclaration(
+                       M, Intrinsic::powi, overloadedTypes);
+
+                   Value *exponent =
+                       ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
+                   return b.CreateCall(powiFunc, {ops[0], exponent},
+                                       "herbie.powi");
+                 }
+               }
+
                return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
                                               nullptr, "herbie.pow");
              }},
@@ -1117,9 +1135,20 @@ void changePrecision(Instruction *I, PrecisionChange &change,
     if (calledFunc && calledFunc->isIntrinsic()) {
       Intrinsic::ID intrinsicID = calledFunc->getIntrinsicID();
       if (intrinsicID != Intrinsic::not_intrinsic) {
-        Function *newFunc = Intrinsic::getOrInsertDeclaration(
-            CI->getModule(), intrinsicID, newType);
-        newI = Builder.CreateCall(newFunc, newArgs);
+        // Special cases for intrinsics with mixed types
+        if (intrinsicID == Intrinsic::powi) {
+          // powi
+          SmallVector<Type *, 2> overloadedTypes;
+          overloadedTypes.push_back(newType);
+          overloadedTypes.push_back(CI->getArgOperand(1)->getType());
+          Function *newFunc = Intrinsic::getOrInsertDeclaration(
+              CI->getModule(), intrinsicID, overloadedTypes);
+          newI = Builder.CreateCall(newFunc, newArgs);
+        } else {
+          Function *newFunc = Intrinsic::getOrInsertDeclaration(
+              CI->getModule(), intrinsicID, newType);
+          newI = Builder.CreateCall(newFunc, newArgs);
+        }
       } else {
         llvm::errs() << "PT: Unknown intrinsic: " << *CI << "\n";
         llvm_unreachable("changePrecision: Unknown intrinsic call to change");
@@ -5553,7 +5582,8 @@ B2:
           llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
         if (herbieInput.length() > FPOptMaxExprLength) {
-          llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
+          llvm::errs() << "WARNING: Skipping Herbie optimization for "
+                       << *output
                        << " since expression length exceeds limit of "
                        << FPOptMaxExprLength << "\n";
           continue;
