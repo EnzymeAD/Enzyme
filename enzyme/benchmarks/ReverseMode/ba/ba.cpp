@@ -43,16 +43,12 @@ double sqsum(int n, double const* x)
     return res;
 }
 
-
-
-void cross(double const* a, double const* b, double* out)
-{
+void cross_restrict(double const *__restrict a, double const *__restrict b,
+                    double *__restrict out) {
     out[0] = a[1] * b[2] - a[2] * b[1];
     out[1] = a[2] * b[0] - a[0] * b[2];
     out[2] = a[0] * b[1] - a[1] * b[0];
 }
-
-
 
 /* ===================================================================== */
 /*                               MAIN LOGIC                              */
@@ -68,8 +64,9 @@ void cross(double const* a, double const* b, double* out)
 //  n = w / theta;
 //  n_x = au_cross_matrix(n);
 //  R = eye(3) + n_x*sin(theta) + n_x*n_x*(1 - cos(theta));
-void rodrigues_rotate_point(double const* __restrict rot, double const* __restrict pt, double *__restrict rotatedPt)
-{
+void rodrigues_rotate_point_restrict(double const *__restrict rot,
+                                     double const *__restrict pt,
+                                     double *__restrict rotatedPt) {
     int i;
     double sqtheta = sqsum(3, rot);
     if (sqtheta != 0)
@@ -87,7 +84,7 @@ void rodrigues_rotate_point(double const* __restrict rot, double const* __restri
             w[i] = rot[i] * theta_inverse;
         }
 
-        cross(w, pt, w_cross_pt);
+        cross_restrict(w, pt, w_cross_pt);
 
         tmp = (w[0] * pt[0] + w[1] * pt[1] + w[2] * pt[2]) *
             (1. - costheta);
@@ -100,7 +97,7 @@ void rodrigues_rotate_point(double const* __restrict rot, double const* __restri
     else
     {
         double rot_cross_pt[3];
-        cross(rot, pt, rot_cross_pt);
+        cross_restrict(rot, pt, rot_cross_pt);
 
         for (i = 0; i < 3; i++)
         {
@@ -108,8 +105,6 @@ void rodrigues_rotate_point(double const* __restrict rot, double const* __restri
         }
     }
 }
-
-
 
 void radial_distort(double const* rad_params, double *proj)
 {
@@ -120,10 +115,17 @@ void radial_distort(double const* rad_params, double *proj)
     proj[1] = proj[1] * L;
 }
 
-
-
-void project(double const* __restrict cam, double const* __restrict X, double* __restrict proj)
+void radial_distort_restrict(double const *__restrict rad_params, double *__restrict proj)
 {
+    double rsq, L;
+    rsq = sqsum(2, proj);
+    L = 1. + rad_params[0] * rsq + rad_params[1] * rsq * rsq;
+    proj[0] = proj[0] * L;
+    proj[1] = proj[1] * L;
+}
+
+void project_restrict(double const *__restrict cam, double const *__restrict X,
+                      double *__restrict proj) {
     double const* C = &cam[3];
     double Xo[3], Xcam[3];
 
@@ -131,18 +133,16 @@ void project(double const* __restrict cam, double const* __restrict X, double* _
     Xo[1] = X[1] - C[1];
     Xo[2] = X[2] - C[2];
 
-    rodrigues_rotate_point(&cam[0], Xo, Xcam);
+    rodrigues_rotate_point_restrict(&cam[0], Xo, Xcam);
 
     proj[0] = Xcam[0] / Xcam[2];
     proj[1] = Xcam[1] / Xcam[2];
 
-    radial_distort(&cam[9], proj);
+    radial_distort_restrict(&cam[9], proj);
 
     proj[0] = proj[0] * cam[6] + cam[7];
     proj[1] = proj[1] * cam[6] + cam[8];
 }
-
-
 
 // cam: 11 camera in format [r1 r2 r3 C1 C2 C3 f u0 v0 k1 k2]
 //            r1, r2, r3 are angle - axis rotation parameters(Rodrigues)
@@ -158,29 +158,22 @@ void project(double const* __restrict cam, double const* __restrict X, double* _
 // distorted = radial_distort(projective2euclidean(Xcam), radial_parameters)
 // proj = distorted * f + principal_point
 // err = sqsum(proj - measurement)
-void compute_reproj_error(
-    double const* __restrict cam,
-    double const* __restrict X,
-    double const* __restrict w,
-    double const* __restrict feat,
-    double * __restrict err
-)
-{
+void compute_reproj_error_restrict(double const *__restrict cam,
+                                   double const *__restrict X,
+                                   double const *__restrict w,
+                                   double const *__restrict feat,
+                                   double *__restrict err) {
     double proj[2];
-    project(cam, X, proj);
+    project_restrict(cam, X, proj);
 
     err[0] = (*w)*(proj[0] - feat[0]);
     err[1] = (*w)*(proj[1] - feat[1]);
 }
 
-
-
-void compute_zach_weight_error(double const* w, double* err)
-{
+void compute_zach_weight_error_restrict(double const *__restrict w,
+                                        double *__restrict err) {
     *err = 1 - (*w)*(*w);
 }
-
-
 
 // n number of cameras
 // m number of points
@@ -196,36 +189,23 @@ void compute_zach_weight_error(double const* w, double* err)
 // feats: 2*p features (x,y coordinates corresponding to observations)
 // reproj_err: 2*p errors of observations
 // w_err: p weight "error" terms
-void ba_objective(
-    int n,
-    int m,
-    int p,
-    double const* cams,
-    double const* X,
-    double const* w,
-    int const* obs,
-    double const* feats,
-    double* reproj_err,
-    double* w_err
-)
-{
+void ba_objective_restrict(int n, int m, int p, double const *cams,
+                           double const *X, double const *w, int const *obs,
+                           double const *feats, double *reproj_err,
+                           double *w_err) {
     int i;
     for (i = 0; i < p; i++)
     {
         int camIdx = obs[i * 2 + 0];
         int ptIdx = obs[i * 2 + 1];
-        compute_reproj_error(
-            &cams[camIdx * BA_NCAMPARAMS],
-            &X[ptIdx * 3],
-            &w[i],
-            &feats[i * 2],
-            &reproj_err[2 * i]
-        );
+        compute_reproj_error_restrict(&cams[camIdx * BA_NCAMPARAMS],
+                                      &X[ptIdx * 3], &w[i], &feats[i * 2],
+                                      &reproj_err[2 * i]);
     }
 
     for (i = 0; i < p; i++)
     {
-        compute_zach_weight_error(&w[i], &w_err[i]);
+        compute_zach_weight_error_restrict(&w[i], &w_err[i]);
     }
 }
 
@@ -234,32 +214,21 @@ extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 void __enzyme_autodiff(...) noexcept;
 
-void dcompute_reproj_error(
-    double const* cam,
-    double * dcam,
-    double const* X,
-    double * dX,
-    double const* w,
-    double * wb,
-    double const* feat,
-    double *err,
-    double *derr
-)
-{
-    __enzyme_autodiff(compute_reproj_error,
-            enzyme_dup, cam, dcam,
-            enzyme_dup, X, dX,
-            enzyme_dup, w, wb,
-            enzyme_const, feat,
-            enzyme_dupnoneed, err, derr);
+void dcompute_reproj_error_restrict(double const *cam, double *dcam,
+                                    double const *X, double *dX,
+                                    double const *w, double *wb,
+                                    double const *feat, double *err,
+                                    double *derr) {
+    __enzyme_autodiff(compute_reproj_error_restrict, enzyme_dup, cam, dcam,
+                      enzyme_dup, X, dX, enzyme_dup, w, wb, enzyme_const, feat,
+                      enzyme_dupnoneed, err, derr);
 }
 
-void dcompute_zach_weight_error(double const* w, double* dw, double* err, double* derr) {
-    __enzyme_autodiff(compute_zach_weight_error,
-            enzyme_dup, w, dw,
-            enzyme_dupnoneed, err, derr);
+void dcompute_zach_weight_error_restrict(double const *w, double *dw,
+                                         double *err, double *derr) {
+    __enzyme_autodiff(compute_zach_weight_error_restrict, enzyme_dup, w, dw,
+                      enzyme_dupnoneed, err, derr);
 }
-
 }
 
 
@@ -911,3 +880,5 @@ void adept_compute_zach_weight_error(double const* w, double* dw, double* err, d
 
       *dw = aw.get_gradient();
 }
+
+#include "ba_mayalias.h"
