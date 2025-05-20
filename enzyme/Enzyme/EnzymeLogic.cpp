@@ -3863,6 +3863,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .strongZero = key.strongZero},
           TA, augmenteddata, omp);
 
+      llvm::errs() << " revfn: " << *revfn << "\n";
+      
       {
         auto arg = revfn->arg_begin();
         for (auto cidx : next_constant_args) {
