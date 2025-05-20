@@ -524,9 +524,9 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array",
     "jl_ptr_to_array_1d"};
   // clang-format on
-if (isInactiveCall(CB)) {
-  return true;
-}
+  if (isInactiveCall(CB)) {
+    return true;
+  }
   if (CB.hasFnAttr("enzyme_inactive_inst")) {
     return true;
   }
