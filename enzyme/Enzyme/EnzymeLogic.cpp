@@ -2303,8 +2303,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     std::map<AugmentedStruct, int> returnMapping;
-    if (!foundcalled->getReturnType()->isVoidTy())
-      returnMapping[AugmentedStruct::Tape] = -1;
+    if (!foundcalled->getReturnType()->isVoidTy()) {
+      if (foundcalled->getReturnType() == todiff->getReturnType())
+        returnMapping[AugmentedStruct::Return] = -1;
+      else
+        returnMapping[AugmentedStruct::Tape] = -1;
+    }
 
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
