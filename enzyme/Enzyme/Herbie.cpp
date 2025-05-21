@@ -4042,7 +4042,7 @@ bool improveViaHerbie(
     if (cached) {
       llvm::errs() << "Herbie output: " << content << "\n";
       // Skip evaluation for cached results
-      if (processHerbieOutput(content, true)) {
+      if (processHerbieOutput(content, FPOptSolverType == "dp")) {
         success = true;
       }
       continue;
@@ -4150,7 +4150,7 @@ bool improveViaHerbie(
     }
 
     // Process the output
-    if (processHerbieOutput(content)) {
+    if (processHerbieOutput(content, false)) {
       success = true;
     }
   }
@@ -5636,11 +5636,10 @@ B2:
       const auto &PTFuncs = getPTFuncs();
 
       // Check if we have a cached DP table
-      bool cached = false;
       std::string cacheFilePath = FPOptCachePath + "/table.json";
-      if (!FPOptCachePath.empty() && llvm::sys::fs::exists(cacheFilePath)) {
-        cached = true;
-      }
+      bool skipEvaluation = FPOptSolverType == "dp" &&
+                            !FPOptCachePath.empty() &&
+                            llvm::sys::fs::exists(cacheFilePath);
 
       SmallVector<FPLLValue *, 8> operations;
       for (auto *I : component.operations) {
@@ -5692,8 +5691,7 @@ B2:
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
 
-          // Skip candidate evaluation if we have a cached DP table
-          if (!cached) {
+          if (!skipEvaluation) {
             candidate.CompCost = getCompCost(component, TTI, candidate);
           }
 
@@ -5741,8 +5739,7 @@ B2:
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
 
-          // Skip candidate evaluation if we have a cached DP table
-          if (!cached) {
+          if (!skipEvaluation) {
             candidate.CompCost = getCompCost(component, TTI, candidate);
           }
 
@@ -5750,8 +5747,7 @@ B2:
         }
       }
 
-      // Skip candidate evaluation if we have a cached DP table
-      if (!cached) {
+      if (!skipEvaluation) {
         setUnifiedAccuracyCost(ACC, valueToNodeMap, symbolToValueMap);
       }
 
