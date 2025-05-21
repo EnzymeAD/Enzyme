@@ -1510,10 +1510,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 #ifdef ENZYME_ENABLE_FPOPT
     // Disable recursive inlining since no FPOpt metadata is attached
     // to inlined instructions
-    if (!hasFPOptLogger(F->getParent()) && EnzymeInline) {
+    if (!hasFPOptLogger(F->getParent()) && EnzymeInline)
 #else
-    if (EnzymeInline) {
+    if (EnzymeInline)
 #endif
+    {
       ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount);
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
