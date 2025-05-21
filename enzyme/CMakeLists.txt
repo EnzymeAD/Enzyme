@@ -279,7 +279,6 @@ find_library(MPFR_LIB_PATH mpfr)
 CHECK_INCLUDE_FILE("mpfr.h" HAS_MPFR_H)
 message("MPFR lib: " ${MPFR_LIB_PATH})
 message("MPFR header: " ${HAS_MPFR_H})
-link_libraries(mpfr)
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" "${INPUT_TEXT}")
 
