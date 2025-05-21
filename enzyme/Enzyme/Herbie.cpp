@@ -136,9 +136,10 @@ static cl::opt<bool> FPOptEnableSolver(
     "fpopt-enable-solver", cl::init(false), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
-static cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
-                                            cl::Hidden,
-                                            cl::desc("Which solver to use"));
+static cl::opt<std::string>
+    FPOptSolverType("fpopt-solver-type", cl::init("dp"), cl::Hidden,
+                    cl::desc("Which solver to use; "
+                             "either 'dp' or 'greedy'"));
 static cl::opt<bool> FPOptStrictMode(
     "fpopt-strict-mode", cl::init(false), cl::Hidden,
     cl::desc(
