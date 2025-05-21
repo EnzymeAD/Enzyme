@@ -20,6 +20,12 @@
 
 #include "llvm/Passes/PassBuilder.h"
 
+#if LLVM_VERSION_MAJOR >= 21
+#define GET_INSTRUCTION_COST(cost) (cost.getValue())
+#else
+#define GET_INSTRUCTION_COST(cost) (cost.getValue().value())
+#endif
+
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -487,8 +493,13 @@ public:
                    int exp = static_cast<int>(value);
                    SmallVector<Type *, 1> overloadedTypes = {
                        ops[0]->getType(), Type::getInt32Ty(M->getContext())};
+#if LLVM_VERSION_MAJOR >= 21
                    Function *powiFunc = Intrinsic::getOrInsertDeclaration(
                        M, Intrinsic::powi, overloadedTypes);
+#else
+                   Function *powiFunc = getIntrinsicDeclaration(
+                       M, Intrinsic::powi, overloadedTypes);
+#endif
 
                    Value *exponent =
                        ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
@@ -1133,11 +1144,19 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           SmallVector<Type *, 2> overloadedTypes;
           overloadedTypes.push_back(newType);
           overloadedTypes.push_back(CI->getArgOperand(1)->getType());
+#if LLVM_VERSION_MAJOR >= 21
           Function *newFunc = Intrinsic::getOrInsertDeclaration(
+#else
+          Function *newFunc = getIntrinsicDeclaration(
+#endif
               CI->getModule(), intrinsicID, overloadedTypes);
           newI = Builder.CreateCall(newFunc, newArgs);
         } else {
+#if LLVM_VERSION_MAJOR >= 21
           Function *newFunc = Intrinsic::getOrInsertDeclaration(
+#else
+          Function *newFunc = getIntrinsicDeclaration(
+#endif
               CI->getModule(), intrinsicID, newType);
           newI = Builder.CreateCall(newFunc, newArgs);
         }
@@ -4713,7 +4732,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue()) &&
+                            GET_INSTRUCTION_COST(otherCompCost)) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4814,7 +4833,7 @@ bool accuracyDPSolver(
 
           if (currCompCost - otherCompCost >
                   std::fabs(FPOptCostDominanceThreshold *
-                            otherCompCost.getValue()) &&
+                            GET_INSTRUCTION_COST(otherCompCost)) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (EnzymePrintFPOpt)
@@ -4852,7 +4871,8 @@ bool accuracyDPSolver(
 
     json::Object costAccMap;
     for (const auto &pair : costToAccuracyMap) {
-      costAccMap[std::to_string(pair.first.getValue())] = pair.second;
+      costAccMap[std::to_string(GET_INSTRUCTION_COST(pair.first))] =
+          pair.second;
     }
     jsonObj["costToAccuracyMap"] = std::move(costAccMap);
 
@@ -4879,7 +4899,8 @@ bool accuracyDPSolver(
             step.item);
         stepsArray.push_back(std::move(stepObj));
       }
-      costSolMap[std::to_string(pair.first.getValue())] = std::move(stepsArray);
+      costSolMap[std::to_string(GET_INSTRUCTION_COST(pair.first))] =
+          std::move(stepsArray);
     }
     jsonObj["costToSolutionMap"] = std::move(costSolMap);
 
@@ -4956,7 +4977,7 @@ bool accuracyDPSolver(
   if (!llvm::sys::fs::exists(budgetsFile)) {
     std::string budgetsStr;
     for (const auto &pair : costToAccuracyMap) {
-      budgetsStr += std::to_string(pair.first.getValue()) + ",";
+      budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
     }
 
     if (!budgetsStr.empty())
