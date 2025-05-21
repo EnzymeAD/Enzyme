@@ -95,7 +95,6 @@ config.substitutions.append(('%newLoadEnzyme', newPM))
 config.substitutions.append(('%OPloadEnzyme', oldPMOP if int(config.llvm_ver) < 16 else newPMOP))
 config.substitutions.append(('%OPnewLoadEnzyme', newPMOP))
 config.substitutions.append(('%enzyme', ('-enzyme' if int(config.llvm_ver) < 16 else '-passes="enzyme"')))
-config.substitutions.append(('%fpopt', ('-fp-opt' if int(config.llvm_ver) < 16 else '-passes="fp-opt"')))
 config.substitutions.append(('%simplifycfg', ("simplify-cfg" if int(config.llvm_ver) < 11 else "simplifycfg")))
 config.substitutions.append(('%loopmssa', ("loop" if int(config.llvm_ver) < 11 else "loop-mssa")))
 

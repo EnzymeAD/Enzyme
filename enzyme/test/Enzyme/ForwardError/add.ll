@@ -18,7 +18,7 @@ entry:
 declare double @__enzyme_error_estimate(double (double, double)*, ...)
 
 
-; CHECK: define internal double @fwderrtester(double %x, double %"x'", double %y, double %"y'")
+; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, double %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = fadd double %x, %y
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"x'", %x

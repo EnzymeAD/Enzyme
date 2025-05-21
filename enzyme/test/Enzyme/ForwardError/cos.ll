@@ -23,33 +23,21 @@ declare double @llvm.sin.f64(double)
 ; Function Attrs: nounwind
 declare double @__enzyme_error_estimate(double (double)*, ...)
 
-; Function Attrs: mustprogress noinline optnone ssp uwtable
-declare void @enzymeLogValue(i8* noundef %id, double noundef %res, i32 noundef %numOperands, double* noundef %operands)
 
-; Function Attrs: mustprogress noinline optnone ssp uwtable
-declare void @enzymeLogError(i8* noundef %id, double noundef %err)
-
-
-; CHECK: define internal double @fwderrtester(double %x, double %"x'")
+; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = alloca [1 x double], align 8
-; CHECK-NEXT:   %[[i1:.+]] = tail call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %"x'", %x
-; CHECK-NEXT:   %[[i5:.+]] = fdiv fast double %[[i4]], %[[i1]]
-; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.sin.f64(double %x)
-; CHECK-NEXT:   %[[i7:.+]] = fneg fast double %[[i6]]
-; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i5]], %[[i7]]
-; CHECK-NEXT:   %[[i9:.+]] = call fast double @llvm.fabs.f64(double %[[i8]])
-; CHECK-NEXT:   %[[i10:.+]] = bitcast double %[[i1]] to i64
-; CHECK-NEXT:   %[[i11:.+]] = xor i64 %[[i10]], 1
-; CHECK-NEXT:   %[[i12:.+]] = bitcast i64 %[[i11]] to double
-; CHECK-NEXT:   %[[i13:.+]] = fsub fast double %[[i1]], %[[i12]]
-; CHECK-NEXT:   %[[i14:.+]] = call fast double @llvm.fabs.f64(double %[[i13]])
-; CHECK-NEXT:   %[[i15:.+]] = call fast double @llvm.maxnum.f64(double %[[i14]], double %[[i9]])
-; CHECK-NEXT:   call void @enzymeLogError(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @1, i32 0, i32 0), double %[[i15]])
-; CHECK-NEXT:   %[[i2:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
-; CHECK-NEXT:   store double %x, double* %[[i2]], align 8
-; CHECK-NEXT:   %[[i3:.+]] = getelementptr [1 x double], [1 x double]* %[[i0]], i32 0, i32 0
-; CHECK-NEXT:   call void @enzymeLogValue(i8* getelementptr inbounds ([11 x i8], [11 x i8]* @0, i32 0, i32 0), double %1, i32 1, double* %[[i3]])
-; CHECK-NEXT:   ret double %[[i15]]
+; CHECK-NEXT:   %[[i0:.+]] = tail call fast double @llvm.cos.f64(double %x)
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"x'", %x
+; CHECK-NEXT:   %[[i2:.+]] = fdiv fast double %[[i1]], %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.sin.f64(double %x)
+; CHECK-NEXT:   %[[i4:.+]] = fneg fast double %[[i3]]
+; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i2]], %[[i4]]
+; CHECK-NEXT:   %[[i6:.+]] = call fast double @llvm.fabs.f64(double %[[i5]])
+; CHECK-NEXT:   %[[i7:.+]] = bitcast double %[[i0]] to i64
+; CHECK-NEXT:   %[[i8:.+]] = xor i64 %[[i7]], 1
+; CHECK-NEXT:   %[[i9:.+]] = bitcast i64 %[[i8]] to double
+; CHECK-NEXT:   %[[i10:.+]] = fsub fast double %[[i0]], %[[i9]]
+; CHECK-NEXT:   %[[i11:.+]] = call fast double @llvm.fabs.f64(double %[[i10]])
+; CHECK-NEXT:   %[[i12:.+]] = call fast double @llvm.maxnum.f64(double %[[i11]], double %[[i6]])
+; CHECK-NEXT:   ret double %[[i12]]
 ; CHECK-NEXT: }
