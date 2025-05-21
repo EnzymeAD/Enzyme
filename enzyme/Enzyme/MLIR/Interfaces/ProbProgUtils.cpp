@@ -82,5 +82,6 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
 
-  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
+  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
+                            mode);
 }
