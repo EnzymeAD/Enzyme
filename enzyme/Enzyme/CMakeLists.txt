@@ -50,7 +50,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-# set(ENZYME_LINK_TARGETS)
 set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable Poseidon")
 
 if(ENZYME_ENABLE_FPOPT)
