@@ -1,34 +1,28 @@
-# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" LOAD="%loadEnzyme" LOADCLANG="%loadClangEnzyme" make -B tuned.exe VERBOSE=1 -f %s
+# RUN: cd %S && LD_LIBRARY_PATH="%bldpath:$LD_LIBRARY_PATH" BENCH="%bench" BENCHLINK="%blink" LOAD="%loadEnzyme" make -B ode-unopt.ll ode-opt.ll ode.o results.txt VERBOSE=1 -f %s
 
 .PHONY: clean
 
 clean:
-	rm -f *.exe *.o results.txt ode.txt
+	rm -f *.ll *.o results.txt
 
-logger.exe: ode.cpp fp-logger.cpp
-	clang++ $(BENCH) $(LOADCLANG) ode.cpp fp-logger.cpp -O3 -mllvm -enzyme-inline -ffast-math -fno-finite-math-only -o $@ -DLOGGING
+ode-adept-unopt.ll: ode-adept.cpp
+	clang++ $(BENCH) $^ -O2 -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
 
-ode.txt: logger.exe
-	./$^ 1000000 | tee $@
+ode-unopt.ll: ode.cpp
+	clang++ $(BENCH) $^ -O2 -fno-use-cxa-atexit -fno-exceptions -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	#clang++ $(BENCH) $^ -O1 -Xclang -disable-llvm-passes -fno-use-cxa-atexit -fno-exceptions -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm -Xclang -new-struct-path-tbaa
 
-tuned.exe: ode.cpp ode.txt
-	clang++ $(BENCH) $(LOADCLANG) ode.cpp -O3 -ffast-math -fno-finite-math-only -o $@ \
-		-mllvm -enzyme-inline \
-		-mllvm -enzyme-enable-fpopt \
-		-mllvm -fpopt-log-path=ode.txt \
-		-mllvm -fpopt-enable-solver \
-		-mllvm -fpopt-enable-pt \
-		-mllvm -fpopt-target-func-regex=foobar \
-		-mllvm -fpopt-comp-cost-budget=0 \
-		-mllvm -fpopt-num-samples=1024 \
-		-mllvm -fpopt-cost-dom-thres=0.0 \
-		-mllvm -fpopt-acc-dom-thres=0.0 \
-		-mllvm -enzyme-print-fpopt \
-		-mllvm -fpopt-show-table \
-		-mllvm -fpopt-cache-path=cache \
-		-mllvm -herbie-timeout=1000 \
-		-mllvm -herbie-num-threads=12 \
-		-mllvm --fpopt-cost-model-path=cm.csv
+ode-raw.ll: ode-adept-unopt.ll ode-unopt.ll
+	opt ode-unopt.ll $(LOAD) -enzyme -o ode-enzyme.ll -S
+	llvm-link ode-adept-unopt.ll ode-enzyme.ll -o $@
 
-results.txt: tuned.exe
+%-opt.ll: %-raw.ll
+	opt $^ -o $@ -S
+	#opt $^ -O2 -o $@ -S
+
+ode.o: ode-opt.ll
+	clang++ -O2 $^ -o $@ $(BENCHLINK) -lm
+
+results.txt: ode.o
 	./$^ 1000000 | tee $@
