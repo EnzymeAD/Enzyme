@@ -1206,7 +1206,6 @@ struct PTCandidate {
   std::unordered_map<FPNode *, double> perOutputAccCost;
   std::unordered_map<FPNode *, SmallVector<double, 4>> errors;
 
-  // TODO:
   explicit PTCandidate(SmallVector<PrecisionChange> changes,
                        const std::string &desc)
       : changes(std::move(changes)), desc(desc) {}
@@ -1373,7 +1372,7 @@ public:
       return;
 
     if (isa<FPConst>(node)) {
-      double constVal = node->getLowerBound(); // TODO: Can be improved
+      double constVal = node->getLowerBound();
       cache.emplace(node, constVal);
       return;
     }
@@ -1780,7 +1779,7 @@ public:
       return;
 
     if (isa<FPConst>(node)) {
-      double constVal = node->getLowerBound(); // TODO: Can be improved
+      double constVal = node->getLowerBound();
       CachedValue cv(53);
       mpfr_set_d(cv.value, constVal, MPFR_RNDN);
       cache.emplace(node, CachedValue(std::move(cv)));
@@ -2293,7 +2292,6 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
 }
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
-  // TODO: Update it if we use let expr in the future
   std::regex argPattern("v\\d+");
 
   std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
@@ -4484,13 +4482,13 @@ bool accuracyGreedySolver(
       size_t i = candidate.index();
       auto candCompCost = AO.getCompCostDelta(i);
       auto candAccCost = AO.getAccCostDelta(i);
-      llvm::errs() << "AO Candidate " << i << " for " << AO.expr
-                   << " has accuracy cost: " << candAccCost
-                   << " and computation cost: " << candCompCost << "\n";
+      // llvm::errs() << "AO Candidate " << i << " for " << AO.expr
+      //              << " has accuracy cost: " << candAccCost
+      //              << " and computation cost: " << candCompCost << "\n";
 
       if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
         if (candAccCost < bestAccuracyCost) {
-          llvm::errs() << "AO Candidate " << i << " selected!\n";
+          // llvm::errs() << "AO Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
           bestAccuracyCost = candAccCost;
           bestCandidateComputationCost = candCompCost;
@@ -4502,8 +4500,13 @@ bool accuracyGreedySolver(
       AO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
-      llvm::errs() << "Updated total computation cost: " << totalComputationCost
-                   << "\n\n";
+      if (EnzymePrintFPOpt) {
+        llvm::errs() << "Greedy solver selected candidate "
+                     << bestCandidateIndex << " for " << AO.expr
+                     << " with accuracy cost: " << bestAccuracyCost
+                     << " and computation cost: "
+                     << bestCandidateComputationCost << "\n";
+      }
     }
   }
 
@@ -4523,13 +4526,13 @@ bool accuracyGreedySolver(
       size_t i = candidate.index();
       auto candCompCost = ACC.getCompCostDelta(i);
       auto candAccCost = ACC.getAccCostDelta(i);
-      llvm::errs() << "ACC Candidate " << i << " (" << candidate.value().desc
-                   << ") has accuracy cost: " << candAccCost
-                   << " and computation cost: " << candCompCost << "\n";
+      // llvm::errs() << "ACC Candidate " << i << " (" << candidate.value().desc
+      //              << ") has accuracy cost: " << candAccCost
+      //              << " and computation cost: " << candCompCost << "\n";
 
       if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
         if (candAccCost < bestAccuracyCost) {
-          llvm::errs() << "ACC Candidate " << i << " selected!\n";
+          // llvm::errs() << "ACC Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
           bestAccuracyCost = candAccCost;
           bestCandidateComputationCost = candCompCost;
@@ -4541,10 +4544,20 @@ bool accuracyGreedySolver(
       ACC.apply(bestCandidateIndex);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
-      llvm::errs() << "Updated total computation cost: " << totalComputationCost
-                   << "\n\n";
+      if (EnzymePrintFPOpt) {
+        llvm::errs() << "Greedy solver selected candidate "
+                     << bestCandidateIndex << " for "
+                     << ACC.candidates[bestCandidateIndex].desc
+                     << " with accuracy cost: " << bestAccuracyCost
+                     << " and computation cost: "
+                     << bestCandidateComputationCost << "\n";
+      }
     }
   }
+
+  llvm::errs() << "Greedy solver finished with total computation cost: "
+               << totalComputationCost
+               << "; total allowance: " << FPOptComputationCostBudget << "\n";
 
   return changed;
 }
@@ -5559,9 +5572,6 @@ B2:
           continue;
         }
 
-        // TODO: Herbie properties
-        // llvm::errs() << "Generating herbie expression for " << *output <<
-        // "\n";
         std::string expr =
             valueToNodeMap[output]->toFullExpression(valueToNodeMap);
         SmallSet<std::string, 8> args;
@@ -5762,14 +5772,6 @@ B2:
   if (EnzymePrintFPOpt) {
     if (FPOptEnableHerbie) {
       for (auto &AO : AOs) {
-        // TODO: Solver
-        // Available Parameters:
-        // 1. gradients at the output llvm::Value
-        // 2. costs of the potential rewrites from Herbie (lower is preferred)
-        // 3. percentage accuracies of potential rewrites (higher is better)
-        // 4*. TTI costs of potential rewrites (TODO: need to consider branches)
-        // 5*. Custom error estimates of potential rewrites (TODO)
-
         llvm::errs() << "\n################################\n";
         llvm::errs() << "Initial AccuracyCost: " << AO.initialAccCost << "\n";
         llvm::errs() << "Initial ComputationCost: " << AO.initialCompCost
@@ -5821,16 +5823,7 @@ B2:
         changed = true;
       }
     }
-
-    // // TODO: just for testing
-    // if (FPOptEnablePT) {
-    //   for (auto &ACC : ACCs) {
-    //     ACC.apply(0);
-    //     changed = true;
-    //   }
-    // }
   } else {
-    // TODO: Solver
     if (FPOptLogPath.empty()) {
       llvm::errs() << "FPOpt: Solver enabled but no log file is provided\n";
       return false;
