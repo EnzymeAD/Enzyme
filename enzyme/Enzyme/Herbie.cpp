@@ -4439,7 +4439,7 @@ std::string getPrecondition(
 // Given the cost budget `FPOptComputationCostBudget`, we want to minimize the
 // accuracy cost of the rewritten expressions.
 bool accuracyGreedySolver(
-    SmallVector<ApplicableOutput, 4> &AOs,
+    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -4447,7 +4447,15 @@ bool accuracyGreedySolver(
                << FPOptComputationCostBudget << "\n";
   InstructionCost totalComputationCost = 0;
 
-  for (auto &AO : AOs) {
+  SmallVector<size_t, 4> aoIndices;
+  for (size_t i = 0; i < AOs.size(); ++i) {
+    aoIndices.push_back(i);
+  }
+  std::mt19937 g(FPOptRandomSeed);
+  std::shuffle(aoIndices.begin(), aoIndices.end(), g);
+
+  for (size_t idx : aoIndices) {
+    auto &AO = AOs[idx];
     int bestCandidateIndex = -1;
     double bestAccuracyCost = std::numeric_limits<double>::infinity();
     InstructionCost bestCandidateComputationCost;
@@ -4456,15 +4464,13 @@ bool accuracyGreedySolver(
       size_t i = candidate.index();
       auto candCompCost = AO.getCompCostDelta(i);
       auto candAccCost = AO.getAccCostDelta(i);
-      llvm::errs() << "Candidate " << i << " for " << AO.expr
+      llvm::errs() << "AO Candidate " << i << " for " << AO.expr
                    << " has accuracy cost: " << candAccCost
                    << " and computation cost: " << candCompCost << "\n";
 
-      // See if the candidate fits within the computation cost budget
       if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
-        // Select the candidate with the lowest accuracy cost
         if (candAccCost < bestAccuracyCost) {
-          llvm::errs() << "Candidate " << i << " selected!\n";
+          llvm::errs() << "AO Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
           bestAccuracyCost = candAccCost;
           bestCandidateComputationCost = candCompCost;
@@ -4474,6 +4480,45 @@ bool accuracyGreedySolver(
 
     if (bestCandidateIndex != -1) {
       AO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
+      changed = true;
+      totalComputationCost += bestCandidateComputationCost;
+      llvm::errs() << "Updated total computation cost: " << totalComputationCost
+                   << "\n\n";
+    }
+  }
+
+  SmallVector<size_t, 4> accIndices;
+  for (size_t i = 0; i < ACCs.size(); ++i) {
+    accIndices.push_back(i);
+  }
+  std::shuffle(accIndices.begin(), accIndices.end(), g);
+
+  for (size_t idx : accIndices) {
+    auto &ACC = ACCs[idx];
+    int bestCandidateIndex = -1;
+    double bestAccuracyCost = std::numeric_limits<double>::infinity();
+    InstructionCost bestCandidateComputationCost;
+
+    for (const auto &candidate : enumerate(ACC.candidates)) {
+      size_t i = candidate.index();
+      auto candCompCost = ACC.getCompCostDelta(i);
+      auto candAccCost = ACC.getAccCostDelta(i);
+      llvm::errs() << "ACC Candidate " << i << " (" << candidate.value().desc
+                   << ") has accuracy cost: " << candAccCost
+                   << " and computation cost: " << candCompCost << "\n";
+
+      if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
+        if (candAccCost < bestAccuracyCost) {
+          llvm::errs() << "ACC Candidate " << i << " selected!\n";
+          bestCandidateIndex = i;
+          bestAccuracyCost = candAccCost;
+          bestCandidateComputationCost = candCompCost;
+        }
+      }
+    }
+
+    if (bestCandidateIndex != -1) {
+      ACC.apply(bestCandidateIndex);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
       llvm::errs() << "Updated total computation cost: " << totalComputationCost
@@ -5773,7 +5818,8 @@ B2:
       return false;
     }
     if (FPOptSolverType == "greedy") {
-      changed = accuracyGreedySolver(AOs, valueToNodeMap, symbolToValueMap);
+      changed =
+          accuracyGreedySolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);
     } else if (FPOptSolverType == "dp") {
       changed = accuracyDPSolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);
     } else {
