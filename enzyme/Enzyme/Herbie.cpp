@@ -20,12 +20,6 @@
 
 #include "llvm/Passes/PassBuilder.h"
 
-#if LLVM_VERSION_MAJOR >= 21
-#define GET_INSTRUCTION_COST(cost) (cost.getValue())
-#else
-#define GET_INSTRUCTION_COST(cost) (cost.getValue().value())
-#endif
-
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -216,6 +210,12 @@ static cl::opt<double> FPOptAccuracyDominanceThreshold(
     "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
     cl::desc("The threshold for accuracy dominance in DP solver"));
 }
+
+#if LLVM_VERSION_MAJOR >= 21
+#define GET_INSTRUCTION_COST(cost) (cost.getValue())
+#else
+#define GET_INSTRUCTION_COST(cost) (cost.getValue().value())
+#endif
 
 static const std::unordered_set<std::string> LibmFuncs = {
     "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
