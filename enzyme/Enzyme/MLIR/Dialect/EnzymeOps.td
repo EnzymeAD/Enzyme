@@ -53,20 +53,6 @@ def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let assemblyFormat = "`<` $function `(` $argNumber `,` $depth `)` `>`";
 }
 
-def GenFnAttr : Enzyme_Attr<"GenFn", "gen"> {
-  let summary = "Marks a function as a generative function";
-  let description = [{
-    This attribute marks a function as a generative function.
- }];
-
-  let parameters = (ins
-    "BoolAttr":$dynamic,
-    "StringAttr":$name
-  );
-
-  let assemblyFormat = "`<` params `>`";
-}
-
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
     [
@@ -166,27 +152,6 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def Trace : Enzyme_Type<"Trace"> {
-  let summary = "Trace for ProbProg pass";
-  let description = [{
-    Mutable storage for recording all sampled variables, their values, computed log-likelihoods,
-    and the final returned result from executing a traced probabilistic function.
-  }];
-  let parameters = (ins "Type":$type);
-  let mnemonic = "Trace";
-  let assemblyFormat = "`<` $type `>`";
-}
-
-def ChoiceMap : Enzyme_Type<"ChoiceMap"> {
-  let summary = "Choice map for ProbProg pass";
-  let description = [{
-    Immutable storage for recording constraints on the sampled variables.
-  }];
-  let parameters = (ins "Type":$type);
-  let mnemonic = "ChoiceMap";
-  let assemblyFormat = "`<` $type `>`";
-}
-
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
@@ -259,80 +224,6 @@ def SampleOp : Enzyme_Op<"sample",
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
-}
-
-def TraceOp : Enzyme_Op<"trace", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "Trace a probabilistic function";
-  let description = [{
-  Execute a probabilistic function specified by a symbol reference using the provided arguments,
-  and a set of constraints on the sampled variables (if provided). Return the execution trace
-  (if provided) and the log-likelihood of the execution trace.
-  }];
-
-  let arguments = (ins
-    FlatSymbolRefAttr:$fn,
-    Variadic<AnyType>:$inputs,
-    Optional<Trace>:$oldTrace,
-    Optional<ChoiceMap>:$constraints,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs Trace:$newTrace, Variadic<AnyType>:$weights);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` `[` ($constraints^ `:` type($constraints))? `]` `[` ($oldTrace^ `:` type($oldTrace))? `]` attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
-def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Simulate a probabilistic function to generate execution trace";
-  let description = [{
-  Simulate a probabilistic function to generate execution trace
-  by replacing all SampleOps with distribution calls and inserting
-  sampled values into the choice map.
-  }];
-
-  let arguments = (ins
-    FlatSymbolRefAttr:$fn,
-    Variadic<AnyType>:$inputs,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs Trace:$newTrace);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
-def insertChoiceToMapOp : Enzyme_Op<"insertChoiceToMap"> {
-  let summary = "Insert a choice into the choice map";
-  let description = [{
-  Insert a constraint on a sampled variable into the choice map.
-  }];
-
-  let arguments = (ins
-    ChoiceMap:$choiceMap,
-    AnyType:$choice,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs ChoiceMap:$newChoiceMap);
-}
-
-def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
-  let summary = "Add a sampled value into the execution trace";
-  let description = [{
-  Add a sampled value into the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    AnyType:$sample,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs );
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {

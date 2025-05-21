@@ -1,25 +1,23 @@
 // RUN: %eopt %s | FileCheck %s
 
 module {
-  func.func private @normal(%mean : f64, %stddev : f64) -> f64
+  func.func private @normal(%seed : i64, %mean : f64, %stddev : f64) -> f64
 
-  // CHECK:   func.func @test(%[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res:.+]] = enzyme.sample @normal(%[[mean]], %[[stddev]]) {name = "m"} : (f64, f64) -> f64
+  // CHECK:   func.func @test(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
+  // CHECK-NEXT:    %[[res:.+]] = enzyme.sample @normal(%[[seed]], %[[mean]], %[[stddev]]) {name = "m"} : (i64, f64, f64) -> f64
   // CHECK-NEXT:    return %[[res]] : f64
   // CHECK-NEXT:   }
-  func.func @test(%mean : f64, %stddev : f64) -> f64 {
-    %r = enzyme.sample @normal(%mean, %stddev) { name="m" } : (f64, f64) -> (f64)
+  func.func @test(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
+    %r = enzyme.sample @normal(%seed, %mean, %stddev) { name="m" } : (i64, f64, f64) -> (f64)
     return %r : f64
   }
 
-  // CHECK:   func.func @generate(%[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> !enzyme.Trace<f64> {
-  // CHECK-NEXT:    %[[trace0:.+]], %[[res0:.+]] = enzyme.trace @test(%[[mean]], %[[stddev]]) [] [] {name = "test"} : (f64, f64) -> (!enzyme.Trace<f64>, f64)
-  // CHECK-NEXT:    %[[trace1:.+]] = enzyme.trace @test(%[[res0]], %[[stddev]]) [] [%[[trace0]] : !enzyme.Trace<f64>] {name = "test"} : (f64, f64) -> !enzyme.Trace<f64>
-  // CHECK-NEXT:    return %[[trace1]] : !enzyme.Trace<f64>
+  // CHECK:   func.func @generate(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
+  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @test(%[[seed]], %[[mean]], %[[stddev]]) {name = "test"} : (i64, f64, f64) -> f64
+  // CHECK-NEXT:    return %[[res0]] : f64
   // CHECK-NEXT:   }
-  func.func @generate(%mean : f64, %stddev : f64) -> !enzyme.Trace<f64> {
-    %trace0, %res0 = enzyme.trace @test(%mean, %stddev) [] [] { name = "test" } : (f64, f64) -> (!enzyme.Trace<f64>, f64)
-    %trace1 = enzyme.trace @test(%res0, %stddev) [] [%trace0 : !enzyme.Trace<f64>] { name = "test" } : (f64, f64) -> !enzyme.Trace<f64>
-    return %trace1 : !enzyme.Trace<f64>
+  func.func @generate(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
+    %res = enzyme.generate @test(%seed, %mean, %stddev) { name = "test" } : (i64, f64, f64) -> f64
+    return %res : f64
   }
 }

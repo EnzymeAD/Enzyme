@@ -32,26 +32,17 @@ public:
 
 private:
   Block *initializationBlock;
-  Type traceType;
-  Value trace;
 
 public:
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 MProbProgMode mode_, Type traceType_)
+                 MProbProgMode mode_)
       : newFunc(newFunc_), mode(mode_), oldFunc(oldFunc_),
         originalToNewFn(originalToNewFn_),
         originalToNewFnOps(originalToNewFnOps_),
-        initializationBlock(&*(newFunc.getFunctionBody().begin())),
-        traceType(traceType_) {}
+        initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
-  Type getIndexType();
-  Value insertInit(Type t);
-
-  // Trace
-  Value initTrace();
-  Value getTrace();
   void processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                        SymbolTableCollection &symbolTable);
 

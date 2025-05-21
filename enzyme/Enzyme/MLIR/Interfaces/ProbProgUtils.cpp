@@ -25,21 +25,6 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-Type mlir::enzyme::MProbProgUtils::getIndexType() {
-  return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
-}
-
-Value mlir::enzyme::MProbProgUtils::initTrace() {
-  OpBuilder builder(initializationBlock, initializationBlock->begin());
-  auto init = builder.create<enzyme::InitOp>(
-      (initializationBlock->rbegin())->getLoc(), traceType);
-  trace = init.getResult();
-  return trace;
-}
-
-// Trace
-Value mlir::enzyme::MProbProgUtils::getTrace() { return trace; }
-
 void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                                      SymbolTableCollection &symbolTable) {
   auto distFn = cast<FunctionOpInterface>(
@@ -50,13 +35,8 @@ void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
   // 1. Insert distribution function call
   auto distCall = b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
                                          distFn.getResultTypes(), inputs);
-  Value sampleVal = distCall.getResult(0);
 
-  // 2. Record the computed sample in the trace
-  b.create<enzyme::addSampleToTraceOp>(sampleOp.getLoc(), trace, sampleVal,
-                                       nameAttr);
-
-  // 3. Replace the sample op with the distribution call
+  // 2. Replace the sample op with the distribution call
   sampleOp.replaceAllUsesWith(distCall);
 }
 
@@ -68,12 +48,6 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   }
 
   std::string suffix;
-
-  // Assuming that trace object base type is the traced function's FIRST return
-  // type.
-  auto traceType = enzyme::TraceType::get(
-      toeval.getContext(),
-      cast<mlir::FunctionType>(toeval.getFunctionType()).getResult(0));
 
   auto originalInputs =
       cast<mlir::FunctionType>(toeval.getFunctionType()).getInputs();
@@ -87,16 +61,6 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     suffix = "generate";
     ArgTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.append(originalResults.begin(), originalResults.end());
-    break;
-  case MProbProgMode::Simulate:
-    suffix = "simulate";
-    ArgTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(traceType);
-    break;
-  case MProbProgMode::Trace:
-    suffix = "trace";
-    ArgTypes.append(originalInputs.begin(), originalInputs.end()); // TODO
-    ResultTypes.push_back(traceType);                              // TODO
     break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");
@@ -118,6 +82,5 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
 
-  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode,
-                            traceType);
+  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
 }
