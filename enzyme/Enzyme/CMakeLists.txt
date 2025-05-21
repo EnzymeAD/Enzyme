@@ -44,7 +44,7 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
-list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Herbie.cpp")
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Poseidon.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -65,9 +65,9 @@ if(ENZYME_ENABLE_FPOPT)
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
     )
-    list(APPEND ENZYME_SRC Herbie.cpp)
+    list(APPEND ENZYME_SRC Poseidon.cpp)
     add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
-    set_source_files_properties(Herbie.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+    set_source_files_properties(Poseidon.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
 endif()
 
 

@@ -1,5 +1,5 @@
-#ifndef ENZYME_HERBIE_H
-#define ENZYME_HERBIE_H
+#ifndef ENZYME_POSEIDON_H
+#define ENZYME_POSEIDON_H
 
 #include <string>
 
@@ -35,4 +35,4 @@ public:
   static bool isRequired() { return true; }
 };
 
-#endif // ENZYME_HERBIE_H
+#endif // ENZYME_POSEIDON_H

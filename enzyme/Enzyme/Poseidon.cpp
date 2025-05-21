@@ -51,7 +51,7 @@
 #include <utility>
 #include <variant>
 
-#include "Herbie.h"
+#include "Poseidon.h"
 #include "Utils.h"
 
 using namespace llvm;
@@ -5893,8 +5893,8 @@ public:
 
 char FPOpt::ID = 0;
 
-static RegisterPass<FPOpt> X("fp-opt",
-                             "Run Enzyme/Herbie Floating point optimizations");
+static RegisterPass<FPOpt>
+    X("fp-opt", "Run Enzyme/Poseidon Floating point optimizations");
 
 FunctionPass *createFPOptPass() { return new FPOpt(); }
 
