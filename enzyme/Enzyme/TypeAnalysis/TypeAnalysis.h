@@ -67,6 +67,8 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
     str = str.substr(5, str.size() - 5 - 2);
   } else if (startsWith(str, "__nv_")) {
     str = str.substr(5, str.size() - 5);
+  } else if (startsWith(str, "__ocml_")) {
+    str = str.substr(7, str.size() - 7);
   }
   if (LIBM_FUNCTIONS.find(str.str()) != LIBM_FUNCTIONS.end()) {
     if (ID)
@@ -82,6 +84,15 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
       return true;
     }
   }
+  if ((startsWith(ogstr, "__ocml_") && (endsWith(str, "_f64") || endsWith(str, "_f32")))) {
+    if (LIBM_FUNCTIONS.find(str.substr(0, str.size() - 3).str()) !=
+        LIBM_FUNCTIONS.end()) {
+      if (ID)
+        *ID = LIBM_FUNCTIONS.find(str.substr(0, str.size() - 3).str())->second;
+      return true;
+    }
+  }
+  llvm::errs() << " not found " << str << " via " << ogstr << "\n";
   return false;
 }
 
