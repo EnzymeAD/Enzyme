@@ -93,7 +93,6 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
       return true;
     }
   }
-  llvm::errs() << " not found " << str << " via " << ogstr << "\n";
   return false;
 }
 
