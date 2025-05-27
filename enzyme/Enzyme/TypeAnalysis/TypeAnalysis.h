@@ -84,7 +84,8 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
       return true;
     }
   }
-  if ((startsWith(ogstr, "__ocml_") && (endsWith(str, "_f64") || endsWith(str, "_f32")))) {
+  if ((startsWith(ogstr, "__ocml_") &&
+       (endsWith(str, "_f64") || endsWith(str, "_f32")))) {
     if (LIBM_FUNCTIONS.find(str.substr(0, str.size() - 3).str()) !=
         LIBM_FUNCTIONS.end()) {
       if (ID)
