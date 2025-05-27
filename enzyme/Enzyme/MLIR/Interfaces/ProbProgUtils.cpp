@@ -25,6 +25,21 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+Value mlir::enzyme::MProbProgUtils::initTrace() {
+  OpBuilder builder(initializationBlock, initializationBlock->begin());
+  auto init = builder.create<enzyme::initTraceOp>(
+      (initializationBlock->rbegin())->getLoc(), getTraceType());
+  trace = init.getResult();
+  return trace;
+}
+
+// Trace
+Type mlir::enzyme::MProbProgUtils::getTraceType() {
+  return enzyme::TraceType::get(initializationBlock->begin()->getContext());
+}
+
+Value mlir::enzyme::MProbProgUtils::getTrace() { return trace; }
+
 void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                                      SymbolTableCollection &symbolTable) {
   auto distFn = cast<FunctionOpInterface>(
@@ -32,11 +47,18 @@ void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
   auto inputs = sampleOp.getInputs();
   auto nameAttr = sampleOp.getNameAttr();
 
-  // 1. Insert distribution function call
+  // Insert distribution function call
   auto distCall = b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
                                          distFn.getResultTypes(), inputs);
+  Value sampleVal = distCall.getResult(0);
 
-  // 2. Replace the sample op with the distribution call
+  // In Simulate mode, record the computed sample in the trace
+  if (mode == MProbProgMode::Simulate) {
+    b.create<enzyme::addSampleToTraceOp>(
+        sampleOp.getLoc(), trace, sampleOp.getSymbol(), sampleVal, nameAttr);
+  }
+
+  // Replace the sample op with the distribution call
   sampleOp.replaceAllUsesWith(distCall);
 }
 
@@ -62,6 +84,11 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ArgTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
+  case MProbProgMode::Simulate:
+    suffix = "simulate";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");
   }
@@ -82,6 +109,5 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
 
-  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
-                            mode);
+  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
 }

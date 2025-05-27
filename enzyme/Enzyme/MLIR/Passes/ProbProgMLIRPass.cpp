@@ -58,9 +58,9 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
       OpBuilder b(sampleOp);
       auto distFn = cast<FunctionOpInterface>(
           symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-      auto distCall = b.create<func::CallOp>(
-          sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-          sampleOp.getOperands());
+      auto distCall =
+          b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
+                                 distFn.getResultTypes(), sampleOp.getInputs());
       sampleOp.replaceAllUsesWith(distCall);
 
       toErase.push_back(sampleOp);
@@ -80,10 +80,72 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     return success();
   }
 
+  LogicalResult HandleSimulate(SymbolTableCollection &symbolTable,
+                               enzyme::SimulateOp CI) {
+    auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+
+    if (fn.getFunctionBody().empty()) {
+      llvm::errs() << fn << "\n";
+      llvm_unreachable("Simulating empty function");
+    }
+
+    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate);
+    FunctionOpInterface NewF = putils->newFunc;
+
+    putils->initTrace();
+
+    {
+      SmallVector<Operation *, 4> toErase;
+      NewF.walk([&](enzyme::SampleOp sampleOp) {
+        OpBuilder b(sampleOp);
+        putils->processSampleOp(sampleOp, b, symbolTable);
+        toErase.push_back(sampleOp);
+      });
+
+      for (Operation *op : toErase) {
+        op->erase();
+      }
+    }
+
+    for (auto &block : NewF.getFunctionBody()) {
+      OpBuilder b(&block, block.end());
+      auto term = block.getTerminator();
+
+      auto retloc = block.getTerminator()->getLoc();
+      if (auto retOp = dyn_cast<func::ReturnOp>(term)) {
+        retOp->replaceAllUsesWith(
+            b.create<func::ReturnOp>(retloc, putils->getTrace()));
+        retOp->erase();
+      }
+    }
+
+    if (!NewF)
+      return failure();
+
+    delete putils;
+
+    OpBuilder b(CI);
+    auto tCI = b.create<func::CallOp>(CI.getLoc(), NewF.getName(),
+                                      NewF.getResultTypes(), CI.getInputs());
+
+    CI->replaceAllUsesWith(tCI);
+    CI->erase();
+
+    return success();
+  }
+
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
     op->walk([&](enzyme::GenerateOp cop) {
       auto res = HandleGenerate(symbolTable, cop);
+      if (!res.succeeded()) {
+        signalPassFailure();
+        return;
+      }
+    });
+    op->walk([&](enzyme::SimulateOp sop) {
+      auto res = HandleSimulate(symbolTable, sop);
       if (!res.succeeded()) {
         signalPassFailure();
         return;

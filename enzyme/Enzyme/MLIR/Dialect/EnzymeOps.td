@@ -152,6 +152,24 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
+def Trace : Enzyme_Type<"Trace"> {
+  let summary = "Trace for ProbProg pass";
+  let description = [{
+    Mutable storage for recording all sampled variables, their values, computed log-likelihoods,
+    and the final returned result from executing a traced probabilistic function.
+  }];
+  let mnemonic = "Trace";
+}
+
+def initTraceOp : Enzyme_Op<"initTrace"> {
+  let summary = "Initialize a trace";
+  let description = [{
+    Initialize a trace.
+  }];
+  let arguments = (ins );
+  let results = (outs Trace);
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
@@ -215,6 +233,7 @@ def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
   let arguments = (ins
+    AnyType:$symbol,
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     DefaultValuedStrAttr<StrAttr, "">:$name
@@ -222,8 +241,45 @@ def SampleOp : Enzyme_Op<"sample",
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
+    `[` $symbol `:` type($symbol) `]` $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Simulate a probabilistic function to generate execution trace";
+  let description = [{
+  Simulate a probabilistic function to generate execution trace
+  by replacing all SampleOps with distribution calls and inserting
+  sampled values into the choice map.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$newTrace);
+
+  let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
+}
+
+def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+  let summary = "Add a sampled value into the execution trace";
+  let description = [{
+  Add a sampled value into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    AnyType:$symbol,
+    AnyType:$sample,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs );
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {

@@ -32,6 +32,7 @@ public:
 
 private:
   Block *initializationBlock;
+  Value trace;
 
 public:
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
@@ -43,6 +44,10 @@ public:
         originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
+  // Trace
+  Type getTraceType();
+  Value initTrace();
+  Value getTrace();
   void processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
                        SymbolTableCollection &symbolTable);
 
