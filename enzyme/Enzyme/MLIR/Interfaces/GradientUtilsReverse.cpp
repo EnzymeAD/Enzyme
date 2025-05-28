@@ -38,7 +38,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode_, unsigned width, bool omp, StringRef postpasses,
-    bool verifyPostPasses, bool stringZero)
+    bool verifyPostPasses, bool strongZero)
     : MDiffeGradientUtils(Logic, newFunc_, oldFunc_, TA_, /*MTypeResults*/ {},
                           invertedPointers_, returnPrimals, returnShadows,
                           constantvalues_, activevals_, ReturnActivity,
