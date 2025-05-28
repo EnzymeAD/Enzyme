@@ -80,7 +80,7 @@ def PlaceholderOp : Enzyme_Op<"placeholder",
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width); 
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero); 
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -94,7 +94,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{

@@ -38,6 +38,7 @@ public:
   bool omp;
   bool verifyPostPasses;
   llvm::StringRef postpasses;
+  bool strongZero;
   const llvm::ArrayRef<bool> returnPrimals;
   const llvm::ArrayRef<bool> returnShadows;
 
@@ -62,7 +63,7 @@ public:
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp,
-                 llvm::StringRef postpasses, bool verifyPostPasses);
+                 llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero);
   void erase(Operation *op) { op->erase(); }
   void replaceOrigOpWith(Operation *op, ValueRange vals) {
     for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
@@ -128,12 +129,12 @@ public:
                       ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp,
-                      llvm::StringRef postpasses, bool verifyPostPasses)
+                      llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        returnPrimals, returnShadows, constantvalues_,
                        activevals_, RetActivity, ArgActivity, origToNew_,
                        origToNewOps_, mode, width, omp, postpasses,
-                       verifyPostPasses),
+                       verifyPostPasses, strongZero),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
@@ -145,7 +146,7 @@ public:
                   const llvm::ArrayRef<bool> returnShadows,
                   ArrayRef<DIFFE_TYPE> RetActivity,
                   ArrayRef<DIFFE_TYPE> ArgActivity, mlir::Type additionalArg,
-                  bool omp, llvm::StringRef postpasses, bool verifyPostPasses) {
+                  bool omp, llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero) {
     std::string prefix;
 
     switch (mode) {
@@ -182,7 +183,7 @@ public:
         Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
         returnShadows, constant_values, nonconstant_values, RetActivity,
         ArgActivity, originalToNew, originalToNewOps, mode, width, omp,
-        postpasses, verifyPostPasses);
+        postpasses, verifyPostPasses, strongZero);
   }
 };
 

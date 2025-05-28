@@ -38,14 +38,14 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     IRMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses,
-    bool verifyPostPasses)
+    bool verifyPostPasses, bool strongZero)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
-      postpasses(postpasses), returnPrimals(returnPrimals),
+      postpasses(postpasses), strongZero(strongZero), returnPrimals(returnPrimals),
       returnShadows(returnShadows), width(width), ArgDiffeTypes(ArgDiffeTypes_),
       RetDiffeTypes(ReturnActivity) {}
 

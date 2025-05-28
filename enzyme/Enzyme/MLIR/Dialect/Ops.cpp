@@ -328,7 +328,7 @@ public:
 
     ForwardDiffOp newOp = rewriter.create<ForwardDiffOp>(
         uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(),
-        uop.getActivityAttr(), newRetActivity, uop.getWidthAttr());
+        uop.getActivityAttr(), newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
 
     // Map old uses of uop to newOp
     auto oldIdx = 0;
