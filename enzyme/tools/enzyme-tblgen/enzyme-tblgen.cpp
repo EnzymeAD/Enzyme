@@ -262,7 +262,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         has_vector = true;
       }
     }
-    if (has_vector) {
+    if (has_vector && broadcastInputs) {
       if (intrinsic == MLIRDerivatives)
         os << curIndent << "mlir::Value " << argName << "_" << idx << " = ";
       else
