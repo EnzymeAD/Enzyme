@@ -1,5 +1,4 @@
-// RUN: %eopt --enzyme %s | FileCheck %s
-// ARUN: %eopt --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --cse %s | FileCheck %s
+// RUN: %eopt --enzyme --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --cse %s | FileCheck %s
 
 module {
   func.func @square(%x: f64) -> f64 {
@@ -13,10 +12,11 @@ module {
   }
 }
 
-
-
 // CHECK:  func.func private @diffesquare(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %0 = arith.mulf %arg1, %arg0 : f64
-// CHECK-NEXT:    %1 = arith.addf %0, %0 : f64
-// CHECK-NEXT:    return %1 : f64
+// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %0 = arith.cmpf oeq, %arg1, %cst : f64
+// CHECK-NEXT:    %1 = arith.mulf %arg1, %arg0 : f64
+// CHECK-NEXT:    %2 = arith.select %0, %cst, %1 : f64
+// CHECK-NEXT:    %3 = arith.addf %2, %2 : f64
+// CHECK-NEXT:    return %3 : f64
 // CHECK-NEXT:  }
