@@ -3864,10 +3864,20 @@ public:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        auto cal = cast<CallInst>(Builder2.CreateCall(
+            getIntrinsicDeclaration(
+                M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
+            args));
+        cal->setCallingConv(getIntrinsicDeclaration(
+                                M, Intrinsic::nvvm_barrier_cta_sync_aligned_all)
+                                ->getCallingConv());
+#else
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
                                 ->getCallingConv());
+#endif
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
