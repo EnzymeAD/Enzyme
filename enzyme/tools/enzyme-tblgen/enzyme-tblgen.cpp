@@ -258,7 +258,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
     if (isa<UnsetInit>(args) && names) {
       auto [ord, vecValue, ext, isva] =
           nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
-      if (!vecValue && !startsWith(ord, "local")) {
+      if (!vecValue && !startsWith(ord, "local") && !isva && broadcastInputs) {
         has_vector = true;
       }
     }
