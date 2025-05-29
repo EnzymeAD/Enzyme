@@ -43,7 +43,8 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
                           invertedPointers_, returnPrimals, returnShadows,
                           constantvalues_, activevals_, ReturnActivity,
                           ArgDiffeTypes_, originalToNewFn_, originalToNewFnOps_,
-                          mode_, width, omp, postpasses, verifyPostPasses, strongZero) {}
+                          mode_, width, omp, postpasses, verifyPostPasses,
+                          strongZero) {}
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
   Type indexType = getIndexType();

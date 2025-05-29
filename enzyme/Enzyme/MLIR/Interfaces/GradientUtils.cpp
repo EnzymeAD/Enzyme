@@ -45,9 +45,9 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
-      postpasses(postpasses), strongZero(strongZero), returnPrimals(returnPrimals),
-      returnShadows(returnShadows), width(width), ArgDiffeTypes(ArgDiffeTypes_),
-      RetDiffeTypes(ReturnActivity) {}
+      postpasses(postpasses), strongZero(strongZero),
+      returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
+      ArgDiffeTypes(ArgDiffeTypes_), RetDiffeTypes(ReturnActivity) {}
 
 mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {

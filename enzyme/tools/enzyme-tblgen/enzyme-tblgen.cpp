@@ -247,7 +247,8 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  const DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
-                                 bool newFromOriginal, ActionType intrinsic, bool broadcastInputs = true) {
+                                 bool newFromOriginal, ActionType intrinsic,
+                                 bool broadcastInputs = true) {
   SmallVector<bool, 1> vectorValued;
 
   size_t idx = 0;
@@ -267,7 +268,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
       else
         os << curIndent << "llvm::Value* " << argName << "_" << idx << " = ";
     } else {
-    os << curIndent << "auto " << argName << "_" << idx << " = ";
+      os << curIndent << "auto " << argName << "_" << idx << " = ";
     }
     idx++;
     if (isa<UnsetInit>(args) && names) {
@@ -312,7 +313,8 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
               os << curIndent << INDENT << "for (auto &val : " << argName << "_"
                  << (idx - 1) << ") {\n";
               os << curIndent << INDENT << INDENT
-                 << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), val, "
+                 << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), "
+                    "val, "
                     "llvm::SmallVector<int64_t>({gutils->width}));\n";
               os << curIndent << INDENT << "}\n";
             } else {
@@ -959,9 +961,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing subroutine " << opName << "\n";
-      SmallVector<bool, 1> vectorValued = prepareArgs(
-          curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
-          nameToOrdinal, lookup, retidx, origName, newFromOriginal, intrinsic, false);
+      SmallVector<bool, 1> vectorValued =
+          prepareArgs(curIndent + INDENT, os, argPattern, pattern, resultRoot,
+                      builder, nameToOrdinal, lookup, retidx, origName,
+                      newFromOriginal, intrinsic, false);
       bool anyVector = false;
       for (auto b : vectorValued)
         anyVector |= b;
