@@ -92,7 +92,6 @@ extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern llvm::cl::opt<bool> EnzymeNonPower2Cache;
-extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern llvm::cl::opt<bool> EnzymeBlasCopy;
 extern llvm::cl::opt<bool> EnzymeLapackCopy;
 extern llvm::cl::opt<bool> EnzymeJuliaAddrLoad;
@@ -1802,11 +1801,11 @@ static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
   return Builder2.CreateSelect(cmp, tval, fval, Name);
 }
 
-static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
+static inline llvm::Value *checkedMul(bool strongZero, llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
-  if (EnzymeStrongZero) {
+  if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
     if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
       if (!C->isInfinity() && !C->isNaN())
@@ -1815,11 +1814,11 @@ static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
   }
   return res;
 }
-static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
+static inline llvm::Value *checkedDiv(bool strongZero, llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
-  if (EnzymeStrongZero) {
+  if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
     if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
       if (!C->isZero() && !C->isNaN())

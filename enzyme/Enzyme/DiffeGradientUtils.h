@@ -69,7 +69,7 @@ class DiffeGradientUtils final : public GradientUtils {
       DIFFE_TYPE ActiveReturn, bool shadowReturnUsed,
       llvm::ArrayRef<DIFFE_TYPE> constant_values,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
-      DerivativeMode mode, bool runtimeActivity, unsigned width, bool omp);
+      DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width, bool omp);
 
 public:
   /// Whether to free memory in reverse pass or split forward.
@@ -78,6 +78,7 @@ public:
       differentials;
   static DiffeGradientUtils *
   CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
+                  bool strongZero,
                   unsigned width, llvm::Function *todiff,
                   llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,

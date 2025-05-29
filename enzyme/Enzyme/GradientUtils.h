@@ -370,6 +370,8 @@ public:
   TypeResults TR;
   bool omp;
   bool runtimeActivity;
+  // Whether to use additional checks to ensure correct behavior when handling functions with inf
+  bool strongZero;
 
 private:
   unsigned width;
@@ -392,7 +394,7 @@ public:
                 llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
                     &originalToNewFn_,
-                DerivativeMode mode, bool runtimeActivity, unsigned width,
+                DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
                 bool omp);
 
 public:
@@ -406,7 +408,7 @@ public:
                                 bool *shadowReturnUsedP) const;
 
   static GradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, bool runtimeActivity, unsigned width,
+  CreateFromClone(EnzymeLogic &Logic, bool runtimeActivity, bool strongZero, unsigned width,
                   llvm::Function *todiff, llvm::TargetLibraryInfo &TLI,
                   TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   llvm::ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
@@ -511,12 +513,12 @@ public:
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Constant *F, DerivativeMode mode,
-      bool runtimeActivity, unsigned width, bool AtomicAdd);
+      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
 
   static llvm::Constant *GetOrCreateShadowFunction(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
       TypeAnalysis &TA, llvm::Function *F, DerivativeMode mode,
-      bool runtimeActivity, unsigned width, bool AtomicAdd);
+      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       llvm::BasicBlock *ctx, llvm::IRBuilder<> &BuilderM,
