@@ -1,3 +1,3 @@
 include "Common.td"
 
-def : InactiveOp<"Enzyme", "DetachGradientOp">;
+def : InactiveOp<"enzyme", "DetachGradientOp">;

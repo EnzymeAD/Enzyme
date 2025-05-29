@@ -913,9 +913,8 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
         return;
       }
 #if LLVM_VERSION_MAJOR > 20
-      auto intrinsicIDName = llvm::Intrinsic::getName(II->getIntrinsicID());
-      if (intrinsicIDName == "barrier0" || intrinsicIDName == "barrier.n" ||
-          intrinsicIDName == "bar.sync") {
+      if (II->getIntrinsicID() ==
+          llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all) {
         return;
       }
 #else
@@ -949,18 +948,14 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
           break;
         }
 #if LLVM_VERSION_MAJOR > 20
-        auto intrinsicIDName = llvm::Intrinsic::getName(II->getIntrinsicID());
-        if (intrinsicIDName == "barrier0" || intrinsicIDName == "barrier.n" ||
-            intrinsicIDName == "bar.sync") {
-          syncd = true;
-          break;
-        }
+        if (II->getIntrinsicID() ==
+            llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all) {
 #else
         if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0) {
+#endif
           syncd = true;
           break;
         }
-#endif
       }
       if (f(&*I))
         return;

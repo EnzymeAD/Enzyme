@@ -19,6 +19,7 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "Dialect/Ops.h"
+#include "Dialect/Dialect.h"
 #include "mlir/IR/TypeSupport.h"
 
 using namespace mlir;
