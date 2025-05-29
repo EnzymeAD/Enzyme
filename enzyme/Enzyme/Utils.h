@@ -909,10 +909,19 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
   for (auto uinst = inst->getPrevNode(); uinst != nullptr;
        uinst = uinst->getPrevNode()) {
     if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(uinst)) {
-      if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-          II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
+      if (II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
         return;
       }
+#if LLVM_VERSION_MAJOR > 20
+      if (II->getIntrinsicID() ==
+          llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all) {
+        return;
+      }
+#else
+      if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0) {
+        return;
+      }
+#endif
     }
     if (f(uinst))
       return;
@@ -934,8 +943,16 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
     llvm::BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend();
     for (; I != E; ++I) {
       if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(&*I)) {
-        if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-            II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
+        if (II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
+          syncd = true;
+          break;
+        }
+#if LLVM_VERSION_MAJOR > 20
+        if (II->getIntrinsicID() ==
+            llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all) {
+#else
+        if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0) {
+#endif
           syncd = true;
           break;
         }
@@ -1702,7 +1719,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::roundeven:
   case Intrinsic::lround:
   case Intrinsic::llround:
+#if LLVM_VERSION_MAJOR <= 20
   case Intrinsic::nvvm_barrier0:
+#else
+  case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+#endif
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
@@ -1992,51 +2013,52 @@ get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
-    llvm::Attribute::AttrKind::ReadOnly,
-    llvm::Attribute::AttrKind::WriteOnly,
-    llvm::Attribute::AttrKind::ZExt,
-    llvm::Attribute::AttrKind::SExt,
-    llvm::Attribute::AttrKind::InReg,
-    llvm::Attribute::AttrKind::ByVal,
+  llvm::Attribute::AttrKind::ReadOnly,
+  llvm::Attribute::AttrKind::WriteOnly,
+  llvm::Attribute::AttrKind::ZExt,
+  llvm::Attribute::AttrKind::SExt,
+  llvm::Attribute::AttrKind::InReg,
+  llvm::Attribute::AttrKind::ByVal,
 #if LLVM_VERSION_MAJOR >= 12
-    llvm::Attribute::AttrKind::ByRef,
+  llvm::Attribute::AttrKind::ByRef,
 #endif
-    llvm::Attribute::AttrKind::Preallocated,
-    llvm::Attribute::AttrKind::InAlloca,
+  llvm::Attribute::AttrKind::Preallocated,
+  llvm::Attribute::AttrKind::InAlloca,
 #if LLVM_VERSION_MAJOR >= 13
-    llvm::Attribute::AttrKind::ElementType,
+  llvm::Attribute::AttrKind::ElementType,
 #endif
 #if LLVM_VERSION_MAJOR >= 15
-    llvm::Attribute::AttrKind::AllocAlign,
+  llvm::Attribute::AttrKind::AllocAlign,
 #endif
-    llvm::Attribute::AttrKind::NoFree,
-    llvm::Attribute::AttrKind::Alignment,
-    llvm::Attribute::AttrKind::StackAlignment,
+  llvm::Attribute::AttrKind::NoFree,
+  llvm::Attribute::AttrKind::Alignment,
+  llvm::Attribute::AttrKind::StackAlignment,
 #if LLVM_VERSION_MAJOR >= 20
-    llvm::Attribute::AttrKind::Captures,
+  llvm::Attribute::AttrKind::Captures,
 #else
-    llvm::Attribute::AttrKind::NoCapture,
+  llvm::Attribute::AttrKind::NoCapture,
 #endif
-    llvm::Attribute::AttrKind::ReadNone};
+  llvm::Attribute::AttrKind::ReadNone
+};
 
 // Parameter attributes from the original function/call that
 // we should preserve on the shadow of the derivative code.
 // Note that this will not occur on vectore > 1.
 static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
-    llvm::Attribute::AttrKind::ZExt,
-    llvm::Attribute::AttrKind::SExt,
+  llvm::Attribute::AttrKind::ZExt,
+  llvm::Attribute::AttrKind::SExt,
 #if LLVM_VERSION_MAJOR >= 13
-    llvm::Attribute::AttrKind::ElementType,
+  llvm::Attribute::AttrKind::ElementType,
 #endif
-    llvm::Attribute::AttrKind::NoFree,
-    llvm::Attribute::AttrKind::Alignment,
-    llvm::Attribute::AttrKind::StackAlignment,
+  llvm::Attribute::AttrKind::NoFree,
+  llvm::Attribute::AttrKind::Alignment,
+  llvm::Attribute::AttrKind::StackAlignment,
 #if LLVM_VERSION_MAJOR >= 20
-    llvm::Attribute::AttrKind::Captures,
+  llvm::Attribute::AttrKind::Captures,
 #else
-    llvm::Attribute::AttrKind::NoCapture,
+  llvm::Attribute::AttrKind::NoCapture,
 #endif
-    llvm::Attribute::AttrKind::ReadNone,
+  llvm::Attribute::AttrKind::ReadNone,
 };
 #ifdef __clang__
 #pragma clang diagnostic pop

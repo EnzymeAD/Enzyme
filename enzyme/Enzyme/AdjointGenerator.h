@@ -3803,7 +3803,11 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModePrimal: {
       switch (ID) {
+#if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#else
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+#endif
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or:
@@ -3860,15 +3864,29 @@ public:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
+#if LLVM_VERSION_MAJOR > 20
+        auto cal = cast<CallInst>(Builder2.CreateCall(
+            getIntrinsicDeclaration(
+                M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
+            args));
+        cal->setCallingConv(getIntrinsicDeclaration(
+                                M, Intrinsic::nvvm_barrier_cta_sync_aligned_all)
+                                ->getCallingConv());
+#else
         auto cal = cast<CallInst>(Builder2.CreateCall(
             getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0), args));
         cal->setCallingConv(getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0)
                                 ->getCallingConv());
+#endif
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
 
+#if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#else
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+#endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:

@@ -222,4 +222,15 @@ def SampleOp : Enzyme_Op<"sample",
   }];
 }
 
+def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
+    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
 #endif // ENZYME_OPS

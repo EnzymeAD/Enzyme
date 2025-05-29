@@ -362,8 +362,15 @@ struct CacheAnalysis {
         }
 
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+#if LLVM_VERSION_MAJOR > 20
+          if (II->getIntrinsicID() ==
+                  Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+              II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#else
+
           if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
               II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#endif
             allUnsyncdPredecessorsOf(
                 II,
                 [&](Instruction *mid) {
@@ -4425,9 +4432,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
+#if LLVM_VERSION_MAJOR > 20
+      auto BarrierInst = Arch == Triple::amdgcn
+                             ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
+                             : (llvm::Intrinsic::ID)
+                                   Intrinsic::nvvm_barrier_cta_sync_aligned_all;
+#else
       auto BarrierInst = Arch == Triple::amdgcn
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
+#endif
       instbuilder.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {});
