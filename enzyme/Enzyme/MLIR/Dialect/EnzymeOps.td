@@ -222,4 +222,11 @@ def SampleOp : Enzyme_Op<"sample",
   }];
 }
 
+def DetachGradientOp : Enzyme_Op<"detach_gradient",
+    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Prevents the flow of gradients by creating a new tensor that is detached from the original tensor.";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+}
+
 #endif // ENZYME_OPS
