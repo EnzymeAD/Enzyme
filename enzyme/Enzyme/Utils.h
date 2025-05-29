@@ -909,10 +909,20 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
   for (auto uinst = inst->getPrevNode(); uinst != nullptr;
        uinst = uinst->getPrevNode()) {
     if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(uinst)) {
-      if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-          II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
+      if (II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
         return;
       }
+#if LLVM_VERSION_MAJOR > 20
+      auto intrinsicIDName = llvm::Intrinsic::getName(II->getIntrinsicID());
+      if (intrinsicIDName == "barrier0" || intrinsicIDName == "barrier.n" ||
+          intrinsicIDName == "bar.sync") {
+        return;
+      }
+#else
+      if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0) {
+        return;
+      }
+#endif
     }
     if (f(uinst))
       return;
@@ -934,11 +944,23 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
     llvm::BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend();
     for (; I != E; ++I) {
       if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(&*I)) {
-        if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-            II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
+        if (II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
           syncd = true;
           break;
         }
+#if LLVM_VERSION_MAJOR > 20
+        auto intrinsicIDName = llvm::Intrinsic::getName(II->getIntrinsicID());
+        if (intrinsicIDName == "barrier0" || intrinsicIDName == "barrier.n" ||
+            intrinsicIDName == "bar.sync") {
+          syncd = true;
+          break;
+        }
+#else
+        if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0) {
+          syncd = true;
+          break;
+        }
+#endif
       }
       if (f(&*I))
         return;
@@ -1702,7 +1724,9 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::roundeven:
   case Intrinsic::lround:
   case Intrinsic::llround:
+#if LLVM_VERSION_MAJOR <= 20
   case Intrinsic::nvvm_barrier0:
+#endif
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:

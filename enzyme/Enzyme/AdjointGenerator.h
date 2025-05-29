@@ -3803,7 +3803,9 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModePrimal: {
       switch (ID) {
+#if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#endif
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or:
@@ -3868,7 +3870,9 @@ public:
         return false;
       }
 
+#if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:

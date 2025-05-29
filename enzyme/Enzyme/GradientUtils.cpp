@@ -6806,8 +6806,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       return false;
 
                     if (auto II = dyn_cast<IntrinsicInst>(potentialAlias)) {
+                      auto intrinsicIDName =
+                          llvm::Intrinsic::getName(II->getIntrinsicID());
+#if LLVM_VERSION_MAJOR > 20
+                      if (intrinsicIDName == "barrier0" ||
+                          intrinsicIDName == "barrier.n" ||
+                          intrinsicIDName == "bar.sync" ||
+                          II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#else
                       if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
                           II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#endif
                         interveningSync =
                             DT.dominates(SI, II) && DT.dominates(II, origInst);
                         allUnsyncdPredecessorsOf(

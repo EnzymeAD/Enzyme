@@ -362,8 +362,16 @@ struct CacheAnalysis {
         }
 
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+          auto intrinsicIDName = llvm::Intrinsic::getName(II->getIntrinsicID());
+#if LLVM_VERSION_MAJOR > 20
+          if (intrinsicIDName == "barrier0" || intrinsicIDName == "barrier.n" ||
+              intrinsicIDName == "bar.sync" ||
+              II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#else
+
           if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
               II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#endif
             allUnsyncdPredecessorsOf(
                 II,
                 [&](Instruction *mid) {
@@ -1707,14 +1715,10 @@ void clearFunctionAttributes(Function *f) {
 
   Attribute::AttrKind fnattrs[] = {
 #if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory,
+      Attribute::Memory,
 #endif
-    Attribute::ReadOnly,
-    Attribute::ReadNone,
-    Attribute::WriteOnly,
-    Attribute::WillReturn,
-    Attribute::OptimizeNone
-  };
+      Attribute::ReadOnly,   Attribute::ReadNone,    Attribute::WriteOnly,
+      Attribute::WillReturn, Attribute::OptimizeNone};
   for (auto attr : fnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
@@ -1730,17 +1734,13 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    Attribute::Range,
+      Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2581,16 +2581,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    llvm::Attribute::Range,
+      llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
