@@ -2251,7 +2251,7 @@ public:
                   auto res = Builder2.CreateFDiv(
                       Builder2.CreateFNeg(Builder2.CreateFMul(idiff, lop0)),
                       lop1);
-                  if (EnzymeStrongZero) {
+                  if (gutils->strongZero) {
                     res = CreateSelect(
                         Builder2,
                         Builder2.CreateFCmpOEQ(
@@ -2276,7 +2276,7 @@ public:
                       Builder2.CreateFNeg(Builder2.CreateFMul(
                           s, Builder2.CreateFDiv(idiff, lop0))),
                       lop1);
-                  if (EnzymeStrongZero) {
+                  if (gutils->strongZero) {
                     res = CreateSelect(
                         Builder2,
                         Builder2.CreateFCmpOEQ(
@@ -2522,7 +2522,8 @@ public:
                     prev, ConstantInt::get(prev->getType(), num, false), "",
                     /*NUW*/ true, /*NSW*/ true);
                 prev = Builder2.CreateBitCast(
-                    checkedMul(Builder2, Builder2.CreateBitCast(idiff, FT),
+                    checkedMul(gutils->strongZero, Builder2,
+                               Builder2.CreateBitCast(idiff, FT),
                                Builder2.CreateBitCast(prev, FT)),
                     prev->getType());
                 return prev;
@@ -2748,7 +2749,8 @@ public:
                     prev, ConstantInt::get(prev->getType(), num, false), "",
                     /*NUW*/ true, /*NSW*/ true);
                 prev = Builder2.CreateBitCast(
-                    checkedMul(Builder2, Builder2.CreateBitCast(difi, FT),
+                    checkedMul(gutils->strongZero, Builder2,
+                               Builder2.CreateBitCast(difi, FT),
                                Builder2.CreateBitCast(prev, FT)),
                     prev->getType());
 
@@ -4215,7 +4217,7 @@ public:
             /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo,
             subsequent_calls_may_write, overwritten_args, false,
-            gutils->runtimeActivity, gutils->getWidth(),
+            gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -4442,7 +4444,7 @@ public:
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
-            },
+                .strongZero = gutils->strongZero},
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -4940,7 +4942,8 @@ public:
             subretType, argsInverted, TR.analyzer->interprocedural,
             /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->runtimeActivity,
-            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
+            gutils->strongZero, gutils->getWidth(),
+            tape ? tape->getType() : nullptr, nextTypeInfo,
             subsequent_calls_may_write, overwritten_args,
             /*augmented*/ subdata);
         FT = cast<Function>(newcalled)->getFunctionType();
@@ -5330,7 +5333,8 @@ public:
               subretType, argsInverted, TR.analyzer->interprocedural,
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
               subsequent_calls_may_write, overwritten_args, false,
-              gutils->runtimeActivity, gutils->getWidth(), gutils->AtomicAdd);
+              gutils->runtimeActivity, gutils->strongZero, gutils->getWidth(),
+              gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -5786,7 +5790,8 @@ public:
               .additionalType = tape ? tape->getType() : nullptr,
               .forceAnonymousTape = false,
               .typeInfo = nextTypeInfo,
-              .runtimeActivity = gutils->runtimeActivity},
+              .runtimeActivity = gutils->runtimeActivity,
+              .strongZero = gutils->strongZero},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;

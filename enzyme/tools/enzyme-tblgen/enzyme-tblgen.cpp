@@ -1109,9 +1109,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         getIntrinsic(os, intrName, intrTypes, argPattern, origName);
         os << ", ArrayRef<Value*>({";
       } else if (opName == "CheckedMul") {
-        os << "checkedMul(" << builder << ", ";
+        os << "checkedMul(gutils->strongZero, " << builder << ", ";
       } else if (opName == "CheckedDiv") {
-        os << "checkedDiv(" << builder << ", ";
+        os << "checkedDiv(gutils->strongZero, " << builder << ", ";
       } else if (intrinsic == MLIRDerivatives) {
         if (intrinsic == MLIRDerivatives) {
           auto preop = Def->getValueAsString("preop");
