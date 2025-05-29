@@ -1798,8 +1798,7 @@ public:
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
                             .runtimeActivity = options.runtimeActivity,
-                            .strongZero = options.strongZero
-                          },
+                            .strongZero = options.strongZero},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1815,7 +1814,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
-          forceAnonymousTape, options.runtimeActivity, options.strongZero, width,
+          forceAnonymousTape, options.runtimeActivity, options.strongZero,
+          width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1870,8 +1870,7 @@ public:
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
                               .runtimeActivity = options.runtimeActivity,
-                              .strongZero = options.strongZero
-                            },
+                              .strongZero = options.strongZero},
             TA, aug);
     }
     }
@@ -2857,7 +2856,8 @@ public:
       auto val = GradientUtils::GetOrCreateShadowConstant(
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*runtimeActivity*/ false, /*strongZero*/false, /*width*/ 1, AtomicAdd);
+          pair.second, /*runtimeActivity*/ false, /*strongZero*/ false,
+          /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;

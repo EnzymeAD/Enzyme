@@ -597,10 +597,10 @@ LLVMValueRef EnzymeCreateForwardDiff(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
     CDerivativeMode mode, uint8_t freeMemory, uint8_t runtimeActivity,
-    uint8_t strongZero,
-    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented) {
+    uint8_t strongZero, unsigned width, LLVMTypeRef additionalArg,
+    CFnTypeInfo typeInfo, uint8_t subsequent_calls_may_write,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented) {
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
@@ -622,9 +622,9 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
-    uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity, uint8_t strongZero,
-    unsigned width, uint8_t freeMemory, LLVMTypeRef additionalArg,
-    uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity,
+    uint8_t strongZero, unsigned width, uint8_t freeMemory,
+    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
     size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented,
     uint8_t AtomicAdd) {
@@ -655,8 +655,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
           .runtimeActivity = (bool)runtimeActivity,
-          .strongZero = (bool)strongZero
-        },
+          .strongZero = (bool)strongZero},
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
@@ -666,7 +665,8 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     uint8_t shadowReturnUsed, CFnTypeInfo typeInfo,
     uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
     size_t overwritten_args_size, uint8_t forceAnonymousTape,
-    uint8_t runtimeActivity, uint8_t strongZero, unsigned width, uint8_t AtomicAdd) {
+    uint8_t runtimeActivity, uint8_t strongZero, unsigned width,
+    uint8_t AtomicAdd) {
 
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +

@@ -59,7 +59,8 @@ DiffeGradientUtils::DiffeGradientUtils(
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
     bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
-    DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width, bool omp)
+    DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
+    bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn,
                     shadowReturnUsed, constant_values, origToNew_, mode,
@@ -85,10 +86,9 @@ DiffeGradientUtils::DiffeGradientUtils(
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     EnzymeLogic &Logic, DerivativeMode mode, bool runtimeActivity,
-    bool strongZero,
-    unsigned width, Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
-    FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool shadowReturn,
-    bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+    bool strongZero, unsigned width, Function *todiff, TargetLibraryInfo &TLI,
+    TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+    bool shadowReturn, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||

@@ -1801,7 +1801,8 @@ static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
   return Builder2.CreateSelect(cmp, tval, fval, Name);
 }
 
-static inline llvm::Value *checkedMul(bool strongZero, llvm::IRBuilder<> &Builder2,
+static inline llvm::Value *checkedMul(bool strongZero,
+                                      llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
@@ -1814,7 +1815,8 @@ static inline llvm::Value *checkedMul(bool strongZero, llvm::IRBuilder<> &Builde
   }
   return res;
 }
-static inline llvm::Value *checkedDiv(bool strongZero, llvm::IRBuilder<> &Builder2,
+static inline llvm::Value *checkedDiv(bool strongZero,
+                                      llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
   llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);

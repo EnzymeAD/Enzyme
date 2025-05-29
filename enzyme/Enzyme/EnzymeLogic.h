@@ -190,7 +190,8 @@ struct ReverseCacheKey {
             additionalType,
             forceAnonymousTape,
             newTypeInfo,
-            runtimeActivity, strongZero};
+            runtimeActivity,
+            strongZero};
   }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
@@ -584,7 +585,8 @@ public:
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       bool subsequent_calls_may_write,
       const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
-      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd, bool omp = false);
+      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
+      bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -718,14 +720,16 @@ public:
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
   ///  \p omp is whether this function is an OpenMP closure body.
-  llvm::Function *CreateForwardDiff(
-      RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
-      llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-      bool returnValue, DerivativeMode mode, bool freeMemory,
-      bool runtimeActivity, bool strongZero, unsigned width, llvm::Type *additionalArg,
-      const FnTypeInfo &typeInfo, bool subsequent_calls_may_write,
-      const std::vector<bool> _overwritten_args,
-      const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *
+  CreateForwardDiff(RequestContext context, llvm::Function *todiff,
+                    DIFFE_TYPE retType,
+                    llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
+                    bool returnValue, DerivativeMode mode, bool freeMemory,
+                    bool runtimeActivity, bool strongZero, unsigned width,
+                    llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
+                    bool subsequent_calls_may_write,
+                    const std::vector<bool> _overwritten_args,
+                    const AugmentedReturn *augmented, bool omp = false);
 
   /// Create a function batched in its inputs.
   ///  \p context the instruction which requested this batch (or null).
