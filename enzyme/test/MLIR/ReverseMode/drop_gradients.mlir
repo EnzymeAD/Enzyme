@@ -3,7 +3,7 @@
 module {
   func.func @square(%x: f64) -> f64 {
     %next = arith.mulf %x, %x : f64
-    %dropped = enzyme.detach_gradient %next : f64 -> f64
+    %dropped = enzyme.ignore_derivatives %next : f64 -> f64
     return %dropped : f64
   }
 
@@ -15,7 +15,7 @@ module {
 
 // CHECK:   func.func @square(%arg0: f64) -> f64 {
 // CHECK-NEXT:     %0 = arith.mulf %arg0, %arg0 : f64
-// CHECK-NEXT:     %1 = enzyme.detach_gradient %0 : f64 -> f64
+// CHECK-NEXT:     %1 = enzyme.ignore_derivatives %0 : f64 -> f64
 // CHECK-NEXT:     return %1 : f64
 // CHECK-NEXT:   }
 // CHECK-NEXT:   func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
