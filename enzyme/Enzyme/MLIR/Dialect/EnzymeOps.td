@@ -224,7 +224,7 @@ def SampleOp : Enzyme_Op<"sample",
 
 def DetachGradientOp : Enzyme_Op<"detach_gradient",
     [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Prevents the flow of gradients by creating a new tensor that is detached from the original tensor.";
+  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
   let arguments = (ins AnyType:$input);
   let results = (outs AnyType:$output);
 }
