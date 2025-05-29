@@ -3805,6 +3805,8 @@ public:
       switch (ID) {
 #if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#else
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
 #endif
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
@@ -3872,6 +3874,8 @@ public:
 
 #if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
+#else
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
 #endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
