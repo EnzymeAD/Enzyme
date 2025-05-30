@@ -44,11 +44,31 @@ set(LLVM_LINK_COMPONENTS Demangle)
 file(GLOB ENZYME_SRC CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
-list(REMOVE_ITEM ENZYME_SRC "eopt.cpp")
+list(REMOVE_ITEM ENZYME_SRC "eopt.cpp" "Poseidon.cpp")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
+
+set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable Poseidon")
+
+if(ENZYME_ENABLE_FPOPT)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/sbrantq/herbie
+        GIT_TAG 9a81e9ecd01515ed88fb4efb77e4c0ae7be9cba5
+        UPDATE_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+    )
+    list(APPEND ENZYME_SRC Poseidon.cpp)
+    add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
+    set_source_files_properties(Poseidon.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+endif()
+
 
 if (ENZYME_ENABLE_PLUGINS)
         # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
