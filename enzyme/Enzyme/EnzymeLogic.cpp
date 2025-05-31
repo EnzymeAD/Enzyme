@@ -362,8 +362,15 @@ struct CacheAnalysis {
         }
 
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+#if LLVM_VERSION_MAJOR > 20
+          if (II->getIntrinsicID() ==
+                  Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+              II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#else
+
           if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
               II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#endif
             allUnsyncdPredecessorsOf(
                 II,
                 [&](Instruction *mid) {
@@ -1938,8 +1945,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
-    bool forceAnonymousTape, bool runtimeActivity, unsigned width,
-    bool AtomicAdd, bool omp) {
+    bool forceAnonymousTape, bool runtimeActivity, bool strongZero,
+    unsigned width, bool AtomicAdd, bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
@@ -1963,7 +1970,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            AtomicAdd,
                            omp,
                            width,
-                           runtimeActivity};
+                           runtimeActivity,
+                           strongZero};
 
   if (_overwritten_args.size() != todiff->arg_size()) {
     std::string s;
@@ -2055,8 +2063,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       auto &aug = CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
           shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
-          _overwritten_args, forceAnonymousTape, runtimeActivity, width,
-          AtomicAdd, omp);
+          _overwritten_args, forceAnonymousTape, runtimeActivity, strongZero,
+          width, AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2308,8 +2316,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo, retType,
-      constant_args,
+      *this, runtimeActivity, strongZero, width, todiff, TLI, TA, oldTypeInfo,
+      retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
 
@@ -3043,7 +3051,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         context, *this, TLI, TA, todiff, pair.second, gutils->runtimeActivity,
-        width, gutils->AtomicAdd);
+        gutils->strongZero, width, gutils->AtomicAdd);
     SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
     GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
@@ -3693,8 +3701,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.subsequent_calls_may_write, key.overwritten_args,
-          /*forceAnonymousTape*/ false, key.runtimeActivity, key.width,
-          key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
+          key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3735,22 +3743,21 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){
-              .todiff = key.todiff,
-              .retType = key.retType,
-              .constant_args = key.constant_args,
-              .overwritten_args = key.overwritten_args,
-              .returnUsed = false,
-              .shadowReturnUsed = false,
-              .mode = DerivativeMode::ReverseModeGradient,
-              .width = key.width,
-              .freeMemory = key.freeMemory,
-              .AtomicAdd = key.AtomicAdd,
-              .additionalType = tape ? tape->getType() : nullptr,
-              .forceAnonymousTape = key.forceAnonymousTape,
-              .typeInfo = key.typeInfo,
-              .runtimeActivity = key.runtimeActivity,
-          },
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = key.constant_args,
+                            .overwritten_args = key.overwritten_args,
+                            .returnUsed = false,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = tape ? tape->getType() : nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
+                            .typeInfo = key.typeInfo,
+                            .runtimeActivity = key.runtimeActivity,
+                            .strongZero = key.strongZero},
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -3819,22 +3826,21 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){
-              .todiff = key.todiff,
-              .retType = key.retType,
-              .constant_args = next_constant_args,
-              .overwritten_args = key.overwritten_args,
-              .returnUsed = key.returnUsed,
-              .shadowReturnUsed = false,
-              .mode = DerivativeMode::ReverseModeGradient,
-              .width = key.width,
-              .freeMemory = key.freeMemory,
-              .AtomicAdd = key.AtomicAdd,
-              .additionalType = nullptr,
-              .forceAnonymousTape = key.forceAnonymousTape,
-              .typeInfo = key.typeInfo,
-              .runtimeActivity = key.runtimeActivity,
-          },
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = next_constant_args,
+                            .overwritten_args = key.overwritten_args,
+                            .returnUsed = key.returnUsed,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
+                            .typeInfo = key.typeInfo,
+                            .runtimeActivity = key.runtimeActivity,
+                            .strongZero = key.strongZero},
           TA, augmenteddata, omp);
 
       {
@@ -4062,8 +4068,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.runtimeActivity, key.width, key.todiff, TLI, TA,
-      oldTypeInfo, key.retType,
+      *this, key.mode, key.runtimeActivity, key.strongZero, key.width,
+      key.todiff, TLI, TA, oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
@@ -4426,9 +4432,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
+#if LLVM_VERSION_MAJOR > 20
+      auto BarrierInst = Arch == Triple::amdgcn
+                             ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
+                             : (llvm::Intrinsic::ID)
+                                   Intrinsic::nvvm_barrier_cta_sync_aligned_all;
+#else
       auto BarrierInst = Arch == Triple::amdgcn
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
+#endif
       instbuilder.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {});
@@ -4489,8 +4502,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 Function *EnzymeLogic::CreateForwardDiff(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, bool runtimeActivity, unsigned width,
-    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    DerivativeMode mode, bool freeMemory, bool runtimeActivity, bool strongZero,
+    unsigned width, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
 
@@ -4524,7 +4537,8 @@ Function *EnzymeLogic::CreateForwardDiff(
                          width,
                          additionalArg,
                          oldTypeInfo,
-                         runtimeActivity};
+                         runtimeActivity,
+                         strongZero};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -4722,8 +4736,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo,
-      retType,
+      *this, mode, runtimeActivity, strongZero, width, todiff, TLI, TA,
+      oldTypeInfo, retType,
       /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
       additionalArg, omp);
 

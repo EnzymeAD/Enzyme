@@ -74,7 +74,7 @@ public:
         freeMemory, width,
         /* addedType */ nullptr, type_args, volatile_args,
         /* augmented */ nullptr, gutils->omp, gutils->postpasses,
-        gutils->verifyPostPasses);
+        gutils->verifyPostPasses, gutils->strongZero);
 
     SmallVector<Value> fwdArguments;
 
@@ -175,7 +175,7 @@ public:
         fn, RetActivity, ArgActivity, gutils->TA, returnPrimal, returnShadow,
         mode, freeMemory, width, /*addedType*/ nullptr, type_args,
         volatile_args, /*augmented*/ nullptr, gutils->omp, gutils->postpasses,
-        gutils->verifyPostPasses);
+        gutils->verifyPostPasses, gutils->strongZero);
 
     SmallVector<Value> revArguments;
 

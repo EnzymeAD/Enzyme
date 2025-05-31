@@ -92,10 +92,6 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
                    cl::desc("Use fast math on derivative compuation"));
-llvm::cl::opt<bool>
-    EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
-                     cl::desc("Use additional checks to ensure correct "
-                              "behavior when handling functions with inf"));
 llvm::cl::opt<bool> EnzymeMemmoveWarning(
     "enzyme-memmove-warning", cl::init(true), cl::Hidden,
     cl::desc("Warn if using memmove implementation as a fallback for memmove"));

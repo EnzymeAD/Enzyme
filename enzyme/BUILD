@@ -537,6 +537,18 @@ gentbl_cc_library(
     deps = [":ImplementationsCommonTdFiles"],
 )
 
+gentbl_cc_library(
+    name = "enzyme-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [(
+        ["-gen-mlir-derivatives"],
+        "Enzyme/MLIR/Implementations/EnzymeDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/EnzymeDerivatives.td",
+    deps = [":ImplementationsCommonTdFiles"],
+)
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -578,6 +590,7 @@ cc_library(
         ":memref-derivatives",
         ":nvvm-derivatives",
         ":scf-derivatives",
+        ":enzyme-derivatives",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Demangle",

@@ -383,9 +383,23 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
     os << "active_" << name << ") {\n"
        << "      auto shadow_" << name << " = gutils->invertPointerM(orig_"
        << name << ", BuilderZ);\n"
-       << "      rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
+       << "      if (gutils->getWidth() == 1)\n"
+       << "        rt_inactive_" << name << " = BuilderZ.CreateICmpEQ(shadow_"
        << name << ", arg_" << name << ", \"rt.tmp.inactive.\" \"" << name
        << "\");\n"
+       << "      else {\n"
+       << "        for (size_t i=0; i<gutils->getWidth(); i++) {\n"
+       << "          auto rt_inactive_" << name
+       << "_tmp = BuilderZ.CreateICmpEQ(gutils->extractMeta(BuilderZ, shadow_"
+       << name << ", i), arg_" << name << ", \"rt.tmp.inactive.\" \"" << name
+       << ".\" + std::to_string(i));\n"
+       << "          if (i == 0) rt_inactive_" << name << " = rt_inactive_"
+       << name << "_tmp;\n"
+       << "          else rt_inactive_" << name
+       << " = BuilderZ.CreateOr(rt_inactive_" << name << ", rt_inactive_"
+       << name << "_tmp);\n"
+       << "        }\n"
+       << "      }\n"
        << "      if (Mode == DerivativeMode::ForwardMode || Mode == "
           "DerivativeMode::ForwardModeSplit) anyRuntimeActivity = "
           "anyRuntimeActivity ? BuilderZ.CreateOr(anyRuntimeActivity, "
