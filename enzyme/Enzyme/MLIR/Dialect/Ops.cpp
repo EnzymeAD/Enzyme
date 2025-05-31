@@ -261,6 +261,10 @@ public:
                 rewriter.getContext(),
                 mlir::enzyme::Activity::enzyme_constnoneed);
             newRetActivityArgs.push_back(new_constnn);
+          } else {
+            outs_args.push_back(res);
+            out_ty.push_back(res.getType());
+            newRetActivityArgs.push_back(iattr);
           }
         }
         break;
@@ -306,6 +310,9 @@ public:
               new_dup = ActivityAttr::get(rewriter.getContext(),
                                           Activity::enzyme_const);
             }
+          } else {
+            out_ty.push_back(res.getType());
+            outs_args.push_back(res);
           }
         }
         newRetActivityArgs.push_back(new_dup);
