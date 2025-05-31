@@ -311,6 +311,5 @@ def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
     $input attr-dict `:` type($input) `->` type($output)
   }];
 }
-} 
 
 #endif // ENZYME_OPS
