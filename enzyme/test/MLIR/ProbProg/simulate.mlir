@@ -18,7 +18,7 @@ module {
 }
 
 // CHECK:   func.func @test.simulate(%[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> !enzyme.Trace {
-// CHECK-NEXT:    %[[trace:.+]] = "enzyme.initTrace"() : () -> !enzyme.Trace
+// CHECK-NEXT:    %[[trace:.+]] = enzyme.initTrace : !enzyme.Trace
 // CHECK-NEXT:    %[[s_sym:.+]] = llvm.mlir.constant(1 : i64) : i64
 // CHECK-NEXT:    %[[t_sym:.+]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-NEXT:    %[[s:.+]] = call @normal(%[[mean]], %[[stddev]]) : (f64, f64) -> f64

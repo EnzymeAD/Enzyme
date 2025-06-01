@@ -48,7 +48,7 @@ module {
 }
 
 // CHECK: func.func @line_model.simulate(%[[xs:.+]]: memref<?xf64>, %[[n:.+]]: index) -> !enzyme.Trace {
-// CHECK-NEXT:   %[[trace:.+]] = "enzyme.initTrace"() : () -> !enzyme.Trace
+// CHECK-NEXT:   %[[trace:.+]] = enzyme.initTrace : !enzyme.Trace
 // CHECK-NEXT:   %[[pnan:.+]] = arith.constant 0x7FF0000001000000 : f64
 // CHECK-NEXT:   %[[c0:.+]] = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:   %[[c0_1:.+]] = arith.constant 1.000000e-01 : f64

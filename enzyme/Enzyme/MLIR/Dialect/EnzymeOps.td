@@ -168,6 +168,7 @@ def initTraceOp : Enzyme_Op<"initTrace"> {
   }];
   let arguments = (ins );
   let results = (outs AnyType:$output);
+  let assemblyFormat = "attr-dict `:` type($output)";
 }
 
 def SetOp : Enzyme_Op<"set",
@@ -259,7 +260,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs AnyType:$output);
+  let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
