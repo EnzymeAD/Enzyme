@@ -11,7 +11,7 @@ module {
     return %t : f64
   }
 
-  func.func @generate(%mean : f64, %stddev : f64) -> !enzyme.Trace {
+  func.func @simulate(%mean : f64, %stddev : f64) -> !enzyme.Trace {
     %trace = enzyme.simulate @test(%mean, %stddev) { name = "test" } : (f64, f64) -> !enzyme.Trace
     return %trace : !enzyme.Trace
   }
