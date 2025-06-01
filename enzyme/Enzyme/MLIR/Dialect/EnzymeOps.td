@@ -167,7 +167,7 @@ def initTraceOp : Enzyme_Op<"initTrace"> {
     Initialize a trace.
   }];
   let arguments = (ins );
-  let results = (outs Trace);
+  let results = (outs AnyType:$output);
 }
 
 def SetOp : Enzyme_Op<"set",
@@ -259,7 +259,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$newTrace);
+  let results = (outs AnyType:$output);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -273,7 +273,7 @@ def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 
   let arguments = (ins
-    Trace:$trace,
+    AnyType:$trace,
     AnyType:$symbol,
     AnyType:$sample,
     DefaultValuedStrAttr<StrAttr, "">:$name
