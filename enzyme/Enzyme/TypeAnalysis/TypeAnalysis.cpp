@@ -1220,6 +1220,8 @@ void TypeAnalyzer::considerTBAA() {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
 
   for (BasicBlock &BB : *fntypeinfo.Function) {
+    if (notForAnalysis.count(&BB))
+      continue;
     for (Instruction &I : BB) {
       if (auto MD = I.getMetadata("enzyme_type")) {
         auto TT = TypeTree::fromMD(MD);
