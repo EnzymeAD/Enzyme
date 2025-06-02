@@ -281,6 +281,10 @@ def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   );
 
   let results = (outs );
+
+  let assemblyFormat = [{
+    `[` $symbol `:` type($symbol) `]` $trace `:` type($trace) `,` $sample `:` type($sample) attr-dict
+  }];
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {

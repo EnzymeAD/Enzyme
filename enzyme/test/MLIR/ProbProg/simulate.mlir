@@ -22,8 +22,8 @@ module {
 // CHECK-NEXT:    %[[s_sym:.+]] = llvm.mlir.constant(1 : i64) : i64
 // CHECK-NEXT:    %[[t_sym:.+]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-NEXT:    %[[s:.+]] = call @normal(%[[mean]], %[[stddev]]) : (f64, f64) -> f64
-// CHECK-NEXT:    "enzyme.addSampleToTrace"(%[[trace]], %[[s_sym]], %[[s]]) <{name = "s"}> : (!enzyme.Trace, i64, f64) -> ()
+// CHECK-NEXT:    enzyme.addSampleToTrace[%[[s_sym]] : i64] %[[trace]] : !enzyme.Trace, %[[s]] : f64
 // CHECK-NEXT:    %[[t:.+]] = call @normal(%[[s]], %[[stddev]]) : (f64, f64) -> f64
-// CHECK-NEXT:    "enzyme.addSampleToTrace"(%[[trace]], %[[t_sym]], %[[t]]) <{name = "t"}> : (!enzyme.Trace, i64, f64) -> ()
+// CHECK-NEXT:    enzyme.addSampleToTrace[%[[t_sym]] : i64] %[[trace]] : !enzyme.Trace, %[[t]] : f64
 // CHECK-NEXT:    return %[[trace]] : !enzyme.Trace
 // CHECK-NEXT:   }

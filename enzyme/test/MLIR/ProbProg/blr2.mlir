@@ -48,16 +48,16 @@ module {
 // CHECK-NEXT:   %[[slope_sym:.+]] = llvm.mlir.constant(1 : i64) : i64
 // CHECK-NEXT:   %[[intercept_sym:.+]] = llvm.mlir.constant(2 : i64) : i64
 // CHECK-NEXT:   %[[slope:.+]] = call @normal(%[[c0]], %[[c1]]) : (f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[slope_sym]], %[[slope]]) <{name = "slope"}> : (!enzyme.Trace, i64, f64) -> ()
+// CHECK-NEXT:   enzyme.addSampleToTrace[%[[slope_sym]] : i64] %[[trace]] : !enzyme.Trace, %[[slope]] : f64
 // CHECK-NEXT:   %[[intercept:.+]] = call @normal(%[[c0]], %[[c2]]) : (f64, f64) -> f64
-// CHECK-NEXT:   "enzyme.addSampleToTrace"(%[[trace]], %[[intercept_sym]], %[[intercept]]) <{name = "intercept"}> : (!enzyme.Trace, i64, f64) -> ()
+// CHECK-NEXT:   enzyme.addSampleToTrace[%[[intercept_sym]] : i64] %[[trace]] : !enzyme.Trace, %[[intercept]] : f64
 // CHECK-NEXT:   %[[final:.+]] = scf.for %[[i:.+]] = %[[zero]] to %[[n]] step %[[one]] iter_args(%[[prev_y:.+]] = %[[pnan]]) -> (f64) {
 // CHECK-NEXT:       %[[x:.+]] = memref.load %[[xs]][%[[i]]] : memref<?xf64>
 // CHECK-NEXT:       %[[prod:.+]] = arith.mulf %[[slope]], %[[x]] : f64
 // CHECK-NEXT:       %[[y_mean:.+]] = arith.addf %[[prod]], %[[intercept]] : f64
 // CHECK-NEXT:       %[[y_sym:.+]] = llvm.mlir.constant(3 : i64) : i64
 // CHECK-NEXT:       %[[y_sample:.+]] = func.call @normal(%[[y_mean]], %[[c0_1]]) : (f64, f64) -> f64
-// CHECK-NEXT:       "enzyme.addSampleToTrace"(%[[trace]], %[[y_sym]], %[[y_sample]]) <{name = "y"}> : (!enzyme.Trace, i64,
+// CHECK-NEXT:       enzyme.addSampleToTrace[%[[y_sym]] : i64] %[[trace]] : !enzyme.Trace, %[[y_sample]] : f64
 // CHECK-NEXT:       scf.yield %[[y_sample]] : f64
 // CHECK-NEXT:     }
 // CHECK-NEXT:   return %[[trace]] : !enzyme.Trace
