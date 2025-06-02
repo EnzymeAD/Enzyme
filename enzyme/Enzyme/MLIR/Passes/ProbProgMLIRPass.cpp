@@ -128,8 +128,10 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     OpBuilder b(CI);
     auto tCI = b.create<func::CallOp>(CI.getLoc(), NewF.getName(),
                                       NewF.getResultTypes(), CI.getInputs());
+    auto casted = b.create<UnrealizedConversionCastOp>(
+        CI.getLoc(), CI->getResultTypes(), tCI->getResults());
 
-    CI->replaceAllUsesWith(tCI);
+    CI->replaceAllUsesWith(casted);
     CI->erase();
 
     return success();
