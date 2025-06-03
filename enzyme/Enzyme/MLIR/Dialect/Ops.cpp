@@ -648,7 +648,7 @@ public:
 
     AutoDiffOp newOp = rewriter.create<AutoDiffOp>(
         uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(), newInActivity,
-        newRetActivity, uop.getWidthAttr(),uop.getStrongZeroAttr());
+        newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
 
     // Map old uses of uop to newOp
     auto oldIdx = 0;
