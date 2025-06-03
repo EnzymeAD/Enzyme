@@ -55,7 +55,7 @@ jobs:
         with:
           repository: 'llvm/llvm-project'
           path: 'llvm-project'
-      - uses: bazel-contrib/setup-bazel@0.14.0
+      - uses: bazel-contrib/setup-bazel@0.15.0
         name: Set up Bazel
         with:
           # Avoid downloading Bazel every time.
