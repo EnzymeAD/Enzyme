@@ -2032,9 +2032,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     if (hasconstant) {
-      EmitWarningAlways("NoCustom", *todiff,
-                  "Massaging provided custom augmented forward pass to handle "
-                  "constant argumented");
+      EmitWarningAlways(
+          "NoCustom", *todiff,
+          "Massaging provided custom augmented forward pass to handle "
+          "constant argumented");
       SmallVector<Type *, 3> dupargs;
       std::vector<DIFFE_TYPE> next_constant_args(constant_args.begin(),
                                                  constant_args.end());
@@ -2185,13 +2186,29 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Return] = 1;
         returnMapping[AugmentedStruct::DifferentialReturn] = 2;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType() ||
-            ST->getTypeAtIndex(2) != GradientUtils::getShadowType(todiff->getReturnType(), width)) {
+            ST->getTypeAtIndex(2) !=
+                GradientUtils::getShadowType(todiff->getReturnType(), width)) {
           std::string str;
           raw_string_ostream ss(str);
           if (ST->getTypeAtIndex(1) != todiff->getReturnType())
-          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 1 (primal return slot) of " << *ST->getTypeAtIndex(1) << " which did not match primal return type " << *todiff->getReturnType() << ", automatically casting one to the other\n";
-          if (ST->getTypeAtIndex(2) != GradientUtils::getShadowType(todiff->getReturnType(), width))
-          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 2 (shadow return slot) of " << *ST->getTypeAtIndex(2) << " which did not match shadow return type " << *GradientUtils::getShadowType(todiff->getReturnType(), width) << ", automatically casting one to the other\n";
+            ss << " Custom augmented primal for function " << todiff->getName()
+               << " (" << foundcalled->getName()
+               << ") had struct return with type at index 1 (primal return "
+                  "slot) of "
+               << *ST->getTypeAtIndex(1)
+               << " which did not match primal return type "
+               << *todiff->getReturnType()
+               << ", automatically casting one to the other\n";
+          if (ST->getTypeAtIndex(2) !=
+              GradientUtils::getShadowType(todiff->getReturnType(), width))
+            ss << " Custom augmented primal for function " << todiff->getName()
+               << " (" << foundcalled->getName()
+               << ") had struct return with type at index 2 (shadow return "
+                  "slot) of "
+               << *ST->getTypeAtIndex(2)
+               << " which did not match shadow return type "
+               << *GradientUtils::getShadowType(todiff->getReturnType(), width)
+               << ", automatically casting one to the other\n";
           EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType(), todiff->getReturnType()};
@@ -2226,7 +2243,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 bb.CreatePointerCast(
                     AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
             auto ty = todiff->getReturnType();
-            if (i == 2) ty = GradientUtils::getShadowType(ty, width);
+            if (i == 2)
+              ty = GradientUtils::getShadowType(ty, width);
             Value *vres = bb.CreateLoad(ty, AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }
@@ -2246,7 +2264,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       if (ST->getNumElements() == 2 &&
           ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
-          ST->getTypeAtIndex(1) == GradientUtils::getShadowType(todiff->getReturnType(), width)) {
+          ST->getTypeAtIndex(1) ==
+              GradientUtils::getShadowType(todiff->getReturnType(), width)) {
         std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Return] = 0;
         returnMapping[AugmentedStruct::DifferentialReturn] = 1;
@@ -2263,7 +2282,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (ST->getTypeAtIndex(1) != todiff->getReturnType()) {
           std::string str;
           raw_string_ostream ss(str);
-          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 1 (primal return slot) of " << *ST->getTypeAtIndex(1) << " which did not match primal return type " << *todiff->getReturnType() << ", automatically casting one to the other\n";
+          ss << " Custom augmented primal for function " << todiff->getName()
+             << " (" << foundcalled->getName()
+             << ") had struct return with type at index 1 (primal return slot) "
+                "of "
+             << *ST->getTypeAtIndex(1)
+             << " which did not match primal return type "
+             << *todiff->getReturnType()
+             << ", automatically casting one to the other\n";
           EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType()};
@@ -2318,7 +2344,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
     std::map<AugmentedStruct, int> returnMapping;
     if (!foundcalled->getReturnType()->isVoidTy()) {
-	    llvm::errs() << " aug: todiff: " << *todiff << "\n\n" << "aug foundcalled: " << *foundcalled << "\n";
+      llvm::errs() << " aug: todiff: " << *todiff << "\n\n"
+                   << "aug foundcalled: " << *foundcalled << "\n";
       if (foundcalled->getReturnType() == todiff->getReturnType())
         returnMapping[AugmentedStruct::Return] = -1;
       else
@@ -3965,7 +3992,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(augmenteddata);
       bool badDiffRet = false;
       bool hasTape = true;
-      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/ && key.additionalType != nullptr) {
+      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/ &&
+          key.additionalType != nullptr) {
         auto lastarg = foundcalled->arg_end();
         lastarg--;
         res.first.push_back(lastarg->getType());
@@ -3974,7 +4002,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           if (lastarg->getType() != key.todiff->getReturnType())
             badDiffRet = true;
         }
-      } else if (foundcalled->arg_size() == res.first.size() && key.additionalType == nullptr) {
+      } else if (foundcalled->arg_size() == res.first.size() &&
+                 key.additionalType == nullptr) {
         if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           auto lastarg = foundcalled->arg_end();
           lastarg--;
@@ -3998,7 +4027,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           ss << *a;
         }
         if (key.additionalType) {
-          if (seen) ss << ", /*tapeType=*/";
+          if (seen)
+            ss << ", /*tapeType=*/";
           ss << *key.additionalType;
         }
         ss << "]\n";
@@ -4009,8 +4039,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         } else {
           ss << *key.todiff << "\n";
         }
-        
-        SmallVector<Type*, 1> ftys(res.first.begin(), res.first.end());
+
+        SmallVector<Type *, 1> ftys(res.first.begin(), res.first.end());
         if (key.additionalType) {
           ftys.push_back(key.additionalType);
         }
@@ -4024,24 +4054,24 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         Function *NewF = Function::Create(
             FTy, Function::LinkageTypes::InternalLinkage,
             "badgradient_" + key.todiff->getName(), key.todiff->getParent());
-      
+
         BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
         IRBuilder<> bb(BB);
         auto context2 = context;
         if (!context2.ip)
-            context2.ip = &bb;
+          context2.ip = &bb;
         if (!EmitNoDerivativeError(ss.str(), key.todiff, context2)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
-          if (!NewF->getReturnType()->isVoidTy())
-            bb.CreateRet(UndefValue::get(NewF->getReturnType()));
-          else
-            bb.CreateRetVoid();
+        if (!NewF->getReturnType()->isVoidTy())
+          bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+        else
+          bb.CreateRetVoid();
 
-          return insert_or_assign2<ReverseCacheKey, Function *>(
-                     ReverseCachedFunctions, key, NewF)
-              ->second;
+        return insert_or_assign2<ReverseCacheKey, Function *>(
+                   ReverseCachedFunctions, key, NewF)
+            ->second;
       }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());

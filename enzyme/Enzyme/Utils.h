@@ -162,14 +162,13 @@ public:
 
 template <typename... Args>
 void EmitWarningAlways(llvm::StringRef RemarkName, const llvm::Function &F,
-                 const Args &...args) {
+                       const Args &...args) {
   llvm::LLVMContext &Ctx = F.getContext();
-    std::string str;
-    llvm::raw_string_ostream ss(str);
-    (ss << ... << args);
-    auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
-    Ctx.diagnose(
-      (EnzymeWarning(ss.str(), F.getSubprogram(), &F)));
+  std::string str;
+  llvm::raw_string_ostream ss(str);
+  (ss << ... << args);
+  auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
+  Ctx.diagnose((EnzymeWarning(ss.str(), F.getSubprogram(), &F)));
 }
 
 template <typename... Args>
