@@ -532,6 +532,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ";\n";
 
       os << curIndent << INDENT << "bool vectorized = false;\n";
+      os << curIndent << INDENT << "(void)vectorized;\n";
 
       os << curIndent << INDENT << "if (condition) {\n";
 
@@ -621,7 +622,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
           auto [ord1, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultTree);
-          assert(!isVec);
           assert(!ext.size());
           assert(!isva);
           ord = ord1;
