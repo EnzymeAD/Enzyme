@@ -62,7 +62,7 @@ entry:
 ; CHECK: define internal float @fwddiffetestf(float %x, float %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %exp = alloca i32, align 4
-; CHECK-NEXT:   %call = call double @frexpf(float %x, i32* writeonly %exp)
+; CHECK-NEXT:   %call = call float @frexpf(float %x, i32* writeonly %exp)
 ; CHECK-NEXT:   %0 = bitcast float %x to i32
 ; CHECK-NEXT:   %1 = and i32 2139095040, %0
 ; CHECK-NEXT:   %2 = bitcast i32 %1 to float
@@ -74,7 +74,7 @@ entry:
 ; CHECK: define internal x86_fp80 @fwddiffetestl(x86_fp80 %x, x86_fp80 %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %exp = alloca i32, align 4
-; CHECK-NEXT:   %call = call double @frexpl(x86_fp80 %x, i32* writeonly %exp)
+; CHECK-NEXT:   %call = call x86_fp80 @frexpl(x86_fp80 %x, i32* writeonly %exp)
 ; CHECK-NEXT:   %0 = bitcast x86_fp80 %x to i80
 ; CHECK-NEXT:   %1 = and i80 604453686435277732577280, %0
 ; CHECK-NEXT:   %2 = bitcast i80 %1 to x86_fp80
