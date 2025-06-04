@@ -3740,15 +3740,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (aug.returns.find(AugmentedStruct::Tape) != aug.returns.end()) {
         auto tapeIdx = aug.returns.find(AugmentedStruct::Tape)->second;
         tape = (tapeIdx == -1) ? cal : bb.CreateExtractValue(cal, tapeIdx);
-        llvm::errs() <<" tape: " << *tape << " tidx" << tapeIdx << "\n";
-        assert(tape->getType()->isIntegerTy(8));
         if (tape->getType()->isEmptyTy())
           tape = UndefValue::get(tape->getType());
       }
 
-      llvm::errs() << " augfn: " << *aug.fn << "\n";
       if (aug.tapeType) {
-          llvm::errs() << " aug tape type: " << aug.tapeType << "\n";
         assert(tape);
         auto tapep = bb.CreatePointerCast(
             tape, PointerType::get(
@@ -3886,8 +3882,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .strongZero = key.strongZero},
           TA, augmenteddata, omp);
 
-      llvm::errs() << " revfn: " << *revfn << "\n";
-      
       {
         auto arg = revfn->arg_begin();
         for (auto cidx : next_constant_args) {
