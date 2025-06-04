@@ -868,7 +868,7 @@ def : CallPattern<(Op $x, $expout),
                     (InactiveArg)
                   ],
                   (ForwardFromSummedReverse),
-                  [ReadOnly, NoUnwind]
+                  [WriteOnly, NoUnwind]
                   >;
 
 // Handle both the two-arg and one-arg variants of cabs
