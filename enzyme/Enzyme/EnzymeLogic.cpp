@@ -3741,6 +3741,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         auto tapeIdx = aug.returns.find(AugmentedStruct::Tape)->second;
         tape = (tapeIdx == -1) ? cal : bb.CreateExtractValue(cal, tapeIdx);
         llvm::errs() <<" tape: " << *tape << " tidx" << tapeIdx << "\n";
+        assert(tape->getType()->isIntegerTy(8));
         if (tape->getType()->isEmptyTy())
           tape = UndefValue::get(tape->getType());
       }
@@ -4002,6 +4003,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           seen = true;
           ss << *a;
         }
+        if (key.additionalType) {
+          if (seen) ss << ", /*tapeType=*/";
+          ss << *key.additionalType;
+        }
         ss << "]\n";
         ss << "  Instead found " << foundcalled->getName() << " of type "
            << *foundcalled->getFunctionType() << "\n";
@@ -4010,10 +4015,39 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         } else {
           ss << *key.todiff << "\n";
         }
-        if (!EmitNoDerivativeError(ss.str(), key.todiff, context)) {
+        
+        SmallVector<Type*, 1> ftys(res.first.begin(), res.first.end());
+        if (key.additionalType) {
+          ftys.push_back(key.additionalType);
+        }
+
+        Type *FRetTy =
+            res.second.empty()
+                ? Type::getVoidTy(key.todiff->getContext())
+                : StructType::get(key.todiff->getContext(), {res.second});
+        FunctionType *FTy = FunctionType::get(
+            FRetTy, ftys, key.todiff->getFunctionType()->isVarArg());
+        Function *NewF = Function::Create(
+            FTy, Function::LinkageTypes::InternalLinkage,
+            "badgradient_" + key.todiff->getName(), key.todiff->getParent());
+      
+        BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+        IRBuilder<> bb(BB);
+        auto context2 = context;
+        if (!context2.ip)
+            context2.ip = &bb;
+        if (!EmitNoDerivativeError(ss.str(), key.todiff, context2)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
+          if (!NewF->getReturnType()->isVoidTy())
+            bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+          else
+            bb.CreateRetVoid();
+
+          return insert_or_assign2<ReverseCacheKey, Function *>(
+                     ReverseCachedFunctions, key, NewF)
+              ->second;
       }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());
