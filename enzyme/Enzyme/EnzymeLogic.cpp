@@ -3996,7 +3996,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           key.additionalType != nullptr) {
         auto lastarg = foundcalled->arg_end();
         lastarg--;
-        res.first.push_back(lastarg->getType());
+        res.first.push_back(key.additionalType);
         if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           lastarg--;
           if (lastarg->getType() != key.todiff->getReturnType())
@@ -4073,12 +4073,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    ReverseCachedFunctions, key, NewF)
             ->second;
       }
+      
+      bool wrongTape = false;
+      if (hasTape && key.additionalType != nullptr) {
+          auto lastarg = foundcalled->arg_end();
+          lastarg--;
+          if (lastarg->getType() != key.additionalType)
+            wrongTape = true;
+      }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());
       bool wrongRet =
           st == nullptr && !foundcalled->getReturnType()->isVoidTy();
-      if (wrongRet || badDiffRet) {
-        // if (wrongRet || !hasTape) {
+      if (wrongRet || badDiffRet || wrongTape) {
         Type *FRetTy =
             res.second.empty()
                 ? Type::getVoidTy(key.todiff->getContext())
@@ -4122,6 +4129,22 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           Value *vres = bb.CreateLoad(T, AI);
           args[idx] = vres;
         }
+        
+        if (wrongTape) {
+          auto idx = args.size() - 1;
+          Type *T = (foundcalled->arg_begin() + idx)->getType();
+          if (args[idx]->getType()->isIntegerTy() && T->isIntegerTy()) {
+            args[idx] = bb.CreateZExtOrTrunc(args[idx], T);
+          } else {
+          auto AI = bb.CreateAlloca(T);
+          bb.CreateStore(args[idx],
+                         bb.CreatePointerCast(
+                             AI, PointerType::getUnqual(args[idx]->getType())));
+          Value *vres = bb.CreateLoad(T, AI);
+          args[idx] = vres;
+          }
+        }
+
         // if (!hasTape) {
         //  args.pop_back();
         //}
