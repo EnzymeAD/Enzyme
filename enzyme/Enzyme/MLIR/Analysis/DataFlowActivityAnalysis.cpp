@@ -884,9 +884,18 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
             });
       };
 
+      if (value.getDefiningOp<LLVM::PoisonOp>() || value.getDefiningOp<LLVM::ZeroOp>() || value.getDefiningOp<LLVM::UndefOp>()) {
+        return true;
+      }
+
       // If this triggers, investigate why the alias classes weren't computed.
       // If they weren't computed legitimately, treat the value as
       // conservatively non-constant or change the return type to be tri-state.
+      if (aliasClassLattice->isUndefined()) {
+          //llvm::errs() << *callee->getParentOp() << "\n";
+          llvm::errs() << value.getDefiningOp() << " undef alias latice " << value << "\n";
+          return false;
+      }
       assert(!aliasClassLattice->isUndefined() &&
              "didn't compute alias classes");
 
@@ -907,6 +916,12 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
         if (fma->hasActiveData(aliasClass) &&
             bma->activeDataFlowsOut(aliasClass))
           return false;
+        
+        if (pointsToSets->getPointsTo(aliasClass).isUndefined()) {
+
+          llvm::errs() << value.getDefiningOp() << " undef pointrstoalias latice " << value << "\n";
+            return false;
+        }
 
         // If this triggers, investigate why points-to sets couldn't be
         // computed. Treat conservatively as "unknown" if necessary.

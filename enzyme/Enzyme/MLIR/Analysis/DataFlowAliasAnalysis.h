@@ -144,6 +144,7 @@ public:
 
   const AliasClassSet &getPointsTo(DistinctAttr id) const { return lookup(id); }
 
+  //void dumpSets() const;
 private:
   /// Update all alias classes in `keysToUpdate` to additionally point to alias
   /// classes in `values`. Handle undefined keys optimistically (ignore) and
@@ -159,6 +160,7 @@ private:
   /// in the lattice, not only the replacements described above.
   ChangeResult update(const AliasClassSet &keysToUpdate,
                       const AliasClassSet &values, bool replace);
+
 };
 
 //===----------------------------------------------------------------------===//
