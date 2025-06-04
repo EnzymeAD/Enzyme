@@ -4073,13 +4073,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    ReverseCachedFunctions, key, NewF)
             ->second;
       }
-      
+
       bool wrongTape = false;
       if (hasTape && key.additionalType != nullptr) {
-          auto lastarg = foundcalled->arg_end();
-          lastarg--;
-          if (lastarg->getType() != key.additionalType)
-            wrongTape = true;
+        auto lastarg = foundcalled->arg_end();
+        lastarg--;
+        if (lastarg->getType() != key.additionalType)
+          wrongTape = true;
       }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());
@@ -4129,19 +4129,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           Value *vres = bb.CreateLoad(T, AI);
           args[idx] = vres;
         }
-        
+
         if (wrongTape) {
           auto idx = args.size() - 1;
           Type *T = (foundcalled->arg_begin() + idx)->getType();
           if (args[idx]->getType()->isIntegerTy() && T->isIntegerTy()) {
             args[idx] = bb.CreateZExtOrTrunc(args[idx], T);
           } else {
-          auto AI = bb.CreateAlloca(T);
-          bb.CreateStore(args[idx],
-                         bb.CreatePointerCast(
-                             AI, PointerType::getUnqual(args[idx]->getType())));
-          Value *vres = bb.CreateLoad(T, AI);
-          args[idx] = vres;
+            auto AI = bb.CreateAlloca(T);
+            bb.CreateStore(args[idx],
+                           bb.CreatePointerCast(AI, PointerType::getUnqual(
+                                                        args[idx]->getType())));
+            Value *vres = bb.CreateLoad(T, AI);
+            args[idx] = vres;
           }
         }
 
