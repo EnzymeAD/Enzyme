@@ -2032,7 +2032,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     if (hasconstant) {
-      EmitWarning("NoCustom", *todiff,
+      EmitWarningAlways("NoCustom", *todiff,
                   "Massaging provided custom augmented forward pass to handle "
                   "constant argumented");
       SmallVector<Type *, 3> dupargs;
@@ -2185,7 +2185,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Return] = 1;
         returnMapping[AugmentedStruct::DifferentialReturn] = 2;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType() ||
-            ST->getTypeAtIndex(2) != todiff->getReturnType()) {
+            ST->getTypeAtIndex(2) != GradientUtils::getShadowType(todiff->getReturnType(), width)) {
+          std::string str;
+          raw_string_ostream ss(str);
+          if (ST->getTypeAtIndex(1) != todiff->getReturnType())
+          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 1 (primal return slot) of " << *ST->getTypeAtIndex(1) << " which did not match primal return type " << *todiff->getReturnType() << ", automatically casting one to the other\n";
+          if (ST->getTypeAtIndex(2) != GradientUtils::getShadowType(todiff->getReturnType(), width))
+          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 2 (shadow return slot) of " << *ST->getTypeAtIndex(2) << " which did not match shadow return type " << *GradientUtils::getShadowType(todiff->getReturnType(), width) << ", automatically casting one to the other\n";
+          EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType(), todiff->getReturnType()};
           auto RT =
@@ -2218,7 +2225,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
                     AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
-            Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
+            auto ty = todiff->getReturnType();
+            if (i == 2) ty = GradientUtils::getShadowType(ty, width);
+            Value *vres = bb.CreateLoad(ty, AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }
           bb.CreateRet(res);
@@ -2236,7 +2245,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             ->second;
       }
       if (ST->getNumElements() == 2 &&
-          ST->getElementType(0) == ST->getElementType(1)) {
+          ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
+          ST->getTypeAtIndex(1) == GradientUtils::getShadowType(todiff->getReturnType(), width)) {
         std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Return] = 0;
         returnMapping[AugmentedStruct::DifferentialReturn] = 1;
@@ -2251,6 +2261,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType()) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << " Custom augmented primal for function " << todiff->getName() << " (" << foundcalled->getName() << ") had struct return with type at index 1 (primal return slot) of " << *ST->getTypeAtIndex(1) << " which did not match primal return type " << *todiff->getReturnType() << ", automatically casting one to the other\n";
+          EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType()};
           auto RT =
@@ -3726,11 +3740,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       if (aug.returns.find(AugmentedStruct::Tape) != aug.returns.end()) {
         auto tapeIdx = aug.returns.find(AugmentedStruct::Tape)->second;
         tape = (tapeIdx == -1) ? cal : bb.CreateExtractValue(cal, tapeIdx);
+        llvm::errs() <<" tape: " << *tape << " tidx" << tapeIdx << "\n";
         if (tape->getType()->isEmptyTy())
           tape = UndefValue::get(tape->getType());
       }
 
+      llvm::errs() << " augfn: " << *aug.fn << "\n";
       if (aug.tapeType) {
+          llvm::errs() << " aug tape type: " << aug.tapeType << "\n";
         assert(tape);
         auto tapep = bb.CreatePointerCast(
             tape, PointerType::get(
@@ -3861,7 +3878,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .width = key.width,
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
-                            .additionalType = nullptr,
+                            .additionalType = key.additionalType,
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
@@ -3953,7 +3970,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(augmenteddata);
       bool badDiffRet = false;
       bool hasTape = true;
-      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
+      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/ && key.additionalType != nullptr) {
         auto lastarg = foundcalled->arg_end();
         lastarg--;
         res.first.push_back(lastarg->getType());
@@ -3962,7 +3979,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           if (lastarg->getType() != key.todiff->getReturnType())
             badDiffRet = true;
         }
-      } else if (foundcalled->arg_size() == res.first.size()) {
+      } else if (foundcalled->arg_size() == res.first.size() && key.additionalType == nullptr) {
         if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           auto lastarg = foundcalled->arg_end();
           lastarg--;

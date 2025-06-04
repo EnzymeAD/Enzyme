@@ -458,6 +458,16 @@ CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
   return res;
 }
 
+EnzymeWarning::EnzymeWarning(const llvm::Twine &RemarkName,
+                             const llvm::DiagnosticLocation &Loc,
+                             const llvm::Instruction *CodeRegion)
+    : EnzymeWarning(RemarkName, Loc, CodeRegion->getParent()->getParent()) {}
+
+EnzymeWarning::EnzymeWarning(const llvm::Twine &RemarkName,
+                             const llvm::DiagnosticLocation &Loc,
+                             const llvm::Function *CodeRegion)
+    : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc, DS_Warning) {}
+
 EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Instruction *CodeRegion)

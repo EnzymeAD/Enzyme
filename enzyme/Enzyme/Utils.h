@@ -152,6 +152,26 @@ void EmitWarning(llvm::StringRef RemarkName, const llvm::Instruction &I,
   EmitWarning(RemarkName, I.getDebugLoc(), I.getParent(), args...);
 }
 
+class EnzymeWarning final : public llvm::DiagnosticInfoUnsupported {
+public:
+  EnzymeWarning(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
+                const llvm::Instruction *CodeRegion);
+  EnzymeWarning(const llvm::Twine &Msg, const llvm::DiagnosticLocation &Loc,
+                const llvm::Function *CodeRegion);
+};
+
+template <typename... Args>
+void EmitWarningAlways(llvm::StringRef RemarkName, const llvm::Function &F,
+                 const Args &...args) {
+  llvm::LLVMContext &Ctx = F.getContext();
+    std::string str;
+    llvm::raw_string_ostream ss(str);
+    (ss << ... << args);
+    auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
+    Ctx.diagnose(
+      (EnzymeWarning(ss.str(), F.getSubprogram(), &F)));
+}
+
 template <typename... Args>
 void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
                  const Args &...args) {
