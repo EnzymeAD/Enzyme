@@ -3893,7 +3893,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto revfn = CreatePrimalAndGradient(
           context,
           (ReverseCacheKey){.todiff = key.todiff,
-                            .retType = key.retType,
+                            .retType = nextRetType,
                             .constant_args = next_constant_args,
                             .overwritten_args = key.overwritten_args,
                             .returnUsed = key.returnUsed,
