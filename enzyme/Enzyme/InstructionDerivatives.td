@@ -24,6 +24,7 @@ class Attribute<string name_> {
 }
 def ReadNone : Attribute<"ReadNone">;
 def ReadOnly : Attribute<"ReadOnly">;
+def WriteOnly : Attribute<"WriteOnly">;
 def NoUnwind : Attribute<"NoUnwind">;
 
 class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOps, dag forwardOps, list<Attribute> attrs=[]> {
@@ -868,7 +869,7 @@ def : CallPattern<(Op $x, $expout),
                     (InactiveArg)
                   ],
                   (ForwardFromSummedReverse),
-                  [ReadOnly, NoUnwind]
+                  [WriteOnly, NoUnwind]
                   >;
 
 // Handle both the two-arg and one-arg variants of cabs
