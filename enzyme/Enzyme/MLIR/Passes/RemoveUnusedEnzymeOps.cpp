@@ -326,7 +326,8 @@ struct IgnoreDerivativesSimplifyPattern
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                  InitSimplify, IgnoreDerivativesSimplifyPattern>(op->getContext());
+                  InitSimplify, IgnoreDerivativesSimplifyPattern>(
+      op->getContext());
 
   GreedyRewriteConfig config;
   config.enableFolding();
