@@ -37,26 +37,13 @@ struct ApplySimplificationPattern
   }
 };
 
-struct ApplyRemoveIgnoreDerivativePattern
-    : public OpRewritePattern<enzyme::IgnoreDerivativesOp> {
-  using OpRewritePattern<enzyme::IgnoreDerivativesOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(enzyme::IgnoreDerivativesOp op,
-                                PatternRewriter &rewriter) const override {
-    rewriter.replaceOp(op, op.getOperand());
-    return success();
-  }
-};
-
 struct MathematicSimplification
     : public enzyme::MathematicSimplificationPassBase<
           MathematicSimplification> {
   void runOnOperation() override {
 
     RewritePatternSet patterns(&getContext());
-    patterns
-        .insert<ApplySimplificationPattern, ApplyRemoveIgnoreDerivativePattern>(
-            &getContext());
+    patterns.insert<ApplySimplificationPattern>(&getContext());
 
     GreedyRewriteConfig config;
     (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),

@@ -27,7 +27,7 @@ module {
 // CHECK-NEXT:     return %cst : f64
 // CHECK-NEXT:   }
 
-// RUN: %eopt --enzyme-simplify-math %s | FileCheck %s
+// RUN: %eopt --remove-unnecessary-enzyme-ops %s | FileCheck %s
 
 module {
   func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> (tensor<2xf64>) {
