@@ -26,3 +26,16 @@ module {
 // CHECK-NEXT:     %cst = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:     return %cst : f64
 // CHECK-NEXT:   }
+
+// RUN: %eopt --remove-unnecessary-enzyme-ops %s | FileCheck %s
+
+module {
+  func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> (tensor<2xf64>) {
+    %0 = enzyme.ignore_derivatives %arg0 : tensor<2xf64> -> tensor<2xf64>
+    return %0 : tensor<2xf64>
+  }
+}
+
+// CHECK: func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> (tensor<2xf64>) {
+// CHECK-NEXT:   return %arg0 : tensor<2xf64>
+// CHECK-NEXT: }
