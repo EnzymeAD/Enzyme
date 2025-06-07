@@ -299,7 +299,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
-    CI.replaceAllUsesWith(dCI);
+    if (CI.getNumResults() != 0)
+      CI.replaceAllUsesWith(dCI);
     CI->erase();
     return success();
   }

@@ -26,6 +26,68 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/LLVMDerivatives.inc"
 
+struct LoadOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
+                                                       LLVM::LoadOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto loadOp = cast<LLVM::LoadOp>(op);
+    Value addr = loadOp.getAddr();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (!gutils->isConstantValue(addr) && !gutils->isConstantValue(loadOp)) {
+        Value grad = gutils->diffe(loadOp, builder);
+        Value shadow = gutils->invertPointerM(addr, builder);
+        gutils->zeroDiffe(loadOp, builder);
+
+        // TODO: emit serial += where possible
+        builder.create<LLVM::AtomicRMWOp>(loadOp.getLoc(),
+                                          LLVM::AtomicBinOp::fadd, shadow, grad,
+                                          LLVM::AtomicOrdering::monotonic);
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
+struct StoreOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse,
+                                                       LLVM::StoreOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto storeOp = cast<LLVM::StoreOp>(op);
+    Value storedVal = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(storedVal.getType())) {
+      if (!gutils->isConstantValue(storeOp.getAddr()) &&
+          !gutils->isConstantValue(storedVal)) {
+        Value daddr = gutils->invertPointerM(storeOp.getAddr(), builder);
+        Value tmp = builder.create<LLVM::LoadOp>(storeOp.getLoc(),
+                                                 storedVal.getType(), daddr);
+        gutils->zeroDiffe(storeOp.getAddr(), builder);
+        gutils->addToDiffe(storedVal, tmp, builder);
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 struct InlineAsmActivityInterface
     : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
                                                 LLVM::InlineAsmOp> {
@@ -76,5 +138,8 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     registerInterfaces(context);
+
+    LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
+    LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
   });
 }

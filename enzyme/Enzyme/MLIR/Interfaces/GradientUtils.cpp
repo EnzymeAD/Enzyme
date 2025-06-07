@@ -175,7 +175,6 @@ void mlir::enzyme::MDiffeGradientUtils::zeroDiffe(mlir::Value oval,
                                                   OpBuilder &BuilderM) {
   assert(!isConstantValue(oval));
   auto iface = cast<AutoDiffTypeInterface>(getShadowType(oval.getType()));
-  assert(!iface.isMutable());
   setDiffe(oval, iface.createNullValue(BuilderM, oval.getLoc()), BuilderM);
 }
 
