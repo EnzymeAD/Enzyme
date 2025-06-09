@@ -88,6 +88,46 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct GEPOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<GEPOpInterfaceReverse,
+                                                       LLVM::GEPOp> {
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto gepOp = cast<LLVM::GEPOp>(op);
+    auto newGepOp = cast<LLVM::GEPOp>(gutils->getNewFromOriginal(op));
+    using llvm::errs;
+    errs() << "[debug] creating shadow for gep\n";
+    if (!gutils->isConstantValue(gepOp.getBase())) {
+      SmallVector<LLVM::GEPArg> indices;
+      indices.reserve(newGepOp.getIndices().size());
+      for (llvm::PointerUnion<IntegerAttr, Value> idx : newGepOp.getIndices()) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(idx)) {
+          indices.push_back(intAttr.getInt());
+        } else {
+          indices.push_back(cast<Value>(idx));
+        }
+      }
+
+      Value shadow = builder.create<LLVM::GEPOp>(
+          gepOp.getLoc(), gepOp.getType(), gepOp.getElemType(),
+          gutils->invertPointerM(gepOp.getBase(), builder), indices);
+      gutils->setDiffe(gepOp, shadow, builder);
+    }
+  }
+};
+
 struct InlineAsmActivityInterface
     : public ActivityOpInterface::ExternalModel<InlineAsmActivityInterface,
                                                 LLVM::InlineAsmOp> {
@@ -141,5 +181,6 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
 
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
+    LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
   });
 }
