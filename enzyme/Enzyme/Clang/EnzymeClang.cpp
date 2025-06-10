@@ -183,7 +183,7 @@ public:
           continue;
         if (!StringRef(FD->getLocation().printToString(CI.getSourceManager()))
                  .contains("/__clang_cuda_math.h") &&
-           !StringRef(FD->getLocation().printToString(CI.getSourceManager()))
+            !StringRef(FD->getLocation().printToString(CI.getSourceManager()))
                  .contains("/__clang_hip_math.h"))
           continue;
 
