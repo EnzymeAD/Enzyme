@@ -53,28 +53,31 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     FunctionOpInterface NewF = putils->newFunc;
 
     // Replace SampleOps with distribution function calls
-    SmallVector<Operation *, 4> toErase;
-    NewF.walk([&](enzyme::SampleOp sampleOp) {
-      OpBuilder b(sampleOp);
-      auto distFn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-      auto distCall =
-          b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
-                                 distFn.getResultTypes(), sampleOp.getInputs());
-      sampleOp.replaceAllUsesWith(distCall);
+    {
+      SmallVector<Operation *, 4> toErase;
+      NewF.walk([&](enzyme::SampleOp sampleOp) {
+        OpBuilder b(sampleOp);
+        auto distFn =
+            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                sampleOp, sampleOp.getFnAttr()));
+        auto distCall = b.create<func::CallOp>(
+            sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+            sampleOp.getInputs());
+        sampleOp.replaceAllUsesWith(distCall);
 
-      toErase.push_back(sampleOp);
-    });
+        toErase.push_back(sampleOp);
+      });
 
-    for (Operation *op : toErase) {
-      op->erase();
+      for (Operation *op : toErase) {
+        op->erase();
+      }
     }
 
     OpBuilder b(CI);
-    auto newCallOp = b.create<func::CallOp>(
+    auto newCI = b.create<func::CallOp>(
         CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
 
-    CI->replaceAllUsesWith(newCallOp);
+    CI->replaceAllUsesWith(newCI);
     CI->erase();
 
     return success();
@@ -93,30 +96,25 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate);
     FunctionOpInterface NewF = putils->newFunc;
 
-    putils->initTrace();
-
     {
       SmallVector<Operation *, 4> toErase;
       NewF.walk([&](enzyme::SampleOp sampleOp) {
         OpBuilder b(sampleOp);
-        putils->processSampleOp(sampleOp, b, symbolTable);
+        auto distFn =
+            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                sampleOp, sampleOp.getFnAttr()));
+        auto distCall = b.create<func::CallOp>(
+            sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+            sampleOp.getInputs());
+        b.create<enzyme::AddSampleToTraceOp>(
+            sampleOp.getLoc(), distCall.getResults(), sampleOp.getSymbolAttr(),
+            CI.getTraceAttr(), sampleOp.getNameAttr());
+        sampleOp.replaceAllUsesWith(distCall);
         toErase.push_back(sampleOp);
       });
 
       for (Operation *op : toErase) {
         op->erase();
-      }
-    }
-
-    for (auto &block : NewF.getFunctionBody()) {
-      OpBuilder b(&block, block.end());
-      auto term = block.getTerminator();
-
-      auto retloc = block.getTerminator()->getLoc();
-      if (auto retOp = dyn_cast<func::ReturnOp>(term)) {
-        retOp->replaceAllUsesWith(
-            b.create<func::ReturnOp>(retloc, putils->getTrace()));
-        retOp->erase();
       }
     }
 
@@ -126,12 +124,10 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     delete putils;
 
     OpBuilder b(CI);
-    auto tCI = b.create<func::CallOp>(CI.getLoc(), NewF.getName(),
-                                      NewF.getResultTypes(), CI.getInputs());
-    auto casted = b.create<UnrealizedConversionCastOp>(
-        CI.getLoc(), CI->getResultTypes(), tCI->getResults());
+    auto newCI = b.create<func::CallOp>(
+        CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
 
-    CI->replaceAllUsesWith(casted);
+    CI->replaceAllUsesWith(newCI);
     CI->erase();
 
     return success();

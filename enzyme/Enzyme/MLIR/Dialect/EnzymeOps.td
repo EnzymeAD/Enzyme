@@ -152,15 +152,6 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def Trace : Enzyme_Type<"Trace"> {
-  let summary = "Trace for ProbProg pass";
-  let description = [{
-    Mutable storage for recording all sampled variables, their values, computed log-likelihoods,
-    and the final returned result from executing a traced probabilistic function.
-  }];
-  let mnemonic = "Trace";
-}
-
 def initTraceOp : Enzyme_Op<"initTrace"> {
   let summary = "Initialize a trace";
   let description = [{
@@ -234,15 +225,15 @@ def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
   let arguments = (ins
-    AnyType:$symbol,
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    OptionalAttr<UI64Attr>:$symbol,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    `[` $symbol `:` type($symbol) `]` $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 }
 
@@ -257,6 +248,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    UI64Attr:$trace,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -267,23 +259,23 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   }];
 }
 
-def addSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   let summary = "Add a sampled value into the execution trace";
   let description = [{
   Add a sampled value into the execution trace.
   }];
 
   let arguments = (ins
-    AnyType:$trace,
-    AnyType:$symbol,
-    AnyType:$sample,
+    Variadic<AnyType>:$sample,
+    UI64Attr:$symbol,
+    UI64Attr:$trace,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs );
 
   let assemblyFormat = [{
-    `[` $symbol `:` type($symbol) `]` $trace `:` type($trace) `,` $sample `:` type($sample) attr-dict
+    $sample attr-dict `:` functional-type($sample, results)
   }];
 }
 

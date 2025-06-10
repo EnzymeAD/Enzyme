@@ -25,43 +25,6 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-Value mlir::enzyme::MProbProgUtils::initTrace() {
-  OpBuilder builder(initializationBlock, initializationBlock->begin());
-  auto init = builder.create<enzyme::initTraceOp>(
-      (initializationBlock->rbegin())->getLoc(), getTraceType());
-  trace = init.getResult();
-  return trace;
-}
-
-// Trace
-Type mlir::enzyme::MProbProgUtils::getTraceType() {
-  return enzyme::TraceType::get(initializationBlock->begin()->getContext());
-}
-
-Value mlir::enzyme::MProbProgUtils::getTrace() { return trace; }
-
-void MProbProgUtils::processSampleOp(enzyme::SampleOp sampleOp, OpBuilder &b,
-                                     SymbolTableCollection &symbolTable) {
-  auto distFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-  auto inputs = sampleOp.getInputs();
-  auto nameAttr = sampleOp.getNameAttr();
-
-  // Insert distribution function call
-  auto distCall = b.create<func::CallOp>(sampleOp.getLoc(), distFn.getName(),
-                                         distFn.getResultTypes(), inputs);
-  Value sampleVal = distCall.getResult(0);
-
-  // In Simulate mode, record the computed sample in the trace
-  if (mode == MProbProgMode::Simulate) {
-    b.create<enzyme::addSampleToTraceOp>(
-        sampleOp.getLoc(), trace, sampleOp.getSymbol(), sampleVal, nameAttr);
-  }
-
-  // Replace the sample op with the distribution call
-  sampleOp.replaceAllUsesWith(distCall);
-}
-
 MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
                                                 MProbProgMode mode) {
   if (toeval.getFunctionBody().empty()) {
@@ -71,34 +34,22 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
 
   std::string suffix;
 
-  auto originalInputs =
-      cast<mlir::FunctionType>(toeval.getFunctionType()).getInputs();
-  auto originalResults =
-      cast<mlir::FunctionType>(toeval.getFunctionType()).getResults();
-  SmallVector<mlir::Type, 4> ArgTypes;
-  SmallVector<mlir::Type, 4> ResultTypes;
-
   switch (mode) {
   case MProbProgMode::Generate:
     suffix = "generate";
-    ArgTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
-    ArgTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
     break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");
   }
 
   OpBuilder builder(toeval.getContext());
-  auto FTy = builder.getFunctionType(ArgTypes, ResultTypes);
 
   auto NewF = cast<FunctionOpInterface>(toeval->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, toeval.getName().str() + "." + suffix);
-  NewF.setType(FTy);
+  NewF.setType(toeval.getFunctionType());
 
   Operation *parent = toeval->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);
@@ -109,5 +60,6 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
 
-  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
+  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
+                            mode);
 }
