@@ -182,7 +182,9 @@ public:
         if (!FD->getIdentifier())
           continue;
         if (!StringRef(FD->getLocation().printToString(CI.getSourceManager()))
-                 .contains("/__clang_cuda_math.h"))
+                 .contains("/__clang_cuda_math.h") &&
+           !StringRef(FD->getLocation().printToString(CI.getSourceManager()))
+                 .contains("/__clang_hip_math.h"))
           continue;
 
         FD->addAttr(UsedAttr::CreateImplicit(CI.getASTContext()));
