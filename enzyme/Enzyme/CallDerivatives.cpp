@@ -2344,7 +2344,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       llvm::raw_string_ostream ss(s);
       ss << " unhandled openmp function: " << call << "\n";
       EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
-      return;
+      return true;
     }
 
     auto mod = call.getParent()->getParent()->getParent();
