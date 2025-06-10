@@ -126,6 +126,7 @@ void fixup(Module &M) {
     auto GridDim2 = CI->getArgOperand(2);
     auto BlockDim1 = CI->getArgOperand(3);
     auto BlockDim2 = CI->getArgOperand(4);
+    auto ArgPtr = CI->getArgOperand(5);
     auto SharedMemSize = CI->getArgOperand(6);
     auto StreamPtr = CI->getArgOperand(7);
     SmallVector<Value *> Args = {
@@ -133,8 +134,15 @@ void fixup(Module &M) {
         BlockDim2, SharedMemSize, StreamPtr,
     };
     auto StubFunc = cast<Function>(CI->getArgOperand(0));
-    for (auto &Arg : StubFunc->args())
-      Args.push_back(&Arg);
+    
+    size_t idx = 0;
+    for (auto &Arg : StubFunc->args()) {
+      auto gep = Builder.CreateConstInBoundsGEP1_64(llvm::PointerType::getUnqual(CI->getContext()), ArgPtr, idx); 
+      auto ld = Builder.CreateLoad(llvm::PointerType::getUnqual(CI->getContext()), gep);
+      ld = Builder.CreateLoad(Arg.getType(), ld);
+      Args.push_back(ld);
+      idx++;
+    }
     SmallVector<Type *> ArgTypes;
     for (Value *V : Args)
       ArgTypes.push_back(V->getType());
@@ -417,6 +425,50 @@ public:
       F->eraseFromParent();
     }
     }
+    
+    if (auto GV = M.getGlobalVariable("llvm.global_ctors")) {
+      ConstantArray *CA = dyn_cast<ConstantArray>(GV->getInitializer());
+      if (CA) {
+
+      bool changed = false;
+      SmallVector<Constant*> newOperands;
+      for (Use &OP : CA->operands()) {
+	 if (isa<ConstantAggregateZero>(OP)) {
+	   changed = true;
+	   continue;
+	 }
+	 ConstantStruct *CS = cast<ConstantStruct>(OP);
+	 if (isa<ConstantPointerNull>(CS->getOperand(1))) {
+	   changed = true;
+	   continue;
+	 }
+	 newOperands.push_back(CS);
+      }
+      if (changed) {
+	if (newOperands.size() == 0) {
+	  GV->eraseFromParent();
+	} else {
+		auto EltTy = newOperands[0]->getType();
+  	ArrayType *NewType = ArrayType::get(EltTy, newOperands.size());
+	auto CT = ConstantArray::get(NewType, newOperands);
+
+  // Create the new global variable.
+  GlobalVariable *NG = new GlobalVariable(
+      M, NewType, GV->isConstant(), GV->getLinkage(),
+      /*init*/ CT, /*name*/ "", GV, GV->getThreadLocalMode(),
+      GV->getAddressSpace());
+
+  NG->copyAttributesFrom(GV);
+  NG->takeName(GV);
+  GV->replaceAllUsesWith(NG);
+  GV->eraseFromParent();
+
+      }
+
+      }
+    }
+    }
+
     {
       PassBuilder PB;
       LoopAnalysisManager LAM;
