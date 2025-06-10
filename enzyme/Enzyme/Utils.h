@@ -66,8 +66,6 @@
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
-#include "TypeAnalysis/ConcreteType.h"
-
 class TypeResults;
 
 namespace llvm {
@@ -907,54 +905,6 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
                          llvm::function_ref<bool(llvm::Instruction *)> f,
                          llvm::function_ref<void()> preEntry) {
 
-  for (auto uinst = inst->getPrevNode(); uinst != nullptr;
-       uinst = uinst->getPrevNode()) {
-    if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(uinst)) {
-      if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-          II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
-        return;
-      }
-    }
-    if (f(uinst))
-      return;
-  }
-
-  std::deque<llvm::BasicBlock *> todo;
-  std::set<llvm::BasicBlock *> done;
-  for (auto suc : llvm::predecessors(inst->getParent())) {
-    todo.push_back(suc);
-  }
-  while (todo.size()) {
-    auto BB = todo.front();
-    todo.pop_front();
-    if (done.count(BB))
-      continue;
-    done.insert(BB);
-
-    bool syncd = false;
-    llvm::BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend();
-    for (; I != E; ++I) {
-      if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(&*I)) {
-        if (II->getIntrinsicID() == llvm::Intrinsic::nvvm_barrier0 ||
-            II->getIntrinsicID() == llvm::Intrinsic::amdgcn_s_barrier) {
-          syncd = true;
-          break;
-        }
-      }
-      if (f(&*I))
-        return;
-      if (&*I == inst)
-        break;
-    }
-    if (!syncd) {
-      for (auto suc : llvm::predecessors(BB)) {
-        todo.push_back(suc);
-      }
-      if (&BB->getParent()->getEntryBlock() == BB) {
-        preEntry();
-      }
-    }
-  }
 }
 
 #include "llvm/Analysis/LoopInfo.h"
@@ -1107,10 +1057,6 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B, llvm::Value *V,
     return B.CreateExtractValue(V, {(unsigned)E});
   }
 }
-
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
-                                   llvm::Type *OpType, ConcreteType CT,
-                                   llvm::Type *intType, llvm::IRBuilder<> &B2);
 
 class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
@@ -1681,88 +1627,6 @@ static inline bool isNoAlias(const llvm::Value *val) {
 }
 
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
-  if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
-    return true;
-  using namespace llvm;
-  switch (F->getIntrinsicID()) {
-  case Intrinsic::memset:
-  case Intrinsic::memcpy:
-  case Intrinsic::memmove:
-#if LLVM_VERSION_MAJOR >= 12
-  case Intrinsic::experimental_noalias_scope_decl:
-#endif
-  case Intrinsic::objectsize:
-  case Intrinsic::floor:
-  case Intrinsic::ceil:
-  case Intrinsic::trunc:
-  case Intrinsic::rint:
-  case Intrinsic::lrint:
-  case Intrinsic::llrint:
-  case Intrinsic::nearbyint:
-  case Intrinsic::round:
-  case Intrinsic::roundeven:
-  case Intrinsic::lround:
-  case Intrinsic::llround:
-  case Intrinsic::nvvm_barrier0:
-  case Intrinsic::nvvm_barrier0_popc:
-  case Intrinsic::nvvm_barrier0_and:
-  case Intrinsic::nvvm_barrier0_or:
-  case Intrinsic::nvvm_membar_cta:
-  case Intrinsic::nvvm_membar_gl:
-  case Intrinsic::nvvm_membar_sys:
-  case Intrinsic::amdgcn_s_barrier:
-  case Intrinsic::assume:
-  case Intrinsic::lifetime_start:
-  case Intrinsic::lifetime_end:
-#if LLVM_VERSION_MAJOR <= 16
-  case Intrinsic::dbg_addr:
-#endif
-
-  case Intrinsic::dbg_declare:
-  case Intrinsic::dbg_value:
-  case Intrinsic::dbg_label:
-  case Intrinsic::invariant_start:
-  case Intrinsic::invariant_end:
-  case Intrinsic::var_annotation:
-  case Intrinsic::ptr_annotation:
-  case Intrinsic::annotation:
-  case Intrinsic::codeview_annotation:
-  case Intrinsic::expect:
-  case Intrinsic::type_test:
-  case Intrinsic::donothing:
-  case Intrinsic::prefetch:
-  case Intrinsic::trap:
-  case Intrinsic::is_constant:
-#if LLVM_VERSION_MAJOR >= 12
-  case Intrinsic::smax:
-  case Intrinsic::smin:
-  case Intrinsic::umax:
-  case Intrinsic::umin:
-#endif
-  case Intrinsic::ctlz:
-  case Intrinsic::cttz:
-  case Intrinsic::sadd_with_overflow:
-  case Intrinsic::ssub_with_overflow:
-#if LLVM_VERSION_MAJOR >= 12
-  case Intrinsic::abs:
-#endif
-  case Intrinsic::sqrt:
-  case Intrinsic::exp:
-  case Intrinsic::cos:
-  case Intrinsic::sin:
-#if LLVM_VERSION_MAJOR >= 19
-  case Intrinsic::tanh:
-  case Intrinsic::cosh:
-  case Intrinsic::sinh:
-#endif
-  case Intrinsic::copysign:
-  case Intrinsic::fabs:
-    return true;
-  default:
-    break;
-  }
-  // if (F->empty())
-  //  llvm::errs() << "  may escape:" << F->getName() << "\n";
   return false;
 }
 static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {

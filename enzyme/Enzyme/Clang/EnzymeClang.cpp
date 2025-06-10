@@ -53,11 +53,18 @@ protected:
   std::unique_ptr<clang::ASTConsumer>
   CreateASTConsumer(clang::CompilerInstance &CI,
                     llvm::StringRef InFile) override {
+llvm::errs() << " create consumer\n";
+llvm::errs() << " is device: " << CI.getLangOpts().CUDAIsDevice << "\n";
+llvm::errs() << " out file: " << CI.getFrontendOpts().OutputFile << "\n";
     return std::unique_ptr<clang::ASTConsumer>(new ConsumerType(CI));
   }
 
   bool ParseArgs(const clang::CompilerInstance &CI,
                  const std::vector<std::string> &args) override {
+    llvm::errs() << " parse args action\n";
+   llvm::errs() << " pa: " << CI.getFrontendOpts().ProgramAction << "\n";
+    llvm::errs() << " args:\n";
+for (auto a : args) llvm::errs() << "+ arg: " << a<<"\n"; 
     return true;
   }
 
@@ -80,9 +87,9 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
   }
 };
 
-#if LLVM_VERSION_MAJOR >= 18
-extern "C" void registerEnzyme(llvm::PassBuilder &PB);
-#endif
+extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string> gpubins);
+
+extern "C" void registerExporter(llvm::PassBuilder &PB, std::string file);
 
 class EnzymePlugin final : public clang::ASTConsumer {
   clang::CompilerInstance &CI;
@@ -90,33 +97,38 @@ class EnzymePlugin final : public clang::ASTConsumer {
 public:
   EnzymePlugin(clang::CompilerInstance &CI) : CI(CI) {
 
-    FrontendOptions &Opts = CI.getFrontendOpts();
+     llvm::errs() << " enzyme plugin constructor\n";
+    //FrontendOptions &Opts = CI.getFrontendOpts();
     CodeGenOptions &CGOpts = CI.getCodeGenOpts();
     auto PluginName = "ClangEnzyme-" + std::to_string(LLVM_VERSION_MAJOR);
-    bool contains = false;
-#if LLVM_VERSION_MAJOR < 18
-    std::string pluginPath;
-#endif
-    for (auto P : Opts.Plugins)
-      if (endsWith(llvm::sys::path::stem(P), PluginName)) {
-#if LLVM_VERSION_MAJOR < 18
-        pluginPath = P;
-#endif
-        for (auto passPlugin : CGOpts.PassPlugins) {
-          if (endsWith(llvm::sys::path::stem(passPlugin), PluginName)) {
-            contains = true;
-            break;
-          }
-        }
-      }
+    //bool contains = false;
 
-    if (!contains) {
-#if LLVM_VERSION_MAJOR >= 18
-      CGOpts.PassBuilderCallbacks.push_back(registerEnzyme);
-#else
-      CGOpts.PassPlugins.push_back(pluginPath);
-#endif
+
+    std::string inFile;
+    for (auto in : CI.getFrontendOpts().Inputs) {
+    	if (in.isFile()) {
+	 inFile = in.getFile().str();
+      llvm::errs() << " in: " << in.getFile() << "\n";
+	}
     }
+    if (CI.getLangOpts().CUDAIsDevice) {
+	    std::string file = CI.getFrontendOpts().OutputFile;
+	    file = inFile;
+      CGOpts.PassBuilderCallbacks.push_back([=](llvm::PassBuilder & PB) {
+	registerExporter(PB, file);
+      });
+    } else {
+	std::vector<std::string> gpubins;
+	if (CGOpts.CudaGpuBinaryFileName.size()) {
+	  if (inFile.size())
+	    gpubins.push_back(inFile);
+	  //gpubins.push_back(CGOpts.CudaGpuBinaryFileName);
+	}
+      CGOpts.PassBuilderCallbacks.push_back([=](llvm::PassBuilder &PB) {
+	registerReactant(PB, gpubins);
+	});
+    }
+
     CI.getPreprocessorOpts().Includes.push_back("/enzyme/enzyme/version");
 
     std::string PredefineBuffer;
@@ -166,50 +178,6 @@ public:
                                                              /*isAngled=*/true);
   }
   ~EnzymePlugin() {}
-  void HandleTranslationUnit(ASTContext &context) override {}
-  bool HandleTopLevelDecl(clang::DeclGroupRef dg) override {
-    using namespace clang;
-    DeclGroupRef::iterator it;
-
-    // Visitor v(CI);
-    // Forcibly require emission of all libdevice
-    for (it = dg.begin(); it != dg.end(); ++it) {
-      // v.TraverseDecl(*it);
-      if (auto FD = dyn_cast<FunctionDecl>(*it)) {
-        if (!FD->hasAttr<clang::CUDADeviceAttr>())
-          continue;
-
-        if (!FD->getIdentifier())
-          continue;
-        if (!StringRef(FD->getLocation().printToString(CI.getSourceManager()))
-                 .contains("/__clang_cuda_math.h"))
-          continue;
-
-        FD->addAttr(UsedAttr::CreateImplicit(CI.getASTContext()));
-      }
-      if (auto FD = dyn_cast<VarDecl>(*it)) {
-        HandleCXXStaticMemberVarInstantiation(FD);
-      }
-    }
-    return true;
-  }
-  void HandleCXXStaticMemberVarInstantiation(clang::VarDecl *V) override {
-    if (!V->getIdentifier())
-      return;
-    auto name = V->getName();
-    if (!(name.contains("__enzyme_inactive_global") ||
-          name.contains("__enzyme_inactivefn") ||
-          name.contains("__enzyme_shouldrecompute") ||
-          name.contains("__enzyme_function_like") ||
-          name.contains("__enzyme_allocation_like") ||
-          name.contains("__enzyme_register_gradient") ||
-          name.contains("__enzyme_register_derivative") ||
-          name.contains("__enzyme_register_splitderivative")))
-      return;
-
-    V->addAttr(clang::UsedAttr::CreateImplicit(CI.getASTContext()));
-    return;
-  }
 };
 
 // register the PluginASTAction in the registry.
