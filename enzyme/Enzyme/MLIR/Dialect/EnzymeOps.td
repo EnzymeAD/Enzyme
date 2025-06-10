@@ -152,16 +152,6 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def initTraceOp : Enzyme_Op<"initTrace"> {
-  let summary = "Initialize a trace";
-  let description = [{
-    Initialize a trace.
-  }];
-  let arguments = (ins );
-  let results = (outs AnyType:$output);
-  let assemblyFormat = "attr-dict `:` type($output)";
-}
-
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
