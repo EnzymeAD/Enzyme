@@ -27,6 +27,7 @@
 #include <memory>
 
 #include "llvm/ADT/StringRef.h"
+  #include <dlfcn.h>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -87,6 +88,10 @@ using namespace llvm;
 #undef DEBUG_TYPE
 #endif
 #define DEBUG_TYPE "lower-reactant-intrinsic"
+
+llvm::cl::opt<std::string>
+    Passes("raising-plugin-path", cl::init(""), cl::Hidden,
+                cl::desc("Print before and after fns for autodiff"));
 
 namespace {
 
@@ -426,7 +431,21 @@ public:
 
       GlobalOptPass().run(M, MAM);
       }
+
     llvm::errs() << "M: " << M << "\n";
+  
+    auto lib = dlopen(Passes.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
+    auto sym = dlsym(lib, "runLLVMToMLIRRoundTrip");
+
+    auto runLLVMToMLIRRoundTrip = (std::string (*)(std::string))sym;
+    if (runLLVMToMLIRRoundTrip) {
+      std::string MStr;
+      llvm::raw_string_ostream ss(MStr);
+      ss << M; 
+      auto newMod = runLLVMToMLIRRoundTrip(MStr);
+      llvm::errs() << " newMod: " << newMod << "\n";
+    }
+
     return changed;
   }
 };
