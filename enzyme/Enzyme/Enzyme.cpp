@@ -365,6 +365,7 @@ public:
 	  if (!F.empty())
 		      F.setLinkage(Function::LinkageTypes::InternalLinkage);
       }
+      SmallVector<std::string> toInternalize;
       if (auto RF = M.getFunction("__cudaRegisterFunction")) {
         for (auto U : make_early_inc_range(RF->users())) {
 	  if (auto CI = dyn_cast<CallBase>(U)) {
@@ -395,8 +396,10 @@ public:
 		  F22->deleteBody();
 		  MF->setCallingConv(llvm::CallingConv::C);
 		  MF->setLinkage(Function::LinkageTypes::LinkOnceODRLinkage);
+		  toInternalize.push_back(MF->getName().str());
+		  CI->eraseFromParent();
+		  llvm::errs() << " replacing: " << nameVal << "\n";
 		}
-		CI->eraseFromParent();
 	  }
 	}
       }
@@ -407,6 +410,10 @@ public:
       Linker L(M);
       L.linkInModule(std::move(mod2));
       M.getContext().setDiagnosticHandler(std::move(handler));
+      for (auto name : toInternalize)
+	 if (auto F = M.getFunction(name)) {
+	    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+	 }
     }
 
     for (Function &F : make_early_inc_range(M)) {
@@ -487,8 +494,13 @@ public:
     llvm::errs() << "M: " << M << "\n";
   
     auto lib = dlopen(Passes.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
+    if (!lib) {
+      llvm::errs() << " could not open " << Passes.c_str() << " - " << dlerror() << "\n";
+    }
     auto sym = dlsym(lib, "runLLVMToMLIRRoundTrip");
-
+    if (!sym) {  
+      llvm::errs() << " could not find sym\n";
+    }
     auto runLLVMToMLIRRoundTrip = (std::string (*)(std::string))sym;
     if (runLLVMToMLIRRoundTrip) {
       std::string MStr;
