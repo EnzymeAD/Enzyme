@@ -673,3 +673,10 @@ cc_binary(
 )
 
 exports_files(["run_lit.sh"])
+
+# generate compilation commands for enzymemlir-opt
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    targets = [":enzymemlir-opt"],
+)
