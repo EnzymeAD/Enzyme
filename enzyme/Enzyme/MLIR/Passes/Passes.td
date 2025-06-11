@@ -128,6 +128,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Annotate every operation and value with its activity"
     >,
     Option<
+      /*C++ variable name=*/"inferFromAutodiff",
+      /*CLI argument=*/"infer",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Infer the argument and return activity from an __enzyme_autodiff call"
+    >,
+    Option<
       /*C++ variable name=*/"dataflow",
       /*CLI argument=*/"dataflow",
       /*type=*/"bool",

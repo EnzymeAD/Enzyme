@@ -971,7 +971,7 @@ void enzyme::AliasAnalysis::createImplicitArgDereference(
                                    readResult, derefClass)));
     // The read source points to the dereferenced class
     auto *pointsToState = getOrCreate<PointsToSets>(
-        getProgramPointAfter(&parent.getCallableRegion()->front()));
+        getProgramPointBefore(&parent.getCallableRegion()->front()));
     propagateIfChanged(pointsToState,
                        pointsToState->insert(source->getAliasClassesObject(),
                                              AliasClassSet(derefClass)));

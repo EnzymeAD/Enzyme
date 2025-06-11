@@ -19,6 +19,7 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
+#include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
 
 #define GET_ATTRDEF_CLASSES
