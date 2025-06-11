@@ -274,7 +274,7 @@ struct PushOpConversion : public OpConversionPattern<enzyme::PushOp> {
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
-  matchAndRewrite(enzyme::PushOp op, OpAdaptor adaptor,
+  matchAndRewrite(enzyme::PushOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto loweredCache = LoweredCache::getFromEnzymeCache(
@@ -295,7 +295,7 @@ struct PopOpConversion : public OpConversionPattern<enzyme::PopOp> {
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult
-  matchAndRewrite(enzyme::PopOp op, OpAdaptor adaptor,
+  matchAndRewrite(enzyme::PopOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto loweredCache = LoweredCache::getFromEnzymeCache(
