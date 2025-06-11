@@ -6,34 +6,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "Ops.h"
-#include "Dialect.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/IntegerSet.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
 
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -187,6 +174,196 @@ static inline bool isMutable(Type type) {
   return false;
 }
 
+/**
+ *
+ * Modifies input activites for the FwdDiffOp
+ * The activity promotion flow is as follows
+ * (depending on variable use):
+ *
+ *           -----> enzyme_dupnoneed
+ *          /              /
+ * enzyme_dup            /
+ *          \          v
+ *           ------> enzyme_const
+ *
+ */
+class FwdInpOpt final : public OpRewritePattern<ForwardDiffOp> {
+public:
+  using OpRewritePattern<ForwardDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ForwardDiffOp uop,
+                                PatternRewriter &rewriter) const override {
+
+    if (uop.getOutputs().size() == 0)
+      return failure();
+
+    auto retActivity = uop.getRetActivity();
+    auto inActivity = uop.getActivity();
+
+    auto in_idx = 0;
+    SmallVector<mlir::Value, 2> in_args;
+    SmallVector<Type, 2> in_ty;
+    SmallVector<ActivityAttr, 2> newInActivityArgs;
+    bool changed = false;
+
+    for (auto [idx, act] : llvm::enumerate(inActivity)) {
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+
+      // Forward mode Input activities can only take values {dup, dupnoneed,
+      // const }
+
+      mlir::Value inp = uop.getOutputs()[in_idx];
+
+      switch (val) {
+
+      case mlir::enzyme::Activity::enzyme_const:
+        if (!inp.use_empty()) {
+          in_args.push_back(inp);
+          in_ty.push_back(inp.getType());
+          newInActivityArgs.push_back(iattr);
+        } else {
+          changed = true;
+          auto new_constnn = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(),
+              mlir::enzyme::Activity::enzyme_constnoneed);
+          newInActivityArgs.push_back(new_constnn);
+        }
+        break;
+      case Activity::enzyme_dupnoneed:
+
+        if (!inp.use_empty()) {
+          in_args.push_back(inp);
+          in_ty.push_back(inp.getType());
+          newInActivityArgs.push_back(iattr);
+        } else {
+          if (!isMutable(inp.getType())) {
+            changed = true;
+            auto new_constnn = mlir::enzyme::ActivityAttr::get(
+                rewriter.getContext(),
+                mlir::enzyme::Activity::enzyme_constnoneed);
+            newInActivityArgs.push_back(new_constnn);
+          } else {
+            in_args.push_back(inp);
+            in_ty.push_back(inp.getType());
+            newInActivityArgs.push_back(iattr);
+          }
+        }
+        break;
+
+      case Activity::enzyme_dup: {
+        ActivityAttr new_dup = iattr;
+        if (!inp.use_empty()) {
+          in_args.push_back(inp);
+          in_ty.push_back(inp.getType());
+        } else {
+          changed = true;
+          // discard return, change attr
+          new_dup = ActivityAttr::get(rewriter.getContext(),
+                                      Activity::enzyme_dupnoneed);
+        }
+
+        in_idx++;
+
+        // derivative
+        inp = uop.getOutputs()[in_idx];
+        if (!inp.use_empty()) {
+          // activity arg doesn't update
+          in_ty.push_back(inp.getType());
+          in_args.push_back(inp);
+        } else {
+          // no uses, can discard
+          if (!isMutable(inp.getType())) {
+            changed = true;
+            // check if primal is used
+            if (new_dup.getValue() == Activity::enzyme_dupnoneed) {
+              new_dup = ActivityAttr::get(rewriter.getContext(),
+                                          Activity::enzyme_constnoneed);
+            } else {
+              new_dup = ActivityAttr::get(rewriter.getContext(),
+                                          Activity::enzyme_const);
+            }
+          } else {
+            in_ty.push_back(inp.getType());
+            in_args.push_back(inp);
+          }
+        }
+        newInActivityArgs.push_back(new_dup);
+        break;
+      }
+      default:
+        llvm_unreachable("unexpected input activity arg");
+      }
+
+      in_idx++;
+    }
+
+    if (!changed)
+      return failure();
+
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
+
+    ForwardDiffOp newOp = rewriter.create<ForwardDiffOp>(
+        uop.getLoc(), uop.getResultTypes(), uop.getFnAttr(), uop.getInputs(), newInActivity,
+        uop.getRetActivityAttr(), uop.getWidthAttr(), uop.getStrongZeroAttr());
+
+    // Map old uses of uop to newOp
+    auto oldIdx = 0;
+    auto newIdx = 0;
+    for (auto [idx, old_act, new_act] :
+         llvm::enumerate(retActivity, newInActivityArgs)) {
+
+      auto iattr = cast<ActivityAttr>(old_act);
+      auto old_val = iattr.getValue();
+      auto new_val = new_act.getValue();
+
+      if (old_val == new_val) {
+        // don't index into op if its a const_noneed
+        if (old_val == Activity::enzyme_constnoneed) {
+          continue;
+        }
+        // replace use
+        uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+            newOp.getOutputs()[newIdx++]);
+        if (old_val == Activity::enzyme_dup) {
+          // 2nd replacement for derivative
+          uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+              newOp.getOutputs()[newIdx++]);
+        }
+      } else {
+        // handle all substitutions
+        if (new_val == Activity::enzyme_dupnoneed &&
+            old_val == Activity::enzyme_dup) {
+          ++oldIdx; // skip primal
+          uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+              newOp.getOutputs()[newIdx++]);
+        } else if (new_val == mlir::enzyme::Activity::enzyme_constnoneed &&
+                   old_val == mlir::enzyme::Activity::enzyme_const) {
+          ++oldIdx; // skip const
+        } else if (new_val == mlir::enzyme::Activity::enzyme_constnoneed &&
+                   old_val == mlir::enzyme::Activity::enzyme_dupnoneed) {
+          ++oldIdx; // skip gradient too
+        } else if (new_val == Activity::enzyme_const &&
+                   old_val == Activity::enzyme_dup) {
+
+          uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+              newOp.getOutputs()[newIdx++]);
+          ++oldIdx; // skip derivative
+        } else if (new_val == Activity::enzyme_constnoneed &&
+                   old_val == Activity::enzyme_dup) {
+          ++oldIdx; // skip primal
+          ++oldIdx; // skip derivative
+        }
+      }
+    }
+
+    rewriter.eraseOp(uop);
+    return success();
+  }
+};
 /**
  *
  * Modifies return activites for the FwdDiffOp
@@ -398,7 +575,7 @@ public:
 void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                 MLIRContext *context) {
 
-  patterns.add<FwdRetOpt>(context);
+  patterns.add<FwdRetOpt, FwdInpOpt>(context);
 }
 
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
