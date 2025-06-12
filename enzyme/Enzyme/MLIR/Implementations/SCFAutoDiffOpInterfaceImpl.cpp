@@ -462,9 +462,9 @@ struct IfOpInterfaceReverse
 
         auto term = oBB.getTerminator();
 
-        for (auto &&[active, arg, operand] : llvm::zip_equal(
-                 resultsActive, incomingGradients, term->getOperands())) {
-          if (active) {
+        for (auto &&[arg, operand] :
+             llvm::zip_equal(incomingGradients, term->getOperands())) {
+          if (!gutils->isConstantValue(operand)) {
             gutils->addToDiffe(operand, arg, bodyBuilder);
           }
         }
