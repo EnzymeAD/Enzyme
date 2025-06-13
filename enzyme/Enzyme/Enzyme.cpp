@@ -527,10 +527,10 @@ public:
     	Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
 	exit(1);
       }
-      //auto handler = M.getContext().getDiagnosticHandler(); 
+      auto handler = M.getContext().getDiagnosticHandler(); 
       Linker L(M);
       L.linkInModule(std::move(llvmModule));
-     // M.getContext().setDiagnosticHandler(std::move(handler));
+      M.getContext().setDiagnosticHandler(std::move(handler));
 
     }
 
