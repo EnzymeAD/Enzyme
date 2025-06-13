@@ -23,6 +23,9 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#define private public
+#include "llvm/IR/Module.h"
+#undef private
 #include <llvm/Config/llvm-config.h>
 #include <memory>
 
@@ -508,6 +511,27 @@ public:
       ss << M; 
       auto newMod = runLLVMToMLIRRoundTrip(MStr);
       llvm::errs() << " newMod: " << newMod << "\n";
+      M.dropAllReferences();
+
+ M.getGlobalList().clear();
+ M.getFunctionList().clear();
+ M.getAliasList().clear();
+ M.getIFuncList().clear();
+      
+
+  llvm::SMDiagnostic Err;
+  auto llvmModule =
+      llvm::parseIR(llvm::MemoryBufferRef(newMod, "conversion"), Err, M.getContext());
+
+      if (!llvmModule) {
+    	Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
+	exit(1);
+      }
+      //auto handler = M.getContext().getDiagnosticHandler(); 
+      Linker L(M);
+      L.linkInModule(std::move(llvmModule));
+     // M.getContext().setDiagnosticHandler(std::move(handler));
+
     }
 
     return changed;
