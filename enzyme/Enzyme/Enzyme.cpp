@@ -513,25 +513,23 @@ public:
       llvm::errs() << " newMod: " << newMod << "\n";
       M.dropAllReferences();
 
- M.getGlobalList().clear();
- M.getFunctionList().clear();
- M.getAliasList().clear();
- M.getIFuncList().clear();
-      
+      M.getGlobalList().clear();
+      M.getFunctionList().clear();
+      M.getAliasList().clear();
+      M.getIFuncList().clear();
 
-  llvm::SMDiagnostic Err;
-  auto llvmModule =
-      llvm::parseIR(llvm::MemoryBufferRef(newMod, "conversion"), Err, M.getContext());
+      llvm::SMDiagnostic Err;
+      auto llvmModule = llvm::parseIR(
+          llvm::MemoryBufferRef(newMod, "conversion"), Err, M.getContext());
 
       if (!llvmModule) {
-    	Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
-	exit(1);
+        Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
+        exit(1);
       }
-      auto handler = M.getContext().getDiagnosticHandler(); 
+      auto handler = M.getContext().getDiagnosticHandler();
       Linker L(M);
       L.linkInModule(std::move(llvmModule));
       M.getContext().setDiagnosticHandler(std::move(handler));
-
     }
 
     return changed;
