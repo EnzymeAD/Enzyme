@@ -2340,10 +2340,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     if (startsWith(funcName, "__kmpc") &&
         funcName != "__kmpc_global_thread_num") {
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << call << "\n";
-      assert(0 && "unhandled openmp function");
-      llvm_unreachable("unhandled openmp function");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << " unhandled openmp function: " << call << "\n";
+      EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
+      return true;
     }
 
     auto mod = call.getParent()->getParent()->getParent();

@@ -100,6 +100,9 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
+
+  // Define activity optimizations as canonicalization 
+  let hasCanonicalizer = 1;
 }
 
 def BatchOp : Enzyme_Op<"batch",
@@ -286,6 +289,17 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
-} 
+}
+
+def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
+    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
 
 #endif // ENZYME_OPS
