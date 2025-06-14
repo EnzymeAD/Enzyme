@@ -12,8 +12,8 @@ module {
     %c1 = arith.constant 1.0 : f64
     %c2 = arith.constant 2.0 : f64
     %i = arith.constant 0 : index
-    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope", symbol = 42 : ui64 } : (f64, f64) -> f64
-    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept", symbol = 43 : ui64 } : (f64, f64) -> f64
+    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope", symbol = 42 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
+    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept", symbol = 43 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
     cf.br ^loop(%i, %pnan : index, f64)
 
   ^loop(%i1 : index, %prev_y : f64):
@@ -28,7 +28,7 @@ module {
     %y_mean = arith.addf %prod, %intercept : f64
 
     // Sample an observation for y
-    %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y", symbol = 44 : ui64 } : (f64, f64) -> f64
+    %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y", symbol = 44 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
 
     %one = arith.constant 1 : index
     %next_i = arith.addi %i2, %one : index

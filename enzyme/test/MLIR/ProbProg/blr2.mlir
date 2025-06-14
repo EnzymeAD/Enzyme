@@ -13,15 +13,15 @@ module {
     %c2 = arith.constant 2.0 : f64
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
-    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope", symbol = 42 : ui64 } : (f64, f64) -> f64
-    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept", symbol = 43 : ui64 } : (f64, f64) -> f64
+    %slope = enzyme.sample @normal(%c0, %c1) { name = "slope", symbol = 42 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
+    %intercept = enzyme.sample @normal(%c0, %c2) { name = "intercept", symbol = 43 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
 
     %final = scf.for %i = %zero to %n step %one
              iter_args(%prev_y = %pnan) -> (f64) {
       %x = memref.load %xs[%i] : memref<?xf64>
       %prod = arith.mulf %slope, %x : f64
       %y_mean = arith.addf %prod, %intercept : f64
-      %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y", symbol = 44 : ui64 } : (f64, f64) -> f64
+      %y_sample = enzyme.sample @normal(%y_mean, %c0_1) { name = "y", symbol = 44 : ui64, traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
       scf.yield %y_sample : f64
     }
     return %final : f64

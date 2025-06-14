@@ -106,9 +106,17 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         auto distCall = b.create<func::CallOp>(
             sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
             sampleOp.getInputs());
-        b.create<enzyme::AddSampleToTraceOp>(
-            sampleOp.getLoc(), distCall.getResults(), sampleOp.getSymbolAttr(),
-            CI.getTraceAttr(), sampleOp.getNameAttr());
+
+        auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr();
+        if (tracedOutputIndices) {
+          for (auto idx : tracedOutputIndices.asArrayRef()) {
+            b.create<enzyme::AddSampleToTraceOp>(
+                sampleOp.getLoc(), distCall.getResult(idx),
+                sampleOp.getSymbolAttr(), CI.getTraceAttr(),
+                sampleOp.getNameAttr());
+          }
+        }
+
         sampleOp.replaceAllUsesWith(distCall);
         toErase.push_back(sampleOp);
       });

@@ -4,8 +4,8 @@ module {
   func.func private @normal(%mean : f64, %stddev : f64) -> f64
 
   func.func @test(%mean : f64, %stddev : f64) -> f64 {
-    %s = enzyme.sample @normal(%mean, %stddev) { symbol = 1 : ui64, name="s" } : (f64, f64) -> f64
-    %t = enzyme.sample @normal(%s, %stddev) { symbol = 2 : ui64, name="t" } : (f64, f64) -> f64
+    %s = enzyme.sample @normal(%mean, %stddev) { symbol = 1 : ui64, name="s", traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
+    %t = enzyme.sample @normal(%s, %stddev) { symbol = 2 : ui64, name="t", traced_output_indices = array<i64: 0> } : (f64, f64) -> f64
     return %t : f64
   }
 
