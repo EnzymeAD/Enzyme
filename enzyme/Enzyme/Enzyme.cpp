@@ -304,13 +304,9 @@ public:
   bool run(Module &M) {
     bool changed = true;
 
-    llvm::errs() << " pre: " << M << "\n";
     fixup(M);
-    llvm::errs() << "M: " << M << "\n";
     
     for (auto bin : gpubins) {
-      llvm::errs() << " gpubin: " << bin << "\n";
-
       SMDiagnostic Err;
       auto mod2 = llvm::parseIRFile(bin + ".re_export", Err, M.getContext());
       if (!mod2) {
@@ -401,14 +397,11 @@ public:
 		  MF->setLinkage(Function::LinkageTypes::LinkOnceODRLinkage);
 		  toInternalize.push_back(MF->getName().str());
 		  CI->eraseFromParent();
-		  llvm::errs() << " replacing: " << nameVal << "\n";
 		}
 	  }
 	}
       }
 
-      llvm::errs() << " mod2: " << *mod2 << "\n";
-     
       auto handler = M.getContext().getDiagnosticHandler(); 
       Linker L(M);
       L.linkInModule(std::move(mod2));
@@ -494,8 +487,6 @@ public:
       GlobalOptPass().run(M, MAM);
       }
 
-    llvm::errs() << "M: " << M << "\n";
-  
     auto lib = dlopen(Passes.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
     if (!lib) {
       llvm::errs() << " could not open " << Passes.c_str() << " - " << dlerror() << "\n";
@@ -510,7 +501,6 @@ public:
       llvm::raw_string_ostream ss(MStr);
       ss << M; 
       auto newMod = runLLVMToMLIRRoundTrip(MStr);
-      llvm::errs() << " newMod: " << newMod << "\n";
       M.dropAllReferences();
 
       M.getGlobalList().clear();
@@ -523,6 +513,7 @@ public:
           llvm::MemoryBufferRef(newMod, "conversion"), Err, M.getContext());
 
       if (!llvmModule) {
+        llvm::errs() << " newMod: " << newMod << "\n";
         Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
         exit(1);
       }
@@ -553,11 +544,9 @@ private:
 public:
   using Result = llvm::PreservedAnalyses;
   ReactantNewPM(const std::vector<std::string> &gpubins) : ReactantBase(gpubins) {
-	llvm::errs() << " constructing new pm\n";
 }
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-llvm::errs() << " running on module: " << M << "\n";
     return ReactantBase::run(M) ? PreservedAnalyses::none()
                               : PreservedAnalyses::all();
   }
@@ -588,7 +577,6 @@ public:
   }
 
   file << M;
-  llvm::errs() << " exported to: " << filename << "\n";
     return PreservedAnalyses::all();
   }
 
