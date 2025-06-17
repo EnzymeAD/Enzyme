@@ -237,23 +237,15 @@ void fixup(Module &M) {
       Load->replaceAllUsesWith(NewLoad);
     }
     CoercedKernels.insert(KernelLaunch);
-
-    It = &*PopCall->getParent()->getPrevNode()->getFirstNonPHIOrDbg();
-    CallInst *PushCall = dyn_cast<CallInst>(It);
-    while (!It->isTerminator() &&
-           !(PushCall && PushCall->getCalledFunction() &&
-             PushCall->getCalledFunction()->getName() == cudaPushConfigName)) {
-      It = It->getNextNonDebugInstruction();
-      PushCall = dyn_cast<CallInst>(It);
-    }
-
-    assert(!It->isTerminator());
-
     // Replace with success
-    PushCall->replaceAllUsesWith(IRB.getInt32(0));
-    PushCall->eraseFromParent();
     PopCall->replaceAllUsesWith(IRB.getInt32(0));
     PopCall->eraseFromParent();
+  }
+
+  for (CallInst *PushCall : gatherCallers(PushConfigFunc)) {
+    // Replace with success
+    PushCall->replaceAllUsesWith(ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
+    PushCall->eraseFromParent();
   }
   for (CallInst *CI : CoercedKernels) {
     IRBuilder<> Builder(CI);
@@ -631,6 +623,16 @@ extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string>
     MPM.addPass(ReactantNewPM(gpubinaries));
   };
 
+  PB.registerPipelineParsingCallback(
+      [=](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+        if (Name == "reactant") {
+          MPM.addPass(ReactantNewPM(gpubinaries));
+          return true;
+        }
+	return false;
+	});
+
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
@@ -644,3 +646,13 @@ extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string>
   };
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
+
+extern "C" void registerReactant2(llvm::PassBuilder &PB) {
+  registerReactant(PB, {});
+}
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "ReactantNewPM", "v0.1", registerReactant2};
+}
+
