@@ -927,7 +927,7 @@ static FunctionOpInterface getFunctionIfArgument(Value value) {
     return nullptr;
 
   Block *block = arg.getOwner();
-  if (block->isEntryBlock())
+  if (!block->isEntryBlock())
     return nullptr;
 
   return dyn_cast<FunctionOpInterface>(block->getParentOp());
