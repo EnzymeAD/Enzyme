@@ -213,81 +213,72 @@ public:
       // Forward mode Input activities can only take values {dup, dupnoneed,
       // const }
 
-      mlir::Value inp = uop.getOutputs()[in_idx];
+      mlir::Value inp = uop.getInputs()[in_idx];
 
       switch (val) {
 
       case mlir::enzyme::Activity::enzyme_const:
-        if (!inp.use_empty()) {
-          in_args.push_back(inp);
-          in_ty.push_back(inp.getType());
-          newInActivityArgs.push_back(iattr);
-        } else {
-          changed = true;
-          auto new_constnn = mlir::enzyme::ActivityAttr::get(
-              rewriter.getContext(),
-              mlir::enzyme::Activity::enzyme_constnoneed);
-          newInActivityArgs.push_back(new_constnn);
-        }
+        in_args.push_back(inp);
+        in_ty.push_back(inp.getType());
+        newInActivityArgs.push_back(iattr);
         break;
       case Activity::enzyme_dupnoneed:
 
-        if (!inp.use_empty()) {
-          in_args.push_back(inp);
-          in_ty.push_back(inp.getType());
-          newInActivityArgs.push_back(iattr);
-        } else {
-          if (!isMutable(inp.getType())) {
-            changed = true;
-            auto new_constnn = mlir::enzyme::ActivityAttr::get(
-                rewriter.getContext(),
-                mlir::enzyme::Activity::enzyme_constnoneed);
-            newInActivityArgs.push_back(new_constnn);
-          } else {
-            in_args.push_back(inp);
-            in_ty.push_back(inp.getType());
-            newInActivityArgs.push_back(iattr);
-          }
-        }
+        in_args.push_back(inp);
+        in_ty.push_back(inp.getType());
+        newInActivityArgs.push_back(iattr);
+        //   else {
+        //   if (!isMutable(inp.getType())) {
+        //     changed = true;
+        //     auto new_constnn = mlir::enzyme::ActivityAttr::get(
+        //         rewriter.getContext(),
+        //         mlir::enzyme::Activity::enzyme_constnoneed);
+        //     newInActivityArgs.push_back(new_constnn);
+        //   } else {
+        //     in_args.push_back(inp);
+        //     in_ty.push_back(inp.getType());
+        //     newInActivityArgs.push_back(iattr);
+        //   }
+        // }
         break;
 
       case Activity::enzyme_dup: {
         ActivityAttr new_dup = iattr;
-        if (!inp.use_empty()) {
-          in_args.push_back(inp);
-          in_ty.push_back(inp.getType());
-        } else {
-          changed = true;
-          // discard return, change attr
-          new_dup = ActivityAttr::get(rewriter.getContext(),
-                                      Activity::enzyme_dupnoneed);
-        }
+        // if (!inp.use_empty()) {
+        in_args.push_back(inp);
+        in_ty.push_back(inp.getType());
+        // } else {
+        //   changed = true;
+        //   // discard return, change attr
+        //   new_dup = ActivityAttr::get(rewriter.getContext(),
+        //                               Activity::enzyme_dupnoneed);
+        // }
 
         in_idx++;
 
-        // derivative
-        inp = uop.getOutputs()[in_idx];
-        if (!inp.use_empty()) {
-          // activity arg doesn't update
-          in_ty.push_back(inp.getType());
-          in_args.push_back(inp);
-        } else {
-          // no uses, can discard
-          if (!isMutable(inp.getType())) {
-            changed = true;
-            // check if primal is used
-            if (new_dup.getValue() == Activity::enzyme_dupnoneed) {
-              new_dup = ActivityAttr::get(rewriter.getContext(),
-                                          Activity::enzyme_constnoneed);
-            } else {
-              new_dup = ActivityAttr::get(rewriter.getContext(),
-                                          Activity::enzyme_const);
-            }
-          } else {
-            in_ty.push_back(inp.getType());
-            in_args.push_back(inp);
-          }
-        }
+        // derivative value
+        inp = uop.getInputs()[in_idx];
+        // if (!inp.use_empty()) {
+        // activity arg doesn't update
+        in_ty.push_back(inp.getType());
+        in_args.push_back(inp);
+        // } else {
+        //   // no uses, can discard
+        //   if (!isMutable(inp.getType())) {
+        //     changed = true;
+        //     // check if primal is used
+        //     if (new_dup.getValue() == Activity::enzyme_dupnoneed) {
+        //       new_dup = ActivityAttr::get(rewriter.getContext(),
+        //                                   Activity::enzyme_constnoneed);
+        //     } else {
+        //       new_dup = ActivityAttr::get(rewriter.getContext(),
+        //                                   Activity::enzyme_const);
+        //     }
+        //   } else {
+        //     in_ty.push_back(inp.getType());
+        //     in_args.push_back(inp);
+        //   }
+        // }
         newInActivityArgs.push_back(new_dup);
         break;
       }
@@ -305,10 +296,10 @@ public:
         ArrayAttr::get(rewriter.getContext(),
                        llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
                                                  newInActivityArgs.end()));
-
     ForwardDiffOp newOp = rewriter.create<ForwardDiffOp>(
-        uop.getLoc(), uop.getResultTypes(), uop.getFnAttr(), uop.getInputs(), newInActivity,
-        uop.getRetActivityAttr(), uop.getWidthAttr(), uop.getStrongZeroAttr());
+        uop.getLoc(), uop.getResultTypes(), uop.getFnAttr(), uop.getInputs(),
+        newInActivity, uop.getRetActivityAttr(), uop.getWidthAttr(),
+        uop.getStrongZeroAttr());
 
     // Map old uses of uop to newOp
     auto oldIdx = 0;
