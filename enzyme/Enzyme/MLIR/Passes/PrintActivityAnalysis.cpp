@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Analysis/ActivityAnalysis.h"
+#include "Analysis/ActivityAnnotations.h"
 #include "Analysis/DataFlowActivityAnalysis.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/EnzymeLogic.h"
@@ -30,7 +31,6 @@
 using namespace mlir;
 
 namespace {
-using llvm::errs;
 
 enzyme::Activity getDefaultActivity(Type argType) {
   if (argType.isIntOrIndex())
@@ -127,11 +127,14 @@ struct PrintActivityAnalysisPass
     }
   }
 
-  void runActivityAnalysis(bool dataflow, FunctionOpInterface callee,
+  void runActivityAnalysis(const enzyme::ActivityPrinterConfig &config,
+                           FunctionOpInterface callee,
                            ArrayRef<enzyme::Activity> argActivities,
                            ArrayRef<enzyme::Activity> resultActivities,
-                           bool print, bool verbose, bool annotate) {
-    if (dataflow) {
+                           bool print = true) {
+    if (config.relative) {
+      enzyme::runActivityAnnotations(callee, argActivities, config);
+    } else if (config.dataflow) {
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
                                           /*print=*/true, verbose, annotate);
     } else {
@@ -200,9 +203,16 @@ struct PrintActivityAnalysisPass
   }
 
   void runOnOperation() override {
+    enzyme::ActivityPrinterConfig config;
+    config.dataflow = dataflow;
+    config.relative = relative;
+    config.annotate = annotate;
+    config.inferFromAutodiff = inferFromAutodiff;
+    config.verbose = verbose;
+
     auto moduleOp = cast<ModuleOp>(getOperation());
 
-    if (annotate && dataflow) {
+    if (inferFromAutodiff) {
       // Infer the activity attributes from the __enzyme_autodiff call
       Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
       if (!autodiff_decl) {
@@ -233,19 +243,17 @@ struct PrintActivityAnalysisPass
 
         SmallVector<enzyme::Activity> argActivities{callee.getNumArguments()},
             resultActivities{callee.getNumResults()};
-
         // Populate the argument activities based on either the type or the
         // supplied annotation. First argument is the callee
         inferArgActivitiesFromEnzymeAutodiff(callee, autodiff_call,
                                              argActivities, resultActivities);
-        runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
-                            /*print=*/true, verbose, annotate);
+        runActivityAnalysis(config, callee, argActivities, resultActivities);
       }
       return;
     }
 
     if (funcsToAnalyze.empty()) {
-      moduleOp.walk([this](FunctionOpInterface callee) {
+      moduleOp.walk([this, config](FunctionOpInterface callee) {
         if (callee.isExternal() || callee.isPrivate())
           return;
 
@@ -253,8 +261,7 @@ struct PrintActivityAnalysisPass
             resultActivities{callee.getNumResults()};
         initializeArgAndResActivities(callee, argActivities, resultActivities);
 
-        runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
-                            /*print=*/true, verbose, annotate);
+        runActivityAnalysis(config, callee, argActivities, resultActivities);
       });
       return;
     }
@@ -276,8 +283,7 @@ struct PrintActivityAnalysisPass
           resultActivities{callee.getNumResults()};
       initializeArgAndResActivities(callee, argActivities, resultActivities);
 
-      runActivityAnalysis(dataflow, callee, argActivities, resultActivities,
-                          /*print=*/true, verbose, annotate);
+      runActivityAnalysis(config, callee, argActivities, resultActivities);
     }
   }
 };
