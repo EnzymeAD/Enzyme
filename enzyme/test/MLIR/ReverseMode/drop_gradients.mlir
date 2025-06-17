@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme --canonicalize --remove-unnecessary-enzyme-ops %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops %s | FileCheck %s
 
 module {
   func.func @square(%x: f64) -> f64 {
@@ -15,8 +15,7 @@ module {
 
 // CHECK:   func.func @square(%arg0: f64) -> f64 {
 // CHECK-NEXT:     %0 = arith.mulf %arg0, %arg0 : f64
-// CHECK-NEXT:     %1 = enzyme.ignore_derivatives %0 : f64 -> f64
-// CHECK-NEXT:     return %1 : f64
+// CHECK-NEXT:     return %0 : f64
 // CHECK-NEXT:   }
 // CHECK-NEXT:   func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
 // CHECK-NEXT:     %0 = call @diffesquare(%arg0, %arg1) : (f64, f64) -> f64
@@ -27,7 +26,7 @@ module {
 // CHECK-NEXT:     return %cst : f64
 // CHECK-NEXT:   }
 
-// RUN: %eopt --remove-unnecessary-enzyme-ops %s | FileCheck %s
+// -----
 
 module {
   func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> (tensor<2xf64>) {
@@ -36,6 +35,6 @@ module {
   }
 }
 
-// CHECK: func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> (tensor<2xf64>) {
+// CHECK: func.func @main(%arg0: tensor<2xf64> {tf.aliasing_output = 1 : i32}) -> tensor<2xf64> {
 // CHECK-NEXT:   return %arg0 : tensor<2xf64>
 // CHECK-NEXT: }

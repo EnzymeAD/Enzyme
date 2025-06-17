@@ -1108,7 +1108,11 @@ enum class MPI_Elem {
 
 static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
                                               unsigned AddressSpace = 0) {
+#if LLVM_VERSION_MAJOR >= 21
+  return llvm::PointerType::get(Context, AddressSpace);
+#else
   return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+#endif
 }
 
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
