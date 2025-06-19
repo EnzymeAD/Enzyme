@@ -591,7 +591,8 @@ struct CacheAnalysis {
         if (CD == BaseType::Integer || CD.isFloat())
           continue;
 
-        if (llvm::isModSet(AA.getModRefInfo(
+        if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
+            llvm::isModSet(AA.getModRefInfo(
                 inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
