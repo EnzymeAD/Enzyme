@@ -573,18 +573,16 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
  * shadow(which we then accumulate into and return). So specifically,
  *
  * pInput' = 	pInput (if the activity is enzyme_active, enzyme_const)
- * 		| pInput, dInput (if the activity is enzyme_dup)
- * 		| dInput (if the activity is enzyme_dupnoneed)
+ * 		| pInput, dInput (if the activity is enzyme_dup,
+ * enzyme_dupnoneed)
  *
  * Now that we have fixed the codegen semantics, we can go ahead and optimize
  * for both the input return activities based on usage. Possible activity
  * promotion flow for the inputs can be as follows:
  * 1. enzyme_active --> enzyme_const (dInput is never used, so we simply don't
  * compute it)
- * 2. enzyme_activenoneed --> enzyme_constnoneed (It is the noneed equivalent
- * of the previous rule and semantically makes sense, although I can't think of
- * a function where you don't pass in the input but still compute the derivative
- * w.r.t that input)
+ * 2. enzyme_dup --> enzyme_const (pInput is mutable, readonly, nocapture,
+ * dInput is never used post AD)
  *
  * Similarly, one can define a similar activity promotion flow for the outputs:
  * 1. enzyme_active --> enzyme_activenoneed (we do need to pass in dOutput into
@@ -794,9 +792,105 @@ public:
   }
 };
 
+class ReverseInOpt final : public OpRewritePattern<AutoDiffOp> {
+public:
+  using OpRewritePattern<AutoDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AutoDiffOp uop,
+                                PatternRewriter &rewriter) const override {
+    // early return if there are no outputs
+    if (uop.getOutputs().size() == 0)
+      return failure();
+
+    auto inpActivity = uop.getActivity();
+    auto retActivity = uop.getRetActivity();
+    auto out_idx = 0;
+    auto in_idx = 0;
+    SmallVector<mlir::Value, 2> in_args; // dont need to keep track of in_ty
+    SmallVector<mlir::Value, 2> outs_args;
+    SmallVector<Type, 2> out_ty;
+    SmallVector<ActivityAttr, 2> newInActivityArgs;
+    SmallVector<ActivityAttr, 2> newRetActivityArgs;
+
+    bool changed = false;
+
+    // sweep through pInputs
+    for (auto [idx, act] : llvm::enumerate(inpActivity)) {
+
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+      mlir::Value res = uop.getInputs()[in_idx];
+      in_args.push_back(res);
+      in_idx++;
+
+      // handle derivatives
+      if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
+        // also push derivative into input arguments
+        res = uop.getInputs()[in_idx];
+        in_args.push_back(res);
+        in_idx++;
+      }
+    }
+
+    // function isn't differentiable
+    if (in_idx == uop.getInputs().size())
+      return failure();
+
+    // check if we can get rid of some of the inputs
+    for (auto [idx, act] : llvm::enumerate(retActivity)) {
+
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+
+      // no contribution towards the inputs
+      if (val == Activity::enzyme_constnoneed ||
+          val == Activity::enzyme_dupnoneed || val == Activity::enzyme_dup ||
+          val == Activity::enzyme_const) {
+        newRetActivityArgs.push_back(iattr);
+        continue;
+      } else if (val == Activity::enzyme_active ||
+                 val == Activity::enzyme_activenoneed) {
+        mlir::Value res = uop.getInputs()[in_idx];
+        in_idx++;
+
+        if (matchPattern(res, m_Zero()) ||
+            matchPattern(res, m_AnyZeroFloat())) {
+          // active -> const, activenoneed -> constnoneed
+          changed = true;
+          auto mod_act = ActivityAttr::get(rewriter.getContext(),
+                                           val == Activity::enzyme_active
+                                               ? Activity::enzyme_const
+                                               : Activity::enzyme_constnoneed);
+          newRetActivityArgs.push_back(mod_act);
+        } else {
+          // retain activity
+          newRetActivityArgs.push_back(iattr);
+          in_args.push_back(res);
+        }
+      } else {
+        llvm_unreachable("unknown return activity encountered. Exiting.");
+      }
+    }
+
+    if (!changed)
+      return failure();
+
+    ArrayAttr newRetActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
+                                                 newRetActivityArgs.end()));
+    rewriter.replaceOpWithNewOp<AutoDiffOp>(
+        uop, uop->getResultTypes(), uop.getFnAttr(), in_args,
+        uop.getActivityAttr(), newRetActivity, uop.getWidthAttr(),
+        uop.getStrongZeroAttr());
+
+    return success();
+  }
+};
+
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
-  patterns.add<ReverseRetOpt>(context);
+  patterns.add<ReverseRetOpt, ReverseInOpt>(context);
 }
 
 //===----------------------------------------------------------------------===//
