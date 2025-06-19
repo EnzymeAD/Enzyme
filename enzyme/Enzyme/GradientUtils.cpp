@@ -9213,7 +9213,11 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     auto inspos = I->getIterator();
 #if LLVM_VERSION_MAJOR >= 18
-    if (I->getParent()->IsNewDbgInfoFormat) {
+#if LLVM_VERSION_MAJOR >= 21
+#else
+    if (I->getParent()->IsNewDbgInfoFormat)
+#endif
+    {
       if (!inspos.getHeadBit()) {
         auto srcmarker = I->getParent()->getMarker(inspos);
         if (srcmarker && !srcmarker->empty()) {

@@ -1929,8 +1929,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
 
-      auto AARes = AA.getModRefInfo(
-          I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+      ModRefInfo AARes;
 
       // Still having failed to replace the location used by AA, fall back to
       // getModref against any location.
@@ -1947,6 +1946,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = mayRead ? (mayWrite ? ModRefInfo::ModRef : ModRefInfo::Ref)
                           : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
+      } else {
+        AARes = AA.getModRefInfo(
+            I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
       if (auto CB = dyn_cast<CallInst>(I)) {
@@ -2080,8 +2082,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // SI->getPointerOperand());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << *Val << "\n";
+                         << " - " << *SI << " of " << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop) // && cop2)
             potentiallyActiveStore = SI;
@@ -2099,8 +2100,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           auto cop = !Hypothesis->isConstantInstruction(TR, I);
           if (EnzymePrintActivity)
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
-                         << " - " << *I << " of "
-                         << " Val=" << *Val << "\n";
+                         << " - " << *I << " of " << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop)
             potentiallyActiveStore = I;
