@@ -796,7 +796,7 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
 
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 18 && LLVM_VERSION_MAJOR < 21
     auto F = CI->getCalledFunction();
     if (CI->getParent()->IsNewDbgInfoFormat != F->IsNewDbgInfoFormat) {
       if (CI->getParent()->IsNewDbgInfoFormat) {
