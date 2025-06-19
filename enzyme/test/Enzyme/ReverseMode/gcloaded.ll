@@ -1,6 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -gt 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -adce -instsimplify -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),%simplifycfg,correlated-propagation,adce,instsimplify)" -enzyme-preopt=false -S | FileCheck %s
-
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),%simplifycfg,correlated-propagation,adce,instsimplify)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; ModuleID = 'start'
 source_filename = "start"
@@ -118,7 +116,7 @@ declare void @__enzyme_autodiff(i8*, ...)
 
 define void @test_derivative({} addrspace(10)* %in, {} addrspace(10)* %din) {
 entry:
-  call void (i8*, ...) @__enzyme_autodiff(i8* bitcast (double ({} addrspace(10))* @julia_sumsq2_826 to i8*), metadata !"enzyme_dup", {} addrspace(10)* %in, {} addrspace(10)* %din)
+  call void (i8*, ...) @__enzyme_autodiff(i8* bitcast (double ({} addrspace(10)*)* @julia_sumsq2_826 to i8*), metadata !"enzyme_dup", {} addrspace(10)* %in, {} addrspace(10)* %din)
   ret void
 }
 

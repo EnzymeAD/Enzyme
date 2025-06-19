@@ -888,6 +888,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 #define getOpFullest(Builder, vtmp, frominst, lookupInst, check)               \
   ({                                                                           \
     Value *v = vtmp;                                                           \
+    Type *vty = v->getType();                                                  \
     BasicBlock *origParent = frominst;                                         \
     Value *___res;                                                             \
     if (unwrapMode == UnwrapMode::LegalFullUnwrap ||                           \
@@ -914,7 +915,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           ___res = lookupM(v, Builder, available, v != val, origParent);       \
       }                                                                        \
       if (___res)                                                              \
-        assert(___res->getType() == v->getType() && "uw");                     \
+        assert(___res->getType() == vty && "uw");                              \
     } else {                                                                   \
       origParent = lookupInst;                                                 \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
@@ -923,12 +924,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         ___res = nullptr;                                                      \
       else {                                                                   \
         ___res = lookupM(v, Builder, available, v != val, origParent);         \
-        if (___res && ___res->getType() != v->getType()) {                     \
+        if (___res && ___res->getType() != vty) {                              \
           llvm::errs() << *newFunc << "\n";                                    \
           llvm::errs() << " v = " << *v << " res = " << *___res << "\n";       \
         }                                                                      \
         if (___res)                                                            \
-          assert(___res->getType() == v->getType() && "lu");                   \
+          assert(___res->getType() == vty && "lu");                            \
       }                                                                        \
     }                                                                          \
     ___res;                                                                    \
