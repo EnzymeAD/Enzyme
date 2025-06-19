@@ -2082,7 +2082,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // SI->getPointerOperand());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of " << " Val=" << *Val << "\n";
+                         << " - " << *SI << " of "
+                         << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop) // && cop2)
             potentiallyActiveStore = SI;
@@ -2100,7 +2101,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           auto cop = !Hypothesis->isConstantInstruction(TR, I);
           if (EnzymePrintActivity)
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
-                         << " - " << *I << " of " << " Val=" << *Val << "\n";
+                         << " - " << *I << " of "
+                         << " Val=" << *Val << "\n";
           potentialStore = I;
           if (cop)
             potentiallyActiveStore = I;
