@@ -48,5 +48,8 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
+void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
+                 PatternRewriter &rewriter);
+
 } // namespace enzyme
 } // namespace mlir
