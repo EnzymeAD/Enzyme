@@ -64,10 +64,12 @@ using namespace llvm;
 #endif
 #define DEBUG_TYPE "type-analysis-results"
 
+extern "C" {
 /// Function ActivityAnalysis will be starting its run from
 llvm::cl::opt<std::string>
     FunctionToAnalyze("type-analysis-func", cl::init(""), cl::Hidden,
                       cl::desc("Which function to analyze/print"));
+}
 
 namespace {
 bool printTypeAnalyses(llvm::Function &F) {
