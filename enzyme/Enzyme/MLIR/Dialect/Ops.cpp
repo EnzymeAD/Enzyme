@@ -203,7 +203,6 @@ public:
 
     auto in_idx = 0;
     SmallVector<mlir::Value, 2> in_args;
-    SmallVector<Type, 2> in_ty;
     SmallVector<ActivityAttr, 2> newInActivityArgs;
     bool changed = false;
     for (auto [idx, act] : llvm::enumerate(inActivity)) {
@@ -219,67 +218,49 @@ public:
 
       case mlir::enzyme::Activity::enzyme_const:
         in_args.push_back(inp);
-        in_ty.push_back(inp.getType());
         newInActivityArgs.push_back(iattr);
         break;
 
-      case Activity::enzyme_dupnoneed:
+      case Activity::enzyme_dupnoneed: {
         // always pass in primal
         in_args.push_back(inp);
-        in_ty.push_back(inp.getType());
         in_idx++;
 
         // selectively push or skip directional derivative
         inp = uop.getInputs()[in_idx];
-        if (!isMutable(inp.getType())) {
-          if (matchPattern(inp, m_Zero()) ||
-              matchPattern(inp, m_AnyZeroFloat())) {
-            // skip and promote to const
-            auto new_const = mlir::enzyme::ActivityAttr::get(
-                rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
-            newInActivityArgs.push_back(new_const);
-            changed = true;
-          } else {
-            // push derivative value
-            in_ty.push_back(inp.getType());
-            in_args.push_back(inp);
-            newInActivityArgs.push_back(iattr);
-          }
+        if (!isMutable(inp.getType()) &&
+            (matchPattern(inp, m_Zero()) ||
+             matchPattern(inp, m_AnyZeroFloat()))) {
+          // skip and promote to const
+          auto new_const = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
+          newInActivityArgs.push_back(new_const);
+          changed = true;
         } else {
           // push derivative value
-          in_ty.push_back(inp.getType());
           in_args.push_back(inp);
           newInActivityArgs.push_back(iattr);
         }
         break;
+      }
 
       case Activity::enzyme_dup: {
         // always pass in primal
         in_args.push_back(inp);
-        in_ty.push_back(inp.getType());
         in_idx++;
 
         // selectively push or skip directional derivative
         inp = uop.getInputs()[in_idx];
-        if (!isMutable(inp.getType())) {
-          if (matchPattern(inp, m_Zero()) ||
-              matchPattern(inp, m_AnyZeroFloat())) {
-
-            // skip and promote to const
-            auto new_const = mlir::enzyme::ActivityAttr::get(
-                rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
-            newInActivityArgs.push_back(new_const);
-            changed = true;
-          } else {
-
-            // push derivative value
-            in_ty.push_back(inp.getType());
-            in_args.push_back(inp);
-            newInActivityArgs.push_back(iattr);
-          }
+        if (!isMutable(inp.getType()) &&
+            (matchPattern(inp, m_Zero()) ||
+             matchPattern(inp, m_AnyZeroFloat()))) {
+          // skip and promote to const
+          auto new_const = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
+          newInActivityArgs.push_back(new_const);
+          changed = true;
         } else {
           // push derivative value
-          in_ty.push_back(inp.getType());
           in_args.push_back(inp);
           newInActivityArgs.push_back(iattr);
         }
