@@ -74,6 +74,20 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       /*retTy=*/"bool",
       /*methodName=*/"isMutable",
       /*args=*/(ins )
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Returns an estimate of the size of a type.
+
+        `INT64_MAX` if not known.
+      }],
+      /*retTy=*/"int64_t",
+      /*methodName=*/"getApproxSize",
+      /*args=*/(ins ),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return INT64_MAX;
+      }]
     >
   ];
 

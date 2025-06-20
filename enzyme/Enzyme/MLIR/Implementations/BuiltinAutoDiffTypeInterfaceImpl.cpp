@@ -69,6 +69,10 @@ public:
                             Value val) const {
     return failure();
   }
+
+  int64_t getApproxSize(Type self) const {
+    return self.getIntOrFloatBitWidth();
+  }
 };
 
 class TensorTypeInterface
@@ -129,6 +133,19 @@ public:
                             Value val) const {
     return failure();
   }
+
+  int64_t getApproxSize(Type self) const {
+    auto tenType = cast<TensorType>(self);
+    auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
+    if (!elType)
+      return INT64_MAX;
+    int64_t sz = elType.getApproxSize();
+    if (sz == INT64_MAX)
+      return sz;
+    for (auto n : tenType.getShape())
+      sz *= n;
+    return sz;
+  }
 };
 
 template <typename T>
@@ -160,6 +177,10 @@ public:
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
+  }
+
+  int64_t getApproxSize(Type self) const {
+    return self.getIntOrFloatBitWidth();
   }
 };
 
@@ -193,6 +214,15 @@ public:
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
+  }
+
+  int64_t getApproxSize(Type self) const {
+    auto elType =
+        cast<AutoDiffTypeInterface>(cast<ComplexType>(self).getElementType());
+    auto elSize = elType.getApproxSize();
+    if (elSize == INT64_MAX)
+      return elSize;
+    return 2 * elSize;
   }
 };
 } // namespace
