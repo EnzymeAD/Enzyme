@@ -29,9 +29,9 @@ struct Node {
     OP,
   } type;
 
-  Node(Operation *O) : O(O), type(OP) {};
-  Node(Value V) : V(V), type(VAL) {};
-  Node() : type(NONE) {};
+  Node(Operation *O) : O(O), type(OP){};
+  Node(Value V) : V(V), type(VAL){};
+  Node() : type(NONE){};
 
   bool operator<(const Node N) const {
     if (type != N.type)
