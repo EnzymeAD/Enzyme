@@ -1511,7 +1511,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             auto ip = invertPointerM(dli, BuilderM);
             replaceAWithB(phi, ip);
             erase(phi);
-            llvm::errs() << " ip: " << *ip << "\n";
             return unwrapM(ip, BuilderM, available, unwrapMode, scope,
                            permitCache);
           }
