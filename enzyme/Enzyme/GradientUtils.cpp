@@ -1410,8 +1410,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (dli->getMetadata("enzyme_noneedunwrap"))
             return dli;
 
-          bool legalMove = unwrapMode == UnwrapMode::LegalFullUnwrap ||
-                           unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+          bool legalMove =
+              unwrapMode == UnwrapMode::LegalFullUnwrap ||
+              unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
           if (!legalMove) {
             // TODO actually consider whether this is legal to move to the new
             // location, rather than recomputable anywhere
@@ -1421,9 +1422,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             auto &warnMap = UnwrappedWarnings[phi];
             if (!warnMap.count(BuilderM.GetInsertBlock())) {
               EmitWarning("UncacheableUnwrap", *dli,
-                          "Differential Load cannot be unwrapped ", *dli, " in ",
-                          BuilderM.GetInsertBlock()->getName(), " mode ",
-                          unwrapMode);
+                          "Differential Load cannot be unwrapped ", *dli,
+                          " in ", BuilderM.GetInsertBlock()->getName(),
+                          " mode ", unwrapMode);
               warnMap.insert(BuilderM.GetInsertBlock());
             }
             return nullptr;
@@ -1434,8 +1435,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
             pidx = invertPointerM(dli->getOperand(0), BuilderM);
           } else {
-            pidx = lookupM(invertPointerM(dli->getOperand(0), BuilderM), BuilderM,
-                           available);
+            pidx = lookupM(invertPointerM(dli->getOperand(0), BuilderM),
+                           BuilderM, available);
           }
 
           if (pidx == nullptr)
@@ -1443,10 +1444,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
           if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
             llvm::errs() << "dli: " << *dli << "\n";
-            llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0) << "\n";
+            llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0)
+                         << "\n";
             llvm::errs() << "pidx: " << *pidx << "\n";
           }
-          assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
+          assert(pidx->getType() ==
+                 getShadowType(dli->getOperand(0)->getType()));
 
           size_t s_idx = 0;
           Value *toreturn = applyChainRule(
@@ -1477,7 +1480,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 SmallVector<Metadata *, 1> MDs;
                 for (ssize_t j = -1; j < getWidth(); j++) {
                   if (j != (ssize_t)s_idx)
-                    MDs.push_back(getDerivativeAliasScope(dli->getOperand(0), j));
+                    MDs.push_back(
+                        getDerivativeAliasScope(dli->getOperand(0), j));
                 }
                 if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
                   for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -1508,16 +1512,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             assert(found != invertedPointers.end());
             assert(found->second == phi);
             invertedPointers.erase(found);
-            auto ip = invertPointerM(dli, BuilderM);            
+            auto ip = invertPointerM(dli, BuilderM);
             replaceAWithB(phi, ip);
             erase(phi);
             llvm::errs() << " ip: " << *ip << "\n";
-            return unwrapM(ip, BuilderM, available, unwrapMode, scope, permitCache);
+            return unwrapM(ip, BuilderM, available, unwrapMode, scope,
+                           permitCache);
           }
         }
-
       }
-
 
       goto endCheck;
     }
@@ -6385,12 +6388,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           },
           ptr0shadow, ptr1shadow);
 
-    assert(invertedPointers.find(oval) == invertedPointers.end());
+      assert(invertedPointers.find(oval) == invertedPointers.end());
 
-    invertedPointers.insert(
-        std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
 
-    return res;
+      return res;
     }
   }
 
@@ -8657,7 +8660,8 @@ void GradientUtils::forceAugmentedReturns() {
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
       if (hasNoCache(inst)) {
-        anti->setMetadata("enzyme_nocache", MDNode::get(inst->getContext(), {}));
+        anti->setMetadata("enzyme_nocache",
+                          MDNode::get(inst->getContext(), {}));
       }
       anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
       invertedPointers.insert(
