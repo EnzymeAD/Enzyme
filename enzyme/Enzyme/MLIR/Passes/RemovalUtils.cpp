@@ -8,6 +8,7 @@
 
 #include "RemovalUtils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/IR/PatternMatch.h"
 #include <cassert>
 
@@ -141,9 +142,9 @@ static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
   return revGraph;
 }
 
-void minCutCache(Block *forward, Block *reverse,
-                 SmallVector<CacheInfo> &caches,
-                 PatternRewriter &rewriter) {
+void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
+                               SmallVector<CacheInfo> &caches,
+                               PatternRewriter &rewriter) {
   if (caches.empty())
     return;
 
@@ -379,13 +380,8 @@ void minCutCache(Block *forward, Block *reverse,
     worklist.push_back(newCache);
 
     auto computeSizeOfType = [](Value val) -> int64_t {
-      auto T = cast<RankedTensorType>(val.getType());
-      if (!T.getElementType().isIntOrFloat())
-        return INT64_MAX;
-      int64_t sz = T.getElementType().getIntOrFloatBitWidth();
-      for (auto sh : T.getShape())
-        sz *= sh;
-      return sz;
+      auto T = dyn_cast<AutoDiffTypeInterface>(val.getType());
+      return T ? T.getApproxSize() : INT64_MAX;
     };
 
     Value picked = newCache;
