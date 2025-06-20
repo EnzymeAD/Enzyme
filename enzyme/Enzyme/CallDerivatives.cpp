@@ -3557,32 +3557,25 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     auto ifound = gutils->invertedPointers.find(&call);
     assert(ifound != gutils->invertedPointers.end());
 
-    auto placeholder = cast<PHINode>(&*ifound->second);
+    if (auto placeholder = dyn_cast<PHINode>(&*ifound->second)) {
 
-    bool needShadow =
-        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
-            gutils, &call, Mode, oldUnreachable);
-    if (!needShadow) {
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      if (!needShadow) {
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        eraseIfUnused(call);
+        return true;
+      }
+
       gutils->invertedPointers.erase(ifound);
+      auto res = gutils->invertPointerM(&call, BuilderZ);
+
+      gutils->replaceAWithB(placeholder, res);
       gutils->erase(placeholder);
-      eraseIfUnused(call);
-      return true;
     }
-
-    Value *ptr0shadow = gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
-    Value *ptr1shadow = gutils->invertPointerM(call.getArgOperand(1), BuilderZ);
-
-    Value *val = applyChainRule(
-        call.getType(), BuilderZ,
-        [&](Value *v1, Value *v2) -> Value * {
-          Value *args[2] = {v1, v2};
-          return BuilderZ.CreateCall(called, args);
-        },
-        ptr0shadow, ptr1shadow);
-
-    gutils->replaceAWithB(placeholder, val);
-    gutils->erase(placeholder);
     eraseIfUnused(call);
+
     return true;
   }
 
