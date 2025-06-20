@@ -427,3 +427,185 @@ attributes #7 = { nofree }
 !202 = !DILocation(line: 491, scope: !149, inlinedAt: !203)
 !203 = !DILocation(line: 27, scope: !151, inlinedAt: !204)
 !204 = !DILocation(line: 273, scope: !119)
+
+; CHECK: define internal fastcc void @diffejulia_mapreduce_impl_852({} addrspace(10)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(24) "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Pointer, [-1,8,0]:Integer, [-1,8,1]:Integer, [-1,8,2]:Integer, [-1,8,3]:Integer, [-1,8,4]:Integer, [-1,8,5]:Integer, [-1,8,6]:Integer, [-1,8,7]:Integer, [-1,8,8]:Pointer, [-1,8,8,-1]:Float@double, [-1,16]:Integer, [-1,17]:Integer, [-1,18]:Integer, [-1,19]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer}" "enzymejl_parmtype"="4730247120" "enzymejl_parmtype_ref"="2" %0, {} addrspace(10)* nocapture nofree align 8 "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,0,-1]:Float@double, [-1,8]:Pointer, [-1,8,0]:Integer, [-1,8,1]:Integer, [-1,8,2]:Integer, [-1,8,3]:Integer, [-1,8,4]:Integer, [-1,8,5]:Integer, [-1,8,6]:Integer, [-1,8,7]:Integer, [-1,8,8]:Pointer, [-1,8,8,-1]:Float@double, [-1,16]:Integer, [-1,17]:Integer, [-1,18]:Integer, [-1,19]:Integer, [-1,20]:Integer, [-1,21]:Integer, [-1,22]:Integer, [-1,23]:Integer}" "enzymejl_parmtype"="4730247120" "enzymejl_parmtype_ref"="2" %"'", i64 signext "enzyme_inactive" "enzyme_type"="{[-1]:Integer}" "enzymejl_parmtype"="4784121872" "enzymejl_parmtype_ref"="0" %1, i64 signext "enzyme_inactive" "enzyme_type"="{[-1]:Integer}" "enzymejl_parmtype"="4784121872" "enzymejl_parmtype_ref"="0" %2, double %differeturn)
+; CHECK-NEXT: top:
+; CHECK-NEXT:   %pgcstack = call {}*** @julia.get_pgcstack() #11
+; CHECK-NEXT:   %ptls_field16 = getelementptr inbounds {}**, {}*** %pgcstack, i64 2
+; CHECK-NEXT:   %3 = bitcast {}*** %ptls_field16 to i64***
+; CHECK-NEXT:   %ptls_load1718 = load i64**, i64*** %3, align 8, !tbaa !12, !alias.scope !297, !noalias !300
+; CHECK-NEXT:   %4 = getelementptr inbounds i64*, i64** %ptls_load1718, i64 2
+; CHECK-NEXT:   %safepoint = load i64*, i64** %4, align 8, !tbaa !16, !alias.scope !302, !noalias !305
+; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
+; CHECK-NEXT:   call void @julia.safepoint(i64* %safepoint) #12, !dbg !307
+; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
+; CHECK-NEXT:   %.not = icmp eq i64 %2, %1, !dbg !308
+; CHECK-NEXT:   br i1 %.not, label %invertcommon.ret, label %L23, !dbg !309
+
+; CHECK: L23:                                              ; preds = %top
+; CHECK-NEXT:   %5 = sub i64 %2, %1, !dbg !310
+; CHECK-NEXT:   %.not19 = icmp slt i64 %5, 1024, !dbg !312
+; CHECK-NEXT:   br i1 %.not19, label %L40, label %invertcommon.ret, !dbg !311
+
+; CHECK: L40:                                              ; preds = %L23
+; CHECK-NEXT:   %6 = add i64 %1, 2, !dbg !313
+; CHECK-NEXT:   %.not20 = icmp sgt i64 %6, %2, !dbg !316
+; CHECK-NEXT:   %7 = add i64 %1, 1
+; CHECK-NEXT:   %spec.select = select i1 %.not20, i64 %7, i64 %2, !dbg !318
+; CHECK-NEXT:   %8 = sub i64 %spec.select, %6, !dbg !321
+; CHECK-NEXT:   %9 = icmp ugt i64 %8, 9223372036854775806, !dbg !325
+; CHECK-NEXT:   %spec.select96 = select i1 %9, i8 2, i8 1, !dbg !326
+; CHECK-NEXT:   br label %invertcommon.ret, !dbg !326
+
+; CHECK: inverttop:                                        ; preds = %invertL40, %invertL132, %invertL17
+; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
+; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
+; CHECK-NEXT:   ret void
+
+; CHECK: invertL17:                                        ; preds = %invertcommon.ret
+; CHECK-NEXT:   %_unwrap = bitcast {} addrspace(10)* %0 to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !327
+; CHECK-NEXT:   %_unwrap5 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %_unwrap to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !327
+; CHECK-NEXT:   %_unwrap6 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %_unwrap5, i64 0, i32 1, !dbg !327
+; CHECK-NEXT:   %_unwrap7 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %_unwrap6, align 8, !dbg !331, !tbaa !48, !alias.scope !333, !noalias !336, !dereferenceable_or_null !53, !invariant.group !338
+; CHECK-NEXT:   %_unwrap8 = bitcast {} addrspace(10)* %0 to {} addrspace(10)** addrspace(10)*, !dbg !327
+; CHECK-NEXT:   %_unwrap9 = addrspacecast {} addrspace(10)** addrspace(10)* %_unwrap8 to {} addrspace(10)** addrspace(11)*, !dbg !327
+; CHECK-NEXT:   %_unwrap10 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %_unwrap9, align 8, !dbg !331, !tbaa !48, !alias.scope !333, !noalias !336, !invariant.group !339
+; CHECK-NEXT:   %10 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %_unwrap7, {} addrspace(10)** noundef %_unwrap10) #11, !dbg !331
+; CHECK-NEXT:   %_unwrap11 = add i64 %2, -1, !dbg !327
+; CHECK-NEXT:   %_unwrap12 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %10, i64 %_unwrap11, !dbg !327
+; CHECK-NEXT:   %_unwrap13 = bitcast {} addrspace(10)* addrspace(13)* %_unwrap12 to double addrspace(13)*, !dbg !327
+; CHECK-NEXT:   %_unwrap14 = load double, double addrspace(13)* %_unwrap13, align 8, !dbg !331, !tbaa !57, !alias.scope !340, !noalias !343, !invariant.group !345
+; CHECK-NEXT:   %11 = fmul fast double %24, %_unwrap14, !dbg !327
+; CHECK-NEXT:   %12 = fmul fast double %24, %_unwrap14, !dbg !327
+; CHECK-NEXT:   %13 = fadd fast double %11, %12, !dbg !327
+; CHECK-NEXT:   %"'ipc16_unwrap" = bitcast {} addrspace(10)* %"'" to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !331
+; CHECK-NEXT:   %"'ipc17_unwrap" = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %"'ipc16_unwrap" to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !331
+; CHECK-NEXT:   %"'ipg18_unwrap" = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %"'ipc17_unwrap", i64 0, i32 1, !dbg !331
+; CHECK-NEXT:   %"'il_phi1_unwrap" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"'ipg18_unwrap", align 8, !dbg !331, !tbaa !48, !alias.scope !346, !noalias !347, !dereferenceable_or_null !53
+; CHECK-NEXT:   %"'ipc19_unwrap" = bitcast {} addrspace(10)* %"'" to {} addrspace(10)** addrspace(10)*, !dbg !331
+; CHECK-NEXT:   %"'ipc20_unwrap" = addrspacecast {} addrspace(10)** addrspace(10)* %"'ipc19_unwrap" to {} addrspace(10)** addrspace(11)*, !dbg !331
+; CHECK-NEXT:   %"'il_phi_unwrap" = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %"'ipc20_unwrap", align 8, !dbg !331, !tbaa !48, !alias.scope !346, !noalias !347
+; CHECK-NEXT:   %14 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %"'il_phi1_unwrap", {} addrspace(10)** %"'il_phi_unwrap"), !dbg !331
+; CHECK-NEXT:   %"'ipg_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %14, i64 %_unwrap11, !dbg !331
+; CHECK-NEXT:   %"'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"'ipg_unwrap" to double addrspace(13)*, !dbg !331
+; CHECK-NEXT:   %15 = load double, double addrspace(13)* %"'ipc_unwrap", align 8, !dbg !331, !tbaa !57, !alias.scope !348, !noalias !349
+; CHECK-NEXT:   %16 = fadd fast double %15, %13, !dbg !331
+; CHECK-NEXT:   store double %16, double addrspace(13)* %"'ipc_unwrap", align 8, !dbg !331, !tbaa !57, !alias.scope !348, !noalias !349
+; CHECK-NEXT:   br label %inverttop
+
+; CHECK: invertcommon.ret.loopexit:                        ; preds = %invertcommon.ret
+; CHECK-NEXT:   %_unwrap22 = add i64 %1, 2
+; CHECK-NEXT:   %.not20_unwrap = icmp sgt i64 %_unwrap22, %2
+; CHECK-NEXT:   %_unwrap23 = add i64 %1, 1
+; CHECK-NEXT:   %spec.select_unwrap = select i1 %.not20_unwrap, i64 %_unwrap23, i64 %2
+; CHECK-NEXT:   %_unwrap24 = sub i64 %spec.select_unwrap, %_unwrap22
+; CHECK-NEXT:   br label %invertL86
+
+; CHECK: invertcommon.ret:                                 ; preds = %L40, %L23, %top
+; CHECK-NEXT:   %_cache31.0 = phi i8 [ 0, %top ], [ %spec.select96, %L40 ], [ 3, %L23 ]
+; CHECK-NEXT:   %17 = icmp eq i8 0, %_cache31.0
+; CHECK-NEXT:   %18 = icmp eq i8 1, %_cache31.0
+; CHECK-NEXT:   %19 = icmp eq i8 2, %_cache31.0
+; CHECK-NEXT:   %20 = icmp eq i8 3, %_cache31.0
+; CHECK-NEXT:   %21 = select fast i1 %18, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %22 = select fast i1 %20, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %23 = select fast i1 %19, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %24 = select fast i1 %17, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   switch i8 %_cache31.0, label %invertL132 [
+; CHECK-NEXT:     i8 0, label %invertL17
+; CHECK-NEXT:     i8 1, label %invertcommon.ret.loopexit
+; CHECK-NEXT:     i8 2, label %invertL40
+; CHECK-NEXT:   ]
+
+; CHECK: invertL40:                                        ; preds = %invertL86, %invertcommon.ret
+; CHECK-NEXT:   %"'de29.0" = phi double [ %23, %invertcommon.ret ], [ %45, %invertL86 ]
+; CHECK-NEXT:   %_unwrap36 = bitcast {} addrspace(10)* %0 to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !350
+; CHECK-NEXT:   %_unwrap37 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %_unwrap36 to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !350
+; CHECK-NEXT:   %_unwrap38 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %_unwrap37, i64 0, i32 1, !dbg !350
+; CHECK-NEXT:   %_unwrap39 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %_unwrap38, align 8, !dbg !353, !tbaa !48, !alias.scope !333, !noalias !336, !invariant.group !355
+; CHECK-NEXT:   %_unwrap40 = bitcast {} addrspace(10)* %0 to {} addrspace(10)** addrspace(10)*, !dbg !350
+; CHECK-NEXT:   %_unwrap41 = addrspacecast {} addrspace(10)** addrspace(10)* %_unwrap40 to {} addrspace(10)** addrspace(11)*, !dbg !350
+; CHECK-NEXT:   %_unwrap42 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %_unwrap41, align 8, !dbg !353, !tbaa !48, !alias.scope !333, !noalias !336, !invariant.group !356
+; CHECK-NEXT:   %25 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %_unwrap39, {} addrspace(10)** noundef %_unwrap42) #11, !dbg !353
+; CHECK-NEXT:   %_unwrap43 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %25, i64 %1, !dbg !350
+; CHECK-NEXT:   %_unwrap44 = bitcast {} addrspace(10)* addrspace(13)* %_unwrap43 to double addrspace(13)*, !dbg !350
+; CHECK-NEXT:   %_unwrap45 = load double, double addrspace(13)* %_unwrap44, align 8, !dbg !357, !tbaa !57, !alias.scope !359, !noalias !362, !invariant.group !364
+; CHECK-NEXT:   %26 = fmul fast double %"'de29.0", %_unwrap45, !dbg !350
+; CHECK-NEXT:   %27 = fmul fast double %"'de29.0", %_unwrap45, !dbg !350
+; CHECK-NEXT:   %28 = fadd fast double %26, %27, !dbg !350
+; CHECK-NEXT:   %_unwrap48 = add i64 %1, -1, !dbg !350
+; CHECK-NEXT:   %_unwrap49 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %25, i64 %_unwrap48, !dbg !350
+; CHECK-NEXT:   %_unwrap50 = bitcast {} addrspace(10)* addrspace(13)* %_unwrap49 to double addrspace(13)*, !dbg !350
+; CHECK-NEXT:   %_unwrap51 = load double, double addrspace(13)* %_unwrap50, align 8, !dbg !353, !tbaa !57, !alias.scope !359, !noalias !362, !invariant.group !365
+; CHECK-NEXT:   %29 = fmul fast double %"'de29.0", %_unwrap51, !dbg !350
+; CHECK-NEXT:   %30 = fmul fast double %"'de29.0", %_unwrap51, !dbg !350
+; CHECK-NEXT:   %31 = fadd fast double %29, %30, !dbg !350
+; CHECK-NEXT:   %"'ipc55_unwrap" = bitcast {} addrspace(10)* %"'" to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !357
+; CHECK-NEXT:   %"'ipc56_unwrap" = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %"'ipc55_unwrap" to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !357
+; CHECK-NEXT:   %"'ipg57_unwrap" = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %"'ipc56_unwrap", i64 0, i32 1, !dbg !357
+; CHECK-NEXT:   %"'il_phi3_unwrap" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"'ipg57_unwrap", align 8, !dbg !353, !tbaa !48, !alias.scope !346, !noalias !347
+; CHECK-NEXT:   %"'ipc58_unwrap" = bitcast {} addrspace(10)* %"'" to {} addrspace(10)** addrspace(10)*, !dbg !357
+; CHECK-NEXT:   %"'ipc59_unwrap" = addrspacecast {} addrspace(10)** addrspace(10)* %"'ipc58_unwrap" to {} addrspace(10)** addrspace(11)*, !dbg !357
+; CHECK-NEXT:   %"'il_phi2_unwrap" = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %"'ipc59_unwrap", align 8, !dbg !353, !tbaa !48, !alias.scope !346, !noalias !347
+; CHECK-NEXT:   %32 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %"'il_phi3_unwrap", {} addrspace(10)** %"'il_phi2_unwrap"), !dbg !353
+; CHECK-NEXT:   %"'ipg53_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %32, i64 %1, !dbg !357
+; CHECK-NEXT:   %"'ipc54_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"'ipg53_unwrap" to double addrspace(13)*, !dbg !357
+; CHECK-NEXT:   %33 = load double, double addrspace(13)* %"'ipc54_unwrap", align 8, !dbg !357, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   %34 = fadd fast double %33, %28, !dbg !357
+; CHECK-NEXT:   store double %34, double addrspace(13)* %"'ipc54_unwrap", align 8, !dbg !357, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   %"'ipg60_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %32, i64 %_unwrap48, !dbg !353
+; CHECK-NEXT:   %"'ipc61_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"'ipg60_unwrap" to double addrspace(13)*, !dbg !353
+; CHECK-NEXT:   %35 = load double, double addrspace(13)* %"'ipc61_unwrap", align 8, !dbg !353, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   %36 = fadd fast double %35, %31, !dbg !353
+; CHECK-NEXT:   store double %36, double addrspace(13)* %"'ipc61_unwrap", align 8, !dbg !353, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   br label %inverttop
+
+; CHECK: invertL86:                                        ; preds = %incinvertL86, %invertcommon.ret.loopexit
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap24, %invertcommon.ret.loopexit ], [ %46, %incinvertL86 ]
+; CHECK-NEXT:   %_unwrap67 = bitcast {} addrspace(10)* %0 to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !368
+; CHECK-NEXT:   %_unwrap68 = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %_unwrap67 to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !368
+; CHECK-NEXT:   %_unwrap69 = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %_unwrap68, i64 0, i32 1, !dbg !368
+; CHECK-NEXT:   %_unwrap70 = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %_unwrap69, align 8, !dbg !353, !tbaa !48, !alias.scope !333, !noalias !336, !invariant.group !355
+; CHECK-NEXT:   %_unwrap71 = bitcast {} addrspace(10)* %0 to {} addrspace(10)** addrspace(10)*, !dbg !368
+; CHECK-NEXT:   %_unwrap72 = addrspacecast {} addrspace(10)** addrspace(10)* %_unwrap71 to {} addrspace(10)** addrspace(11)*, !dbg !368
+; CHECK-NEXT:   %_unwrap73 = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %_unwrap72, align 8, !dbg !353, !tbaa !48, !alias.scope !333, !noalias !336, !invariant.group !356
+; CHECK-NEXT:   %37 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %_unwrap70, {} addrspace(10)** noundef %_unwrap73) #11, !dbg !353
+; CHECK-NEXT:   %_unwrap74 = add i64 %1, 1, !dbg !368
+; CHECK-NEXT:   %_unwrap75 = add i64 %"iv'ac.0", %_unwrap74, !dbg !368
+; CHECK-NEXT:   %_unwrap76 = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %37, i64 %_unwrap75, !dbg !368
+; CHECK-NEXT:   %_unwrap77 = bitcast {} addrspace(10)* addrspace(13)* %_unwrap76 to double addrspace(13)*, !dbg !368
+; CHECK-NEXT:   %_unwrap78 = load double, double addrspace(13)* %_unwrap77, align 8, !dbg !372, !tbaa !57, !alias.scope !359, !noalias !362, !invariant.group !374
+; CHECK-NEXT:   %38 = fmul fast double %21, %_unwrap78, !dbg !368
+; CHECK-NEXT:   %39 = fmul fast double %21, %_unwrap78, !dbg !368
+; CHECK-NEXT:   %40 = fadd fast double %38, %39, !dbg !368
+; CHECK-NEXT:   %"'ipc55_unwrap82" = bitcast {} addrspace(10)* %"'" to { i8*, {} addrspace(10)* } addrspace(10)*, !dbg !372
+; CHECK-NEXT:   %"'ipc56_unwrap83" = addrspacecast { i8*, {} addrspace(10)* } addrspace(10)* %"'ipc55_unwrap82" to { i8*, {} addrspace(10)* } addrspace(11)*, !dbg !372
+; CHECK-NEXT:   %"'ipg57_unwrap84" = getelementptr inbounds { i8*, {} addrspace(10)* }, { i8*, {} addrspace(10)* } addrspace(11)* %"'ipc56_unwrap83", i64 0, i32 1, !dbg !372
+; CHECK-NEXT:   %"'ipl62_unwrap" = load {} addrspace(10)*, {} addrspace(10)* addrspace(11)* %"'ipg57_unwrap84", align 8, !dbg !353, !tbaa !48, !alias.scope !346, !noalias !347, !invariant.group !375
+; CHECK-NEXT:   %"'ipc58_unwrap85" = bitcast {} addrspace(10)* %"'" to {} addrspace(10)** addrspace(10)*, !dbg !372
+; CHECK-NEXT:   %"'ipc59_unwrap86" = addrspacecast {} addrspace(10)** addrspace(10)* %"'ipc58_unwrap85" to {} addrspace(10)** addrspace(11)*, !dbg !372
+; CHECK-NEXT:   %"'ipl63_unwrap" = load {} addrspace(10)**, {} addrspace(10)** addrspace(11)* %"'ipc59_unwrap86", align 8, !dbg !353, !tbaa !48, !alias.scope !346, !noalias !347, !invariant.group !376
+; CHECK-NEXT:   %41 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %"'ipl62_unwrap", {} addrspace(10)** %"'ipl63_unwrap"), !dbg !353
+; CHECK-NEXT:   %"'ipg80_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %41, i64 %_unwrap75, !dbg !372
+; CHECK-NEXT:   %"'ipc81_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"'ipg80_unwrap" to double addrspace(13)*, !dbg !372
+; CHECK-NEXT:   %42 = load double, double addrspace(13)* %"'ipc81_unwrap", align 8, !dbg !372, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   %43 = fadd fast double %42, %40, !dbg !372
+; CHECK-NEXT:   store double %43, double addrspace(13)* %"'ipc81_unwrap", align 8, !dbg !372, !tbaa !57, !alias.scope !366, !noalias !367
+; CHECK-NEXT:   %44 = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %45 = fadd fast double %23, %21
+; CHECK-NEXT:   br i1 %44, label %invertL40, label %incinvertL86
+
+; CHECK: incinvertL86:                                     ; preds = %invertL86
+; CHECK-NEXT:   %46 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %invertL86
+
+; CHECK: invertL132:                                       ; preds = %invertcommon.ret
+; CHECK-NEXT:   %_unwrap91 = sub i64 %2, %1, !dbg !377
+; CHECK-NEXT:   %_unwrap92 = ashr i64 %_unwrap91, 1, !dbg !377
+; CHECK-NEXT:   %_unwrap93 = add i64 %_unwrap92, %1, !dbg !377
+; CHECK-NEXT:   %_unwrap94 = add i64 %_unwrap93, 1, !dbg !377
+; CHECK-NEXT:   call fastcc void @diffejulia_mapreduce_impl_852({} addrspace(10)* nocapture nofree readonly align 8 %0, {} addrspace(10)* nocapture nofree align 8 %"'", i64 signext %_unwrap94, i64 signext %2, double %22), !dbg !377
+; CHECK-NEXT:   call fastcc void @diffejulia_mapreduce_impl_852({} addrspace(10)* nocapture nofree readonly align 8 %0, {} addrspace(10)* nocapture nofree align 8 %"'", i64 signext %1, i64 signext %_unwrap93, double %22), !dbg !378
+; CHECK-NEXT:   br label %inverttop
+; CHECK-NEXT: }
+

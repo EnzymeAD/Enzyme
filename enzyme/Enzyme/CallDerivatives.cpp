@@ -3557,23 +3557,23 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     auto ifound = gutils->invertedPointers.find(&call);
     assert(ifound != gutils->invertedPointers.end());
 
-    auto placeholder = cast<PHINode>(&*ifound->second);
+    if (auto placeholder = dyn_cast<PHINode>(&*ifound->second)) {
 
-    bool needShadow =
-        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
-            gutils, &call, Mode, oldUnreachable);
-    if (!needShadow) {
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      if (!needShadow) {
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        eraseIfUnused(call);
+        return true;
+      }
+
       gutils->invertedPointers.erase(ifound);
+      auto res = gutils->invertPointerM(&call, BuilderZ);
+
+      gutils->replaceAWithB(placeholder, res);
       gutils->erase(placeholder);
-      eraseIfUnused(call);
-      return true;
     }
-
-    gutils->invertedPointers.erase(ifound);
-    auto res = gutils->invertPointerM(&call, BuilderZ);
-
-    gutils->replaceAWithB(placeholder, res);
-    gutils->erase(placeholder);
     eraseIfUnused(call);
 
     return true;
