@@ -956,7 +956,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     getOpFullest(BuilderM, vtmp, parent, parent, true);                        \
   })
 
-  llvm::errs() << " considering val: " << *val << "\n";
   if (isa<Argument>(val) || isa<Constant>(val)) {
     return val;
   } else if (auto op = dyn_cast<FreezeInst>(val)) {
@@ -1394,12 +1393,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     unwrappedLoads[toreturn] = val;
     return toreturn;
   } else if (auto phi = dyn_cast<PHINode>(val)) {
-    llvm::errs() << " phi: " << *phi << "\n";
     if (phi->getNumIncomingValues() == 0) {
-      llvm::errs() << " placeholder: " << *phi << "\n";
       auto uninverted = hasUninverted(phi);
       if (uninverted) {
-        llvm::errs() << " + uninverted: " << *uninverted << "\n";
 
         // This is a placeholder shadow for a load, rather than falling
         // back to the uncached variant, use the proper procedure for
@@ -5374,11 +5370,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   auto M = oldFunc->getParent();
   assert(oval);
 
-  llvm::errs() << " inverting pointer of : " << *oval << "\n";
   {
     auto ifound = invertedPointers.find(oval);
     if (ifound != invertedPointers.end()) {
-      llvm::errs() << "using prior found: " << oval << "\n";
       return &*ifound->second;
     }
   }
