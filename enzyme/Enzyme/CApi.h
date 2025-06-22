@@ -100,7 +100,7 @@ void EnzymeTypeTreeToStringFree(const char *cstr);
 
 void EnzymeSetCLBool(void *, uint8_t);
 void EnzymeSetCLInteger(void *, int64_t);
-void EnzymeSetCLString(void *, const char*);
+void EnzymeSetCLString(void *, const char *);
 
 struct CFnTypeInfo {
   /// Types of arguments, assumed of size len(Arguments)

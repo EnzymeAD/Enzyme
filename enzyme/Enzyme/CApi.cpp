@@ -200,7 +200,7 @@ int64_t EnzymeGetCLInteger(void *ptr) {
   return (int64_t)cl->getValue();
 }
 
-void EnzymeSetCLString(void *ptr, const char* val) {
+void EnzymeSetCLString(void *ptr, const char *val) {
   if (auto *clopt = static_cast<cl::opt<std::string> *>(ptr))
     clopt->setValue(val);
 }
