@@ -21,12 +21,21 @@ module {
     return %r : f64
   }
 
+  // CHECK:   func.func @generate_no_constraints(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
+  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
+  // CHECK-NEXT:    return %[[res0]] : f64
+  // CHECK-NEXT:   }
+  func.func @generate_no_constraints(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
+    %res = enzyme.generate @sample(%seed, %mean, %stddev) { name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
+    return %res : f64
+  }
+
   // CHECK:   func.func @generate(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {name = "test"} : (i64, f64, f64) -> f64
+  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {constraints = 41 : ui64, name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
   // CHECK-NEXT:    return %[[res0]] : f64
   // CHECK-NEXT:   }
   func.func @generate(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %res = enzyme.generate @sample(%seed, %mean, %stddev) { name = "test" } : (i64, f64, f64) -> f64
+    %res = enzyme.generate @sample(%seed, %mean, %stddev) { constraints = 41 : ui64, name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
     return %res : f64
   }
 

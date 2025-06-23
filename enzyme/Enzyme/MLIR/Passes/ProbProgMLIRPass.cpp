@@ -52,19 +52,91 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Generate);
     FunctionOpInterface NewF = putils->newFunc;
 
-    // Replace SampleOps with distribution function calls
+    OpBuilder entryBuilder(&NewF.getFunctionBody().front().front());
+    auto loc = NewF.getLoc();
+    auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
+    auto zeroAttr = DenseElementsAttr::get(
+        tensorType, APFloat(entryBuilder.getF64Type().getFloatSemantics(), 0));
+    auto zeroWeight =
+        entryBuilder.create<arith::ConstantOp>(loc, tensorType, zeroAttr);
+    Value weightAccumulator = zeroWeight;
+
     {
+      auto constraintsAttr = CI.getConstraintsAttr();
       SmallVector<Operation *, 4> toErase;
       NewF.walk([&](enzyme::SampleOp sampleOp) {
+        assert(sampleOp.getSymbolAttr() && "SampleOp requires symbol");
+        assert(sampleOp.getLogpdfAttr() &&
+               "GenerateOp requires logpdf in SampleOps");
+
         OpBuilder b(sampleOp);
         auto distFn =
             cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                 sampleOp, sampleOp.getFnAttr()));
-        auto distCall = b.create<func::CallOp>(
-            sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-            sampleOp.getInputs());
-        sampleOp.replaceAllUsesWith(distCall);
 
+        SmallVector<Value> finalValues;
+
+        auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr();
+        auto symbolAttr = sampleOp.getSymbolAttr();
+
+        // Extract constraint if symbol presents AND exists in `constraints`
+        // dict AND has traced outputs, otherwise sample from distFn
+        bool doSOEC = constraintsAttr && symbolAttr && tracedOutputIndices &&
+                      !tracedOutputIndices.empty();
+        if (doSOEC) {
+
+          auto soecOp = b.create<enzyme::SampleOrExtractConstraintOp>(
+              sampleOp.getLoc(), distFn.getResultTypes(), sampleOp.getFnAttr(),
+              sampleOp.getInputs(), constraintsAttr, sampleOp.getSymbolAttr(),
+              tracedOutputIndices);
+
+          for (auto result : soecOp.getResults()) {
+            finalValues.push_back(result);
+          }
+        } else {
+          auto distCall = b.create<func::CallOp>(
+              sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+              sampleOp.getInputs());
+          for (auto result : distCall.getResults()) {
+            finalValues.push_back(result);
+          }
+        }
+
+        // For traced outputs: weight using logpdf and accumulate and add to
+        // trace.
+        if (tracedOutputIndices && !tracedOutputIndices.empty()) {
+          auto logpdfFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getLogpdfAttr()));
+
+          // 1. Construct args for logpdf call: sample + specified distFn args
+          SmallVector<Value> logpdfOperands;
+          for (auto idx : tracedOutputIndices.asArrayRef()) {
+            logpdfOperands.push_back(finalValues[idx]);
+          }
+          auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr();
+          for (auto idx : tracedInputIndices.asArrayRef()) {
+            logpdfOperands.push_back(sampleOp.getOperand(idx));
+          }
+          auto logpdfCall =
+              b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
+                                     logpdfFn.getResultTypes(), logpdfOperands);
+
+          // 2. Accumulate weights
+          weightAccumulator = b.create<arith::AddFOp>(
+              sampleOp.getLoc(), weightAccumulator, logpdfCall.getResult(0));
+
+          // 3. Add traced outputs to trace
+          for (auto idx : tracedOutputIndices.asArrayRef()) {
+            b.create<enzyme::AddSampleToTraceOp>(
+                sampleOp.getLoc(), finalValues[idx], sampleOp.getSymbolAttr(),
+                CI.getTraceAttr(), sampleOp.getNameAttr());
+          }
+        }
+
+        for (size_t i = 0; i < sampleOp.getNumResults(); ++i) {
+          sampleOp.getResult(i).replaceAllUsesWith(finalValues[i]);
+        }
         toErase.push_back(sampleOp);
       });
 
@@ -72,6 +144,26 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         op->erase();
       }
     }
+
+    // Return the weight (0th) and original results
+    NewF.walk([&](func::ReturnOp returnOp) {
+      OpBuilder b(returnOp);
+      SmallVector<Value> newReturnValues;
+      newReturnValues.push_back(weightAccumulator);
+      newReturnValues.append(returnOp.getOperands().begin(),
+                             returnOp.getOperands().end());
+
+      auto fnType = cast<FunctionType>(NewF.getFunctionType());
+      SmallVector<Type> newResultTypes;
+      newResultTypes.push_back(RankedTensorType::get({}, b.getF64Type()));
+      newResultTypes.append(fnType.getResults().begin(),
+                            fnType.getResults().end());
+      auto newFnType = b.getFunctionType(fnType.getInputs(), newResultTypes);
+      NewF.setType(newFnType);
+
+      b.create<func::ReturnOp>(returnOp.getLoc(), newReturnValues);
+      returnOp.erase();
+    });
 
     OpBuilder b(CI);
     auto newCI = b.create<func::CallOp>(

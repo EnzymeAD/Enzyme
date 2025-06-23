@@ -220,7 +220,9 @@ def SampleOp : Enzyme_Op<"sample",
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<UI64Attr>:$symbol,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
     OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -273,15 +275,41 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 }
 
-def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Generate a sample from a probabilistic function";
+def SampleOrExtractConstraintOp : Enzyme_Op<"sampleOrExtractConstraint",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Sample from distribution or extract constraint if symbol is present";
   let description = [{
-  Generate a sample from a probabilistic function by replacing all SampleOps with distribution calls.
+    Sample from a distribution function, but if the symbol is present in the
+    constraints dict, use the constrained value instead.
+  }];
+  
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    UI64Attr:$constraints,
+    UI64Attr:$symbol,
+    DenseI64ArrayAttr:$traced_output_indices
+  );
+  
+  let results = (outs Variadic<AnyType>:$outputs);
+  
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Generate an execution trace and weight from a probabilistic function";
+  let description = [{
+  Generate an execution trace and weight from a probabilistic function. If a constraint dict
+  is provided, we will use the corresponding constraint values instead of generating new samples.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    UI64Attr:$trace,
+    OptionalAttr<UI64Attr>:$constraints,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
