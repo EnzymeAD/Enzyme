@@ -84,22 +84,16 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         bool doSOEC = constraintsAttr && symbolAttr && tracedOutputIndices &&
                       !tracedOutputIndices.empty();
         if (doSOEC) {
-
           auto soecOp = b.create<enzyme::SampleOrExtractConstraintOp>(
               sampleOp.getLoc(), distFn.getResultTypes(), sampleOp.getFnAttr(),
               sampleOp.getInputs(), constraintsAttr, sampleOp.getSymbolAttr(),
               tracedOutputIndices);
-
-          for (auto result : soecOp.getResults()) {
-            finalValues.push_back(result);
-          }
+          finalValues = soecOp.getResults();
         } else {
           auto distCall = b.create<func::CallOp>(
               sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
               sampleOp.getInputs());
-          for (auto result : distCall.getResults()) {
-            finalValues.push_back(result);
-          }
+          finalValues = distCall.getResults();
         }
 
         // For traced outputs: weight using logpdf and accumulate and add to
@@ -134,9 +128,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           }
         }
 
-        for (size_t i = 0; i < sampleOp.getNumResults(); ++i) {
-          sampleOp.getResult(i).replaceAllUsesWith(finalValues[i]);
-        }
+        sampleOp.replaceAllUsesWith(finalValues);
         toErase.push_back(sampleOp);
       });
 
