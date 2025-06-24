@@ -78,22 +78,70 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
         auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr();
         auto symbolAttr = sampleOp.getSymbolAttr();
+        bool hasConstraint = false;
+        SmallVector<Attribute> opConstraintValues;
 
-        // Extract constraint if symbol presents AND exists in `constraints`
-        // dict AND has traced outputs, otherwise sample from distFn
-        bool doSOEC = constraintsAttr && symbolAttr && tracedOutputIndices &&
-                      !tracedOutputIndices.empty();
-        if (doSOEC) {
-          auto soecOp = b.create<enzyme::SampleOrExtractConstraintOp>(
-              sampleOp.getLoc(), distFn.getResultTypes(), sampleOp.getFnAttr(),
-              sampleOp.getInputs(), constraintsAttr, sampleOp.getSymbolAttr(),
-              tracedOutputIndices);
-          finalValues = soecOp.getResults();
-        } else {
+        if (constraintsAttr && symbolAttr && tracedOutputIndices &&
+            !tracedOutputIndices.empty()) {
+          uint64_t symPtr = symbolAttr.getValue().getZExtValue();
+
+          for (auto entry : constraintsAttr.getEntries()) {
+            auto centry = cast<ConstraintEntryAttr>(entry);
+            if (centry.getSymbol() != symPtr)
+              continue;
+
+            assert(centry.getValues().size() == tracedOutputIndices.size() &&
+                   "Constraint entry value count must match number of traced "
+                   "output indices");
+
+            for (auto a : centry.getValues())
+              opConstraintValues.push_back(a);
+
+            hasConstraint = true;
+            break;
+          }
+        }
+
+        if (!hasConstraint) {
           auto distCall = b.create<func::CallOp>(
               sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
               sampleOp.getInputs());
-          finalValues = distCall.getResults();
+
+          finalValues.append(distCall.getResults().begin(),
+                             distCall.getResults().end());
+        } else {
+          // Constraint for current SampleOp is found. Replace traced outputs
+          // with constraint values and try to forward other results from
+          // SampleOp inputs when possible (e.g., RNG state).
+          unsigned numResults = sampleOp->getNumResults();
+          finalValues.resize(numResults, Value());
+
+          // Map constraint values to traced output indices in order.
+          if (tracedOutputIndices) {
+            unsigned i = 0;
+            for (auto outIdx : tracedOutputIndices.asArrayRef()) {
+              auto elemAttr = cast<ElementsAttr>(opConstraintValues[i]);
+              auto constOp = b.create<arith::ConstantOp>(
+                  sampleOp.getLoc(), elemAttr.getType(), elemAttr);
+              finalValues[outIdx] = constOp.getResult();
+              i++;
+            }
+          }
+
+          // Try forwarding an operand with identical type (e.g., RNG state).
+          for (unsigned i = 0; i < numResults; ++i) {
+            if (finalValues[i])
+              continue;
+
+            for (Value inVal : sampleOp.getInputs()) {
+              if (inVal.getType() == sampleOp.getResult(i).getType()) {
+                finalValues[i] = inVal;
+                break;
+              }
+            }
+
+            assert(finalValues[i] && "Cannot retrieve or forward result");
+          }
         }
 
         // For traced outputs: weight using logpdf and accumulate and add to
@@ -105,6 +153,8 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
           // 1. Construct args for logpdf call: sample + specified distFn args
           SmallVector<Value> logpdfOperands;
+          // NOTE: This assumes that the traced output indices come in the same
+          // order as the first few logpdf args.
           for (auto idx : tracedOutputIndices.asArrayRef()) {
             logpdfOperands.push_back(finalValues[idx]);
           }

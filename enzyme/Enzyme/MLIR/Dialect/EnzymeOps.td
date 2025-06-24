@@ -275,27 +275,31 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 }
 
-def SampleOrExtractConstraintOp : Enzyme_Op<"sampleOrExtractConstraint",
-    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from distribution or extract constraint if symbol is present";
+def ConstraintEntryAttr : Enzyme_Attr<"ConstraintEntry", "constraint"> {
+  let summary = "Entry mapping a probabilistic symbol id to a tensor value used as a constraint.";
   let description = [{
-    Sample from a distribution function, but if the symbol is present in the
-    constraints dict, use the constrained value instead.
+    This attribute represents a single key/value pair inside the constraints dictionary
+    attached to `enzyme.generate`.  The `symbol` field is the probabilistic symbol id
+    (64-bit unsigned integer).  The `value` field is an arbitrary attribute but is
+    expected to be a ranked tensor constant (e.g. `DenseElementsAttr`).
   }];
-  
-  let arguments = (ins
-    FlatSymbolRefAttr:$fn,
-    Variadic<AnyType>:$inputs,
-    UI64Attr:$constraints,
-    UI64Attr:$symbol,
-    DenseI64ArrayAttr:$traced_output_indices
-  );
-  
-  let results = (outs Variadic<AnyType>:$outputs);
-  
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-  }];
+
+  let parameters = (ins "uint64_t":$symbol, "ArrayAttr":$values);
+
+  let assemblyFormat = "`<` `symbol` `=` $symbol `,` `values` `=` $values `>`";
+}
+
+def ConstraintsDictAttr : Enzyme_Attr<"ConstraintsDict", "constraints"> {
+  let summary = "Dictionary mapping symbol ids to constrained tensor values.";
+  let parameters = (ins "ArrayAttr":$entries);
+
+  let builders = [
+    AttrBuilderWithInferredContext<(ins "ArrayAttr":$entries), [{
+      return $_get(entries.getContext(), entries);
+    }]>
+  ];
+
+  let assemblyFormat = "`<` $entries `>`";
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
@@ -309,7 +313,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     UI64Attr:$trace,
-    OptionalAttr<UI64Attr>:$constraints,
+    OptionalAttr<ConstraintsDictAttr>:$constraints,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
