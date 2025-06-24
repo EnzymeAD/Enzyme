@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/IR/PatternMatch.h"
 #include <cassert>
+#include <deque>
 
 using namespace mlir;
 using namespace mlir::enzyme;
