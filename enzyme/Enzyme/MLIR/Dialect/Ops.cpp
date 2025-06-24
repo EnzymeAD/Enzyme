@@ -823,12 +823,34 @@ public:
       in_args.push_back(res);
       in_idx++;
 
-      // handle derivatives
-      if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
-        // also push derivative into input arguments
-        res = uop.getInputs()[in_idx];
-        in_args.push_back(res);
+      if (val == Activity::enzyme_dup) {
+        // input: dup -> const
+        mlir::Value dres = uop.getInputs()[in_idx];
+        if (dres.use_empty()) {
+          // possible elimination and demotion to enzyme_const
+          // iff res is mutable, readonly (need to query activity analysis for
+          // this) and dres is never used post the diff call
+          if (isMutable(res.getType()) && false) {
+            changed = true;
+            auto new_const = mlir::enzyme::ActivityAttr::get(
+                rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
+            newInActivityArgs.push_back(new_const);
+          }
+        } else {
+          newInActivityArgs.push_back(iattr);
+          in_args.push_back(dres);
+        }
+
+        // increment in_idx regardless of the transform
         in_idx++;
+      } else if (val == Activity::enzyme_dupnoneed) {
+        // also push derivative into input arguments
+        mlir::Value dres = uop.getInputs()[in_idx];
+        newInActivityArgs.push_back(iattr);
+        in_args.push_back(dres);
+        in_idx++;
+      } else {
+        newInActivityArgs.push_back(iattr);
       }
     }
 
@@ -875,14 +897,17 @@ public:
     if (!changed)
       return failure();
 
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
     ArrayAttr newRetActivity =
         ArrayAttr::get(rewriter.getContext(),
                        llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
                                                  newRetActivityArgs.end()));
     rewriter.replaceOpWithNewOp<AutoDiffOp>(
-        uop, uop->getResultTypes(), uop.getFnAttr(), in_args,
-        uop.getActivityAttr(), newRetActivity, uop.getWidthAttr(),
-        uop.getStrongZeroAttr());
+        uop, uop->getResultTypes(), uop.getFnAttr(), in_args, newInActivity,
+        newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
 
     return success();
   }
