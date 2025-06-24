@@ -476,9 +476,8 @@ void PostOrderWalkDriver::notifyMatchFailure(
 }
 
 void PostOrderWalkDriver::initializeWorklist() {
-  root->walk(
+  root->walk<WalkOrder::PreOrder>(
       [this](EnzymeOpsRemoverOpInterface iface) { addToWorklist(iface); });
-  worklist.reverse();
 }
 
 LogicalResult PostOrderWalkDriver::processWorklist() {
