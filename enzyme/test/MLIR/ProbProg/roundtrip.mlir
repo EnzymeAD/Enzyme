@@ -31,14 +31,12 @@ module {
   }
 
   // CHECK:   func.func @generate(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {constraints = #enzyme.constraints<[#enzyme.constraint<symbol = 1, values = [dense<0.000000e+00> : tensor<f64>]>]>, name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
+  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {constraints = [#enzyme.constraint<symbol = 1, values = [dense<0.000000e+00> : tensor<f64>]>], name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
   // CHECK-NEXT:    return %[[res0]] : f64
   // CHECK-NEXT:   }
   func.func @generate(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
     %res = enzyme.generate @sample(%seed, %mean, %stddev) {
-      constraints = #enzyme.constraints<[
-      #enzyme.constraint<symbol = 1, values = [ dense<0.0> : tensor<f64> ]>
-    ]>, name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
+      constraints = [ #enzyme.constraint<symbol = 1, values = [ dense<0.0> : tensor<f64> ]> ], name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
     return %res : f64
   }
 

@@ -82,20 +82,19 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         SmallVector<Attribute> opConstraintValues;
 
         if (constraintsAttr && symbolAttr && tracedOutputIndices &&
-            !tracedOutputIndices.empty()) {
+            !constraintsAttr.empty() && !tracedOutputIndices.empty()) {
           uint64_t symPtr = symbolAttr.getValue().getZExtValue();
 
-          for (auto entry : constraintsAttr.getEntries()) {
-            auto centry = cast<ConstraintEntryAttr>(entry);
-            if (centry.getSymbol() != symPtr)
+          for (auto constraint : constraintsAttr) {
+            auto c = cast<ConstraintAttr>(constraint);
+            if (c.getSymbol() != symPtr)
               continue;
 
-            assert(centry.getValues().size() == tracedOutputIndices.size() &&
+            assert(c.getValues().size() == tracedOutputIndices.size() &&
                    "Constraint entry value count must match number of traced "
                    "output indices");
-
-            for (auto a : centry.getValues())
-              opConstraintValues.push_back(a);
+            for (auto v : c.getValues())
+              opConstraintValues.push_back(v);
 
             hasConstraint = true;
             break;

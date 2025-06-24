@@ -28,9 +28,7 @@ module {
   func.func @foo(%rng : tensor<2xui64>, %x : tensor<f64>, %y : tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:3 = enzyme.generate @test(%rng, %x, %y) {
       trace = 42 : ui64,
-      constraints = #enzyme.constraints<[
-        #enzyme.constraint<symbol = 2, values = [ dense<9.9> : tensor<f64> ]>
-      ]>,
+      constraints = [ #enzyme.constraint<symbol = 2, values = [ dense<9.9> : tensor<f64> ]> ],
       name = "res"
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2 : tensor<f64>, tensor<2xui64>, tensor<f64>

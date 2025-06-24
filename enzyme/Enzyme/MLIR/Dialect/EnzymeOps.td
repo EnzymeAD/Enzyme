@@ -275,31 +275,18 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 }
 
-def ConstraintEntryAttr : Enzyme_Attr<"ConstraintEntry", "constraint"> {
-  let summary = "Entry mapping a probabilistic symbol id to a tensor value used as a constraint.";
+def ConstraintAttr : Enzyme_Attr<"Constraint", "constraint"> {
+  let summary = "In probabilistic programming, mapping a symbol to a constraint value.";
   let description = [{
-    This attribute represents a single key/value pair inside the constraints dictionary
-    attached to `enzyme.generate`.  The `symbol` field is the probabilistic symbol id
-    (64-bit unsigned integer).  The `value` field is an arbitrary attribute but is
-    expected to be a ranked tensor constant (e.g. `DenseElementsAttr`).
+    This attribute represents a symbol/value pair inside the constraints dict
+    optionally attached to `enzyme.generate` op.  The `symbol` field should be
+    an ui64.  The `values` field is an array attribute containing constraint values
+    in the same order as the SampleOp's traced output indices.
   }];
 
   let parameters = (ins "uint64_t":$symbol, "ArrayAttr":$values);
 
   let assemblyFormat = "`<` `symbol` `=` $symbol `,` `values` `=` $values `>`";
-}
-
-def ConstraintsDictAttr : Enzyme_Attr<"ConstraintsDict", "constraints"> {
-  let summary = "Dictionary mapping symbol ids to constrained tensor values.";
-  let parameters = (ins "ArrayAttr":$entries);
-
-  let builders = [
-    AttrBuilderWithInferredContext<(ins "ArrayAttr":$entries), [{
-      return $_get(entries.getContext(), entries);
-    }]>
-  ];
-
-  let assemblyFormat = "`<` $entries `>`";
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
@@ -313,7 +300,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     UI64Attr:$trace,
-    OptionalAttr<ConstraintsDictAttr>:$constraints,
+    OptionalAttr<ArrayAttr>:$constraints,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
