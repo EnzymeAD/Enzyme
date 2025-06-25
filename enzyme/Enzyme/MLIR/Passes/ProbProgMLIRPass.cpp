@@ -311,6 +311,23 @@ std::unique_ptr<Pass> createProbProgPass() {
 void ProbProgPass::runOnOperation() {
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
+
   getOperation()->walk(
       [&](FunctionOpInterface op) { lowerEnzymeCalls(symbolTable, op); });
+
+  if (!postpasses.empty()) {
+    mlir::PassManager pm(getOperation()->getContext());
+
+    if (mlir::failed(mlir::parsePassPipeline(postpasses, pm))) {
+      getOperation()->emitError()
+          << "Failed to parse probprog post-passes pipeline: " << postpasses;
+      signalPassFailure();
+      return;
+    }
+
+    if (mlir::failed(pm.run(getOperation()))) {
+      signalPassFailure();
+      return;
+    }
+  }
 }
