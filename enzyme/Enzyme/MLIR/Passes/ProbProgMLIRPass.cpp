@@ -158,9 +158,14 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             logpdfOperands.push_back(finalValues[idx]);
           }
           auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr();
-          for (auto idx : tracedInputIndices.asArrayRef()) {
-            logpdfOperands.push_back(sampleOp.getOperand(idx));
+          if (tracedInputIndices) {
+            for (auto idx : tracedInputIndices.asArrayRef()) {
+              logpdfOperands.push_back(sampleOp.getOperand(idx));
+            }
           }
+          assert(logpdfOperands.size() == logpdfFn.getNumArguments() &&
+                 "Logpdf call arguments must match number of logpdf function "
+                 "arguments; double check traced input indices attribute");
           auto logpdfCall =
               b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
                                      logpdfFn.getResultTypes(), logpdfOperands);
