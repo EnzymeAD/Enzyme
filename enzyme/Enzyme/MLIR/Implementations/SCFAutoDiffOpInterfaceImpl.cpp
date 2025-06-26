@@ -97,15 +97,19 @@ struct ForOpEnzymeOpsRemover
       }
     }
 
-    SmallVector<CacheInfo> caches;
-    caches.reserve(cachesMap.size());
-    for (auto &&[_, info] : cachesMap) {
-      caches.push_back(info);
-    }
+    SmallVector<CacheInfo> caches =
+        llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
 
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
       return success();
+
+    if (forOp->hasAttr("enzyme.enable_mincut")) {
+      mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
+                                rewriter);
+      if (caches.empty())
+        return success();
+    }
 
     for (auto &it : *body) {
       Operation *op = &it;
