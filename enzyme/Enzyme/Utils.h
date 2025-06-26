@@ -383,9 +383,9 @@ enum class ProbProgMode {
 };
 
 enum class MProbProgMode {
-  Generate = 0,
+  Call = 0,
   Simulate = 1,
-  Trace = 2, // TODO: handle variants
+  Generate = 2,
 };
 
 /// Classification of value as an original program

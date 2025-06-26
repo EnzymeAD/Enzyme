@@ -35,6 +35,9 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   std::string suffix;
 
   switch (mode) {
+  case MProbProgMode::Call:
+    suffix = "call";
+    break;
   case MProbProgMode::Generate:
     suffix = "generate";
     break;

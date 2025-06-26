@@ -44,6 +44,44 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                     mlir::enzyme::EnzymeDialect>();
   }
 
+  LogicalResult HandleUntracedCall(SymbolTableCollection &symbolTable,
+                                   enzyme::UntracedCallOp CI) {
+    auto fn = cast<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+
+    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Call);
+    FunctionOpInterface NewF = putils->newFunc;
+
+    {
+      SmallVector<Operation *, 4> toErase;
+      NewF.walk([&](enzyme::SampleOp sampleOp) {
+        OpBuilder b(sampleOp);
+        auto distFn =
+            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                sampleOp, sampleOp.getFnAttr()));
+        auto distCall = b.create<func::CallOp>(
+            sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+            sampleOp.getInputs());
+        sampleOp.replaceAllUsesWith(distCall);
+
+        toErase.push_back(sampleOp);
+      });
+
+      for (Operation *op : toErase) {
+        op->erase();
+      }
+    }
+
+    OpBuilder b(CI);
+    auto newCI = b.create<func::CallOp>(
+        CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
+
+    CI->replaceAllUsesWith(newCI);
+    CI->erase();
+
+    return success();
+  }
+
   LogicalResult HandleGenerate(SymbolTableCollection &symbolTable,
                                enzyme::GenerateOp CI) {
     auto fn = cast<FunctionOpInterface>(
@@ -283,6 +321,13 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
+    op->walk([&](enzyme::UntracedCallOp ucop) {
+      auto res = HandleUntracedCall(symbolTable, ucop);
+      if (!res.succeeded()) {
+        signalPassFailure();
+        return;
+      }
+    });
     op->walk([&](enzyme::GenerateOp cop) {
       auto res = HandleGenerate(symbolTable, cop);
       if (!res.succeeded()) {

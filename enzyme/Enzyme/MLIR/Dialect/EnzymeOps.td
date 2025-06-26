@@ -290,6 +290,25 @@ def ConstraintAttr : Enzyme_Attr<"Constraint", "constraint"> {
   let assemblyFormat = "`<` `symbol` `=` $symbol `,` `values` `=` $values `>`";
 }
 
+def UntracedCallOp : Enzyme_Op<"untracedCall"> {
+  let summary = "Call a probabilistic function without tracing";
+  let description = [{
+  Call a probabilistic function without tracing.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+  
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Generate an execution trace and weight from a probabilistic function";
   let description = [{
