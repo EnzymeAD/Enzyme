@@ -224,6 +224,7 @@ def SampleOp : Enzyme_Op<"sample",
     OptionalAttr<UI64Attr>:$symbol,
     OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
     OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
+    OptionalAttr<DenseI64ArrayAttr>:$alias_map,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
   let results = (outs Variadic<AnyType>:$outputs);

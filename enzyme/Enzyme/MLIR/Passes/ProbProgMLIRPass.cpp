@@ -127,19 +127,16 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             }
           }
 
-          // Try forwarding an operand with identical type (e.g., RNG state).
-          for (unsigned i = 0; i < numResults; ++i) {
-            if (finalValues[i])
-              continue;
-
-            for (Value inVal : sampleOp.getInputs()) {
-              if (inVal.getType() == sampleOp.getResult(i).getType()) {
-                finalValues[i] = inVal;
-                break;
+          if (auto aliasAttr = sampleOp.getAliasMapAttr()) {
+            auto arr = aliasAttr.asArrayRef();
+            assert(arr.size() % 2 == 0);
+            for (size_t k = 0; k < arr.size(); k += 2) {
+              unsigned resIdx = arr[k];
+              unsigned inIdx = arr[k + 1];
+              if (!finalValues[resIdx]) {
+                finalValues[resIdx] = sampleOp.getOperand(inIdx);
               }
             }
-
-            assert(finalValues[i] && "Cannot retrieve or forward result");
           }
         }
 
