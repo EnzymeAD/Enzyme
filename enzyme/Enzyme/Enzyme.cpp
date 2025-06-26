@@ -118,12 +118,6 @@ SmallVector<CallBase *> gatherCallers(Function *F) {
   return ToHandle;
 }
 
-#undef LLVM_DEBUG
-#define LLVM_DEBUG(X)                                                          \
-  do {                                                                         \
-    X;                                                                         \
-  } while (0)
-
 void fixup(Module &M) {
 
   if (getenv("ENZYME_CLANG_DUMP_BEFORE_FIXUP"))
@@ -133,7 +127,6 @@ void fixup(Module &M) {
   if (!LaunchKernelFunc)
     return;
 
-  auto &DL = M.getDataLayout();
   SmallPtrSet<CallBase *, 8> CoercedKernels;
   for (CallBase *CI : gatherCallers(LaunchKernelFunc)) {
     IRBuilder<> Builder(CI);
@@ -153,17 +146,10 @@ void fixup(Module &M) {
     LLVM_DEBUG(dbgs() << "StubFunc " << *StubFunc << "\n");
 
     AllocaInst *ArgPtrAlloca = cast<AllocaInst>(ArgPtr);
-    assert(cast<ConstantInt>(ArgPtrAlloca->getArraySize())->getZExtValue() == 1);
+    assert(ArgPtrAlloca->getAllocatedType()->isPointerTy());
     LLVM_DEBUG(dbgs() << "ALLOCA " << *ArgPtrAlloca << "\n");
-    unsigned NumArgs;
-    if (ArrayType *ArgPtrTy =
-            dyn_cast<ArrayType>(ArgPtrAlloca->getAllocatedType())) {
-      assert(ArgPtrTy->getElementType()->isPointerTy());
-      NumArgs = ArgPtrTy->getNumElements();
-    } else {
-      assert(ArgPtrAlloca->getAllocatedType()->isPointerTy());
-      NumArgs = 1;
-    }
+    unsigned NumArgs =
+        cast<ConstantInt>(ArgPtrAlloca->getArraySize())->getZExtValue();
     unsigned ArgsOffset = Args.size();
     for (unsigned I = 0; I < NumArgs; I++)
       Args.push_back(nullptr);
@@ -180,11 +166,12 @@ void fixup(Module &M) {
         assert(Gep->getPointerOperand() == ArgPtr);
         assert(Gep->getNumIndices() == 1);
         Value *GepIdx = Gep->idx_begin()->get();
-        ArgIdx = cast<ConstantInt>(GepIdx)->getSExtValue() / DL.getPointerSize();
-        assert(ArgIdx > 0);
-        assert(Gep->getSourceElementType()->isIntegerTy(8));
+        ArgIdx = cast<ConstantInt>(GepIdx)->getSExtValue();
+        assert(ArgIdx >= 0);
+        assert(Gep->getSourceElementType()->isPointerTy());
         ThisArgPtr = Gep;
       } else if (SI && SI->getPointerOperand() == ArgPtr) {
+        assert(false && "Should never happen if we properly run in StartEP");
         ArgIdx = 0;
         ThisArgPtr = ArgPtr;
       } else {
@@ -215,12 +202,13 @@ void fixup(Module &M) {
             if (Args[ArgsOffset + ArgIdx] == nullptr) {
               errs() << "WARNING: Could not find corresponding store to `"
                      << *ThisArgAlloca << "'.\n";
-              assert(cast<ConstantInt>(ArgPtrAlloca->getArraySize())
+              assert(cast<ConstantInt>(ThisArgAlloca->getArraySize())
                          ->getZExtValue() == 1);
               Args[ArgsOffset + ArgIdx] =
                   UndefValue::get(ThisArgAlloca->getAllocatedType());
             }
           } else {
+            // TODO this needs to be fixed
             assert(isa<Argument>(SI->getValueOperand()));
             errs()
                 << "WARNING: Found argument that we cannot see the stores to `"
