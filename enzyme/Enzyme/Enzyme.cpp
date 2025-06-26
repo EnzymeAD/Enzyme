@@ -23,6 +23,7 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include <llvm/IR/IntrinsicInst.h>
 #define private public
 #include "llvm/IR/Module.h"
 #undef private
@@ -121,6 +122,7 @@ void fixup(Module &M) {
   if (!LaunchKernelFunc)
     return;
 
+  auto &DL = M.getDataLayout();
   SmallPtrSet<CallBase *, 8> CoercedKernels;
   for (CallBase *CI : gatherCallers(LaunchKernelFunc)) {
     IRBuilder<> Builder(CI);
@@ -137,19 +139,82 @@ void fixup(Module &M) {
         BlockDim2, SharedMemSize, StreamPtr,
     };
     auto StubFunc = cast<Function>(CI->getArgOperand(0));
-    
-    size_t idx = 0;
-    for (auto &Arg : StubFunc->args()) {
-      auto gep = Builder.CreateConstInBoundsGEP1_64(llvm::PointerType::getUnqual(CI->getContext()), ArgPtr, idx); 
-      auto ld = Builder.CreateLoad(llvm::PointerType::getUnqual(CI->getContext()), gep);
-      ld = Builder.CreateLoad(Arg.getType(), ld);
-      Args.push_back(ld);
-      idx++;
+
+    AllocaInst *ArgPtrAlloca = cast<AllocaInst>(ArgPtr);
+    assert(cast<ConstantInt>(ArgPtrAlloca->getArraySize())->getZExtValue() == 1);
+    LLVM_DEBUG(dbgs() << "ALLOCA " << *ArgPtrAlloca << "\n");
+    unsigned NumArgs;
+    if (ArrayType *ArgPtrTy =
+            dyn_cast<ArrayType>(ArgPtrAlloca->getAllocatedType())) {
+      assert(ArgPtrTy->getElementType()->isPointerTy());
+      NumArgs = ArgPtrTy->getNumElements();
+    } else {
+      assert(ArgPtrAlloca->getAllocatedType()->isPointerTy());
+      NumArgs = 1;
     }
+    unsigned ArgsOffset = Args.size();
+    for (unsigned I = 0; I < NumArgs; I++)
+      Args.push_back(nullptr);
+
+    LLVM_DEBUG(dbgs() << "ARG PTR " << *ArgPtr << "\n");
+    for (Use &ArgPtrUse : ArgPtr->uses()) {
+      LLVM_DEBUG(dbgs() << "USE " << *ArgPtrUse.getUser() << "\n");
+
+      Value *ThisArgPtr;
+      int ArgIdx;
+      auto Gep = dyn_cast<GetElementPtrInst>(ArgPtrUse.getUser());
+      auto SI = dyn_cast<StoreInst>(ArgPtrUse.getUser());
+      if (Gep && Gep->getPointerOperand() == ArgPtr) {
+        assert(Gep->getPointerOperand() == ArgPtr);
+        assert(Gep->getNumIndices() == 1);
+        Value *GepIdx = Gep->idx_begin()->get();
+        ArgIdx = cast<ConstantInt>(GepIdx)->getSExtValue() / DL.getPointerSize();
+        assert(ArgIdx > 0);
+        assert(Gep->getSourceElementType()->isIntegerTy(8));
+        ThisArgPtr = Gep;
+      } else if (SI && SI->getPointerOperand() == ArgPtr) {
+        ArgIdx = 0;
+        ThisArgPtr = ArgPtr;
+      } else {
+        continue;
+      }
+      LLVM_DEBUG(dbgs() << *ThisArgPtr << "\n");
+
+      for (Use &ThisArgPtrUse : ThisArgPtr->uses()) {
+        if (StoreInst* SI = dyn_cast<StoreInst>(ThisArgPtrUse.getUser())) {
+          LLVM_DEBUG(dbgs() << ArgsOffset << " " << ArgIdx << " " << *SI << "\n");
+          assert(SI->getPointerOperand() == ThisArgPtr);
+          assert(Args[ArgsOffset + ArgIdx] == nullptr);
+          Args[ArgsOffset + ArgIdx] = SI->getValueOperand();
+        }
+      }
+    }
+
+    if (NumArgs == 1) {
+      // There is one case where having a null ptr is allowed and it is because
+      // even if the kernel has 0 arguments, the codegen will still allocate a ptr
+      //
+      // i.e. in the case of
+      //   0 args:
+      //     %kernel_args = alloca ptr
+      //   1 arg:
+      //     %kernel_args = alloca ptr
+      //   2 (or more) args:
+      //     %kernel_args = alloca [ 2 x ptr ]
+      //
+      if (Args[Args.size() - 1] == nullptr) {
+        Args.pop_back();
+        NumArgs = 0;
+      }
+    } else {
+      assert(all_of(Args, [](Value *V) {return V != nullptr;}));
+    }
+
+
     SmallVector<Type *> ArgTypes;
     for (Value *V : Args)
       ArgTypes.push_back(V->getType());
-    auto MlirLaunchFunc = Function::Create(
+    Function *MlirLaunchFunc = Function::Create(
         FunctionType::get(Type::getVoidTy(M.getContext()), ArgTypes,
                           /*isVarAtg=*/false),
         llvm::GlobalValue::ExternalLinkage,
@@ -252,7 +317,8 @@ void fixup(Module &M) {
 
   for (CallBase *PushCall : gatherCallers(PushConfigFunc)) {
     // Replace with success
-    PushCall->replaceAllUsesWith(ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
+    PushCall->replaceAllUsesWith(
+        ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
     PushCall->eraseFromParent();
   }
   for (CallBase *CI : CoercedKernels) {
