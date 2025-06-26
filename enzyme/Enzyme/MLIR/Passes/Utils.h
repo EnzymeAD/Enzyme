@@ -19,5 +19,14 @@ public:
                                                   Location loc);
 };
 
+bool blockCmp(mlir::Block *a, mlir::Block *b);
+
+bool opCmp(mlir::Operation *a, mlir::Operation *b);
+
+bool regionCmp(mlir::Region *a, mlir::Region *b)
+
+// This function returns whether a < b
+bool valueCmp(mlir::Value a, mlir::Value b)
+
 } // namespace enzyme
 } // namespace mlir
