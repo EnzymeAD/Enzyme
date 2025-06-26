@@ -105,12 +105,12 @@ constexpr char kernelCoercedPrefix[] = "__mlir_launch_coerced_kernel_";
 constexpr char cudaPushConfigName[] = "__cudaPushCallConfiguration";
 constexpr char cudaPopConfigName[] = "__cudaPopCallConfiguration";
 
-SmallVector<CallInst *> gatherCallers(Function *F) {
+SmallVector<CallBase *> gatherCallers(Function *F) {
   if (!F)
     return {};
-  SmallVector<CallInst *> ToHandle;
+  SmallVector<CallBase *> ToHandle;
   for (auto User : F->users())
-    if (auto CI = dyn_cast<CallInst>(User))
+    if (auto CI = dyn_cast<CallBase>(User))
       if (CI->getCalledFunction() == F)
         ToHandle.push_back(CI);
   return ToHandle;
@@ -121,8 +121,8 @@ void fixup(Module &M) {
   if (!LaunchKernelFunc)
     return;
 
-  SmallPtrSet<CallInst *, 8> CoercedKernels;
-  for (CallInst *CI : gatherCallers(LaunchKernelFunc)) {
+  SmallPtrSet<CallBase *, 8> CoercedKernels;
+  for (CallBase *CI : gatherCallers(LaunchKernelFunc)) {
     IRBuilder<> Builder(CI);
     auto FuncPtr = CI->getArgOperand(0);
     auto GridDim1 = CI->getArgOperand(1);
@@ -156,14 +156,18 @@ void fixup(Module &M) {
         kernelCoercedPrefix + StubFunc->getName(), M);
 
     CoercedKernels.insert(Builder.CreateCall(MlirLaunchFunc, Args));
+    if (auto II = dyn_cast<InvokeInst>(CI)) {
+      Builder.CreateBr(II->getNormalDest());
+      II->getUnwindDest()->removePredecessor(II->getParent());
+    }
     CI->eraseFromParent();
   }
 
   SmallVector<Function *> InlinedStubs;
-  for (CallInst *CI : CoercedKernels) {
+  for (CallBase *CI : CoercedKernels) {
     Function *StubFunc = cast<Function>(CI->getArgOperand(0));
     for (User *callee : StubFunc->users()) {
-      if (auto *CI = dyn_cast<CallInst>(callee)) {
+      if (auto *CI = dyn_cast<CallBase>(callee)) {
         if (CI->getCalledFunction() == StubFunc) {
           InlineFunctionInfo IFI;
           InlineResult Res =
@@ -184,7 +188,7 @@ void fixup(Module &M) {
   CoercedKernels.clear();
   DenseMap<Function *, SmallVector<AllocaInst *, 6>> FuncAllocas;
   auto PushConfigFunc = M.getFunction(cudaPushConfigName);
-  for (CallInst *CI : gatherCallers(PushConfigFunc)) {
+  for (CallBase *CI : gatherCallers(PushConfigFunc)) {
     Function *TheFunc = CI->getFunction();
     IRBuilder<> IRB(&TheFunc->getEntryBlock(),
                     TheFunc->getEntryBlock().getFirstNonPHIOrDbgOrAlloca());
@@ -202,21 +206,25 @@ void fixup(Module &M) {
           IRB.CreateAlloca(IRB.getInt64Ty(), nullptr, "shmem_size"));
       Allocas.push_back(IRB.CreateAlloca(IRB.getPtrTy(), nullptr, "stream"));
       FuncAllocas.insert_or_assign(TheFunc, Allocas);
+      llvm::errs() <<" CI: making allocas for  " << *CI << "\n"; 
     }
     IRB.SetInsertPoint(CI);
+    if (CI->arg_size() != Allocas.size()) {
+      llvm::errs() << " size mismatch on: " << *CI << "\n";
+    }
     for (auto [Arg, Alloca] :
-         llvm::zip_equal(llvm::drop_end(CI->operand_values()), Allocas))
+         llvm::zip_equal(CI->args(), Allocas))
       IRB.CreateStore(Arg, Alloca);
   }
   auto PopConfigFunc = M.getFunction(cudaPopConfigName);
-  for (CallInst *PopCall : gatherCallers(PopConfigFunc)) {
+  for (CallBase *PopCall : gatherCallers(PopConfigFunc)) {
     Function *TheFunc = PopCall->getFunction();
     auto Allocas = FuncAllocas.lookup(TheFunc);
     if (Allocas.empty()) {
       continue;
     }
 
-    CallInst *KernelLaunch = PopCall;
+    CallBase *KernelLaunch = PopCall;
     Instruction *It = PopCall;
     do {
       It = It->getNextNonDebugInstruction();
@@ -242,12 +250,12 @@ void fixup(Module &M) {
     PopCall->eraseFromParent();
   }
 
-  for (CallInst *PushCall : gatherCallers(PushConfigFunc)) {
+  for (CallBase *PushCall : gatherCallers(PushConfigFunc)) {
     // Replace with success
     PushCall->replaceAllUsesWith(ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
     PushCall->eraseFromParent();
   }
-  for (CallInst *CI : CoercedKernels) {
+  for (CallBase *CI : CoercedKernels) {
     IRBuilder<> Builder(CI);
     auto FuncPtr = CI->getArgOperand(0);
     auto GridDim1 = CI->getArgOperand(1);
@@ -296,7 +304,13 @@ public:
   bool run(Module &M) {
     bool changed = true;
 
+    if (getenv("DEBUG_REACTANT"))
+    llvm::errs() <<" pre fix: " << M << "\n";
     fixup(M);
+    auto discard = M.getContext().shouldDiscardValueNames();
+    M.getContext().setDiscardValueNames(false);
+    if (getenv("DEBUG_REACTANT"))
+    llvm::errs() <<" post fix: " << M << "\n";
     
     for (auto bin : gpubins) {
       SMDiagnostic Err;
@@ -356,6 +370,7 @@ public:
 	  if (!F.empty())
 		      F.setLinkage(Function::LinkageTypes::InternalLinkage);
       }
+      llvm::errs() << " mod2: " << *mod2 << "\n";
       SmallVector<std::string> toInternalize;
       if (auto RF = M.getFunction("__cudaRegisterFunction")) {
         for (auto U : make_early_inc_range(RF->users())) {
@@ -403,6 +418,8 @@ public:
 	    F->setLinkage(Function::LinkageTypes::InternalLinkage);
 	 }
     }
+
+    llvm::errs() << "post link: " << M << "\n";
 
     for (Function &F : make_early_inc_range(M)) {
       if (!F.empty()) continue;
@@ -514,6 +531,7 @@ public:
       L.linkInModule(std::move(llvmModule));
       M.getContext().setDiagnosticHandler(std::move(handler));
     }
+    M.getContext().setDiscardValueNames(discard);
 
     return changed;
   }
