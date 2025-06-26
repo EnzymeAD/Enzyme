@@ -9,6 +9,7 @@
 #include "RemovalUtils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Utils.h"
 #include "mlir/IR/PatternMatch.h"
 #include <cassert>
 #include <deque>
@@ -343,38 +344,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // Refine cached values based on some heuristics
   auto newCacheVec = newCaches.takeVector();
 
-  {
-    // sort caches to provide determinism.
-    auto sorter = [](const Value &a, const Value &b) -> bool {
-      if (a == b)
-        return true;
-
-      auto ba = dyn_cast<BlockArgument>(a);
-      auto bb = dyn_cast<BlockArgument>(b);
-      if (ba && bb) {
-        if (ba.getOwner() == bb.getOwner())
-          return ba.getArgNumber() < bb.getArgNumber();
-
-        return ba.getOwner()->getParent()->isProperAncestor(
-            bb.getOwner()->getParent());
-      }
-
-      if (ba)
-        return true;
-
-      if (bb)
-        return false;
-
-      OpResult ra = cast<OpResult>(a);
-      OpResult rb = cast<OpResult>(b);
-
-      if (ra.getParentBlock() == rb.getParentBlock())
-        return ra.getDefiningOp()->isBeforeInBlock(rb.getDefiningOp());
-
-      return ra.getParentRegion()->isProperAncestor(rb.getParentRegion());
-    };
-    std::sort(newCacheVec.begin(), newCacheVec.end(), sorter);
-  };
+  llvm::sort(newCacheVec.begin(), newCacheVec.end(), mlir::enzyme::valueCmp);
 
   for (Value newCache : newCacheVec) {
     worklist.clear();
