@@ -138,6 +138,11 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               }
             }
           }
+
+          // Check that all final values are set.
+          for (unsigned i = 0; i < numResults; ++i) {
+            assert(finalValues[i]);
+          }
         }
 
         // For traced outputs: weight using logpdf and accumulate and add to

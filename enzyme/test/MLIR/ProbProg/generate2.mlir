@@ -10,7 +10,8 @@ module {
       name = "s",
       logpdf = @joint_logpdf,
       traced_input_indices = array<i64: 1, 2>,
-      traced_output_indices = array<i64: 1, 2>
+      traced_output_indices = array<i64: 1, 2>,
+      alias_map = array<i64: 0, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<2xf64>)
     return %s#0, %s#1, %s#2 : tensor<2xui64>, tensor<f64>, tensor<2xf64>
   }

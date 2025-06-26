@@ -11,7 +11,8 @@ module {
       name="s",
       logpdf = @normal_logpdf,
       traced_input_indices = array<i64: 1, 2>,
-      traced_output_indices = array<i64: 1>
+      traced_output_indices = array<i64: 1>,
+      alias_map = array<i64: 0, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     
     %t:2 = enzyme.sample @normal(%s#0, %s#1, %stddev) { 
@@ -19,7 +20,8 @@ module {
       name="t",
       logpdf = @normal_logpdf,
       traced_input_indices = array<i64: 1, 2>,
-      traced_output_indices = array<i64: 1>
+      traced_output_indices = array<i64: 1>,
+      alias_map = array<i64: 0, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
