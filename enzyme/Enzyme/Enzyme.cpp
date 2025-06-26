@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include <llvm/IR/IntrinsicInst.h>
+#include <llvm/Support/PointerLikeTypeTraits.h>
 #define private public
 #include "llvm/IR/Module.h"
 #undef private
@@ -117,7 +118,17 @@ SmallVector<CallBase *> gatherCallers(Function *F) {
   return ToHandle;
 }
 
+#undef LLVM_DEBUG
+#define LLVM_DEBUG(X)                                                          \
+  do {                                                                         \
+    X;                                                                         \
+  } while (0)
+
 void fixup(Module &M) {
+
+  if (getenv("ENZYME_CLANG_DUMP_BEFORE_FIXUP"))
+    llvm::errs() << "BEFORE FIXUP:\n" << M << "\n";
+
   auto LaunchKernelFunc = M.getFunction(cudaLaunchSymbolName);
   if (!LaunchKernelFunc)
     return;
@@ -139,6 +150,7 @@ void fixup(Module &M) {
         BlockDim2, SharedMemSize, StreamPtr,
     };
     auto StubFunc = cast<Function>(CI->getArgOperand(0));
+    LLVM_DEBUG(dbgs() << "StubFunc " << *StubFunc << "\n");
 
     AllocaInst *ArgPtrAlloca = cast<AllocaInst>(ArgPtr);
     assert(cast<ConstantInt>(ArgPtrAlloca->getArraySize())->getZExtValue() == 1);
@@ -181,11 +193,42 @@ void fixup(Module &M) {
       LLVM_DEBUG(dbgs() << *ThisArgPtr << "\n");
 
       for (Use &ThisArgPtrUse : ThisArgPtr->uses()) {
-        if (StoreInst* SI = dyn_cast<StoreInst>(ThisArgPtrUse.getUser())) {
-          LLVM_DEBUG(dbgs() << ArgsOffset << " " << ArgIdx << " " << *SI << "\n");
+        if (StoreInst *SI = dyn_cast<StoreInst>(ThisArgPtrUse.getUser())) {
           assert(SI->getPointerOperand() == ThisArgPtr);
-          assert(Args[ArgsOffset + ArgIdx] == nullptr);
-          Args[ArgsOffset + ArgIdx] = SI->getValueOperand();
+          LLVM_DEBUG(dbgs() << ArgsOffset << " " << ArgIdx << " " << *SI << " "
+                            << "\n");
+          if (AllocaInst *ThisArgAlloca =
+                  dyn_cast<AllocaInst>(SI->getValueOperand())) {
+            LLVM_DEBUG(dbgs() << ArgsOffset << " " << ArgIdx << " " << *SI
+                              << " " << *ThisArgAlloca << "\n");
+            for (Use &ThisArgAllocaUse : ThisArgAlloca->uses()) {
+              LLVM_DEBUG(dbgs()
+                         << "RealSI " << *ThisArgAllocaUse.getUser() << "\n");
+              StoreInst *RealSI =
+                  dyn_cast<StoreInst>(ThisArgAllocaUse.getUser());
+              if (RealSI && RealSI->getPointerOperand() == ThisArgAlloca) {
+                LLVM_DEBUG(dbgs() << "YES\n");
+                assert(Args[ArgsOffset + ArgIdx] == nullptr);
+                Args[ArgsOffset + ArgIdx] = RealSI->getValueOperand();
+              }
+            }
+            if (Args[ArgsOffset + ArgIdx] == nullptr) {
+              errs() << "WARNING: Could not find corresponding store to `"
+                     << *ThisArgAlloca << "'.\n";
+              assert(cast<ConstantInt>(ArgPtrAlloca->getArraySize())
+                         ->getZExtValue() == 1);
+              Args[ArgsOffset + ArgIdx] =
+                  UndefValue::get(ThisArgAlloca->getAllocatedType());
+            }
+          } else {
+            assert(isa<Argument>(SI->getValueOperand()));
+            errs()
+                << "WARNING: Found argument that we cannot see the stores to `"
+                << *SI->getValueOperand() << "'.\n";
+
+            Args[ArgsOffset + ArgIdx] =
+                ConstantPointerNull::get(PointerType::get(M.getContext(), 0));
+          }
         }
       }
     }
@@ -697,13 +740,7 @@ extern "C" void registerReactantAndPassPipeline(llvm::PassBuilder &PB,
 extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string> gpubinaries) {
 
   llvm::errs() << " registering reactant\n";
-#if LLVM_VERSION_MAJOR >= 20
-  auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
-#else
-  auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level)
-#endif
-  {
+  auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level) {
     MPM.addPass(ReactantNewPM(gpubinaries));
   };
 
@@ -718,17 +755,7 @@ extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string>
 	});
 
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
-  PB.registerOptimizerEarlyEPCallback(loadPass);
-
-  auto loadLTO = [loadPass](ModulePassManager &MPM,
-                                        OptimizationLevel Level) {
-#if LLVM_VERSION_MAJOR >= 20
-    loadPass(MPM, Level, ThinOrFullLTOPhase::None);
-#else
-    loadPass(MPM, Level);
-#endif
-  };
-  PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
+  PB.registerPipelineStartEPCallback(loadPass);
 }
 
 extern "C" void registerReactant2(llvm::PassBuilder &PB) {
