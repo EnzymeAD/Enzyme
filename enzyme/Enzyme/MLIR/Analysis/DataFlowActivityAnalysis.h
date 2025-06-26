@@ -39,7 +39,8 @@ enum class Activity : uint32_t;
 void runDataFlowActivityAnalysis(FunctionOpInterface callee,
                                  ArrayRef<enzyme::Activity> argumentActivity,
                                  bool print = false, bool verbose = false,
-                                 bool annotate = false);
+                                 bool annotate = false,
+                                 bool intraprocedural = false);
 
 } // namespace enzyme
 } // namespace mlir

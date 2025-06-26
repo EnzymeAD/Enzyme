@@ -232,6 +232,9 @@ public:
   bool annotate = false;
   /// Infer the starting argument state from an __enzyme_autodiff call.
   bool inferFromAutodiff = false;
+  /// Force the whole-program analysis to treat every function call as external.
+  /// This is always true for the function summary analysis.
+  bool intraprocedural = false;
 };
 
 void runActivityAnnotations(

@@ -124,6 +124,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Whether to use the new Dataflow activity analysis"
     >,
     Option<
+      /*C++ variable name=*/"intraprocedural",
+      /*CLI argument=*/"intraproc",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Force the whole-program activity to operate intraprocedurally"
+    >,
+    Option<
       /*C++ variable name=*/"relative",
       /*CLI argument=*/"relative",
       /*type=*/"bool",

@@ -1111,9 +1111,10 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
 
 void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
-    bool print, bool verbose, bool annotate) {
+    bool print, bool verbose, bool annotate, bool intraprocedural) {
   SymbolTableCollection symbolTable;
   DataFlowConfig config;
+  config.setInterprocedural(!intraprocedural);
   DataFlowSolver solver(config);
 
   solver.load<enzyme::PointsToPointerAnalysis>();

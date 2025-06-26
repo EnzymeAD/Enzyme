@@ -145,7 +145,8 @@ struct PrintActivityAnalysisPass
       enzyme::runActivityAnnotations(callee, argActivities, config);
     } else if (config.dataflow) {
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
-                                          /*print=*/true, verbose, annotate);
+                                          /*print=*/true, verbose, annotate,
+                                          config.intraprocedural);
     } else {
 
       SmallPtrSet<Block *, 4> blocksNotForAnalysis;
@@ -247,6 +248,7 @@ struct PrintActivityAnalysisPass
     config.annotate = annotate;
     config.inferFromAutodiff = inferFromAutodiff;
     config.verbose = verbose;
+    config.intraprocedural = intraprocedural;
 
     auto moduleOp = cast<ModuleOp>(getOperation());
 
