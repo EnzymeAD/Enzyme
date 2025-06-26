@@ -385,9 +385,14 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       return T ? T.getApproxSize() : INT64_MAX;
     };
 
+    auto computeRankOfType = [](Value val) -> int64_t {
+      auto TT = dyn_cast<RankedTensorType>(val.getType());
+      return TT ? TT.getRank() : 0;
+    };
+
     Value picked = newCache;
     int64_t curSize = computeSizeOfType(picked),
-            curRank = cast<RankedTensorType>(picked.getType()).getRank();
+            curRank = computeRankOfType(picked);
 
     while (!worklist.empty()) {
       Value candidate = worklist.pop_back_val();
@@ -403,7 +408,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue; // TODO: support this
 
       int64_t newSize = computeSizeOfType(candidate),
-              newRank = cast<RankedTensorType>(candidate.getType()).getRank();
+              newRank = computeRankOfType(candidate);
       if (newSize < curSize || (newSize == curSize && newRank < curRank) ||
           candidate.getDefiningOp<enzyme::PopOp>() != nullptr) {
         curSize = newSize;
