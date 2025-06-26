@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RemovalUtils.h"
+#include "Utils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/IR/PatternMatch.h"
