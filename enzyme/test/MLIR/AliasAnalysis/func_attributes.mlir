@@ -1,4 +1,4 @@
-// RUN: %eopt --test-print-alias-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --test-print-alias-analysis --split-input-file %s | FileCheck %s
 
 func.func private @callee(%ptr : !llvm.ptr) 
 
