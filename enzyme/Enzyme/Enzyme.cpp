@@ -30,7 +30,7 @@
 #include <memory>
 
 #include "llvm/ADT/StringRef.h"
-  #include <dlfcn.h>
+#include <dlfcn.h>
 
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
@@ -52,8 +52,8 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -80,11 +80,10 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
-
 #include "llvm/Transforms/IPO/GlobalOpt.h"
 
-#include "llvm/Linker/Linker.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Linker/Linker.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE
@@ -94,11 +93,11 @@ using namespace llvm;
 
 llvm::cl::opt<std::string>
     Passes("raising-plugin-path", cl::init(""), cl::Hidden,
-                cl::desc("Print before and after fns for autodiff"));
+           cl::desc("Print before and after fns for autodiff"));
 
 namespace {
 
-	constexpr char cudaLaunchSymbolName[] = "cudaLaunchKernel";
+constexpr char cudaLaunchSymbolName[] = "cudaLaunchKernel";
 constexpr char kernelPrefix[] = "__mlir_launch_kernel_";
 constexpr char kernelCoercedPrefix[] = "__mlir_launch_coerced_kernel_";
 
@@ -137,11 +136,13 @@ void fixup(Module &M) {
         BlockDim2, SharedMemSize, StreamPtr,
     };
     auto StubFunc = cast<Function>(CI->getArgOperand(0));
-    
+
     size_t idx = 0;
     for (auto &Arg : StubFunc->args()) {
-      auto gep = Builder.CreateConstInBoundsGEP1_64(llvm::PointerType::getUnqual(CI->getContext()), ArgPtr, idx); 
-      auto ld = Builder.CreateLoad(llvm::PointerType::getUnqual(CI->getContext()), gep);
+      auto gep = Builder.CreateConstInBoundsGEP1_64(
+          llvm::PointerType::getUnqual(CI->getContext()), ArgPtr, idx);
+      auto ld = Builder.CreateLoad(
+          llvm::PointerType::getUnqual(CI->getContext()), gep);
       ld = Builder.CreateLoad(Arg.getType(), ld);
       Args.push_back(ld);
       idx++;
@@ -206,14 +207,13 @@ void fixup(Module &M) {
           IRB.CreateAlloca(IRB.getInt64Ty(), nullptr, "shmem_size"));
       Allocas.push_back(IRB.CreateAlloca(IRB.getPtrTy(), nullptr, "stream"));
       FuncAllocas.insert_or_assign(TheFunc, Allocas);
-      llvm::errs() <<" CI: making allocas for  " << *CI << "\n"; 
+      llvm::errs() << " CI: making allocas for  " << *CI << "\n";
     }
     IRB.SetInsertPoint(CI);
     if (CI->arg_size() != Allocas.size()) {
       llvm::errs() << " size mismatch on: " << *CI << "\n";
     }
-    for (auto [Arg, Alloca] :
-         llvm::zip_equal(CI->args(), Allocas))
+    for (auto [Arg, Alloca] : llvm::zip_equal(CI->args(), Allocas))
       IRB.CreateStore(Arg, Alloca);
   }
   auto PopConfigFunc = M.getFunction(cudaPopConfigName);
@@ -252,7 +252,8 @@ void fixup(Module &M) {
 
   for (CallBase *PushCall : gatherCallers(PushConfigFunc)) {
     // Replace with success
-    PushCall->replaceAllUsesWith(ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
+    PushCall->replaceAllUsesWith(
+        ConstantInt::get(IntegerType::get(PushCall->getContext(), 32), 0));
     PushCall->eraseFromParent();
   }
   for (CallBase *CI : CoercedKernels) {
@@ -298,187 +299,192 @@ void fixup(Module &M) {
 class ReactantBase {
 public:
   std::vector<std::string> gpubins;
-  ReactantBase(const std::vector<std::string> &gpubins) : gpubins(gpubins) {
-  }
+  ReactantBase(const std::vector<std::string> &gpubins) : gpubins(gpubins) {}
 
   bool run(Module &M) {
     bool changed = true;
 
     if (getenv("DEBUG_REACTANT"))
-    llvm::errs() <<" pre fix: " << M << "\n";
+      llvm::errs() << " pre fix: " << M << "\n";
     fixup(M);
     auto discard = M.getContext().shouldDiscardValueNames();
     M.getContext().setDiscardValueNames(false);
     if (getenv("DEBUG_REACTANT"))
-    llvm::errs() <<" post fix: " << M << "\n";
-    
+      llvm::errs() << " post fix: " << M << "\n";
+
     for (auto bin : gpubins) {
       SMDiagnostic Err;
       auto mod2 = llvm::parseIRFile(bin + ".re_export", Err, M.getContext());
       if (!mod2) {
-    	Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
-	exit(1);
+        Err.print(/*ProgName=*/"LLVMToMLIR", llvm::errs());
+        exit(1);
       }
 
       for (std::string T : {"", "f"}) {
-    for (std::string name :
-         {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
-          "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
-          "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
-          "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
-          "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
-          "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
-          "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
-          "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
-          "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
-          "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt",       "finite",  "fabs",      "fmax"}) {
-      std::string nvname = "__nv_" + name;
-      std::string llname = "llvm." + name + ".";
-      std::string mathname = name;
+        for (std::string name :
+             {"sin",       "cos",     "tan",        "log2",    "exp",
+              "exp2",      "exp10",   "cosh",       "sinh",    "tanh",
+              "atan2",     "atan",    "asin",       "acos",    "log",
+              "log10",     "log1p",   "acosh",      "asinh",   "atanh",
+              "expm1",     "hypot",   "rhypot",     "norm3d",  "rnorm3d",
+              "norm4d",    "rnorm4d", "norm",       "rnorm",   "cbrt",
+              "rcbrt",     "j0",      "j1",         "y0",      "y1",
+              "yn",        "jn",      "erf",        "erfinv",  "erfc",
+              "erfcx",     "erfcinv", "normcdfinv", "normcdf", "lgamma",
+              "ldexp",     "scalbn",  "frexp",      "modf",    "fmod",
+              "remainder", "remquo",  "powi",       "tgamma",  "round",
+              "fdim",      "ilogb",   "logb",       "isinf",   "pow",
+              "sqrt",      "finite",  "fabs",       "fmax"}) {
+          std::string nvname = "__nv_" + name;
+          std::string llname = "llvm." + name + ".";
+          std::string mathname = name;
 
-      if (T == "f") {
-        mathname += "f";
-        nvname += "f";
-        llname += "f32";
-      } else {
-        llname += "f64";
+          if (T == "f") {
+            mathname += "f";
+            nvname += "f";
+            llname += "f32";
+          } else {
+            llname += "f64";
+          }
+
+          if (auto F = mod2->getFunction(llname)) {
+            F->deleteBody();
+          }
+        }
       }
+      {
 
-      if (auto F = mod2->getFunction(llname)) {
-        F->deleteBody();
-      }
-    }
-      }
-    {
+        PassBuilder PB;
+        LoopAnalysisManager LAM;
+        FunctionAnalysisManager FAM;
+        CGSCCAnalysisManager CGAM;
+        ModuleAnalysisManager MAM;
+        PB.registerModuleAnalyses(MAM);
+        PB.registerFunctionAnalyses(FAM);
+        PB.registerLoopAnalyses(LAM);
+        PB.registerCGSCCAnalyses(CGAM);
+        PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-
-      PassBuilder PB;
-      LoopAnalysisManager LAM;
-      FunctionAnalysisManager FAM;
-      CGSCCAnalysisManager CGAM;
-      ModuleAnalysisManager MAM;
-      PB.registerModuleAnalyses(MAM);
-      PB.registerFunctionAnalyses(FAM);
-      PB.registerLoopAnalyses(LAM);
-      PB.registerCGSCCAnalyses(CGAM);
-      PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-
-      GlobalOptPass().run(*mod2, MAM);
+        GlobalOptPass().run(*mod2, MAM);
       }
       for (auto &F : *mod2) {
-	  if (!F.empty())
-		      F.setLinkage(Function::LinkageTypes::InternalLinkage);
+        if (!F.empty())
+          F.setLinkage(Function::LinkageTypes::InternalLinkage);
       }
-      llvm::errs() << " mod2: " << *mod2 << "\n";
+      if (getenv("DEBUG_REACTANT"))
+        llvm::errs() << " mod2: " << *mod2 << "\n";
+
       SmallVector<std::string> toInternalize;
       if (auto RF = M.getFunction("__cudaRegisterFunction")) {
         for (auto U : make_early_inc_range(RF->users())) {
-	  if (auto CI = dyn_cast<CallBase>(U)) {
-	    if (CI->getCalledFunction() != RF) continue;
-	    
-	    	Value *F2 = CI->getArgOperand(1);
-		Value *name = CI->getArgOperand(2);
-		while (auto CE = dyn_cast<ConstantExpr>(F2)) {
-		  F2 = CE->getOperand(0);
-		}
-		while (auto CE = dyn_cast<ConstantExpr>(name)) {
-		  name = CE->getOperand(0);
-		}
-		StringRef nameVal;
-		if (auto GV = dyn_cast<GlobalVariable>(name))
-		  if (GV->isConstant())
-		    if (auto C = GV->getInitializer())
-		      if (auto CA = dyn_cast<ConstantDataArray>(C))
-			if (CA->getType()->getElementType()->isIntegerTy(8) &&
-			    CA->isCString())
-			  nameVal = CA->getAsCString();
-		auto F22 = dyn_cast<Function>(F2);
-		if (!F22) continue;
+          if (auto CI = dyn_cast<CallBase>(U)) {
+            if (CI->getCalledFunction() != RF)
+              continue;
 
-		if (nameVal.size())
-		if (auto MF = mod2->getFunction(nameVal)) {
-		  MF->setName(F22->getName());
-		  F22->deleteBody();
-		  MF->setCallingConv(llvm::CallingConv::C);
-		  MF->setLinkage(Function::LinkageTypes::LinkOnceODRLinkage);
-		  toInternalize.push_back(MF->getName().str());
-		  CI->eraseFromParent();
-		}
-	  }
-	}
+            Value *F2 = CI->getArgOperand(1);
+            Value *name = CI->getArgOperand(2);
+            while (auto CE = dyn_cast<ConstantExpr>(F2)) {
+              F2 = CE->getOperand(0);
+            }
+            while (auto CE = dyn_cast<ConstantExpr>(name)) {
+              name = CE->getOperand(0);
+            }
+            StringRef nameVal;
+            if (auto GV = dyn_cast<GlobalVariable>(name))
+              if (GV->isConstant())
+                if (auto C = GV->getInitializer())
+                  if (auto CA = dyn_cast<ConstantDataArray>(C))
+                    if (CA->getType()->getElementType()->isIntegerTy(8) &&
+                        CA->isCString())
+                      nameVal = CA->getAsCString();
+            auto F22 = dyn_cast<Function>(F2);
+            if (!F22)
+              continue;
+
+            if (nameVal.size())
+              if (auto MF = mod2->getFunction(nameVal)) {
+                MF->setName(F22->getName());
+                F22->deleteBody();
+                MF->setCallingConv(llvm::CallingConv::C);
+                MF->setLinkage(Function::LinkageTypes::LinkOnceODRLinkage);
+                toInternalize.push_back(MF->getName().str());
+                CI->eraseFromParent();
+              }
+          }
+        }
       }
 
-      auto handler = M.getContext().getDiagnosticHandler(); 
+      auto handler = M.getContext().getDiagnosticHandler();
       Linker L(M);
       L.linkInModule(std::move(mod2));
       M.getContext().setDiagnosticHandler(std::move(handler));
       for (auto name : toInternalize)
-	 if (auto F = M.getFunction(name)) {
-	    F->setLinkage(Function::LinkageTypes::InternalLinkage);
-	 }
+        if (auto F = M.getFunction(name)) {
+          F->setLinkage(Function::LinkageTypes::InternalLinkage);
+        }
     }
 
-    llvm::errs() << "post link: " << M << "\n";
+    if (getenv("DEBUG_REACTANT"))
+      llvm::errs() << "post link: " << M << "\n";
 
     for (Function &F : make_early_inc_range(M)) {
-      if (!F.empty()) continue;
+      if (!F.empty())
+        continue;
       if (F.getName() == "cudaMalloc") {
-	      continue;
+        continue;
         auto entry = BasicBlock::Create(F.getContext(), "entry", &F);
         IRBuilder<> B(entry);
       }
     }
 
     fixup(M);
-    for (auto todel : {"__cuda_register_globals", "__cuda_module_ctor", "__cuda_module_dtor"}) {
-    if (auto F = M.getFunction(todel)) {
-      F->replaceAllUsesWith(Constant::getNullValue(F->getType()));
-      F->eraseFromParent();
+    for (auto todel : {"__cuda_register_globals", "__cuda_module_ctor",
+                       "__cuda_module_dtor"}) {
+      if (auto F = M.getFunction(todel)) {
+        F->replaceAllUsesWith(Constant::getNullValue(F->getType()));
+        F->eraseFromParent();
+      }
     }
-    }
-    
+
     if (auto GV = M.getGlobalVariable("llvm.global_ctors")) {
       ConstantArray *CA = dyn_cast<ConstantArray>(GV->getInitializer());
       if (CA) {
 
-      bool changed = false;
-      SmallVector<Constant*> newOperands;
-      for (Use &OP : CA->operands()) {
-	 if (isa<ConstantAggregateZero>(OP)) {
-	   changed = true;
-	   continue;
-	 }
-	 ConstantStruct *CS = cast<ConstantStruct>(OP);
-	 if (isa<ConstantPointerNull>(CS->getOperand(1))) {
-	   changed = true;
-	   continue;
-	 }
-	 newOperands.push_back(CS);
+        bool changed = false;
+        SmallVector<Constant *> newOperands;
+        for (Use &OP : CA->operands()) {
+          if (isa<ConstantAggregateZero>(OP)) {
+            changed = true;
+            continue;
+          }
+          ConstantStruct *CS = cast<ConstantStruct>(OP);
+          if (isa<ConstantPointerNull>(CS->getOperand(1))) {
+            changed = true;
+            continue;
+          }
+          newOperands.push_back(CS);
+        }
+        if (changed) {
+          if (newOperands.size() == 0) {
+            GV->eraseFromParent();
+          } else {
+            auto EltTy = newOperands[0]->getType();
+            ArrayType *NewType = ArrayType::get(EltTy, newOperands.size());
+            auto CT = ConstantArray::get(NewType, newOperands);
+
+            // Create the new global variable.
+            GlobalVariable *NG = new GlobalVariable(
+                M, NewType, GV->isConstant(), GV->getLinkage(),
+                /*init*/ CT, /*name*/ "", GV, GV->getThreadLocalMode(),
+                GV->getAddressSpace());
+
+            NG->copyAttributesFrom(GV);
+            NG->takeName(GV);
+            GV->replaceAllUsesWith(NG);
+            GV->eraseFromParent();
+          }
+        }
       }
-      if (changed) {
-	if (newOperands.size() == 0) {
-	  GV->eraseFromParent();
-	} else {
-		auto EltTy = newOperands[0]->getType();
-  	ArrayType *NewType = ArrayType::get(EltTy, newOperands.size());
-	auto CT = ConstantArray::get(NewType, newOperands);
-
-  // Create the new global variable.
-  GlobalVariable *NG = new GlobalVariable(
-      M, NewType, GV->isConstant(), GV->getLinkage(),
-      /*init*/ CT, /*name*/ "", GV, GV->getThreadLocalMode(),
-      GV->getAddressSpace());
-
-  NG->copyAttributesFrom(GV);
-  NG->takeName(GV);
-  GV->replaceAllUsesWith(NG);
-  GV->eraseFromParent();
-
-      }
-
-      }
-    }
     }
 
     {
@@ -494,21 +500,22 @@ public:
       PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
       GlobalOptPass().run(M, MAM);
-      }
+    }
 
     auto lib = dlopen(Passes.c_str(), RTLD_LAZY | RTLD_DEEPBIND);
     if (!lib) {
-      llvm::errs() << " could not open " << Passes.c_str() << " - " << dlerror() << "\n";
+      llvm::errs() << " could not open " << Passes.c_str() << " - " << dlerror()
+                   << "\n";
     }
     auto sym = dlsym(lib, "runLLVMToMLIRRoundTrip");
-    if (!sym) {  
+    if (!sym) {
       llvm::errs() << " could not find sym\n";
     }
-    auto runLLVMToMLIRRoundTrip = (std::string (*)(std::string))sym;
+    auto runLLVMToMLIRRoundTrip = (std::string(*)(std::string))sym;
     if (runLLVMToMLIRRoundTrip) {
       std::string MStr;
       llvm::raw_string_ostream ss(MStr);
-      ss << M; 
+      ss << M;
       auto newMod = runLLVMToMLIRRoundTrip(MStr);
       M.dropAllReferences();
 
@@ -537,7 +544,7 @@ public:
   }
 };
 
-}
+} // namespace
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
@@ -545,7 +552,7 @@ public:
 #include "llvm/Passes/PassPlugin.h"
 
 class ReactantNewPM final : public ReactantBase,
-                          public AnalysisInfoMixin<ReactantNewPM> {
+                            public AnalysisInfoMixin<ReactantNewPM> {
   friend struct llvm::AnalysisInfoMixin<ReactantNewPM>;
 
 private:
@@ -553,12 +560,12 @@ private:
 
 public:
   using Result = llvm::PreservedAnalyses;
-  ReactantNewPM(const std::vector<std::string> &gpubins) : ReactantBase(gpubins) {
-}
+  ReactantNewPM(const std::vector<std::string> &gpubins)
+      : ReactantBase(gpubins) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     return ReactantBase::run(M) ? PreservedAnalyses::none()
-                              : PreservedAnalyses::all();
+                                : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
@@ -578,15 +585,15 @@ public:
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     std::string filename = firstfile + ".re_export";
 
-  std::error_code EC;
-  llvm::raw_fd_ostream file(filename, EC);//, llvm::sys::fs::OF_Text);
+    std::error_code EC;
+    llvm::raw_fd_ostream file(filename, EC); //, llvm::sys::fs::OF_Text);
 
-  if (EC) {
-	  llvm::errs() << "Error opening file: " << EC.message() << "\n";
-    exit(1);
-  }
+    if (EC) {
+      llvm::errs() << "Error opening file: " << EC.message() << "\n";
+      exit(1);
+    }
 
-  file << M;
+    file << M;
     return PreservedAnalyses::all();
   }
 
@@ -601,20 +608,17 @@ AnalysisKey ExporterNewPM::Key;
 
 extern "C" void registerExporter(llvm::PassBuilder &PB, std::string file) {
 #if LLVM_VERSION_MAJOR >= 20
-  auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+  auto loadPass =
+      [=](ModulePassManager &MPM, OptimizationLevel Level, ThinOrFullLTOPhase)
 #else
   auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
-  {
-    MPM.addPass(ExporterNewPM(file));
-  };
+  { MPM.addPass(ExporterNewPM(file)); };
 
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
-  auto loadLTO = [loadPass](ModulePassManager &MPM,
-                                        OptimizationLevel Level) {
+  auto loadLTO = [loadPass](ModulePassManager &MPM, OptimizationLevel Level) {
 #if LLVM_VERSION_MAJOR >= 20
     loadPass(MPM, Level, ThinOrFullLTOPhase::None);
 #else
@@ -625,37 +629,34 @@ extern "C" void registerExporter(llvm::PassBuilder &PB, std::string file) {
 }
 
 extern "C" void registerReactantAndPassPipeline(llvm::PassBuilder &PB,
-                                              bool augment = false) {
-}
+                                                bool augment = false) {}
 
-extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string> gpubinaries) {
+extern "C" void registerReactant(llvm::PassBuilder &PB,
+                                 std::vector<std::string> gpubinaries) {
 
   llvm::errs() << " registering reactant\n";
 #if LLVM_VERSION_MAJOR >= 20
-  auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+  auto loadPass =
+      [=](ModulePassManager &MPM, OptimizationLevel Level, ThinOrFullLTOPhase)
 #else
   auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
-  {
-    MPM.addPass(ReactantNewPM(gpubinaries));
-  };
+  { MPM.addPass(ReactantNewPM(gpubinaries)); };
 
   PB.registerPipelineParsingCallback(
       [=](llvm::StringRef Name, llvm::ModulePassManager &MPM,
-         llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "reactant") {
           MPM.addPass(ReactantNewPM(gpubinaries));
           return true;
         }
-	return false;
-	});
+        return false;
+      });
 
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
-  auto loadLTO = [loadPass](ModulePassManager &MPM,
-                                        OptimizationLevel Level) {
+  auto loadLTO = [loadPass](ModulePassManager &MPM, OptimizationLevel Level) {
 #if LLVM_VERSION_MAJOR >= 20
     loadPass(MPM, Level, ThinOrFullLTOPhase::None);
 #else
@@ -673,4 +674,3 @@ extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "ReactantNewPM", "v0.1", registerReactant2};
 }
-
