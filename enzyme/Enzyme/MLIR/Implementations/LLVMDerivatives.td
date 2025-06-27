@@ -8,6 +8,7 @@ def : InactiveOp<"LLVM", "FPToUIOp">;
 def : InactiveOp<"LLVM", "AssumeOp">;
 def : InactiveOp<"LLVM", "StackSaveOp">;
 def : InactiveOp<"LLVM", "StackRestoreOp">;
+def : InactiveOp<"LLVM", "NoAliasScopeDeclOp">;
 def : InactiveOp<"LLVM", "LifetimeStartOp">;
 def : InactiveOp<"LLVM", "LifetimeEndOp">;
 def : InactiveOp<"LLVM", "Prefetch">;

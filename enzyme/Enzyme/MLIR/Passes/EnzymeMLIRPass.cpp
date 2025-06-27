@@ -185,12 +185,34 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   template <typename T>
   LogicalResult HandleAutoDiffReverse(SymbolTableCollection &symbolTable,
                                       T CI) {
+
+    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+    assert(fn);
+    if (CI.getActivity().size() != fn.getNumArguments()) {
+      llvm::errs() << "Incorrect number of argument activities on autodiff op"
+                   << "CI: " << CI << ", expected " << fn.getNumArguments()
+                   << " found " << CI.getActivity().size() << "\n";
+      return failure();
+    }
+    if (CI.getRetActivity().size() != fn.getNumResults()) {
+      llvm::errs() << "Incorrect number of result activities on autodiff op"
+                   << "CI: " << CI << ", expected " << fn.getNumResults()
+                   << " found " << CI.getRetActivity().size() << "\n";
+      return failure();
+    }
+
     std::vector<DIFFE_TYPE> arg_activities;
     SmallVector<mlir::Value, 2> args;
 
     size_t call_idx = 0;
     {
       for (auto act : CI.getActivity()) {
+        if (call_idx >= CI.getInputs().size()) {
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << "CI: " << CI << "\n";
+          return failure();
+        }
         mlir::Value res = CI.getInputs()[call_idx];
         ++call_idx;
 
@@ -222,6 +244,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         arg_activities.push_back(ty);
         args.push_back(res);
         if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
+          if (call_idx >= CI.getInputs().size()) {
+            llvm::errs() << "Too few arguments to autodiff op"
+                         << "CI: " << CI << "\n";
+            return failure();
+          }
           res = CI.getInputs()[call_idx];
           ++call_idx;
           args.push_back(res);
@@ -229,8 +256,6 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       }
     }
 
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
     auto mode = DerivativeMode::ReverseModeCombined;
     std::vector<DIFFE_TYPE> retType;
@@ -270,6 +295,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       returnPrimals.push_back(primalNeeded);
       returnShadows.push_back(false);
       if (ty == DIFFE_TYPE::OUT_DIFF) {
+        if (call_idx >= CI.getInputs().size()) {
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << "CI: " << CI << "\n";
+          return failure();
+        }
         mlir::Value res = CI.getInputs()[call_idx];
         ++call_idx;
         args.push_back(res);

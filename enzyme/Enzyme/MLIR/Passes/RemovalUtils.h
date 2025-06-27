@@ -48,5 +48,10 @@ struct CacheInfo {
   CacheInfo merge(CacheInfo other, PatternRewriter &rewriter);
 };
 
+// Tries to limit the amount of values cache from block `forward` to `reverse`
+// using a mincut algorithm and heuristics based on the size of values.
+void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
+                 PatternRewriter &rewriter);
+
 } // namespace enzyme
 } // namespace mlir

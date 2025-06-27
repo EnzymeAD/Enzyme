@@ -888,6 +888,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 #define getOpFullest(Builder, vtmp, frominst, lookupInst, check)               \
   ({                                                                           \
     Value *v = vtmp;                                                           \
+    Type *vty = v->getType();                                                  \
     BasicBlock *origParent = frominst;                                         \
     Value *___res;                                                             \
     if (unwrapMode == UnwrapMode::LegalFullUnwrap ||                           \
@@ -914,7 +915,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           ___res = lookupM(v, Builder, available, v != val, origParent);       \
       }                                                                        \
       if (___res)                                                              \
-        assert(___res->getType() == v->getType() && "uw");                     \
+        assert(___res->getType() == vty && "uw");                              \
     } else {                                                                   \
       origParent = lookupInst;                                                 \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
@@ -923,12 +924,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         ___res = nullptr;                                                      \
       else {                                                                   \
         ___res = lookupM(v, Builder, available, v != val, origParent);         \
-        if (___res && ___res->getType() != v->getType()) {                     \
+        if (___res && ___res->getType() != vty) {                              \
           llvm::errs() << *newFunc << "\n";                                    \
           llvm::errs() << " v = " << *v << " res = " << *___res << "\n";       \
         }                                                                      \
         if (___res)                                                            \
-          assert(___res->getType() == v->getType() && "lu");                   \
+          assert(___res->getType() == vty && "lu");                            \
       }                                                                        \
     }                                                                          \
     ___res;                                                                    \
@@ -1393,106 +1394,129 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     return toreturn;
   } else if (auto phi = dyn_cast<PHINode>(val)) {
     if (phi->getNumIncomingValues() == 0) {
-      // This is a placeholder shadow for a load, rather than falling
-      // back to the uncached variant, use the proper procedure for
-      // an inverted load
-      if (auto dli = dyn_cast_or_null<LoadInst>(hasUninverted(phi))) {
-        // Almost identical code to unwrap load (replacing use of shadow
-        // where appropriate)
-        if (dli->getMetadata("enzyme_noneedunwrap"))
-          return dli;
+      auto uninverted = hasUninverted(phi);
+      if (uninverted) {
 
-        bool legalMove = unwrapMode == UnwrapMode::LegalFullUnwrap ||
-                         unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
-        if (!legalMove) {
-          // TODO actually consider whether this is legal to move to the new
-          // location, rather than recomputable anywhere
-          legalMove = legalRecompute(dli, available, &BuilderM);
-        }
-        if (!legalMove) {
-          auto &warnMap = UnwrappedWarnings[phi];
-          if (!warnMap.count(BuilderM.GetInsertBlock())) {
-            EmitWarning("UncacheableUnwrap", *dli,
-                        "Differential Load cannot be unwrapped ", *dli, " in ",
-                        BuilderM.GetInsertBlock()->getName(), " mode ",
-                        unwrapMode);
-            warnMap.insert(BuilderM.GetInsertBlock());
+        // This is a placeholder shadow for a load, rather than falling
+        // back to the uncached variant, use the proper procedure for
+        // an inverted load
+        if (auto dli = dyn_cast<LoadInst>(uninverted)) {
+          // Almost identical code to unwrap load (replacing use of shadow
+          // where appropriate)
+          if (dli->getMetadata("enzyme_noneedunwrap"))
+            return dli;
+
+          bool legalMove =
+              unwrapMode == UnwrapMode::LegalFullUnwrap ||
+              unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+          if (!legalMove) {
+            // TODO actually consider whether this is legal to move to the new
+            // location, rather than recomputable anywhere
+            legalMove = legalRecompute(dli, available, &BuilderM);
           }
-          return nullptr;
-        }
+          if (!legalMove) {
+            auto &warnMap = UnwrappedWarnings[phi];
+            if (!warnMap.count(BuilderM.GetInsertBlock())) {
+              EmitWarning("UncacheableUnwrap", *dli,
+                          "Differential Load cannot be unwrapped ", *dli,
+                          " in ", BuilderM.GetInsertBlock()->getName(),
+                          " mode ", unwrapMode);
+              warnMap.insert(BuilderM.GetInsertBlock());
+            }
+            return nullptr;
+          }
 
-        Value *pidx = nullptr;
+          Value *pidx = nullptr;
 
-        if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
-          pidx = invertPointerM(dli->getOperand(0), BuilderM);
-        } else {
-          pidx = lookupM(invertPointerM(dli->getOperand(0), BuilderM), BuilderM,
-                         available);
-        }
+          if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
+            pidx = invertPointerM(dli->getOperand(0), BuilderM);
+          } else {
+            pidx = lookupM(invertPointerM(dli->getOperand(0), BuilderM),
+                           BuilderM, available);
+          }
 
-        if (pidx == nullptr)
-          goto endCheck;
+          if (pidx == nullptr)
+            goto endCheck;
 
-        if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
-          llvm::errs() << "dli: " << *dli << "\n";
-          llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0) << "\n";
-          llvm::errs() << "pidx: " << *pidx << "\n";
-        }
-        assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
+          if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
+            llvm::errs() << "dli: " << *dli << "\n";
+            llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0)
+                         << "\n";
+            llvm::errs() << "pidx: " << *pidx << "\n";
+          }
+          assert(pidx->getType() ==
+                 getShadowType(dli->getOperand(0)->getType()));
 
-        size_t s_idx = 0;
-        Value *toreturn = applyChainRule(
-            dli->getType(), BuilderM,
-            [&](Value *pidx) {
-              auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
-                                                  phi->getName() + "_unwrap");
-              if (auto newi = dyn_cast<Instruction>(toreturn)) {
-                newi->copyIRFlags(dli);
-                unwrappedLoads[toreturn] = dli;
-              }
-              toreturn->setAlignment(dli->getAlign());
-              toreturn->setVolatile(dli->isVolatile());
-              toreturn->setOrdering(dli->getOrdering());
-              toreturn->setSyncScopeID(dli->getSyncScopeID());
-              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-              toreturn->copyMetadata(*dli, ToCopy2);
-              SmallVector<Metadata *, 1> scopeMD = {
-                  getDerivativeAliasScope(dli->getOperand(0), s_idx)};
-              if (auto prev = dli->getMetadata(LLVMContext::MD_alias_scope)) {
-                for (auto &M : cast<MDNode>(prev)->operands()) {
-                  scopeMD.push_back(M);
+          size_t s_idx = 0;
+          Value *toreturn = applyChainRule(
+              dli->getType(), BuilderM,
+              [&](Value *pidx) {
+                auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
+                                                    phi->getName() + "_unwrap");
+                if (auto newi = dyn_cast<Instruction>(toreturn)) {
+                  newi->copyIRFlags(dli);
+                  unwrappedLoads[toreturn] = dli;
                 }
-              }
-              auto scope = MDNode::get(dli->getContext(), scopeMD);
-              toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
-
-              SmallVector<Metadata *, 1> MDs;
-              for (ssize_t j = -1; j < getWidth(); j++) {
-                if (j != (ssize_t)s_idx)
-                  MDs.push_back(getDerivativeAliasScope(dli->getOperand(0), j));
-              }
-              if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
-                for (auto &M : cast<MDNode>(prev)->operands()) {
-                  MDs.push_back(M);
+                toreturn->setAlignment(dli->getAlign());
+                toreturn->setVolatile(dli->isVolatile());
+                toreturn->setOrdering(dli->getOrdering());
+                toreturn->setSyncScopeID(dli->getSyncScopeID());
+                llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+                toreturn->copyMetadata(*dli, ToCopy2);
+                SmallVector<Metadata *, 1> scopeMD = {
+                    getDerivativeAliasScope(dli->getOperand(0), s_idx)};
+                if (auto prev = dli->getMetadata(LLVMContext::MD_alias_scope)) {
+                  for (auto &M : cast<MDNode>(prev)->operands()) {
+                    scopeMD.push_back(M);
+                  }
                 }
-              }
-              if (MDs.size()) {
-                auto noscope = MDNode::get(dli->getContext(), MDs);
-                toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
-              }
-              toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
-              s_idx++;
-              return toreturn;
-            },
-            pidx);
+                auto scope = MDNode::get(dli->getContext(), scopeMD);
+                toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
 
-        // TODO adding to cache only legal if no alias of any future writes
-        if (permitCache)
-          unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
-              toreturn;
-        assert(val->getType() == toreturn->getType());
-        return toreturn;
+                SmallVector<Metadata *, 1> MDs;
+                for (ssize_t j = -1; j < getWidth(); j++) {
+                  if (j != (ssize_t)s_idx)
+                    MDs.push_back(
+                        getDerivativeAliasScope(dli->getOperand(0), j));
+                }
+                if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
+                  for (auto &M : cast<MDNode>(prev)->operands()) {
+                    MDs.push_back(M);
+                  }
+                }
+                if (MDs.size()) {
+                  auto noscope = MDNode::get(dli->getContext(), MDs);
+                  toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+                }
+                toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+                s_idx++;
+                return toreturn;
+              },
+              pidx);
+
+          // TODO adding to cache only legal if no alias of any future writes
+          if (permitCache)
+            unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
+                toreturn;
+          assert(val->getType() == toreturn->getType());
+          return toreturn;
+        }
+
+        if (auto dli = dyn_cast<Instruction>(uninverted)) {
+          if (hasNoCache(dli)) {
+            auto found = invertedPointers.find(uninverted);
+            assert(found != invertedPointers.end());
+            assert(found->second == phi);
+            invertedPointers.erase(found);
+            auto ip = invertPointerM(dli, BuilderM);
+            replaceAWithB(phi, ip);
+            erase(phi);
+            return unwrapM(ip, BuilderM, available, unwrapMode, scope,
+                           permitCache);
+          }
+        }
       }
+
       goto endCheck;
     }
     assert(phi->getNumIncomingValues() != 0);
@@ -6342,6 +6366,28 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return which;
       }
     }
+  } else if (auto CB = dyn_cast<CallBase>(oval)) {
+    auto funcName = getFuncNameFromCall(CB);
+    if (funcName == "julia.gc_loaded") {
+      IRBuilder<> bb(getNewFromOriginal(CB));
+      bb.setFastMathFlags(getFast());
+      Value *ptr0shadow = invertPointerM(CB->getArgOperand(0), bb);
+      Value *ptr1shadow = invertPointerM(CB->getArgOperand(1), bb);
+      Value *res = applyChainRule(
+          CB->getType(), bb,
+          [&](Value *v1, Value *v2) -> Value * {
+            Value *args[2] = {v1, v2};
+            return bb.CreateCall(CB->getCalledFunction(), args);
+          },
+          ptr0shadow, ptr1shadow);
+
+      assert(invertedPointers.find(oval) == invertedPointers.end());
+
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
+
+      return res;
+    }
   }
 
 end:;
@@ -6672,17 +6718,35 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   if (tryLegalRecomputeCheck &&
       (lrc = legalRecompute(prelcssaInst, available, &BuilderM))) {
     if ((src = shouldRecompute(prelcssaInst, available, &BuilderM))) {
+      auto ity = inst->getType();
+      // unwrap of a placeholder shadow may replace the placeholder with a
+      // real value, in which case the original value may have deleted.
+      // Store the information to correctly store the cache.
+      Value *uninverted = nullptr;
+      if (auto phi = dyn_cast<PHINode>(val)) {
+        if (phi->getNumIncomingValues() == 0) {
+          uninverted = hasUninverted(phi);
+        }
+      }
       auto op = unwrapM(prelcssaInst, BuilderM, available,
                         UnwrapMode::AttemptSingleUnwrap, scope);
       if (op) {
         assert(op);
         assert(op->getType());
-        if (op->getType() != inst->getType()) {
+        if (op->getType() != ity) {
           llvm::errs() << " op: " << *op << " inst: " << *inst << "\n";
         }
-        assert(op->getType() == inst->getType());
-        if (!reduceRegister)
-          lookup_cache[BuilderM.GetInsertBlock()][val] = op;
+        assert(op->getType() == ity);
+        if (!reduceRegister) {
+          auto cache_key = val;
+          if (uninverted) {
+            auto found = invertedPointers.find(uninverted);
+            if (found != invertedPointers.end()) {
+              cache_key = found->second;
+            }
+          }
+          lookup_cache[BuilderM.GetInsertBlock()][cache_key] = op;
+        }
         return op;
       }
     } else {
@@ -8588,6 +8652,10 @@ void GradientUtils::forceAugmentedReturns() {
       Type *antiTy = getShadowType(inst->getType());
 
       PHINode *anti = BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
+      if (hasNoCache(inst)) {
+        anti->setMetadata("enzyme_nocache",
+                          MDNode::get(inst->getContext(), {}));
+      }
       anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
       invertedPointers.insert(
           std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
@@ -9213,7 +9281,11 @@ void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
   if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     auto inspos = I->getIterator();
 #if LLVM_VERSION_MAJOR >= 18
-    if (I->getParent()->IsNewDbgInfoFormat) {
+#if LLVM_VERSION_MAJOR >= 21
+#else
+    if (I->getParent()->IsNewDbgInfoFormat)
+#endif
+    {
       if (!inspos.getHeadBit()) {
         auto srcmarker = I->getParent()->getMarker(inspos);
         if (srcmarker && !srcmarker->empty()) {

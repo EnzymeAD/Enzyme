@@ -1929,8 +1929,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
 
-      auto AARes = AA.getModRefInfo(
-          I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+      ModRefInfo AARes;
 
       // Still having failed to replace the location used by AA, fall back to
       // getModref against any location.
@@ -1947,6 +1946,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = mayRead ? (mayWrite ? ModRefInfo::ModRef : ModRefInfo::Ref)
                           : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
+      } else {
+        AARes = AA.getModRefInfo(
+            I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
       if (auto CB = dyn_cast<CallInst>(I)) {
