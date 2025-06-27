@@ -255,6 +255,42 @@ struct PrintActivityAnalysisPass
         }
       }
       if (!autodiff_decl) {
+        // Try to infer from enzyme.autodiff ops
+        bool found = false;
+        moduleOp.walk([&](enzyme::AutoDiffOp autodiffOp) {
+          auto callee = cast<FunctionOpInterface>(
+              moduleOp.lookupSymbol(autodiffOp.getFn()));
+          auto argActivity = llvm::map_to_vector(
+              autodiffOp.getActivity().getAsRange<enzyme::ActivityAttr>(),
+              [](auto actv) { return actv.getValue(); });
+          auto retActivity = llvm::map_to_vector(
+              autodiffOp.getRetActivity().getAsRange<enzyme::ActivityAttr>(),
+              [](auto actv) { return actv.getValue(); });
+          runActivityAnalysis(config, callee, argActivity, retActivity);
+          found = true;
+        });
+        moduleOp.walk([&](enzyme::ForwardDiffOp fwddiffOp) {
+          auto callee = cast<FunctionOpInterface>(
+              moduleOp.lookupSymbol(fwddiffOp.getFn()));
+          auto argActivity = llvm::map_to_vector(
+              fwddiffOp.getActivity().getAsRange<enzyme::ActivityAttr>(),
+              [](auto actv) { return actv.getValue(); });
+          auto retActivity = llvm::map_to_vector(
+              fwddiffOp.getRetActivity().getAsRange<enzyme::ActivityAttr>(),
+              [](auto actv) { return actv.getValue(); });
+          runActivityAnalysis(config, callee, argActivity, retActivity);
+          found = true;
+        });
+        if (found) {
+          return;
+        } else {
+          moduleOp.emitError("Failed to find __enzyme_autodiff symbol and any "
+                             "enzyme.autodiff ops");
+          return signalPassFailure();
+        }
+      }
+
+      if (!autodiff_decl) {
         moduleOp.emitError("Failed to find __enzyme_autodiff symbol");
         return signalPassFailure();
       }

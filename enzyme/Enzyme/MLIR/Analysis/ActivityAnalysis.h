@@ -2,7 +2,11 @@
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANALYSIS_H
 
 #include "../../Utils.h"
+#include "Analysis/ActivityAnnotations.h"
+#include "Analysis/DataFlowAliasAnalysis.h"
+#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/Block.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir {
 
@@ -14,6 +18,39 @@ namespace enzyme {
 // class TypeResults {};
 
 class MTypeResults;
+
+class DataFlowActivityAnalyzer {
+public:
+  DataFlowActivityAnalyzer(FunctionOpInterface funcOp,
+                           ArrayRef<DIFFE_TYPE> argActivity,
+                           ArrayRef<DIFFE_TYPE> returnActivity);
+
+  bool isInactiveOperation(Operation *op);
+  bool isInactiveValue(Value value);
+
+private:
+  FunctionOpInterface funcOp;
+  DataFlowSolver solver;
+  enzyme::PointsToSets p2sets;
+  enzyme::ForwardOriginsMap forwardOriginsMap;
+  enzyme::BackwardOriginsMap backwardOriginsMap;
+
+  // TODO(jacob): might be nice to have these use the enzyme::Activity enum but
+  // it makes integration more annoying
+  const ArrayRef<DIFFE_TYPE> argActivity;
+  const ArrayRef<DIFFE_TYPE> returnActivity;
+
+  bool isOriginActive(OriginAttr origin);
+  void joinActiveDataState(Value v, ForwardOriginsLattice &sources,
+                           BackwardOriginsLattice &sinks);
+  void joinActivePointerState(const AliasClassSet &aliasClasses,
+                              ForwardOriginsLattice &sources,
+                              BackwardOriginsLattice &sinks);
+  void joinActiveValueState(Value v, ForwardOriginsLattice &sources,
+                            BackwardOriginsLattice &sinks);
+  bool isActiveData(Value value);
+  bool isActivePointer(Value ptr);
+};
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {

@@ -1,7 +1,5 @@
 // RUN: %eopt --print-activity-analysis='relative verbose' --split-input-file %s | FileCheck %s
 
-// XFAIL: *
-
 // CHECK-LABEL: processing function @sparse_callee
 // CHECK: "fadd"(#0)
 // CHECK:   sources: [#enzyme.argorigin<@sparse_callee(0)>]
@@ -69,7 +67,7 @@ func.func @loadstore(%arg0: f64) -> f64 {
 
 // CHECK-LABEL: processing function @load_nested
 // CHECK: forward value origins:
-// CHECK:      distinct[0]<#enzyme.pseudoclass<@load_nested(1, 0)>> originates from [#enzyme.argorigin<@load_nested(0)>, #enzyme.argorigin<@load_nested(1)>]
+// CHECK:      pclass<(1, 0)> originates from [arg0, arg1]
 func.func @load_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
   %data = llvm.load %arg0 : !llvm.ptr -> !llvm.ptr
   %val = llvm.load %data : !llvm.ptr -> f64

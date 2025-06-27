@@ -41,6 +41,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 // TODO: remove this once aliasing interface is factored out.
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/SetOperations.h"
 
@@ -817,8 +818,9 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp,
-             enzyme::PushOp, enzyme::PopOp>(op);
+  return isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+             affine::AffineStoreOp, LLVM::LoadOp, LLVM::StoreOp, enzyme::PushOp,
+             enzyme::PopOp>(op);
 }
 
 void enzyme::AliasAnalysis::transfer(

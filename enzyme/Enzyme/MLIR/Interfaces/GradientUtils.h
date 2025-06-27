@@ -33,6 +33,7 @@ public:
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
   DenseMap<Operation *, bool> readOnlyCache;
   std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
+  std::unique_ptr<enzyme::DataFlowActivityAnalyzer> dataflowActivityAnalyzer;
 
   MTypeAnalysis &TA;
   MTypeResults TR;

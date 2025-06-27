@@ -1,6 +1,9 @@
 #include "ActivityAnalysis.h"
+#include "Analysis/ActivityAnnotations.h"
+#include "Dialect/Dialect.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/Utils.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -257,6 +260,310 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::trap,
     llvm::Intrinsic::is_constant,
 };
+
+static LogicalResult
+reverseToposortCallgraph(CallableOpInterface callee,
+                         SymbolTableCollection *symbolTable,
+                         SmallVectorImpl<CallableOpInterface> &sorted) {
+  DenseSet<CallableOpInterface> permanent;
+  DenseSet<CallableOpInterface> temporary;
+  std::function<LogicalResult(CallableOpInterface)> visit =
+      [&](CallableOpInterface node) -> LogicalResult {
+    if (permanent.contains(node))
+      return success();
+    if (temporary.contains(node))
+      // Cycle on call graph, toposort not possible
+      return failure();
+
+    temporary.insert(node);
+    auto walkResult = node.walk([&](CallOpInterface call) {
+      auto neighbour =
+          cast<CallableOpInterface>(call.resolveCallableInTable(symbolTable));
+      if (failed(visit(neighbour))) {
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (walkResult.wasInterrupted())
+      return failure();
+
+    temporary.erase(node);
+    permanent.insert(node);
+    sorted.push_back(node);
+    return success();
+  };
+
+  return visit(callee);
+}
+
+enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
+    FunctionOpInterface funcOp, ArrayRef<DIFFE_TYPE> argActivity,
+    ArrayRef<DIFFE_TYPE> returnActivity)
+    : funcOp(funcOp), solver(DataFlowConfig().setInterprocedural(false)),
+      p2sets(nullptr), forwardOriginsMap(nullptr), backwardOriginsMap(nullptr),
+      argActivity(argActivity), returnActivity(returnActivity) {
+
+  // Do things naively for now, computing the dataflow states multiple times
+  SymbolTableCollection symbolTable;
+  SmallVector<CallableOpInterface> sorted;
+  // TODO: Fallback to a whole module activity analysis in the presence of
+  // cycles
+  (void)reverseToposortCallgraph(funcOp, &symbolTable, sorted);
+
+  StringRef pointerSummaryName = EnzymeDialect::getPointerSummaryAttrName();
+  for (CallableOpInterface node : sorted) {
+    if (!node.getCallableRegion() || node->hasAttr(pointerSummaryName))
+      continue;
+    // Will be processed last
+    if (node.getOperation() == funcOp)
+      continue;
+
+    auto childFunc = cast<FunctionOpInterface>(node.getOperation());
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    if (failed(runActivityAnnotationsForFunction(childFunc, solver))) {
+      assert(false && "dataflow solver failed\n");
+    }
+
+    enzyme::PointsToSets p2sets(nullptr);
+    enzyme::ForwardOriginsMap forwardOriginsMap(nullptr);
+    enzyme::BackwardOriginsMap backwardOriginsMap(nullptr);
+    size_t numResults = childFunc.getResultTypes().size();
+    SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
+        numResults, ForwardOriginsLattice(nullptr));
+    SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
+        numResults, AliasClassLattice(nullptr));
+    computeSummaries(childFunc, solver, p2sets, forwardOriginsMap,
+                     backwardOriginsMap, returnOperandOrigins,
+                     returnAliasClasses);
+    serializeSummaries(childFunc, p2sets, forwardOriginsMap,
+                       returnOperandOrigins, returnAliasClasses);
+  }
+
+  if (failed(runActivityAnnotationsForFunction(funcOp, solver))) {
+    assert(false && "dataflow solver failed\n");
+  }
+
+  SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
+      funcOp.getNumResults(), ForwardOriginsLattice(nullptr));
+  SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
+      funcOp.getNumResults(), AliasClassLattice(nullptr));
+  computeSummaries(funcOp, solver, p2sets, forwardOriginsMap,
+                   backwardOriginsMap, returnOperandOrigins,
+                   returnAliasClasses);
+
+  for (CallableOpInterface node : sorted)
+    removeSummaries(node.getOperation());
+}
+
+bool enzyme::DataFlowActivityAnalyzer::isActiveData(Value value) {
+  // A value is active data if it has some active source and some active sink
+  auto *sources = solver.lookupState<ForwardOriginsLattice>(value);
+  auto *sinks = solver.lookupState<BackwardOriginsLattice>(value);
+  bool activeSource = false;
+  // TODO(jacob): see how we can clean this up
+  activeSource |= sources->isUnknown();
+  if (!(sources->isUnknown() || sources->isUndefined())) {
+    for (auto origin : sources->getOrigins()) {
+      unsigned argNumber =
+          cast<enzyme::ArgumentOriginAttr>(origin).getArgNumber();
+      activeSource |= argActivity[argNumber] != DIFFE_TYPE::CONSTANT;
+    }
+  }
+
+  auto activeSink = false;
+  if (sinks->isUnknown()) {
+    activeSink = true;
+  } else if (sinks->isUndefined()) {
+    activeSink = false;
+  } else {
+    for (auto origin : sinks->getOrigins()) {
+      if (auto argOrigin = dyn_cast<enzyme::ArgumentOriginAttr>(origin)) {
+        activeSink |=
+            argActivity[argOrigin.getArgNumber()] != DIFFE_TYPE::CONSTANT;
+      } else {
+        unsigned retNumber =
+            cast<enzyme::ReturnOriginAttr>(origin).getReturnNumber();
+        activeSink |= returnActivity[retNumber] != DIFFE_TYPE::CONSTANT;
+      }
+    }
+  }
+  return activeSource && activeSink;
+}
+
+// TODO(jacob): reduce duplication
+static void traversePointsToSets(const enzyme::AliasClassSet &start,
+                                 const enzyme::PointsToSets &pointsToSets,
+                                 function_ref<void(DistinctAttr)> visit) {
+  using enzyme::AliasClassSet;
+  AliasClassSet current(start);
+  while (!current.isUndefined()) {
+    AliasClassSet next;
+
+    assert(!current.isUnknown() && "Unhandled traversal of unknown");
+    for (DistinctAttr currentClass : current.getElements()) {
+      visit(currentClass);
+      (void)next.join(pointsToSets.getPointsTo(currentClass));
+    }
+    std::swap(current, next);
+  }
+}
+
+bool enzyme::DataFlowActivityAnalyzer::isOriginActive(OriginAttr origin) {
+  if (auto argOriginAttr = dyn_cast<ArgumentOriginAttr>(origin)) {
+    return llvm::is_contained(
+        {DIFFE_TYPE::DUP_ARG, DIFFE_TYPE::DUP_NONEED, DIFFE_TYPE::OUT_DIFF},
+        argActivity[argOriginAttr.getArgNumber()]);
+  }
+  auto retOriginAttr = cast<ReturnOriginAttr>(origin);
+  return llvm::is_contained(
+      {DIFFE_TYPE::DUP_ARG, DIFFE_TYPE::DUP_NONEED, DIFFE_TYPE::OUT_DIFF},
+      returnActivity[retOriginAttr.getReturnNumber()]);
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActiveDataState(
+    Value v, ForwardOriginsLattice &sources, BackwardOriginsLattice &sinks) {
+  (void)sources.join(*solver.getOrCreateState<ForwardOriginsLattice>(v));
+  (void)sinks.meet(*solver.getOrCreateState<BackwardOriginsLattice>(v));
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActivePointerState(
+    const AliasClassSet &aliasClasses, ForwardOriginsLattice &sources,
+    BackwardOriginsLattice &sinks) {
+  traversePointsToSets(aliasClasses, p2sets, [&](DistinctAttr aliasClass) {
+    (void)sources.merge(forwardOriginsMap.getOrigins(aliasClass));
+    (void)sinks.merge(backwardOriginsMap.getOrigins(aliasClass));
+  });
+};
+
+void enzyme::DataFlowActivityAnalyzer::joinActiveValueState(
+    Value v, ForwardOriginsLattice &sources, BackwardOriginsLattice &sinks) {
+  if (isa<LLVM::LLVMPointerType, MemRefType>(v.getType())) {
+    auto *aliasClasses = solver.getOrCreateState<AliasClassLattice>(v);
+    joinActivePointerState(aliasClasses->getAliasClassesObject(), sources,
+                           sinks);
+  } else {
+    joinActiveDataState(v, sources, sinks);
+  }
+}
+
+std::optional<Value> getStored(Operation *op);
+
+bool enzyme::DataFlowActivityAnalyzer::isInactiveOperation(Operation *op) {
+  // An operation is active if it propagates active data.
+  ForwardOriginsLattice sources(nullptr);
+  BackwardOriginsLattice sinks(nullptr);
+  if (isPure(op)) {
+    // A pure operation can only propagate active data via its results
+    for (OpResult result : op->getResults()) {
+      joinActiveDataState(result, sources, sinks);
+    }
+  } else {
+    // As a special case, storing an active pointer makes the operation active
+    // (otherwise Enzyme will ignore it). For example, `getelementptr
+    // %activeptr` is *inactive*, while `store %activeptr` is *active*.
+    if (hasEffect<MemoryEffects::Write>(op)) {
+      if (auto storedVal = getStored(op)) {
+        auto *storedClass =
+            solver.getOrCreateState<AliasClassLattice>(*storedVal);
+        joinActivePointerState(storedClass->getAliasClassesObject(), sources,
+                               sinks);
+      }
+    } else if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+      auto callable = cast<CallableOpInterface>(callOp.resolveCallable());
+      if (callable->hasAttr(
+              EnzymeDialect::getDenseActivityAnnotationAttrName())) {
+        for (Value operand : callOp.getArgOperands())
+          joinActiveValueState(operand, sources, sinks);
+      }
+      // TODO: We need to determine if the body of the function contains active
+      // instructions
+    } else if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+      // An operation with recursive memory effects is active if it contains an
+      // active operation
+      for (Region &region : op->getRegions()) {
+        for (Operation &bodyOp : region.getOps()) {
+          if (!isInactiveOperation(&bodyOp)) {
+            return false;
+          }
+        }
+      }
+    }
+
+    // Default: the op is active iff any of its operands or results are
+    // active data.
+    for (Value operand : op->getOperands())
+      joinActiveDataState(operand, sources, sinks);
+    for (OpResult result : op->getResults())
+      joinActiveDataState(result, sources, sinks);
+  }
+
+  // this is duplicated
+  bool activeSource = false;
+  if (sources.isUnknown()) {
+    activeSource = true;
+  } else if (sources.isUndefined()) {
+    activeSource = false;
+  } else {
+    activeSource =
+        llvm::any_of(sources.getOrigins(), [this](OriginAttr origin) {
+          return isOriginActive(origin);
+        });
+  }
+  bool activeSink = false;
+  if (sinks.isUnknown()) {
+    activeSink = true;
+  } else if (sinks.isUndefined()) {
+    activeSink = false;
+  } else {
+    activeSink = llvm::any_of(sinks.getOrigins(), [this](OriginAttr origin) {
+      return isOriginActive(origin);
+    });
+  }
+  bool activeOp = activeSource && activeSink;
+  return !activeOp;
+}
+
+bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
+  // Activity of function arguments is given by the user
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    if (blockArg.getOwner() == &funcOp.getFunctionBody().front())
+      return argActivity[blockArg.getArgNumber()] == DIFFE_TYPE::CONSTANT;
+  }
+
+  ForwardOriginsLattice sources(nullptr);
+  BackwardOriginsLattice sinks(nullptr);
+  joinActiveValueState(value, sources, sinks);
+
+  // Would it make sense to turn isOriginActive into a lambda?
+  // auto isLatticeActive = [&](SetLattice<OriginAttr> lattice) {
+  //   if (lattice.isUnknown()) return true;
+  //   if (lattice.isUndefined()) return false;
+  //   return llvm::any_of(lattice.getElements())
+  // };
+  bool activeSource = false;
+  if (sources.isUnknown()) {
+    activeSource = true;
+  } else if (sources.isUndefined()) {
+    activeSource = false;
+  } else {
+    activeSource =
+        llvm::any_of(sources.getOrigins(), [this](OriginAttr origin) {
+          return isOriginActive(origin);
+        });
+  }
+  bool activeSink = false;
+  if (sinks.isUnknown()) {
+    activeSink = true;
+  } else if (sinks.isUndefined()) {
+    activeSink = false;
+  } else {
+    activeSink = llvm::any_of(sinks.getOrigins(), [this](OriginAttr origin) {
+      return isOriginActive(origin);
+    });
+  }
+  bool activeVal = activeSource && activeSink;
+  return !activeVal;
+}
 
 static Operation *getFunctionFromCall(CallOpInterface iface) {
   auto symbol = dyn_cast<SymbolRefAttr>(iface.getCallableForCallee());
