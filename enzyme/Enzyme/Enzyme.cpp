@@ -299,7 +299,8 @@ void fixup(Module &M) {
 class ReactantBase {
 public:
   std::vector<std::string> gpubins;
-  ReactantBase(const std::vector<std::string> &gpubins) : gpubins(gpubins) {}
+  std::string outfile;
+  ReactantBase(const std::vector<std::string> &gpubins, std::string outfile) : gpubins(gpubins), outfile(outfile) {}
 
   bool run(Module &M) {
     bool changed = true;
@@ -511,12 +512,12 @@ public:
     if (!sym) {
       llvm::errs() << " could not find sym\n";
     }
-    auto runLLVMToMLIRRoundTrip = (std::string(*)(std::string))sym;
+    auto runLLVMToMLIRRoundTrip = (std::string(*)(std::string, std::string))sym;
     if (runLLVMToMLIRRoundTrip) {
       std::string MStr;
       llvm::raw_string_ostream ss(MStr);
       ss << M;
-      auto newMod = runLLVMToMLIRRoundTrip(MStr);
+      auto newMod = runLLVMToMLIRRoundTrip(MStr, outfile);
       M.dropAllReferences();
 
       M.getGlobalList().clear();
@@ -560,8 +561,8 @@ private:
 
 public:
   using Result = llvm::PreservedAnalyses;
-  ReactantNewPM(const std::vector<std::string> &gpubins)
-      : ReactantBase(gpubins) {}
+  ReactantNewPM(const std::vector<std::string> &gpubins, std::string outfile)
+      : ReactantBase(gpubins, outfile) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     return ReactantBase::run(M) ? PreservedAnalyses::none()
@@ -632,7 +633,7 @@ extern "C" void registerReactantAndPassPipeline(llvm::PassBuilder &PB,
                                                 bool augment = false) {}
 
 extern "C" void registerReactant(llvm::PassBuilder &PB,
-                                 std::vector<std::string> gpubinaries) {
+                                 std::vector<std::string> gpubinaries, std::string outfile) {
 
   llvm::errs() << " registering reactant\n";
 #if LLVM_VERSION_MAJOR >= 20
@@ -641,13 +642,13 @@ extern "C" void registerReactant(llvm::PassBuilder &PB,
 #else
   auto loadPass = [=](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
-  { MPM.addPass(ReactantNewPM(gpubinaries)); };
+  { MPM.addPass(ReactantNewPM(gpubinaries, outfile)); };
 
   PB.registerPipelineParsingCallback(
       [=](llvm::StringRef Name, llvm::ModulePassManager &MPM,
           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "reactant") {
-          MPM.addPass(ReactantNewPM(gpubinaries));
+          MPM.addPass(ReactantNewPM(gpubinaries, outfile));
           return true;
         }
         return false;
@@ -667,7 +668,7 @@ extern "C" void registerReactant(llvm::PassBuilder &PB,
 }
 
 extern "C" void registerReactant2(llvm::PassBuilder &PB) {
-  registerReactant(PB, {});
+  registerReactant(PB, {}, "");
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK

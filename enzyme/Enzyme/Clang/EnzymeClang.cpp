@@ -87,7 +87,7 @@ struct Visitor : public RecursiveASTVisitor<Visitor> {
   }
 };
 
-extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string> gpubins);
+extern "C" void registerReactant(llvm::PassBuilder &PB, std::vector<std::string> gpubins, std::string outfile);
 
 extern "C" void registerExporter(llvm::PassBuilder &PB, std::string file);
 
@@ -124,8 +124,9 @@ public:
 	    gpubins.push_back(inFile);
 	  //gpubins.push_back(CGOpts.CudaGpuBinaryFileName);
 	}
+	  std::string file = CI.getFrontendOpts().OutputFile;
       CGOpts.PassBuilderCallbacks.push_back([=](llvm::PassBuilder &PB) {
-	registerReactant(PB, gpubins);
+	  registerReactant(PB, gpubins, file);
 	});
     }
 
