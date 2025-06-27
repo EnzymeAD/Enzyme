@@ -1793,6 +1793,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
 
   if (intrinsic == MLIRDerivatives) {
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
+    os << "          if (!gutils->isConstantInstruction(op) && "
+          "!gutils->isConstantValue(op->getResult(0))) {\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";
     os << "          for (auto en : llvm::enumerate(neededArgs))\n";
@@ -1800,6 +1802,7 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     os << "              operands[en.index()] = "
           "gutils->popCache(caches[count], builder);\n";
     os << "              count++;\n";
+    os << "            }\n";
     os << "            }\n";
   }
 
