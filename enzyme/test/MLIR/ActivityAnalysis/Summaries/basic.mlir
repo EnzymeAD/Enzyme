@@ -112,22 +112,20 @@ func.func @caller(%unused: i32, %val: f64, %out: !llvm.ptr) {
 }
 
 // -----
+#alias_scope_domain4 = #llvm.alias_scope_domain<id = distinct[4]<>, description = "mat_mult">
+#alias_scope13 = #llvm.alias_scope<id = distinct[20]<>, domain = #alias_scope_domain4, description = "mat_mult: %out">
 
-func.func @load_double_nested(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
-  %data = llvm.load %arg0 : !llvm.ptr -> !llvm.ptr
-  %val = llvm.load %data : !llvm.ptr -> f64
-  // Rather than storing to %arg1, store to what %arg1 points to.
-  %out_data = llvm.load %arg1 : !llvm.ptr -> !llvm.ptr
-  llvm.store %val, %out_data : f64, !llvm.ptr
-  return
+// Make sure that known inactive operations don't cause worst-case pessimistic results
+// CHECK-LABEL: processing function @with_noop
+// CHECK: "alloca"(#0)
+// CHECK:   sources: [#enzyme.argorigin<@with_noop(0)>]
+// CHECK:   sinks:   [#enzyme.retorigin<@with_noop(0)>]
+func.func @with_noop(%arg0: f64) -> f64 {
+  %c1 = llvm.mlir.constant (1) : i64
+  %ptr = llvm.alloca %c1 x f64 {tag = "alloca"} : (i64) -> !llvm.ptr
+  llvm.store %arg0, %ptr : f64, !llvm.ptr
+  llvm.intr.experimental.noalias.scope.decl #alias_scope13
+  %0 = llvm.load %ptr : !llvm.ptr -> f64
+  return %0 : f64
 }
 
-// TODO: This is an issue where we don't see what %out points to, but it points to something.
-// Probably need to fix the summarized func processing in p2p.
-func.func @pass_pointer_to(%arg0: f64, %alloc: !llvm.ptr, %out: !llvm.ptr) {
-  %one = llvm.mlir.constant (1) : i64
-  %inner = llvm.load %alloc : !llvm.ptr -> !llvm.ptr
-  llvm.store %arg0, %inner : f64, !llvm.ptr
-  func.call @load_double_nested(%alloc, %out) : (!llvm.ptr, !llvm.ptr) -> ()
-  return
-}

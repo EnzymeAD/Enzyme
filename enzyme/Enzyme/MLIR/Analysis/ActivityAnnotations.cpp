@@ -3,6 +3,7 @@
 #include "DataFlowLattice.h"
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
@@ -63,36 +64,11 @@ void enzyme::ForwardActivityAnnotationAnalysis::markResultsUnknown(
   }
 }
 
-/// True iff all results differentially depend on all operands
-// TODO: differential dependency/activity interface
-// TODO: Select cond is not fully active
-static bool isFullyActive(Operation *op) {
-  return isa<LLVM::FMulOp, LLVM::FAddOp, LLVM::FDivOp, LLVM::FSubOp,
-             LLVM::FNegOp, LLVM::FAbsOp, LLVM::SqrtOp, LLVM::SinOp, LLVM::CosOp,
-             LLVM::TanhOp, LLVM::Exp2Op, LLVM::ExpOp, LLVM::LogOp,
-             LLVM::InsertValueOp, LLVM::ExtractValueOp, LLVM::BitcastOp,
-             LLVM::SelectOp>(op);
-}
-
-static bool isNoOp(Operation *op) {
-  return isa<LLVM::NoAliasScopeDeclOp, LLVM::LifetimeStartOp,
-             LLVM::LifetimeEndOp, LLVM::AssumeOp>(op);
-}
-
 LogicalResult enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<const ForwardOriginsLattice *> operands,
     ArrayRef<ForwardOriginsLattice *> results) {
-  if (isFullyActive(op)) {
-    for (ForwardOriginsLattice *result : results) {
-      for (const ForwardOriginsLattice *operand : operands) {
-        join(result, *operand);
-      }
-    }
-    return success();
-  }
-
-  // Expected to be handled through the diff dependency interface
-  if (isPure(op) || isNoOp(op))
+  auto iface = dyn_cast<enzyme::ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -113,6 +89,17 @@ LogicalResult enzyme::ForwardActivityAnnotationAnalysis::visitOperation(
       continue;
     }
     processMemoryRead(op, value, results);
+  }
+
+  // Propagate sparse differential dependencies, excluding any inactive
+  // arguments.
+  for (auto &&[i, operand] : llvm::enumerate(operands)) {
+    if (iface && iface.isArgInactive(i))
+      continue;
+
+    for (ForwardOriginsLattice *result : results) {
+      join(result, *operand);
+    }
   }
   return success();
 }
@@ -262,15 +249,8 @@ void enzyme::BackwardActivityAnnotationAnalysis::markOperandsUnknown(
 LogicalResult enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
     Operation *op, ArrayRef<BackwardOriginsLattice *> operands,
     ArrayRef<const BackwardOriginsLattice *> results) {
-  if (isFullyActive(op)) {
-    for (BackwardOriginsLattice *operand : operands)
-      for (const BackwardOriginsLattice *result : results)
-        meet(operand, *result);
-    return success();
-  }
-
-  // Expected to be handled through the diff dependency interface
-  if (isPure(op) || isNoOp(op))
+  auto iface = dyn_cast<enzyme::ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -301,6 +281,16 @@ LogicalResult enzyme::BackwardActivityAnnotationAnalysis::visitOperation(
       changed |= originsMap->insert(srcClasses->getAliasClassesObject(),
                                     result->getOriginsObject());
     propagateIfChanged(originsMap, changed);
+  }
+
+  // Propagate sparse differential dependencies, excluding any inactive
+  // arguments.
+  for (auto &&[i, operand] : llvm::enumerate(operands)) {
+    if (iface && iface.isArgInactive(i))
+      continue;
+
+    for (const BackwardOriginsLattice *result : results)
+      meet(operand, *result);
   }
   return success();
 }
@@ -408,7 +398,8 @@ LogicalResult enzyme::DenseActivityAnnotationAnalysis::visitOperation(
     Operation *op, const ForwardOriginsMap &before, ForwardOriginsMap *after) {
   join(after, before);
 
-  if (isNoOp(op))
+  auto iface = dyn_cast<ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -673,7 +664,8 @@ LogicalResult enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
     BackwardOriginsMap *before) {
   meet(before, after);
 
-  if (isNoOp(op))
+  auto iface = dyn_cast<ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);

@@ -36,6 +36,18 @@ struct InlineAsmActivityInterface
   bool isArgInactive(Operation *op, size_t) const { return isInactive(op); }
 };
 
+struct SelectActivityInterface
+    : public ActivityOpInterface::ExternalModel<SelectActivityInterface,
+                                                LLVM::SelectOp> {
+  bool isInactive(Operation *op) const { return false; }
+  bool isArgInactive(Operation *op, size_t idx) const {
+    // llvm.select is not inactive in general, but the condition is always
+    // inactive.
+    auto selectOp = cast<LLVM::SelectOp>(op);
+    return selectOp.getCondition() == selectOp.getOperand(idx);
+  }
+};
+
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
@@ -74,6 +86,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    LLVM::SelectOp::attachInterface<SelectActivityInterface>(*context);
     registerInterfaces(context);
   });
 }
