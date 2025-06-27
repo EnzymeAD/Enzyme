@@ -426,6 +426,67 @@ struct AffineParallelOpEnzymeOpsRemover
   }
 };
 
+struct AffineParallelRegionBranchOpInterface
+    : public mlir::RegionBranchOpInterface::FallbackModel<
+          AffineParallelRegionBranchOpInterface> {
+  OperandRange getEntrySuccessorOperands(Operation *op,
+                                         RegionSuccessor successor) const {
+    return cast<AffineParallelOp>(op).getInits();
+  }
+
+  void getEntrySuccessorRegions(
+      Operation *op, ::llvm::ArrayRef<::mlir::Attribute> operands,
+      ::llvm::SmallVectorImpl<::mlir::RegionSuccessor> &regions) const {
+    getSuccessorRegions(op, RegionBranchPoint::parent(), regions);
+  }
+
+  void getSuccessorRegions(
+      Operation *op, RegionBranchPoint point,
+      ::llvm::SmallVectorImpl<::mlir::RegionSuccessor> &regions) const {
+    // Both the operation itself and the region may be branching into the body
+    // or back into the operation itself. It is possible for the loop to not
+    // enter the body.
+
+    // This is not entirely correct: the lack of initial reduction arguments
+    // makes modelling the zero iteration case tricky.
+    if (point.isParent()) {
+      regions.push_back(
+          RegionSuccessor(&cast<AffineParallelOp>(op).getRegion()));
+    } else {
+      regions.push_back(RegionSuccessor::parent());
+    }
+  }
+
+  void getSuccessorRegions_3(
+      Operation *op, ::mlir::Region &region,
+      ::llvm::SmallVectorImpl<::mlir::RegionSuccessor> &regions) const {}
+
+  void getRegionInvocationBounds(
+      Operation *op, ArrayRef<Attribute> operands,
+      SmallVectorImpl<InvocationBounds> &invocationBounds) const {
+    invocationBounds.append(op->getNumRegions(),
+                            InvocationBounds::getUnknown());
+  }
+
+  bool areTypesCompatible(Operation *op, Type lhs, Type rhs) const {
+    return lhs == rhs;
+  }
+
+  ValueRange getSuccessorInputs(Operation *op,
+                                RegionSuccessor successor) const {
+    auto parOp = cast<affine::AffineParallelOp>(op);
+    return successor.isParent() ? ValueRange(parOp.getResults())
+                                : ValueRange(parOp.getRegionIterArgs());
+  }
+
+  void getPredecessorValues(Operation *op, RegionSuccessor successor, int index,
+                            SmallVectorImpl<Value> &predecessorValues) const {}
+
+  void getPredecessors(Operation *op, RegionSuccessor successor,
+                       SmallVectorImpl<RegionBranchPoint> &predecessors) const {
+  }
+};
+
 struct AffineLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
@@ -789,5 +850,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
         *context);
     affine::AffineParallelOp::attachInterface<AffineParallelOpEnzymeOpsRemover>(
         *context);
+    affine::AffineParallelOp::attachInterface<
+        AffineParallelRegionBranchOpInterface>(*context);
   });
 }

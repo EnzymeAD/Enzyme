@@ -46,6 +46,9 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,
           ReturnActivity)),
+      dataflowActivityAnalyzer(
+          std::make_unique<enzyme::DataFlowActivityAnalyzer>(
+              oldFunc_, ArgDiffeTypes_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
       postpasses(postpasses), strongZero(strongZero),
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
@@ -108,10 +111,12 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantInstruction(Operation *op) const {
-  return activityAnalyzer->isConstantOperation(TR, op);
+  // return activityAnalyzer->isConstantOperation(TR, op);
+  return dataflowActivityAnalyzer->isInactiveOperation(op);
 }
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
-  return activityAnalyzer->isConstantValue(TR, v);
+  // return activityAnalyzer->isConstantValue(TR, v);
+  return dataflowActivityAnalyzer->isInactiveValue(v);
 }
 
 mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
