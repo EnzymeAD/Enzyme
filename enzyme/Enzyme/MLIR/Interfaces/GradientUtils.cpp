@@ -46,6 +46,9 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,
           ReturnActivity)),
+      dataflowActivityAnalyzer(
+          std::make_unique<enzyme::DataFlowActivityAnalyzer>(
+              oldFunc_, ArgDiffeTypes_, ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
       postpasses(postpasses), strongZero(strongZero),
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),

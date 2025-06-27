@@ -670,8 +670,8 @@ LogicalResult enzyme::DenseBackwardActivityAnnotationAnalysis::visitOperation(
     BackwardOriginsMap *before) {
   meet(before, after);
 
-  auto activityIface = dyn_cast<enzyme::ActivityOpInterface>(op);
-  if (activityIface && activityIface.isInactive())
+  auto iface = dyn_cast<ActivityOpInterface>(op);
+  if (iface && iface.isInactive())
     return success();
 
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
@@ -1156,7 +1156,6 @@ void enzyme::runActivityAnnotations(
       assert(false && "dataflow solver failed");
     }
 
-    // Create the overall summary by joining sets at all return sites.
     enzyme::PointsToSets p2sets(nullptr);
     enzyme::ForwardOriginsMap forwardOriginsMap(nullptr);
     enzyme::BackwardOriginsMap backwardOriginsMap(nullptr);
