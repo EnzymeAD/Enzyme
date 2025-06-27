@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='annotate' --split-input-file %s 2>&1 | FileCheck %s
 
 // This moves active data from x to y
 // CHECK-LABEL: @output_arg

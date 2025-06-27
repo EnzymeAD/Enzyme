@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='annotate' --split-input-file %s 2>&1 | FileCheck %s
 
 // CHECK-LABEL: @callgraph_sparse:
 // CHECK:         "callres": Active

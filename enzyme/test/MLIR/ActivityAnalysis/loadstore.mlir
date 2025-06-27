@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis=funcs=loadstore %s --split-input-file 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='funcs=loadstore annotate' %s --split-input-file 2>&1 | FileCheck %s
 
 // A function that contains active dataflow via side effects, then operands to results,
 // then side effects again.

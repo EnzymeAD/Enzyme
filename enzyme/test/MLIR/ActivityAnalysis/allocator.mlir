@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis=funcs=_Z10reduce_maxPdi %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='funcs=_Z10reduce_maxPdi annotate' %s 2>&1 | FileCheck %s
 
 module attributes {
     dlti.dl_spec = #dlti.dl_spec<

@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis=annotate --split-input-file %s 2>&1 | FileCheck %s
 
 #map = affine_map<() -> ()>
 // Test that AA is detecting that linalg.generic propagates activity from %x to %out

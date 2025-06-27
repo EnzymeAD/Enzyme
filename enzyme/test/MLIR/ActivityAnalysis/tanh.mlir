@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='annotate' --split-input-file %s 2>&1 | FileCheck %s
 
 // Test that a call to an external function produces the correct value activity.
 

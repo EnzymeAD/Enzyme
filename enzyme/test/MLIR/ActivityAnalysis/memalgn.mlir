@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis=funcs=memalgn %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='funcs=memalgn annotate' %s 2>&1 | FileCheck %s
 
 module attributes {
   dlti.dl_spec = #dlti.dl_spec<

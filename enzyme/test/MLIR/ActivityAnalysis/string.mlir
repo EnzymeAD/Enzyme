@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis=funcs=_Z2fnv %s 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='funcs=_Z2fnv annotate' %s 2>&1 | FileCheck %s
 
 #tbaa_root = #llvm.tbaa_root<id = "Simple C++ TBAA">
 #tbaa_type_desc = #llvm.tbaa_type_desc<id = "omnipotent char", members = {<#tbaa_root, 0>}>

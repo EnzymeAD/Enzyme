@@ -1,4 +1,4 @@
-// RUN: %eopt --print-activity-analysis %s --split-input-file 2>&1 | FileCheck %s
+// RUN: %eopt --print-activity-analysis='annotate' %s --split-input-file 2>&1 | FileCheck %s
 
 func.func private @malloc(%size: i64) -> !llvm.ptr
 func.func private @free(%ptr: !llvm.ptr)
