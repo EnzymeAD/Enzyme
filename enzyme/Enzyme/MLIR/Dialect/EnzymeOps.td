@@ -195,6 +195,15 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
+def Trace : Enzyme_Type<"Trace"> {
+  let summary = "Trace for ProbProg pass";
+  let description = [{
+    Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
+    and various other information from executing a traced probabilistic function.
+  }];
+  let mnemonic = "Trace";
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
