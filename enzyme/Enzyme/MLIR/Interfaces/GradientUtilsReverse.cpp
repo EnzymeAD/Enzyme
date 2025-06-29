@@ -83,11 +83,13 @@ void MGradientUtilsReverse::deregisterCacheCreatorHook(
 }
 
 std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
-  if (cacheCreatorHook.empty()) {
-    Value cache = insertInit(t);
-    return {cache, cache};
+  for (int idx = cacheCreatorHook.size() - 1; idx >= 0; idx--) {
+    auto res = cacheCreatorHook[i](t);
+    if (res.first)
+      return res;
   }
-  return cacheCreatorHook.back()(t);
+  Value cache = insertInit(t);
+  return {cache, cache};
 }
 
 // We assume that caches will only be written to at one location. The returned
