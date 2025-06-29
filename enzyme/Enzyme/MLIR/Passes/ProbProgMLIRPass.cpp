@@ -82,185 +82,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
     return success();
   }
 
-  LogicalResult HandleGenerate(SymbolTableCollection &symbolTable,
-                               enzyme::GenerateOp CI) {
-    auto fn = cast<FunctionOpInterface>(
-        symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
-
-    auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Generate);
-    FunctionOpInterface NewF = putils->newFunc;
-
-    OpBuilder entryBuilder(&NewF.getFunctionBody().front().front());
-    auto loc = NewF.getLoc();
-    auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-    auto zeroAttr = DenseElementsAttr::get(
-        tensorType, APFloat(entryBuilder.getF64Type().getFloatSemantics(), 0));
-    auto zeroWeight =
-        entryBuilder.create<arith::ConstantOp>(loc, tensorType, zeroAttr);
-    Value weightAccumulator = zeroWeight;
-
-    {
-      auto constraintsAttr = CI.getConstraintsAttr();
-      SmallVector<Operation *, 4> toErase;
-      NewF.walk([&](enzyme::SampleOp sampleOp) {
-        assert(sampleOp.getSymbolAttr() && "SampleOp requires symbol");
-        assert(sampleOp.getLogpdfAttr() &&
-               "GenerateOp requires logpdf in SampleOps");
-
-        OpBuilder b(sampleOp);
-        auto distFn =
-            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                sampleOp, sampleOp.getFnAttr()));
-
-        SmallVector<Value> finalValues;
-
-        auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr();
-        auto symbolAttr = sampleOp.getSymbolAttr();
-        bool hasConstraint = false;
-        SmallVector<Attribute> opConstraintValues;
-
-        if (constraintsAttr && symbolAttr && tracedOutputIndices &&
-            !constraintsAttr.empty() && !tracedOutputIndices.empty()) {
-          uint64_t symPtr = symbolAttr.getValue().getZExtValue();
-
-          for (auto constraint : constraintsAttr) {
-            auto c = cast<ConstraintAttr>(constraint);
-            if (c.getSymbol() != symPtr)
-              continue;
-
-            assert(c.getValues().size() == tracedOutputIndices.size() &&
-                   "Constraint entry value count must match number of traced "
-                   "output indices");
-            for (auto v : c.getValues())
-              opConstraintValues.push_back(v);
-
-            hasConstraint = true;
-            break;
-          }
-        }
-
-        if (!hasConstraint) {
-          auto distCall = b.create<func::CallOp>(
-              sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-              sampleOp.getInputs());
-
-          finalValues.append(distCall.getResults().begin(),
-                             distCall.getResults().end());
-        } else {
-          // Constraint for current SampleOp is found. Replace traced outputs
-          // with constraint values and try to forward other results from
-          // SampleOp inputs when possible (e.g., RNG state).
-          unsigned numResults = sampleOp->getNumResults();
-          finalValues.resize(numResults, Value());
-
-          // Map constraint values to traced output indices in order.
-          if (tracedOutputIndices) {
-            unsigned i = 0;
-            for (auto outIdx : tracedOutputIndices.asArrayRef()) {
-              auto elemAttr = cast<ElementsAttr>(opConstraintValues[i]);
-              auto constOp = b.create<arith::ConstantOp>(
-                  sampleOp.getLoc(), elemAttr.getType(), elemAttr);
-              finalValues[outIdx] = constOp.getResult();
-              i++;
-            }
-          }
-
-          if (auto aliasAttr = sampleOp.getAliasMapAttr()) {
-            auto arr = aliasAttr.asArrayRef();
-            assert(arr.size() % 2 == 0);
-            for (size_t k = 0; k < arr.size(); k += 2) {
-              unsigned resIdx = arr[k];
-              unsigned inIdx = arr[k + 1];
-              if (!finalValues[resIdx]) {
-                finalValues[resIdx] = sampleOp.getOperand(inIdx);
-              }
-            }
-          }
-
-          // Check that all final values are set.
-          for (unsigned i = 0; i < numResults; ++i) {
-            assert(finalValues[i]);
-          }
-        }
-
-        // For traced outputs: weight using logpdf and accumulate and add to
-        // trace.
-        if (tracedOutputIndices && !tracedOutputIndices.empty()) {
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          // 1. Construct args for logpdf call: sample + specified distFn args
-          SmallVector<Value> logpdfOperands;
-          // NOTE: This assumes that the traced output indices come in the same
-          // order as the first few logpdf args.
-          for (auto idx : tracedOutputIndices.asArrayRef()) {
-            logpdfOperands.push_back(finalValues[idx]);
-          }
-          auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr();
-          if (tracedInputIndices) {
-            for (auto idx : tracedInputIndices.asArrayRef()) {
-              logpdfOperands.push_back(sampleOp.getOperand(idx));
-            }
-          }
-          assert(logpdfOperands.size() == logpdfFn.getNumArguments() &&
-                 "Logpdf call arguments must match number of logpdf function "
-                 "arguments; double check traced input indices attribute");
-          auto logpdfCall =
-              b.create<func::CallOp>(sampleOp.getLoc(), logpdfFn.getName(),
-                                     logpdfFn.getResultTypes(), logpdfOperands);
-
-          // 2. Accumulate weights
-          weightAccumulator = b.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, logpdfCall.getResult(0));
-
-          // 3. Add traced outputs to trace
-          for (auto idx : tracedOutputIndices.asArrayRef()) {
-            b.create<enzyme::AddSampleToTraceOp>(
-                sampleOp.getLoc(), finalValues[idx], sampleOp.getSymbolAttr(),
-                CI.getTraceAttr(), sampleOp.getNameAttr());
-          }
-        }
-
-        sampleOp.replaceAllUsesWith(finalValues);
-        toErase.push_back(sampleOp);
-      });
-
-      for (Operation *op : toErase) {
-        op->erase();
-      }
-    }
-
-    // Return the weight (0th) and original results
-    NewF.walk([&](func::ReturnOp returnOp) {
-      OpBuilder b(returnOp);
-      SmallVector<Value> newReturnValues;
-      newReturnValues.push_back(weightAccumulator);
-      newReturnValues.append(returnOp.getOperands().begin(),
-                             returnOp.getOperands().end());
-
-      auto fnType = cast<FunctionType>(NewF.getFunctionType());
-      SmallVector<Type> newResultTypes;
-      newResultTypes.push_back(RankedTensorType::get({}, b.getF64Type()));
-      newResultTypes.append(fnType.getResults().begin(),
-                            fnType.getResults().end());
-      auto newFnType = b.getFunctionType(fnType.getInputs(), newResultTypes);
-      NewF.setType(newFnType);
-
-      b.create<func::ReturnOp>(returnOp.getLoc(), newReturnValues);
-      returnOp.erase();
-    });
-
-    OpBuilder b(CI);
-    auto newCI = b.create<func::CallOp>(
-        CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
-
-    CI->replaceAllUsesWith(newCI);
-    CI->erase();
-
-    return success();
-  }
-
   LogicalResult HandleSimulate(SymbolTableCollection &symbolTable,
                                enzyme::SimulateOp CI) {
     auto symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
@@ -289,9 +110,10 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         if (tracedOutputIndices) {
           for (auto idx : tracedOutputIndices.asArrayRef()) {
             b.create<enzyme::AddSampleToTraceOp>(
-                sampleOp.getLoc(), distCall.getResult(idx),
-                sampleOp.getSymbolAttr(), CI.getTraceAttr(),
-                sampleOp.getNameAttr());
+                sampleOp.getLoc(),
+                /*trace*/ putils->getTrace(),
+                /*symbol*/ sampleOp.getSymbolAttr(),
+                /*sample*/ ValueRange{distCall.getResult(idx)});
           }
         }
 
@@ -303,6 +125,17 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         op->erase();
       }
     }
+
+    // Return the trace as the first result
+    NewF.walk([&](func::ReturnOp retOp) {
+      OpBuilder b(retOp);
+      SmallVector<Value> newRetVals;
+      newRetVals.push_back(putils->getTrace());
+      newRetVals.append(retOp.getOperands().begin(), retOp.getOperands().end());
+
+      b.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+      retOp.erase();
+    });
 
     if (!NewF)
       return failure();
@@ -323,13 +156,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                         FunctionOpInterface op) {
     op->walk([&](enzyme::UntracedCallOp ucop) {
       auto res = HandleUntracedCall(symbolTable, ucop);
-      if (!res.succeeded()) {
-        signalPassFailure();
-        return;
-      }
-    });
-    op->walk([&](enzyme::GenerateOp cop) {
-      auto res = HandleGenerate(symbolTable, cop);
       if (!res.succeeded()) {
         signalPassFailure();
         return;

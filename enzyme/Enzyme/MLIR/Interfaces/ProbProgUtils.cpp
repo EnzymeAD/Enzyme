@@ -25,6 +25,17 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+Value mlir::enzyme::MProbProgUtils::getTrace() {
+  if (!trace) {
+    OpBuilder builder(initializationBlock, initializationBlock->begin());
+    auto initTraceOp = builder.create<enzyme::InitTraceOp>(
+        (initializationBlock->rbegin())->getLoc(),
+        enzyme::TraceType::get(initializationBlock->begin()->getContext()));
+    trace = initTraceOp.getTrace();
+  }
+  return trace;
+}
+
 MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
                                                 MProbProgMode mode) {
   if (toeval.getFunctionBody().empty()) {
@@ -33,16 +44,30 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   }
 
   std::string suffix;
+  auto originalInputs =
+      cast<mlir::FunctionType>(toeval.getFunctionType()).getInputs();
+  auto originalResults =
+      cast<mlir::FunctionType>(toeval.getFunctionType()).getResults();
+  SmallVector<mlir::Type, 4> ArgTypes;
+  SmallVector<mlir::Type, 4> ResultTypes;
 
   switch (mode) {
   case MProbProgMode::Call:
     suffix = "call";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case MProbProgMode::Generate:
     suffix = "generate";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
+    ArgTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");
@@ -50,9 +75,10 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
 
   OpBuilder builder(toeval.getContext());
 
+  auto FTy = builder.getFunctionType(ArgTypes, ResultTypes);
   auto NewF = cast<FunctionOpInterface>(toeval->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, toeval.getName().str() + "." + suffix);
-  NewF.setType(toeval.getFunctionType());
+  NewF.setType(FTy);
 
   Operation *parent = toeval->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);

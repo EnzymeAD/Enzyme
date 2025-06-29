@@ -196,12 +196,22 @@ def Gradient : Enzyme_Type<"Gradient"> {
 }
 
 def Trace : Enzyme_Type<"Trace"> {
-  let summary = "Trace for ProbProg pass";
+  let summary = "Execution trace for probabilistic programs";
   let description = [{
+    Reference: https://www.gen.dev/docs/stable/tutorials/basics/gfi/#Traces
     Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
     and various other information from executing a traced probabilistic function.
   }];
   let mnemonic = "Trace";
+}
+
+def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
+  let summary = "Symbol associated with a Sample op";
+  let description = [{
+  Symbol associated with a Sample op.
+  }];
+  let parameters = (ins "uint64_t":$ptr);
+  let assemblyFormat = "`<` $ptr `>`";
 }
 
 def SetOp : Enzyme_Op<"set",
@@ -270,7 +280,7 @@ def SampleOp : Enzyme_Op<"sample",
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
-    OptionalAttr<UI64Attr>:$symbol,
+    OptionalAttr<SymbolAttr>:$symbol,
     OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
     OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     OptionalAttr<DenseI64ArrayAttr>:$alias_map,
@@ -287,22 +297,31 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let summary = "Simulate a probabilistic function to generate execution trace";
   let description = [{
   Simulate a probabilistic function to generate execution trace
-  by replacing all SampleOps with distribution calls and inserting
-  sampled values into the choice map.
+  by replacing all SampleOps with distribution calls and recording
+  all sampled values into the trace.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    UI64Attr:$trace,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
+}
+
+def InitTraceOp : Enzyme_Op<"initTrace"> {
+  let summary = "Initialize an execution trace for a probabilistic function";
+  let description = [{
+    Initialize an execution trace for a probabilistic function.
+  }];
+  let arguments = (ins );
+  let results = (outs Trace:$trace);
+  let assemblyFormat = "attr-dict `:` type($trace)";
 }
 
 def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
@@ -312,16 +331,15 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 
   let arguments = (ins
-    Variadic<AnyType>:$sample,
-    UI64Attr:$symbol,
-    UI64Attr:$trace,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    Trace:$trace,
+    SymbolAttr:$symbol,
+    Variadic<AnyType>:$sample
   );
 
   let results = (outs );
 
   let assemblyFormat = [{
-    $sample attr-dict `:` functional-type($sample, results)
+    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
   }];
 }
 

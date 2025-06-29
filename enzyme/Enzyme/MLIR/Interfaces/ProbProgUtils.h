@@ -32,6 +32,7 @@ public:
 
 private:
   Block *initializationBlock;
+  Value trace;
 
 public:
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
@@ -42,6 +43,8 @@ public:
         originalToNewFn(originalToNewFn_),
         originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
+
+  Value getTrace();
 
   static MProbProgUtils *CreateFromClone(FunctionOpInterface toeval,
                                          MProbProgMode mode);
