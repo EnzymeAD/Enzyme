@@ -22,31 +22,30 @@ module {
   }
 }
 
-// CHECK: func.func @test.simulate(%[[RNG:.*]]: tensor<2xui64>, %[[MEAN:.*]]: tensor<f64>, %[[STD:.*]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
-// CHECK-NEXT:     %[[CST:.*]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:     %[[TRACE:.*]] = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:     %[[N1:.*]]:4 = call @normal(%[[RNG]], %[[MEAN]], %[[STD]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSampleToTrace(%[[N1]]#0 : tensor<f64>) into %[[TRACE]] {symbol = #enzyme.symbol<1>}
-// CHECK-NEXT:     %[[LP1:.*]] = call @logpdf(%[[N1]]#0, %[[MEAN]], %[[STD]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:     %[[SUM1:.*]] = arith.addf %[[LP1]], %[[CST]] : tensor<f64>
-// CHECK-NEXT:     %[[TN:.*]]:5 = call @two_normals(%[[N1]]#1, %[[N1]]#0, %[[STD]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSampleToTrace(%[[TN]]#0, %[[TN]]#1 : tensor<f64>, tensor<f64>) into %[[TRACE]] {symbol = #enzyme.symbol<2>}
-// CHECK-NEXT:     %[[SUB:.*]]:7 = call @two_normals.simulate(%[[N1]]#1, %[[N1]]#0, %[[STD]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSubtrace %[[SUB]]#0 into %[[TRACE]]
-// CHECK-NEXT:     %[[SUM2:.*]] = arith.addf %[[SUM1]], %[[SUB]]#1 : tensor<f64>
-// CHECK-NEXT:     return %[[TRACE]], %[[SUM2]], %[[TN]]#0, %[[TN]]#1, %[[TN]]#2, %[[TN]]#3, %[[TN]]#4 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
+// CHECK:   func.func @test.simulate(%arg0: tensor<2xui64>, %arg1: tensor<f64>, %arg2: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
+// CHECK-NEXT:     %cst = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-NEXT:     %0 = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:     %1:4 = call @normal(%arg0, %arg1, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+// CHECK-NEXT:     %2 = call @logpdf(%1#0, %arg1, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:     %3 = arith.addf %2, %cst : tensor<f64>
+// CHECK-NEXT:     enzyme.addSampleToTrace(%1#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<1>}
+// CHECK-NEXT:     %4:7 = call @two_normals.simulate(%1#1, %1#0, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+// CHECK-NEXT:     enzyme.addSubtrace %4#0 into %0
+// CHECK-NEXT:     %5 = arith.addf %3, %4#1 : tensor<f64>
+// CHECK-NEXT:     enzyme.addSampleToTrace(%4#2, %4#3 : tensor<f64>, tensor<f64>) into %0 {symbol = #enzyme.symbol<2>}
+// CHECK-NEXT:     return %0, %5, %4#2, %4#3, %4#4, %4#5, %4#6 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
 // CHECK-NEXT:   }
 
-// CHECK: func.func @two_normals.simulate(%[[RNG2:.*]]: tensor<2xui64>, %[[MEAN2:.*]]: tensor<f64>, %[[STD2:.*]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
-// CHECK-NEXT:     %[[CST2:.*]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:     %[[TRACE2:.*]] = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:     %[[N1TN:.*]]:4 = call @normal(%[[RNG2]], %[[MEAN2]], %[[STD2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSampleToTrace(%[[N1TN]]#0 : tensor<f64>) into %[[TRACE2]] {symbol = #enzyme.symbol<3>}
-// CHECK-NEXT:     %[[LP1TN:.*]] = call @logpdf(%[[N1TN]]#0, %[[MEAN2]], %[[STD2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:     %[[SUM1TN:.*]] = arith.addf %[[LP1TN]], %[[CST2]] : tensor<f64>
-// CHECK-NEXT:     %[[N2TN:.*]]:4 = call @normal(%[[N1TN]]#1, %[[MEAN2]], %[[STD2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSampleToTrace(%[[N2TN]]#0 : tensor<f64>) into %[[TRACE2]] {symbol = #enzyme.symbol<4>}
-// CHECK-NEXT:     %[[LP2TN:.*]] = call @logpdf(%[[N2TN]]#0, %[[MEAN2]], %[[STD2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:     %[[SUM2TN:.*]] = arith.addf %[[SUM1TN]], %[[LP2TN]] : tensor<f64>
-// CHECK-NEXT:     return %[[TRACE2]], %[[SUM2TN]], %[[N1TN]]#0, %[[N2TN]]#0, %[[N2TN]]#1, %[[N2TN]]#2, %[[N2TN]]#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
+// CHECK:   func.func @two_normals.simulate(%arg0: tensor<2xui64>, %arg1: tensor<f64>, %arg2: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
+// CHECK-NEXT:     %cst = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-NEXT:     %0 = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:     %1:4 = call @normal(%arg0, %arg1, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+// CHECK-NEXT:     %2 = call @logpdf(%1#0, %arg1, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:     %3 = arith.addf %2, %cst : tensor<f64>
+// CHECK-NEXT:     enzyme.addSampleToTrace(%1#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<3>}
+// CHECK-NEXT:     %4:4 = call @normal(%1#1, %arg1, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+// CHECK-NEXT:     %5 = call @logpdf(%4#0, %arg1, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:     %6 = arith.addf %3, %5 : tensor<f64>
+// CHECK-NEXT:     enzyme.addSampleToTrace(%4#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<4>}
+// CHECK-NEXT:     return %0, %6, %1#0, %4#0, %4#1, %4#2, %4#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
 // CHECK-NEXT:   }
