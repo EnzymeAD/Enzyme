@@ -131,38 +131,30 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        // 1. Replace sample op uses with call to the distribution / generative
-        // function.
-        auto sampledFn =
-            cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                sampleOp, sampleOp.getFnAttr()));
-        auto fnCall = rewriter.create<func::CallOp>(
-            sampleOp.getLoc(), sampledFn.getName(), sampledFn.getResultTypes(),
-            sampleOp.getInputs());
-        sampleOp.replaceAllUsesWith(fnCall);
+        SmallVector<Value> sampledValues; // Values to replace uses of sample op
+        SmallVector<Value> tracedOutputs; // Values to add to trace
+        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
-        // 2. Add traced sampled values to trace.
-        if (auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr()) {
-          SmallVector<Value> tracedOutputs;
-          for (auto idx : tracedOutputIndices.asArrayRef())
-            tracedOutputs.push_back(fnCall.getResult(idx));
+        if (isDistribution) {
+          // A1. Distribution function: replace sample op uses with call to the
+          // distribution function.
+          auto distFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getFnAttr()));
 
-          rewriter.create<enzyme::AddSampleToTraceOp>(
-              sampleOp.getLoc(),
-              /*trace*/ putils->getTrace(),
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ tracedOutputs);
-        }
+          auto distCall = rewriter.create<func::CallOp>(
+              sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+              sampleOp.getInputs());
 
-        // 3. Accumulate weight.
-        // * If there is a logpdf attribute, consider `fn` a distribution
-        // function. Call logpdf on the sampled values and accumulate the
-        // weight.
-        // * If there is no logpdf attribute, consider `fn` a generative
-        // function. Generate a simulate op (to be rewritten further) to produce
-        // a subtrace and accumulate the returned weight.
-        if (sampleOp.getLogpdfAttr()) {
-          // Distribution function case: directly lowering.
+          sampledValues.append(distCall.getResults().begin(),
+                               distCall.getResults().end());
+
+          if (auto tracedOutputIndices =
+                  sampleOp.getTracedOutputIndicesAttr()) {
+            for (auto i : tracedOutputIndices.asArrayRef())
+              tracedOutputs.push_back(distCall.getResult(i));
+          }
+
           auto logpdfFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getLogpdfAttr()));
@@ -170,10 +162,10 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           SmallVector<Value> logpdfOperands;
           if (auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr())
             for (auto idx : tracedOutputIndices.asArrayRef())
-              logpdfOperands.push_back(fnCall.getResult(idx));
+              logpdfOperands.push_back(sampledValues[idx]);
           if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
             for (auto idx : tracedInputIndices.asArrayRef())
-              logpdfOperands.push_back(fnCall.getOperand(idx));
+              logpdfOperands.push_back(sampleOp.getOperand(idx));
 
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
             sampleOp.emitError("ProbProg: failed to construct logpdf call; "
@@ -181,15 +173,16 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             return WalkResult::interrupt();
           }
 
+          // A2. Compute and accumulate weight.
           auto logpdf = rewriter.create<func::CallOp>(
               sampleOp.getLoc(), logpdfFn.getName(), logpdfFn.getResultTypes(),
               logpdfOperands);
-
           weightAccumulator = rewriter.create<arith::AddFOp>(
               sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
         } else {
-          // Generative function case: generate a simulate op to produce a
-          // subtrace and accumulate the returned weight.
+          // B1. Generative functions: generate a simulate op that will itself
+          // be lowered in a subsequent rewrite. No direct call to the
+          // generative function should be emitted here.
           auto simulateOp = rewriter.create<enzyme::SimulateOp>(
               sampleOp.getLoc(),
               /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
@@ -199,14 +192,41 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               /*inputs*/ sampleOp.getInputs(),
               /*name*/ sampleOp.getNameAttr());
 
+          // The first two results of simulateOp are the subtrace and weight.
+          // The remaining results correspond 1-to-1 with the original sample
+          // op's results. We will replace uses of the sample op with these
+          // values in the next step.
+          for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
+            sampledValues.push_back(simulateOp->getResult(i + 2));
+
+          if (auto tracedOutputIndices =
+                  sampleOp.getTracedOutputIndicesAttr()) {
+            for (auto i : tracedOutputIndices.asArrayRef())
+              tracedOutputs.push_back(simulateOp->getResult(i + 2));
+          }
+
+          // B2. Add subtrace to trace.
           rewriter.create<enzyme::AddSubtraceOp>(
               sampleOp.getLoc(),
               /*subtrace*/ simulateOp->getResult(0),
               /*trace*/ putils->getTrace());
 
+          // B3. Accumulate weight returned by simulateOp.
           weightAccumulator = rewriter.create<arith::AddFOp>(
               sampleOp.getLoc(), weightAccumulator, simulateOp->getResult(1));
         }
+
+        // C. Add traced sampled values to trace (common for both cases).
+        if (!tracedOutputs.empty()) {
+          rewriter.create<enzyme::AddSampleToTraceOp>(
+              sampleOp.getLoc(),
+              /*trace*/ putils->getTrace(),
+              /*symbol*/ sampleOp.getSymbolAttr(),
+              /*sample*/ tracedOutputs);
+        }
+
+        // D. Replace uses of the original sample op with the new values.
+        sampleOp.replaceAllUsesWith(sampledValues);
 
         toErase.push_back(sampleOp);
         return WalkResult::advance();
@@ -220,7 +240,8 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      // Rewrite returns to include (current) trace and weight.
+      // E. Rewrite returns to include (current) trace and weight (common for
+      // both cases).
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
