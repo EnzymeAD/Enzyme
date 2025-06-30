@@ -30,11 +30,9 @@ public:
   IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
-private:
   Block *initializationBlock;
   Value trace;
 
-public:
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,

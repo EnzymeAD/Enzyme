@@ -298,7 +298,8 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let description = [{
   Simulate a probabilistic function to generate execution trace
   by replacing all SampleOps with distribution calls and recording
-  all sampled values into the trace.
+  all sampled values into the trace. This op returns the trace and
+  the weight along with the original outputs.
   }];
 
   let arguments = (ins
@@ -307,7 +308,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -340,6 +341,24 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
 
   let assemblyFormat = [{
     `(` $sample `:` type($sample) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
+  let summary = "Insert a subtrace into a parent trace";
+  let description = [{
+  Insert a subtrace into a parent trace.
+  }];
+
+  let arguments = (ins
+    Trace:$subtrace,
+    Trace:$trace
+  );
+
+  let results = (outs );
+
+  let assemblyFormat = [{
+    $subtrace `into` $trace attr-dict
   }];
 }
 

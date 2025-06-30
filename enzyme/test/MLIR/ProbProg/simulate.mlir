@@ -10,7 +10,7 @@ module {
   }
 
   func.func @simulate(%mean : f64, %stddev : f64) -> f64 {
-    %trace, %result = enzyme.simulate @test(%mean, %stddev) { name = "test" } : (f64, f64) -> (!enzyme.Trace, f64)
+    %trace, %weight, %result = enzyme.simulate @test(%mean, %stddev) { name = "test" } : (f64, f64) -> (!enzyme.Trace, tensor<f64>, f64)
     return %result : f64
   }
 }
