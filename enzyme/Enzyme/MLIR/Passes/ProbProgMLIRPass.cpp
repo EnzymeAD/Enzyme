@@ -209,6 +209,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           rewriter.create<enzyme::AddSubtraceOp>(
               sampleOp.getLoc(),
               /*subtrace*/ simulateOp->getResult(0),
+              /*symbol*/ sampleOp.getSymbolAttr(),
               /*trace*/ putils->getTrace());
 
           // B3. Accumulate weight returned by simulateOp.

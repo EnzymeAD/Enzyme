@@ -352,6 +352,7 @@ def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
 
   let arguments = (ins
     Trace:$subtrace,
+    SymbolAttr:$symbol,
     Trace:$trace
   );
 

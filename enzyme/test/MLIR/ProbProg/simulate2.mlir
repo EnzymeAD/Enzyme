@@ -30,7 +30,7 @@ module {
 // CHECK-NEXT:     %3 = arith.addf %2, %cst : tensor<f64>
 // CHECK-NEXT:     enzyme.addSampleToTrace(%1#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<1>}
 // CHECK-NEXT:     %4:7 = call @two_normals.simulate(%1#1, %1#0, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     enzyme.addSubtrace %4#0 into %0
+// CHECK-NEXT:     enzyme.addSubtrace %4#0 into %0 {symbol = #enzyme.symbol<2>}
 // CHECK-NEXT:     %5 = arith.addf %3, %4#1 : tensor<f64>
 // CHECK-NEXT:     enzyme.addSampleToTrace(%4#2, %4#3 : tensor<f64>, tensor<f64>) into %0 {symbol = #enzyme.symbol<2>}
 // CHECK-NEXT:     return %0, %5, %4#2, %4#3, %4#4, %4#5, %4#6 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
