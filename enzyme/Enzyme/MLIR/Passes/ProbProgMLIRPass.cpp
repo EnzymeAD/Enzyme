@@ -308,6 +308,4 @@ void ProbProgPass::runOnOperation() {
       return;
     }
   }
-
-  getOperation()->dump();
 }
