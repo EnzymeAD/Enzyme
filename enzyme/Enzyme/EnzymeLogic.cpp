@@ -6588,6 +6588,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                         "vprintf",
                         "fprintf",
                         "fputc",
+                        "getrusage",
                          "memchr",
                          "time",
                          "strlen",
