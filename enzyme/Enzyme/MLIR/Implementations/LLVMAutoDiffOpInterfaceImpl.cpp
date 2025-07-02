@@ -68,6 +68,12 @@ public:
     // TODO inspect val and memset corresponding size
     return failure();
   }
+  
+  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    // TODO inspect val and memset corresponding size
+    return failure();
+  }
 };
 } // namespace
 
