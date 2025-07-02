@@ -2573,6 +2573,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // Functions that only modify pointers and don't allocate memory,
     // needs to be run on shadow in primal
+    // 1) STL red-black tree rebalancing function in maps
     if (funcName == "_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_"
                     "node_baseS0_RS_") {
       if (Mode == DerivativeMode::ReverseModeGradient) {
@@ -2580,6 +2581,44 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         return true;
       }
       if (gutils->isConstantValue(call.getArgOperand(3)))
+        return true;
+      SmallVector<Value *, 2> args;
+      for (auto &arg : call.args()) {
+        if (gutils->isConstantValue(arg))
+          args.push_back(gutils->getNewFromOriginal(arg));
+        else
+          args.push_back(gutils->invertPointerM(arg, BuilderZ));
+      }
+      BuilderZ.CreateCall(called, args);
+      return true;
+    }
+
+    // 2) STL std::list insertion
+    if (funcName == "_ZNSt8__detail15_List_node_base7_M_hookEPS0_") {
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+      if (gutils->isConstantValue(call.getArgOperand(0)))
+        return true;
+      SmallVector<Value *, 2> args;
+      for (auto &arg : call.args()) {
+        if (gutils->isConstantValue(arg))
+          args.push_back(gutils->getNewFromOriginal(arg));
+        else
+          args.push_back(gutils->invertPointerM(arg, BuilderZ));
+      }
+      BuilderZ.CreateCall(called, args);
+      return true;
+    }
+
+    // 3) STL std::list transfer (splice operations)
+    if (funcName == "_ZNSt8__detail15_List_node_base11_M_transferEPS0_S1_") {
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+      if (gutils->isConstantValue(call.getArgOperand(0)))
         return true;
       SmallVector<Value *, 2> args;
       for (auto &arg : call.args()) {
