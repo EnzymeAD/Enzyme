@@ -271,16 +271,18 @@ inline bool is_value_needed_in_reverse(
       if (isStored) {
         for (auto pair : gutils->rematerializableAllocations) {
           // If already decided to cache the whole allocation, ignore
-          if (gutils->needsCacheWholeAllocation(pair.first))
+          if (gutils->needsCacheWholeAllocation(pair.first)) {
             continue;
+          }
 
           // If caching the outer allocation and have already set that this is
           // not needed return early. This is necessary to avoid unnecessarily
           // deciding stored values are needed if we have already decided to
           // cache the whole allocation.
           auto found = seen.find(std::make_pair(pair.first, QueryType::Primal));
-          if (found != seen.end() && !found->second)
+          if (found != seen.end() && !found->second) {
             continue;
+          }
 
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,
@@ -308,6 +310,15 @@ inline bool is_value_needed_in_reverse(
                                << *pair.loadCall << "\n";
                 return seen[idx] = true;
               }
+
+            if (is_value_needed_in_reverse<VT>(gutils, pair.first, mode, seen,
+                                               oldUnreachable)) {
+              if (EnzymePrintDiffUse)
+                llvm::errs()
+                    << " Need: " << to_string(VT) << " of " << *inst
+                    << " in reverse as rematalloc " << *pair.first << "\n";
+              return seen[idx] = true;
+            }
           }
         }
       }
