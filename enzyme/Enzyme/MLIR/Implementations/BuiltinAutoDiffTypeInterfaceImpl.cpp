@@ -65,8 +65,14 @@ public:
   }
 
   bool isMutable(Type self) const { return false; }
+
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
+    return failure();
+  }
+
+  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
+                       Value val) const {
     return failure();
   }
 
@@ -134,6 +140,10 @@ public:
     return failure();
   }
 
+  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
+                       Value val) const {
+    return failure();
+  }
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -179,6 +189,10 @@ public:
     return failure();
   }
 
+  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
+                       Value val) const {
+    return failure();
+  }
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -213,6 +227,11 @@ public:
   bool isMutable(Type self) const { return false; }
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
+    return failure();
+  }
+
+  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
+                       Value val) const {
     return failure();
   }
 
