@@ -22,10 +22,10 @@ module {
 // CHECK-NEXT:     %1:4 = call @normal(%arg0, %arg1, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
 // CHECK-NEXT:     %2 = call @logpdf(%1#0, %arg1, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:     %3 = arith.addf %2, %cst : tensor<f64>
-// CHECK-NEXT:     enzyme.addSampleToTrace(%1#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<1>}
-// CHECK-NEXT:     %4:4 = call @normal(%1#1, %1#0, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
-// CHECK-NEXT:     %5 = call @logpdf(%4#0, %1#0, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:     %6 = arith.addf %3, %5 : tensor<f64>
-// CHECK-NEXT:     enzyme.addSampleToTrace(%4#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<2>}
-// CHECK-NEXT:     return %0, %6, %4#0, %4#1, %4#2, %4#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
+// CHECK-NEXT:     %4 = enzyme.addSampleToTrace(%1#0 : tensor<f64>) into %0 {symbol = #enzyme.symbol<1>}
+// CHECK-NEXT:     %5:4 = call @normal(%1#1, %1#0, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+// CHECK-NEXT:     %6 = call @logpdf(%5#0, %1#0, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT:     %7 = arith.addf %3, %6 : tensor<f64>
+// CHECK-NEXT:     %8 = enzyme.addSampleToTrace(%5#0 : tensor<f64>) into %4 {symbol = #enzyme.symbol<2>}
+// CHECK-NEXT:     return %8, %7, %5#0, %5#1, %5#2, %5#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
 // CHECK-NEXT:   }

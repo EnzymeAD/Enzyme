@@ -337,7 +337,7 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
     Variadic<AnyType>:$sample
   );
 
-  let results = (outs );
+  let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
     `(` $sample `:` type($sample) `)` `into` $trace attr-dict
@@ -356,7 +356,7 @@ def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
     Trace:$trace
   );
 
-  let results = (outs );
+  let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
     $subtrace `into` $trace attr-dict

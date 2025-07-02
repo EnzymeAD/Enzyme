@@ -125,6 +125,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           putils->initializationBlock->begin()->getLoc(), tensorType,
           DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
+      Value currTrace = putils->getTrace();
 
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
@@ -206,11 +207,13 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           }
 
           // B2. Add subtrace to trace.
-          rewriter.create<enzyme::AddSubtraceOp>(
+          auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
               sampleOp.getLoc(),
+              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*subtrace*/ simulateOp->getResult(0),
               /*symbol*/ sampleOp.getSymbolAttr(),
-              /*trace*/ putils->getTrace());
+              /*trace*/ currTrace);
+          currTrace = addSubtraceOp.getUpdatedTrace();
 
           // B3. Accumulate weight returned by simulateOp.
           weightAccumulator = rewriter.create<arith::AddFOp>(
@@ -219,11 +222,13 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
         // C. Add traced sampled values to trace (common for both cases).
         if (!tracedOutputs.empty()) {
-          rewriter.create<enzyme::AddSampleToTraceOp>(
+          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
               sampleOp.getLoc(),
-              /*trace*/ putils->getTrace(),
+              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
+              /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
               /*sample*/ tracedOutputs);
+          currTrace = addSampleToTraceOp.getUpdatedTrace();
         }
 
         // D. Replace uses of the original sample op with the new values.
@@ -247,7 +252,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(putils->getTrace());
+        newRetVals.push_back(currTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
