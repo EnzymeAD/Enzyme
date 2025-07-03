@@ -456,6 +456,40 @@ struct ForOpEnzymeOpsRemover
   }
 };
 
+struct ForOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<ForOpADDataFlow, scf::ForOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto forOp = cast<scf::ForOp>(op);
+    return {
+        forOp->getOperand(res.getResultNumber() + 3),
+        forOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    auto forOp = cast<scf::ForOp>(op);
+    auto idx = arg.getArgNumber() - forOp.getNumInductionVars();
+    return {forOp->getOperand(idx + 3),
+            forOp.getBody()->getTerminator()->getOperand(idx)};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto forOp = cast<scf::ForOp>(op);
+    SmallVector<Value> sv;
+
+    for (auto &&[res, arg, barg] :
+         llvm::zip_equal(forOp->getResults(), term->getOperands(),
+                         forOp.getBody()->getArguments().drop_front())) {
+      if (arg == val) {
+        sv.push_back(res);
+        sv.push_back(barg);
+      }
+    }
+
+    return sv;
+  }
+};
+
 struct ForOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
                                                        scf::ForOp> {
@@ -851,5 +885,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     registerInterfaces(context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
+    scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
   });
 }
