@@ -503,7 +503,11 @@ public:
       auto numIters = getConstantNumberOfIterations(forOp).value();
       auto nInner = std::sqrt(numIters), nOuter = nInner;
 
-      assert(nInner * nOuter == numIters);
+      if (nInner * nOuter != numIters) {
+        op->emitError() << "checkpointing: unsupported number of iteration: "
+                        << numIters << ". Try disabling checkpointing.\n";
+        return failure();
+      }
 
       auto numIterArgs = forOp.getNumRegionIterArgs();
 
@@ -745,7 +749,8 @@ public:
       auto numIters = getConstantNumberOfIterations(forOp).value();
       auto nInner = std::sqrt(numIters), nOuter = nInner;
 
-      assert(nInner * nOuter == numIters);
+      if (nInner * nOuter != numIters)
+        return {};
 
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
