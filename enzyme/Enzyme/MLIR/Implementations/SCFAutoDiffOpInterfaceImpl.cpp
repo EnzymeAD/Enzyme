@@ -564,6 +564,228 @@ struct ForOpInterfaceReverse
   }
 };
 
+struct WhileOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<WhileOpInterfaceReverse,
+                                                       scf::WhileOp> {
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    OpBuilder::InsertionGuard guard(builder);
+
+    bool valid = true;
+
+    Value numIters = gutils->popCache(caches[0], builder);
+
+    SmallVector<bool> operandsActive;
+    SmallVector<Value> incomingGradients;
+
+    for (auto [operand, result, argBefore, argAfter] :
+         llvm::zip_equal(op->getOperands(), op->getResults(),
+                         whileOp.getBeforeBody()->getArguments(),
+                         whileOp.getAfterBody()->getArguments())) {
+      bool active = !gutils->isConstantValue(operand) ||
+                    !gutils->isConstantValue(result) ||
+                    !gutils->isConstantValue(argBefore) ||
+                    !gutils->isConstantValue(argAfter);
+
+      operandsActive.push_back(active);
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(result, builder));
+        if (!gutils->isConstantValue(result))
+          gutils->zeroDiffe(result, builder);
+      }
+    }
+
+    auto forOp = builder.create<scf::ForOp>(
+        op->getLoc(),
+        builder.create<arith::ConstantOp>(
+            op->getLoc(), IntegerAttr::get(numIters.getType(), 0)),
+        numIters,
+        builder.create<arith::ConstantOp>(
+            op->getLoc(), IntegerAttr::get(numIters.getType(), 1)),
+        incomingGradients);
+
+    SmallVector<Value> outgoingGradients;
+
+    auto zeroAllDiffes = [&](Block *oBB, OpBuilder &builder) {
+      // All values defined in the body should have no use outside this block
+      // therefore we can set their diffe to zero upon entering the reverse
+      // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
+      for (auto operand : oBB->getArguments()) {
+        if (!gutils->isConstantValue(operand)) {
+          gutils->zeroDiffe(operand, builder);
+        }
+      }
+
+      for (auto &it : oBB->getOperations()) {
+        for (auto res : it.getResults()) {
+          if (!gutils->isConstantValue(res)) {
+            gutils->zeroDiffe(res, builder);
+          }
+        }
+      }
+    };
+
+    auto makeReverse = [&](Block *oBB, OpBuilder &builder) {
+      bool valid = true;
+      auto first = oBB->rbegin();
+      first++; // skip terminator
+      auto last = oBB->rend();
+      for (auto it = first; it != last; ++it) {
+        Operation *op = &*it;
+        valid &= gutils->Logic.visitChild(op, builder, gutils).succeeded();
+      }
+      return valid;
+    };
+
+    builder.setInsertionPointToEnd(forOp.getBody());
+    {
+      Block *oBB = whileOp.getBeforeBody();
+      Operation *term = oBB->getTerminator();
+
+      zeroAllDiffes(oBB, builder);
+
+      unsigned revIdx = 1;
+      for (auto [active, operand] :
+           llvm::zip_equal(operandsActive, term->getOperands().drop_front())) {
+        if (active) {
+          gutils->addToDiffe(operand, forOp.getBody()->getArgument(revIdx),
+                             builder);
+          revIdx++;
+        }
+      }
+
+      valid &= makeReverse(oBB, builder);
+
+      for (auto &&[active, arg] :
+           llvm::zip(operandsActive, oBB->getArguments())) {
+        if (active) {
+          outgoingGradients.push_back(gutils->diffe(arg, builder));
+          if (!gutils->isConstantValue(arg))
+            gutils->zeroDiffe(arg, builder);
+        }
+      }
+    }
+
+    // In the forward, if this is the last iteration, then the after body is not
+    // executed.
+    //
+    // In the reverse, the after reverse is not executed for the first
+    // iteration.
+    Value isLastIteration = builder.create<arith::CmpIOp>(
+        whileOp.getBeforeBody()->getTerminator()->getLoc(),
+        arith::CmpIPredicate::eq, forOp.getInductionVar(),
+        builder.create<arith::ConstantIndexOp>(
+            whileOp.getBeforeBody()->getTerminator()->getLoc(), 0));
+    auto ifOp = builder.create<scf::IfOp>(
+        op->getLoc(), ValueRange(incomingGradients).getTypes(), isLastIteration,
+        /*withElseRegion*/ true);
+
+    {
+      builder.setInsertionPointToEnd(ifOp.thenBlock());
+      builder.create<scf::YieldOp>(op->getLoc(), outgoingGradients);
+    }
+
+    {
+      Block *oBB = whileOp.getAfterBody();
+      Operation *term = oBB->getTerminator();
+      builder.setInsertionPointToEnd(ifOp.elseBlock());
+
+      zeroAllDiffes(oBB, builder);
+
+      unsigned revIdx = 0;
+      for (auto [active, operand] :
+           llvm::zip_equal(operandsActive, term->getOperands())) {
+        if (active) {
+          gutils->addToDiffe(operand, outgoingGradients[revIdx], builder);
+          revIdx++;
+        }
+      }
+
+      valid &= makeReverse(oBB, builder);
+
+      outgoingGradients.clear();
+      for (auto &&[active, arg] :
+           llvm::zip(operandsActive, oBB->getArguments())) {
+        if (active) {
+          outgoingGradients.push_back(gutils->diffe(arg, builder));
+          if (!gutils->isConstantValue(arg))
+            gutils->zeroDiffe(arg, builder);
+        }
+      }
+
+      builder.create<scf::YieldOp>(op->getLoc(), outgoingGradients);
+    }
+
+    builder.setInsertionPointToEnd(forOp.getBody());
+
+    builder.create<scf::YieldOp>(op->getLoc(), ifOp.getResults());
+
+    builder.setInsertionPointAfter(forOp);
+
+    int revIdx = 0;
+    for (auto &&[active, arg] : llvm::zip(operandsActive, op->getOperands())) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, forOp->getResult(revIdx), builder);
+        revIdx++;
+      }
+    }
+
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    // Cache the number of iterations of the *before* block.
+    auto whileOp = cast<scf::WhileOp>(op);
+
+    auto newOp = cast<scf::WhileOp>(gutils->getNewFromOriginal(op));
+    OpBuilder builder(newOp);
+
+    Block *before = newOp.getBeforeBody(), *after = newOp.getAfterBody();
+
+    auto zero = builder.create<arith::ConstantIndexOp>(op->getLoc(), 0);
+
+    Value inBefore = before->addArgument(zero.getType(), zero.getLoc());
+    Operation *beforeTerm = before->getTerminator();
+    builder.setInsertionPoint(beforeTerm);
+    inBefore = builder.create<arith::AddIOp>(
+        op->getLoc(), inBefore,
+        builder.create<arith::ConstantIndexOp>(op->getLoc(), 1));
+    beforeTerm->insertOperands(beforeTerm->getNumOperands(), inBefore);
+
+    Value inAfter = after->addArgument(zero.getType(), zero.getLoc());
+    Operation *afterTerm = after->getTerminator();
+    afterTerm->insertOperands(afterTerm->getNumOperands(), inAfter);
+
+    SmallVector<Value> initArgs(newOp->getOperands().begin(),
+                                newOp->getOperands().end());
+    initArgs.push_back(zero);
+
+    builder.setInsertionPoint(newOp);
+    auto newWhile = builder.create<scf::WhileOp>(
+        newOp->getLoc(), ValueRange(initArgs).getTypes(), initArgs);
+
+    newWhile.getBefore().takeBody(newOp.getBefore());
+    newWhile.getAfter().takeBody(newOp.getAfter());
+
+    Value numItersCache = gutils->initAndPushCache(
+        newWhile->getResult(newWhile->getNumResults() - 1), builder);
+
+    gutils->replaceOrigOpWith(op, newWhile->getResults().drop_back());
+    gutils->erase(newOp);
+    gutils->originalToNewFnOps[op] = newWhile;
+
+    return {numItersCache};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
@@ -572,5 +794,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     registerInterfaces(context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
+    scf::WhileOp::attachInterface<WhileOpInterfaceReverse>(*context);
   });
 }
