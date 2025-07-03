@@ -256,8 +256,114 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
 
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
+  let summary = "Sample from a distribution";
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf,
+    OptionalAttr<UI64Attr>:$symbol,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
+    OptionalAttr<DenseI64ArrayAttr>:$alias_map,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Simulate a probabilistic function to generate execution trace";
+  let description = [{
+  Simulate a probabilistic function to generate execution trace
+  by replacing all SampleOps with distribution calls and inserting
+  sampled values into the choice map.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    UI64Attr:$trace,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+  let summary = "Add a sampled value into the execution trace";
+  let description = [{
+  Add a sampled value into the execution trace.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$sample,
+    UI64Attr:$symbol,
+    UI64Attr:$trace,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs );
+
+  let assemblyFormat = [{
+    $sample attr-dict `:` functional-type($sample, results)
+  }];
+}
+
+def ConstraintAttr : Enzyme_Attr<"Constraint", "constraint"> {
+  let summary = "In probabilistic programming, mapping a symbol to a constraint value.";
+  let description = [{
+    This attribute represents a symbol/value pair inside the constraints dict
+    optionally attached to `enzyme.generate` op.  The `symbol` field should be
+    an ui64.  The `values` field is an array attribute containing constraint values
+    in the same order as the SampleOp's traced output indices.
+  }];
+
+  let parameters = (ins "uint64_t":$symbol, "ArrayAttr":$values);
+
+  let assemblyFormat = "`<` `symbol` `=` $symbol `,` `values` `=` $values `>`";
+}
+
+def UntracedCallOp : Enzyme_Op<"untracedCall"> {
+  let summary = "Call a probabilistic function without tracing";
+  let description = [{
+  Call a probabilistic function without tracing.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+  
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Generate an execution trace and weight from a probabilistic function";
+  let description = [{
+  Generate an execution trace and weight from a probabilistic function. If a constraint dict
+  is provided, we will use the corresponding constraint values instead of generating new samples.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    UI64Attr:$trace,
+    OptionalAttr<ArrayAttr>:$constraints,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
