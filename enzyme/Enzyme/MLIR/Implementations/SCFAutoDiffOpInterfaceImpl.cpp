@@ -564,6 +564,53 @@ struct ForOpInterfaceReverse
   }
 };
 
+struct WhileOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<WhileOpADDataFlow,
+                                                  scf::WhileOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    return {whileOp.getBeforeBody()->getTerminator()->getOperand(
+        res.getResultNumber() + 1)};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    if (arg.getOwner() == whileOp.getBeforeBody()) {
+      return {whileOp->getOperand(arg.getArgNumber()),
+              whileOp.getAfterBody()->getTerminator()->getOperand(
+                  arg.getArgNumber())};
+    }
+    return {whileOp.getBeforeBody()->getTerminator()->getOperand(
+        arg.getArgNumber() + 1)};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    SmallVector<Value> sv;
+
+    if (term->getBlock() == whileOp.getBeforeBody()) {
+      for (auto &&[res, arg, barg] : llvm::zip_equal(
+               whileOp->getResults(), term->getOperands().drop_front(),
+               whileOp.getAfterBody()->getArguments())) {
+        if (arg == val) {
+          sv.push_back(res);
+          sv.push_back(barg);
+        }
+      }
+    } else if (term->getBlock() == whileOp.getAfterBody()) {
+      for (auto &&[arg, barg] : llvm::zip_equal(
+               term->getOperands(), whileOp.getBeforeBody()->getArguments())) {
+        if (arg == val) {
+          sv.push_back(barg);
+        }
+      }
+    }
+
+    return sv;
+  }
+};
+
 struct WhileOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<WhileOpInterfaceReverse,
                                                        scf::WhileOp> {
@@ -795,5 +842,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::WhileOp::attachInterface<WhileOpInterfaceReverse>(*context);
+    scf::WhileOp::attachInterface<WhileOpADDataFlow>(*context);
   });
 }
