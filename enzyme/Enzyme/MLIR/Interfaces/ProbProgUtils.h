@@ -30,10 +30,9 @@ public:
   IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
-private:
   Block *initializationBlock;
+  Value trace;
 
-public:
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
                  IRMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
@@ -42,6 +41,8 @@ public:
         originalToNewFn(originalToNewFn_),
         originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
+
+  Value getTrace();
 
   static MProbProgUtils *CreateFromClone(FunctionOpInterface toeval,
                                          MProbProgMode mode);

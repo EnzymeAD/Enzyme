@@ -254,6 +254,47 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   ];
 }
 
+def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
+    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+// Probabilistic programming
+def Trace : Enzyme_Type<"Trace"> {
+  let summary = "Execution trace for probabilistic programs";
+  let description = [{
+    Reference: https://www.gen.dev/docs/stable/tutorials/basics/gfi/#Traces
+    Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
+    and various other information from executing a traced probabilistic function.
+  }];
+  let mnemonic = "Trace";
+}
+
+def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
+  let summary = "Symbol associated with a Sample op";
+  let description = [{
+  Symbol associated with a Sample op.
+  }];
+  let parameters = (ins "uint64_t":$ptr);
+  let assemblyFormat = "`<` $ptr `>`";
+}
+
+def SymbolArrayAttr : TypedArrayAttrBase<SymbolAttr, "Array of symbols">;
+
+def Constraint : Enzyme_Type<"Constraint"> {
+  let summary = "A mutable storage mapping symbols to value constraints";
+  let description = [{
+  A mutable storage mapping symbols to value constraints.
+  }];
+  let mnemonic = "Constraint";
+}
+
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
@@ -261,7 +302,7 @@ def SampleOp : Enzyme_Op<"sample",
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
-    OptionalAttr<UI64Attr>:$symbol,
+    OptionalAttr<SymbolAttr>:$symbol,
     OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
     OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     OptionalAttr<DenseI64ArrayAttr>:$alias_map,
@@ -272,62 +313,6 @@ def SampleOp : Enzyme_Op<"sample",
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
-}
-
-def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Simulate a probabilistic function to generate execution trace";
-  let description = [{
-  Simulate a probabilistic function to generate execution trace
-  by replacing all SampleOps with distribution calls and inserting
-  sampled values into the choice map.
-  }];
-
-  let arguments = (ins
-    FlatSymbolRefAttr:$fn,
-    Variadic<AnyType>:$inputs,
-    UI64Attr:$trace,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
-def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
-  let summary = "Add a sampled value into the execution trace";
-  let description = [{
-  Add a sampled value into the execution trace.
-  }];
-
-  let arguments = (ins
-    Variadic<AnyType>:$sample,
-    UI64Attr:$symbol,
-    UI64Attr:$trace,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs );
-
-  let assemblyFormat = [{
-    $sample attr-dict `:` functional-type($sample, results)
-  }];
-}
-
-def ConstraintAttr : Enzyme_Attr<"Constraint", "constraint"> {
-  let summary = "In probabilistic programming, mapping a symbol to a constraint value.";
-  let description = [{
-    This attribute represents a symbol/value pair inside the constraints dict
-    optionally attached to `enzyme.generate` op.  The `symbol` field should be
-    an ui64.  The `values` field is an array attribute containing constraint values
-    in the same order as the SampleOp's traced output indices.
-  }];
-
-  let parameters = (ins "uint64_t":$symbol, "ArrayAttr":$values);
-
-  let assemblyFormat = "`<` `symbol` `=` $symbol `,` `values` `=` $values `>`";
 }
 
 def UntracedCallOp : Enzyme_Op<"untracedCall"> {
@@ -349,6 +334,29 @@ def UntracedCallOp : Enzyme_Op<"untracedCall"> {
   }];
 }
 
+def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Simulate a probabilistic function to generate execution trace";
+  let description = [{
+  Simulate a probabilistic function to generate execution trace
+  by replacing all SampleOps with distribution calls and recording
+  all sampled values into the trace. This op returns the trace and
+  the weight along with the original outputs.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Generate an execution trace and weight from a probabilistic function";
   let description = [{
@@ -359,26 +367,100 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    UI64Attr:$trace,
-    OptionalAttr<ArrayAttr>:$constraints,
+    SymbolArrayAttr:$constrained_symbols,
+    Constraint:$constraint,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
   }];
 }
 
-def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
-    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
-  let arguments = (ins AnyType:$input);
-  let results = (outs AnyType:$output);
+def InitTraceOp : Enzyme_Op<"initTrace"> {
+  let summary = "Initialize an execution trace for a probabilistic function";
+  let description = [{
+    Initialize an execution trace for a probabilistic function.
+  }];
+  let arguments = (ins );
+  let results = (outs Trace:$trace);
+  let assemblyFormat = "attr-dict `:` type($trace)";
+}
+
+def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+  let summary = "Add a sampled value into the execution trace";
+  let description = [{
+  Add a sampled value into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    SymbolAttr:$symbol,
+    Variadic<AnyType>:$sample
+  );
+
+  let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($output)
+    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
+  let summary = "Insert a subtrace into a parent trace";
+  let description = [{
+  Insert a subtrace into a parent trace.
+  }];
+
+  let arguments = (ins
+    Trace:$subtrace,
+    SymbolAttr:$symbol,
+    Trace:$trace
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    $subtrace `into` $trace attr-dict
+  }];
+}
+
+def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace"> {
+  let summary = "Add the aggregated weight into the execution trace";
+  let description = [{
+  Add the aggregated log-probability weight to the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    AnyType:$weight
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace"> {
+  let summary = "Add the function's return value(s) into the execution trace";
+  let description = [{
+  Add the function's return value(s) into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    Variadic<AnyType>:$retval
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
   }];
 }
 
