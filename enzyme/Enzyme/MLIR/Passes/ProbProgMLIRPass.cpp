@@ -184,6 +184,12 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // B1. Generative functions: generate a simulate op that will itself
           // be lowered in a subsequent rewrite. No direct call to the
           // generative function should be emitted here.
+          SmallVector<int64_t> tracedOutputIndices;
+          if (auto tracedOutputIndicesAttr =
+                  sampleOp.getTracedOutputIndicesAttr()) {
+            for (auto i : tracedOutputIndicesAttr.asArrayRef())
+              tracedOutputIndices.push_back(i);
+          }
           auto simulateOp = rewriter.create<enzyme::SimulateOp>(
               sampleOp.getLoc(),
               /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
@@ -191,6 +197,8 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               /*outputs*/ sampleOp.getResultTypes(),
               /*fn*/ sampleOp.getFnAttr(),
               /*inputs*/ sampleOp.getInputs(),
+              /*traced_output_indices*/
+              rewriter.getDenseI64ArrayAttr(tracedOutputIndices),
               /*name*/ sampleOp.getNameAttr());
 
           // The first two results of simulateOp are the subtrace and weight.
@@ -258,22 +266,26 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             retOp.getLoc(),
             /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
-        Value traceAfterWeight = addWeightOp.getUpdatedTrace();
+        currTrace = addWeightOp.getUpdatedTrace();
 
         // E2. Add the function return value(s) to the trace.
-        SmallVector<Value> retvalOperands(retOp.getOperands().begin(),
-                                          retOp.getOperands().end());
-        auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
-            retOp.getLoc(),
-            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-            /*trace*/ traceAfterWeight,
-            /*retval*/ retvalOperands);
-        Value finalTrace = addRetvalOp.getUpdatedTrace();
+        if (auto tracedOutputIndices = CI.getTracedOutputIndicesAttr()) {
+          SmallVector<Value> retvalOperands;
+          for (auto idx : tracedOutputIndices.asArrayRef())
+            retvalOperands.push_back(retOp.getOperand(idx));
+
+          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
+              retOp.getLoc(),
+              /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
+              /*trace*/ currTrace,
+              /*retval*/ retvalOperands);
+          currTrace = addRetvalOp.getUpdatedTrace();
+        }
 
         // E3. Construct new return values: (trace, weight, <original return
         // values>...)
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(finalTrace);
+        newRetVals.push_back(currTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());

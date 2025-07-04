@@ -11,7 +11,7 @@ module {
   }
 
   func.func @simulate(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %res:6 = enzyme.simulate @test(%rng, %mean, %stddev) { name = "test" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
+    %res:6 = enzyme.simulate @test(%rng, %mean, %stddev) { name = "test", traced_output_indices = array<i64: 0> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %res#2, %res#3, %res#4, %res#5 : tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 }
@@ -28,6 +28,6 @@ module {
 // CHECK-NEXT:     %7 = arith.addf %3, %6 : tensor<f64>
 // CHECK-NEXT:     %8 = enzyme.addSampleToTrace(%5#0 : tensor<f64>) into %4 {symbol = #enzyme.symbol<2>}
 // CHECK-NEXT:     %9 = enzyme.addWeightToTrace(%7 : tensor<f64>) into %8
-// CHECK-NEXT:     %10 = enzyme.addRetvalToTrace(%5#0, %5#1, %5#2, %5#3 : tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) into %9
+// CHECK-NEXT:     %10 = enzyme.addRetvalToTrace(%5#0 : tensor<f64>) into %9
 // CHECK-NEXT:     return %10, %7, %5#0, %5#1, %5#2, %5#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
 // CHECK-NEXT:   }

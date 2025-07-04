@@ -316,6 +316,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
