@@ -246,13 +246,34 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      // E. Rewrite returns to include (current) trace and weight (common for
-      // both cases).
+      // E. Before returning, record the aggregated weight and the function
+      // return value(s) in the trace, then rewrite the return to return the
+      // updated trace and aggregated weight.
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
+
+        // E1. Add the accumulated weight to the trace.
+        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
+            retOp.getLoc(),
+            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
+            /*trace*/ currTrace, /*weight*/ weightAccumulator);
+        Value traceAfterWeight = addWeightOp.getUpdatedTrace();
+
+        // E2. Add the function return value(s) to the trace.
+        SmallVector<Value> retvalOperands(retOp.getOperands().begin(),
+                                          retOp.getOperands().end());
+        auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
+            retOp.getLoc(),
+            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
+            /*trace*/ traceAfterWeight,
+            /*retval*/ retvalOperands);
+        Value finalTrace = addRetvalOp.getUpdatedTrace();
+
+        // E3. Construct new return values: (trace, weight, <original return
+        // values>...)
         SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
+        newRetVals.push_back(finalTrace);
         newRetVals.push_back(weightAccumulator);
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());

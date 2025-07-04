@@ -273,6 +273,17 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   ];
 }
 
+def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
+    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
@@ -418,14 +429,39 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   }];
 }
 
-def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
-    [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
-  let arguments = (ins AnyType:$input);
-  let results = (outs AnyType:$output);
+def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace"> {
+  let summary = "Add the aggregated weight into the execution trace";
+  let description = [{
+  Add the aggregated log-probability weight to the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    AnyType:$weight
+  );
+
+  let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    $input attr-dict `:` type($input) `->` type($output)
+    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace"> {
+  let summary = "Add the function's return value(s) into the execution trace";
+  let description = [{
+  Add the function's return value(s) into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    Variadic<AnyType>:$retval
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
   }];
 }
 

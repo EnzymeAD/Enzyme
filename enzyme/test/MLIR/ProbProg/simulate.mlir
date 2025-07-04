@@ -27,5 +27,7 @@ module {
 // CHECK-NEXT:     %6 = call @logpdf(%5#0, %1#0, %arg2) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:     %7 = arith.addf %3, %6 : tensor<f64>
 // CHECK-NEXT:     %8 = enzyme.addSampleToTrace(%5#0 : tensor<f64>) into %4 {symbol = #enzyme.symbol<2>}
-// CHECK-NEXT:     return %8, %7, %5#0, %5#1, %5#2, %5#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
+// CHECK-NEXT:     %9 = enzyme.addWeightToTrace(%7 : tensor<f64>) into %8
+// CHECK-NEXT:     %10 = enzyme.addRetvalToTrace(%5#0, %5#1, %5#2, %5#3 : tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) into %9
+// CHECK-NEXT:     return %10, %7, %5#0, %5#1, %5#2, %5#3 : !enzyme.Trace, tensor<f64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
 // CHECK-NEXT:   }
