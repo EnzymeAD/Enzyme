@@ -75,10 +75,9 @@ public:
     auto forOp = cast<scf::ForOp>(op);
     scf::ForOp otherForOp; // where caches pops are
 
-
-    // There is support for two push/pop removal modes, one is using immutable tensors,
-    // the other uses memrefs. memref is the default, but tensor can be enabled with
-    // enzyme.cache_use_tensor
+    // There is support for two push/pop removal modes, one is using immutable
+    // tensors, the other uses memrefs. memref is the default, but tensor can be
+    // enabled with enzyme.cache_use_tensor
     enum CacheType cacheType = MEMREF;
     if (op->hasAttr("enzyme.cache_use_tensor"))
       cacheType = TENSOR;
