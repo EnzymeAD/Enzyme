@@ -340,60 +340,130 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
+      Value constraint = NewF.getArgument(0);
 
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        SmallVector<Value> sampledValues; // Values to replace uses of sample op
-        SmallVector<Value> tracedOutputs; // Values to add to trace
+        SmallVector<Value> sampleOpResults;
+        SmallVector<Value> tracedOutputs; // Add to trace and pass to logpdf
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
+
+        bool isConstrained =
+            llvm::is_contained(CI.getConstrainedSymbolsAttr().getValue(),
+                               sampleOp.getSymbolAttr());
 
         if (isDistribution) {
           // A1. Distribution function: replace sample op uses with call to the
           // distribution function.
-          auto distFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
+          if (isConstrained) {
+            // Get sampled values from the constraint instead of sampling
+            // from the distribution.
+            sampleOpResults.resize(sampleOp.getNumResults());
+            SmallVector<Type> tracedOutputTypes;
+            if (auto tracedOutputIndicesAttr =
+                    sampleOp.getTracedOutputIndicesAttr()) {
+              for (auto i : tracedOutputIndicesAttr.asArrayRef())
+                tracedOutputTypes.push_back(sampleOp.getResult(i).getType());
+            }
 
-          auto distCall = rewriter.create<func::CallOp>(
-              sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-              sampleOp.getInputs());
+            auto gsfcOp = rewriter.create<enzyme::GetSampleFromConstraintOp>(
+                sampleOp.getLoc(), tracedOutputTypes, constraint,
+                sampleOp.getSymbolAttr());
 
-          sampledValues.append(distCall.getResults().begin(),
-                               distCall.getResults().end());
+            if (auto tracedOutputIndicesAttr =
+                    sampleOp.getTracedOutputIndicesAttr()) {
+              for (auto i : tracedOutputIndicesAttr.asArrayRef())
+                sampleOpResults[i] = gsfcOp->getResult(i);
+            }
 
-          if (auto tracedOutputIndices =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndices.asArrayRef())
-              tracedOutputs.push_back(distCall.getResult(i));
+            // Pass aliased sample op inputs to the final values.
+            if (auto aliasAttr = sampleOp.getAliasMapAttr()) {
+              auto arr = aliasAttr.asArrayRef();
+              assert(arr.size() % 2 == 0 && "alias_map array must be even");
+              for (size_t k = 0; k < arr.size(); k += 2) {
+                assert(!sampleOpResults[arr[k]] &&
+                       "final value already set for aliased sample op input");
+                sampleOpResults[arr[k]] = sampleOp.getOperand(arr[k + 1]);
+              }
+            }
+
+            assert(llvm::all_of(sampleOpResults, [](Value v) { return v; }) &&
+                   "Incomplete sample op results");
+
+            if (auto tracedOutputIndicesAttr =
+                    sampleOp.getTracedOutputIndicesAttr()) {
+              for (auto i : tracedOutputIndicesAttr.asArrayRef())
+                tracedOutputs.push_back(sampleOpResults[i]);
+            }
+
+            // Compute weight via logpdf using constrained values.
+            auto logpdfFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getLogpdfAttr()));
+
+            SmallVector<Value> logpdfOperands;
+            logpdfOperands.append(tracedOutputs);
+            if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
+              for (auto idx : tracedInputIndices.asArrayRef())
+                logpdfOperands.push_back(sampleOp.getOperand(idx));
+
+            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
+              sampleOp.emitError(
+                  "ProbProg: failed to construct logpdf call for constrained "
+                  "sample; logpdf function has wrong number of arguments");
+              return WalkResult::interrupt();
+            }
+
+            auto logpdf = rewriter.create<func::CallOp>(
+                sampleOp.getLoc(), logpdfFn.getName(),
+                logpdfFn.getResultTypes(), logpdfOperands);
+            weightAccumulator = rewriter.create<arith::AddFOp>(
+                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+          } else {
+            auto distFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getFnAttr()));
+
+            auto distCall = rewriter.create<func::CallOp>(
+                sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
+                sampleOp.getInputs());
+
+            sampleOpResults.append(distCall.getResults().begin(),
+                                   distCall.getResults().end());
+
+            if (auto tracedOutputIndices =
+                    sampleOp.getTracedOutputIndicesAttr()) {
+              for (auto i : tracedOutputIndices.asArrayRef())
+                tracedOutputs.push_back(distCall.getResult(i));
+            }
+
+            auto logpdfFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getLogpdfAttr()));
+
+            SmallVector<Value> logpdfOperands;
+            logpdfOperands.append(tracedOutputs);
+            if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
+              for (auto idx : tracedInputIndices.asArrayRef())
+                logpdfOperands.push_back(sampleOp.getOperand(idx));
+
+            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
+              sampleOp.emitError(
+                  "ProbProg: failed to construct logpdf call; "
+                  "logpdf function has wrong number of arguments");
+              return WalkResult::interrupt();
+            }
+
+            // A2. Compute and accumulate weight.
+            auto logpdf = rewriter.create<func::CallOp>(
+                sampleOp.getLoc(), logpdfFn.getName(),
+                logpdfFn.getResultTypes(), logpdfOperands);
+            weightAccumulator = rewriter.create<arith::AddFOp>(
+                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
           }
-
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          SmallVector<Value> logpdfOperands;
-          if (auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr())
-            for (auto idx : tracedOutputIndices.asArrayRef())
-              logpdfOperands.push_back(sampledValues[idx]);
-          if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
-            for (auto idx : tracedInputIndices.asArrayRef())
-              logpdfOperands.push_back(sampleOp.getOperand(idx));
-
-          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("ProbProg: failed to construct logpdf call; "
-                               "logpdf function has wrong number of arguments");
-            return WalkResult::interrupt();
-          }
-
-          // A2. Compute and accumulate weight.
-          auto logpdf = rewriter.create<func::CallOp>(
-              sampleOp.getLoc(), logpdfFn.getName(), logpdfFn.getResultTypes(),
-              logpdfOperands);
-          weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
         } else {
           // B1. Generative functions: generate a `generate` op that will itself
           // be lowered in a subsequent rewrite. No direct call to the
@@ -424,7 +494,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // op's results. We will replace uses of the sample op with these
           // values in the next step.
           for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampledValues.push_back(generateOp->getResult(i + 2));
+            sampleOpResults.push_back(generateOp->getResult(i + 2));
 
           if (auto tracedOutputIndices =
                   sampleOp.getTracedOutputIndicesAttr()) {
@@ -458,7 +528,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         }
 
         // D. Replace uses of the original sample op with the new values.
-        sampleOp.replaceAllUsesWith(sampledValues);
+        sampleOp.replaceAllUsesWith(sampleOpResults);
 
         toErase.push_back(sampleOp);
         return WalkResult::advance();

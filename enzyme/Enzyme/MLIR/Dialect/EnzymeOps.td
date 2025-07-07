@@ -475,4 +475,17 @@ def InitConstraintOp : Enzyme_Op<"initConstraint"> {
   let assemblyFormat = "attr-dict `:` type($constraint)";
 }
 
+def GetSampleFromConstraintOp : Enzyme_Op<"getSampleFromConstraint"> {
+  let summary = "Get sampled values from a constraint for a given symbol";
+  let description = [{
+  Get sampled values from a constraint for a given symbol.
+  }];
+  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $constraint attr-dict `:` type(results)
+  }];
+}
+
 #endif // ENZYME_OPS
