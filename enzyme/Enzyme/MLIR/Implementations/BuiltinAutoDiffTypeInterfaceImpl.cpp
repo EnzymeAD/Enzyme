@@ -226,7 +226,13 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const { return failure(); }
+  LogicalResult isZero(Type self, Value val) const {
+    if (matchPattern(val, m_Zero())) {
+      return success();
+    }
+    return failure();
+  }
+
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -264,7 +270,12 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const { return failure(); }
+  LogicalResult isZero(Type self, Value val) const { 
+    Attribute arrayAttr;
+    if(!matchPattern(val,m_Constant(&arrayAttr))){
+      return failure();
+    }
+    return failure(); }
 
   int64_t getApproxSize(Type self) const {
     auto elType =
