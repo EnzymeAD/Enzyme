@@ -14,10 +14,7 @@ template<typename T>
 extern double __enzyme_autodiff(void*, int, T&, T&);
 
 
-double test_simple_list(std::list<double>& vals) {
-    // modify list without insert/removal
-    //vals.front() = 1.5;
-
+double test_iterate_list(std::list<double>& vals) {
     // iterate over list
     double result = 0.0;
     for (const auto& val : vals) {
@@ -31,8 +28,8 @@ void test_forward_list() {
         std::list<double> vals = {1.0, 2.0, 3.0};
         std::list<double> dvals = {1.0, 1.0, 1.0};
 
-        double ret = __enzyme_fwddiff((void*)test_simple_list, enzyme_dup, vals, dvals);
-        APPROX_EQ( ret, 12., 1e-10);
+        double ret = __enzyme_fwddiff((void*)test_iterate_list, enzyme_dup, vals, dvals);
+        APPROX_EQ(ret, 12., 1e-10);
     }
 }
 
@@ -41,8 +38,8 @@ void test_reverse_list() {
         std::list<double> vals = {1.0, 2.0, 3.0};
         std::list<double> dvals = {1.0, 1.0, 1.0};
 
-        double ret = __enzyme_autodiff((void*)test_simple_list, enzyme_dup, vals, dvals);
-        APPROX_EQ( ret, 12., 1e-10);
+        double ret = __enzyme_autodiff((void*)test_iterate_list, enzyme_dup, vals, dvals);
+        APPROX_EQ(ret, 12., 1e-10);
     }
 }
 
