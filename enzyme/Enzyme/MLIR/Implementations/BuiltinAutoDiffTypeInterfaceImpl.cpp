@@ -143,7 +143,44 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const { return failure(); }
+  LogicalResult isZero(Type self, Value val) const {
+    auto tenType = cast<TensorType>(self);
+    auto ET = tenType.getElementType();
+    DenseElementsAttr eAttr;
+
+    if (!matchPattern(val, m_Constant(&eAttr)))
+      return failure();
+
+    if (eAttr.isSplat()) {
+      auto splatVal = eAttr.getSplatValue<Attribute>();
+
+      if (ET.isa<IntegerType>()) {
+        return matchPattern(splatVal, m_Zero()) ? success() : failure();
+      } else if (ET.isa<FloatType>()) {
+        return matchPattern(splatVal, m_AnyZeroFloat()) ? success() : failure();
+      } else {
+        // TODO: handle complex
+        return failure();
+      }
+    } else {
+      if (ET.isa<IntegerType>()) {
+        return llvm::all_of(eAttr.getValues<APInt>(),
+                            [](const APInt &val) { return val.isZero(); })
+                   ? success()
+                   : failure();
+      } else if (ET.isa<FloatType>()) {
+        return llvm::all_of(eAttr.getValues<APFloat>(),
+                            [](const APFloat &val) { return val.isZero(); })
+                   ? success()
+                   : failure();
+      } else {
+        // TODO: handle complex
+        return failure();
+      }
+    }
+    return failure();
+  }
+
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
