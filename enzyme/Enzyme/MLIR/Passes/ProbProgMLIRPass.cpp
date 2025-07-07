@@ -375,8 +375,9 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 
             if (auto tracedOutputIndicesAttr =
                     sampleOp.getTracedOutputIndicesAttr()) {
-              for (auto i : tracedOutputIndicesAttr.asArrayRef())
-                sampleOpResults[i] = gsfcOp->getResult(i);
+              for (auto [j, i] :
+                   llvm::enumerate(tracedOutputIndicesAttr.asArrayRef()))
+                sampleOpResults[i] = gsfcOp->getResult(j);
             }
 
             // Pass aliased sample op inputs to the final values.
@@ -638,4 +639,6 @@ void ProbProgPass::runOnOperation() {
       return;
     }
   }
+
+  getOperation()->dump();
 }
