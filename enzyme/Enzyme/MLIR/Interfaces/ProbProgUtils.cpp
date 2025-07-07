@@ -62,6 +62,7 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     break;
   case MProbProgMode::Generate:
     suffix = "generate";
+    OperandTypes.push_back(enzyme::ConstraintType::get(toeval.getContext()));
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
@@ -91,6 +92,12 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   std::map<Operation *, Operation *> originalToNewOps;
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
+
+  if (mode == MProbProgMode::Generate) {
+    Block &entry = NewF.getFunctionBody().front();
+    entry.insertArgument(0u, enzyme::ConstraintType::get(toeval.getContext()),
+                         toeval.getLoc());
+  }
 
   return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
                             mode);

@@ -513,8 +513,11 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
       });
 
       rewriter.setInsertionPoint(CI);
+      SmallVector<Value> operands;
+      operands.push_back(CI.getConstraint());
+      operands.append(CI.getInputs().begin(), CI.getInputs().end());
       auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getInputs());
+          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
 
