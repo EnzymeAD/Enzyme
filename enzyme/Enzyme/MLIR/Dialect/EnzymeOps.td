@@ -464,4 +464,15 @@ def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace"> {
   }];
 }
 
+def InitConstraintOp : Enzyme_Op<"initConstraint"> {
+  let summary = "Initialize a constraint for a probabilistic function";
+  let description = [{
+  Initialize a constraint for a probabilistic function.
+  }];
+  let arguments = (ins );
+  let results = (outs Constraint:$constraint);
+
+  let assemblyFormat = "attr-dict `:` type($constraint)";
+}
+
 #endif // ENZYME_OPS
