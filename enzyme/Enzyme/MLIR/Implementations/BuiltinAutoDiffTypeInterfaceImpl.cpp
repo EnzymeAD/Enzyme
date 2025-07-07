@@ -19,6 +19,7 @@
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LLVM.h"
 
 using namespace mlir;
@@ -71,8 +72,10 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
-                       Value val) const {
+  LogicalResult isZero(Type self, Value val) const {
+    if (matchPattern(val, m_AnyZeroFloat())) {
+      return success();
+    }
     return failure();
   }
 
@@ -140,10 +143,7 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
-                       Value val) const {
-    return failure();
-  }
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -189,10 +189,7 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
-                       Value val) const {
-    return failure();
-  }
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -230,10 +227,7 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
-                       Value val) const {
-    return failure();
-  }
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
 
   int64_t getApproxSize(Type self) const {
     auto elType =

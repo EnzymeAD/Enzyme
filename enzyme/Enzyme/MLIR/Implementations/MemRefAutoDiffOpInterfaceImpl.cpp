@@ -235,10 +235,7 @@ public:
     return success();
   }
 
-  LogicalResult isZero(Type self, OpBuilder &builder, Location loc,
-                       Value val) const {
-    return failure();
-  }
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
 };
 } // namespace
 
