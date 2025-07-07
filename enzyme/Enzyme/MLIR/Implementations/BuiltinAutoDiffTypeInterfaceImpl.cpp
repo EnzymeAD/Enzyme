@@ -154,21 +154,21 @@ public:
     if (eAttr.isSplat()) {
       auto splatVal = eAttr.getSplatValue<Attribute>();
 
-      if (ET.isa<IntegerType>()) {
+      if (isa<IntegerType>(ET)) {
         return matchPattern(splatVal, m_Zero()) ? success() : failure();
-      } else if (ET.isa<FloatType>()) {
+      } else if (isa<FloatType>(ET)) {
         return matchPattern(splatVal, m_AnyZeroFloat()) ? success() : failure();
       } else {
         // TODO: handle complex
         return failure();
       }
     } else {
-      if (ET.isa<IntegerType>()) {
+      if (isa<IntegerType>(ET)) {
         return llvm::all_of(eAttr.getValues<APInt>(),
                             [](const APInt &val) { return val.isZero(); })
                    ? success()
                    : failure();
-      } else if (ET.isa<FloatType>()) {
+      } else if (isa<FloatType>(ET)) {
         return llvm::all_of(eAttr.getValues<APFloat>(),
                             [](const APFloat &val) { return val.isZero(); })
                    ? success()
