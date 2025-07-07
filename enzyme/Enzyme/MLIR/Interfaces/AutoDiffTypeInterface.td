@@ -55,7 +55,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       }],
       /*retTy=*/"::mlir::LogicalResult",
       /*methodName=*/"isZero",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc, "::mlir::Value":$val)
+      /*args=*/(ins  "::mlir::Value":$val)
     >,
     InterfaceMethod<
       /*desc=*/[{
