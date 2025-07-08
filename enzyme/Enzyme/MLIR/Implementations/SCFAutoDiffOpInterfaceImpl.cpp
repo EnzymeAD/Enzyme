@@ -534,14 +534,9 @@ public:
     }
 
     if (needsCheckpointing(forOp)) {
-      auto numIters = getConstantNumberOfIterations(forOp).value();
-      auto nInner = std::sqrt(numIters), nOuter = nInner;
-
-      if (nInner * nOuter != numIters) {
-        op->emitError() << "checkpointing: unsupported number of iteration: "
-                        << numIters << ". Try disabling checkpointing.\n";
-        return failure();
-      }
+      int64_t numIters = getConstantNumberOfIterations(forOp).value();
+      int64_t nInner = std::sqrt(numIters), nOuter = nInner;
+      int64_t trailingIters = numIters - nInner * nOuter;
 
       auto numIterArgs = forOp.getNumRegionIterArgs();
 
@@ -582,8 +577,19 @@ public:
                                    ivTy),
             one = makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1,
                                   ivTy);
-      auto revInner = builder.create<scf::ForOp>(forOp.getLoc(), zero,
-                                                 nInnerCst, one, initArgs);
+
+      Value nInnerUB = nInnerCst;
+      if (trailingIters > 0) {
+        Location loc = forOp.getUpperBound().getLoc();
+        nInnerUB = builder.create<arith::SelectOp>(
+            loc,
+            builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                          revOuter.getInductionVar(), zero),
+            makeIntConstant(loc, builder, trailingIters, ivTy), nInnerCst);
+      }
+
+      auto revInner = builder.create<scf::ForOp>(forOp.getLoc(), zero, nInnerUB,
+                                                 one, initArgs);
 
       revInner->setAttrs(op->getAttrs());
       revInner->removeAttr("enzyme.enable_checkpointing");
@@ -619,7 +625,7 @@ public:
       builder.setInsertionPointToEnd(revOuter.getBody());
 
       auto revLoop = builder.create<scf::ForOp>(
-          forOp.getLoc(), zero, nInnerCst, one,
+          forOp.getLoc(), zero, nInnerUB, one,
           revOuter.getBody()->getArguments().drop_front());
 
       Block *revLoopBody = revLoop.getBody();
@@ -780,11 +786,15 @@ public:
     OpBuilder cacheBuilder(newOp);
 
     if (needsCheckpointing(forOp)) {
-      auto numIters = getConstantNumberOfIterations(forOp).value();
-      auto nInner = std::sqrt(numIters), nOuter = nInner;
+      int64_t numIters = getConstantNumberOfIterations(forOp).value();
+      int64_t nInner = std::sqrt(numIters), nOuter = nInner;
+      int64_t trailingIters = numIters - nInner * nOuter;
 
-      if (nInner * nOuter != numIters)
-        return {};
+      llvm::errs() << "nInner = " << nInner << " nOuter = " << nOuter
+                   << " trailingIters = " << trailingIters << "\n";
+
+      // if (trailingIters != 0)
+      //   return {};
 
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
@@ -805,10 +815,24 @@ public:
       cacheBuilder.setInsertionPointToStart(outerFwd.getBody());
       auto nInnerCst = makeIntConstant(forOp.getUpperBound().getLoc(),
                                        cacheBuilder, nInner, ty);
+
+      Value nInnerUB = nInnerCst;
+      if (trailingIters > 0) {
+        // if this is the last iteration, then the inner
+        // loop will only make trailingIters iterations
+        Location loc = forOp.getUpperBound().getLoc();
+        nInnerUB = cacheBuilder.create<arith::SelectOp>(
+            loc,
+            cacheBuilder.create<arith::CmpIOp>(
+                loc, arith::CmpIPredicate::eq, outerFwd.getInductionVar(),
+                makeIntConstant(loc, cacheBuilder, nOuter - 1, ty)),
+            makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
+      }
+
       auto innerFwd = cacheBuilder.create<scf::ForOp>(
           op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
-          nInnerCst,
+          nInnerUB,
           makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty),
           outerFwd.getBody()->getArguments().drop_front());
 
