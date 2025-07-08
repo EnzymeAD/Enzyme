@@ -790,12 +790,6 @@ public:
       int64_t nInner = std::sqrt(numIters), nOuter = nInner;
       int64_t trailingIters = numIters - nInner * nOuter;
 
-      llvm::errs() << "nInner = " << nInner << " nOuter = " << nOuter
-                   << " trailingIters = " << trailingIters << "\n";
-
-      // if (trailingIters != 0)
-      //   return {};
-
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
 
