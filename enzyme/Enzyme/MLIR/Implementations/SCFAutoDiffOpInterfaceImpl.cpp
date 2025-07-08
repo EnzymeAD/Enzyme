@@ -538,6 +538,8 @@ public:
       int64_t nInner = std::sqrt(numIters), nOuter = nInner;
       int64_t trailingIters = numIters - nInner * nOuter;
 
+      bool hasTrailing = trailingIters > 0;
+
       auto numIterArgs = forOp.getNumRegionIterArgs();
 
       SetVector<Value> outsideRefs;
@@ -555,16 +557,22 @@ public:
       }
 
       auto ivTy = forOp.getLowerBound().getType();
+      Value outerUB = makeIntConstant(forOp.getLowerBound().getLoc(), builder,
+                                      nOuter + hasTrailing, ivTy);
       auto revOuter = builder.create<scf::ForOp>(
           op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0, ivTy),
-          makeIntConstant(forOp.getLowerBound().getLoc(), builder, nOuter,
-                          ivTy),
+          outerUB,
           makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy),
           incomingGradients);
 
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(revOuter.getBody());
+
+      Location loc = forOp.getInductionVar().getLoc();
+      Value currentOuterStep = builder.create<arith::SubIOp>(
+          loc, makeIntConstant(loc, builder, nOuter, ivTy),
+          revOuter.getInductionVar());
 
       SmallVector<Value> initArgs(numIterArgs, nullptr);
       for (int i = 0; i < numIterArgs; ++i) {
@@ -580,6 +588,7 @@ public:
 
       Value nInnerUB = nInnerCst;
       if (trailingIters > 0) {
+        // this is the first reverse iteration
         Location loc = forOp.getUpperBound().getLoc();
         nInnerUB = builder.create<arith::SelectOp>(
             loc,
@@ -595,21 +604,32 @@ public:
       revInner->removeAttr("enzyme.enable_checkpointing");
 
       llvm::APInt stepI;
-      if (!matchPattern(forOp.getStep(), m_ConstantInt(&stepI)))
+      if (!matchPattern(forOp.getStep(), m_ConstantInt(&stepI))) {
+        op->emitError() << "step size is not known constant\n";
         return failure();
+      }
+
+      llvm::APInt startI;
+      if (!matchPattern(forOp.getLowerBound(), m_ConstantInt(&startI))) {
+        op->emitError() << "lower bound is not known constant\n";
+        return failure();
+      }
 
       builder.setInsertionPointToEnd(revInner.getBody());
 
-      Location loc = forOp.getInductionVar().getLoc();
-      auto currentIV = builder.create<arith::MulIOp>(
+      Value currentIV = builder.create<arith::AddIOp>(
           loc,
-          builder.create<arith::AddIOp>(
+          builder.create<arith::MulIOp>(
               loc,
-              builder.create<arith::MulIOp>(loc, revOuter.getInductionVar(),
-                                            nInnerCst),
-              revInner.getInductionVar()),
+              builder.create<arith::AddIOp>(
+                  loc,
+                  builder.create<arith::MulIOp>(loc, currentOuterStep,
+                                                nInnerCst),
+                  revInner.getInductionVar()),
+              builder.create<arith::ConstantOp>(loc,
+                                                IntegerAttr::get(ivTy, stepI))),
           builder.create<arith::ConstantOp>(loc,
-                                            IntegerAttr::get(ivTy, stepI)));
+                                            IntegerAttr::get(ivTy, startI)));
 
       for (auto [oldArg, newArg] :
            llvm::zip_equal(forOp.getBody()->getArguments(),
@@ -789,6 +809,7 @@ public:
       int64_t numIters = getConstantNumberOfIterations(forOp).value();
       int64_t nInner = std::sqrt(numIters), nOuter = nInner;
       int64_t trailingIters = numIters - nInner * nOuter;
+      bool hasTrailing = trailingIters > 0;
 
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
@@ -802,7 +823,7 @@ public:
           op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
           makeIntConstant(forOp.getUpperBound().getLoc(), cacheBuilder,
-                          numIters, ty),
+                          nInner * (nOuter + hasTrailing), ty),
           makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, nInner, ty),
           newForOp.getInitArgs());
 
@@ -819,7 +840,7 @@ public:
             loc,
             cacheBuilder.create<arith::CmpIOp>(
                 loc, arith::CmpIPredicate::eq, outerFwd.getInductionVar(),
-                makeIntConstant(loc, cacheBuilder, nOuter - 1, ty)),
+                makeIntConstant(loc, cacheBuilder, nInner * nOuter, ty)),
             makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
       }
 
