@@ -270,12 +270,36 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const { 
-    Attribute arrayAttr;
-    if(!matchPattern(val,m_Constant(&arrayAttr))){
+  // possible reference impl. for hamndling complex values
+  // bool isZero(mlir::Value v) {
+  //   ArrayAttr lhs;
+  //   matchPattern(v, m_Constant(&lhs));
+  //   if (lhs) {
+  //     for (auto e : lhs) {
+  //       if (!cast<FloatAttr>(e).getValue().isZero())
+  //         return false;
+  //     }
+  //     return true;
+  //   }
+  //   return false;
+  // }
+  //
+
+  LogicalResult isZero(Type self, Value val) const {
+    ArrayAttr arrayAttr;
+    if (!matchPattern(val, m_Constant(&arrayAttr))) {
       return failure();
     }
-    return failure(); }
+    if (arrayAttr) {
+      for (auto e : arrayAttr) {
+        if (!cast<FloatAttr>(e).getValue().isZero()) {
+          return failure();
+        }
+      }
+      return success();
+    }
+    return failure();
+  }
 
   int64_t getApproxSize(Type self) const {
     auto elType =
