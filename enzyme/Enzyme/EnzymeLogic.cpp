@@ -1723,7 +1723,20 @@ void clearFunctionAttributes(Function *f) {
     Attribute::WillReturn,
     Attribute::OptimizeNone
   };
+
   for (auto attr : fnattrs) {
+    if (f->hasFnAttribute(attr)) {
+      f->removeFnAttr(attr);
+    }
+  }
+
+  std::string strfnattrs[] = {
+    "enzymejl_mi",
+    "enzymejl_rt",
+    "enzyme_ta_norecur",
+  };
+
+  for (auto attr : strfnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
     }
