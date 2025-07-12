@@ -1731,9 +1731,9 @@ void clearFunctionAttributes(Function *f) {
   }
 
   std::string strfnattrs[] = {
-    "enzymejl_mi",
-    "enzymejl_rt",
-    "enzyme_ta_norecur",
+      "enzymejl_mi",
+      "enzymejl_rt",
+      "enzyme_ta_norecur",
   };
 
   for (auto attr : strfnattrs) {
