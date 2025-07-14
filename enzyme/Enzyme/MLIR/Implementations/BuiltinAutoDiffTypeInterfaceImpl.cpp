@@ -48,7 +48,7 @@ public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto fltType = cast<ConcreteType>(self);
     return builder.create<arith::ConstantFloatOp>(
-        loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
+        loc, fltType, APFloat(fltType.getFloatSemantics(), 0));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -156,7 +156,7 @@ public:
     if (isa<IndexType>(self)) {
       return builder.create<arith::ConstantIndexOp>(loc, 0);
     }
-    return builder.create<arith::ConstantIntOp>(loc, 0, self);
+    return builder.create<arith::ConstantIntOp>(loc, self, 0);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
