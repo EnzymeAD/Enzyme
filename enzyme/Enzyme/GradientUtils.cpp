@@ -3306,7 +3306,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
             for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                            "enzymejl_allocart"})
+                            "enzymejl_allocart", "enzymejl_allocart_name"})
               if (auto M = I.getMetadata(MD))
                 replacement->setMetadata(MD, M);
             auto Alignment =
@@ -3553,8 +3553,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
-                  for (auto MD : {"enzyme_active", "enzyme_inactive",
-                                  "enzyme_type", "enzymejl_allocart"})
+                  for (auto MD :
+                       {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                        "enzymejl_allocart", "enzymejl_allocart_name"})
                     if (auto M = I.getMetadata(MD))
                       replacement->setMetadata(MD, M);
                   replacement->takeName(anti);
