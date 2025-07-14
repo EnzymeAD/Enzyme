@@ -1015,7 +1015,7 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 }
 
 extern "C" RunAttributorOnModule(LLVMModuleRef M0) {
-  auto &M = *unwrap(M0);  
+  auto &M = *unwrap(M0);
   AnalysisGetter AG;
   SetVector<Function *> Functions;
   for (Function &F : M)
