@@ -1013,6 +1013,22 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 
   return Changed == ChangeStatus::CHANGED;
 }
+
+extern "C" RunAttributorOnModule(LLVMModuleRef M0) {
+  auto &M = *unwrap(M0);  
+  AnalysisGetter AG;
+  SetVector<Function *> Functions;
+  for (Function &F : M)
+    Functions.insert(&F);
+
+  CallGraphUpdater CGUpdater;
+  BumpPtrAllocator Allocator;
+  InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+  return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                                  /* DeleteFns*/ true,
+                                  /* IsModulePass */ true);
+}
+
 struct MyAttributorLegacyPass : public ModulePass {
   static char ID;
 

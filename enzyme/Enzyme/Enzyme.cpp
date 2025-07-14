@@ -3729,6 +3729,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
           return true;
         }
+        if (Name == "preserve-nvvm-end") {
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+          return true;
+        }
         if (Name == "print-type-analysis") {
           MPM.addPass(TypeAnalysisPrinterNewPM());
           return true;
