@@ -1025,8 +1025,8 @@ extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
   BumpPtrAllocator Allocator;
   InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
   runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
-                                  /* DeleteFns*/ true,
-                                  /* IsModulePass */ true);
+                           /* DeleteFns*/ true,
+                           /* IsModulePass */ true);
 }
 
 struct MyAttributorLegacyPass : public ModulePass {
