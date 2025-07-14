@@ -1024,7 +1024,7 @@ extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
   CallGraphUpdater CGUpdater;
   BumpPtrAllocator Allocator;
   InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
-  return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+  runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
                                   /* DeleteFns*/ true,
                                   /* IsModulePass */ true);
 }
