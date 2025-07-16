@@ -234,6 +234,8 @@ public:
     }
     return success();
   }
+
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
 };
 } // namespace
 

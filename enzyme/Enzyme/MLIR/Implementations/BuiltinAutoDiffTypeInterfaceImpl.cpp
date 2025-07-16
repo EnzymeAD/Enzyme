@@ -19,6 +19,7 @@
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LLVM.h"
 
 using namespace mlir;
@@ -65,8 +66,16 @@ public:
   }
 
   bool isMutable(Type self) const { return false; }
+
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
+    return failure();
+  }
+
+  LogicalResult isZero(Type self, Value val) const {
+    if (matchPattern(val, m_AnyZeroFloat())) {
+      return success();
+    }
     return failure();
   }
 
@@ -134,6 +143,44 @@ public:
     return failure();
   }
 
+  LogicalResult isZero(Type self, Value val) const {
+    auto tenType = cast<TensorType>(self);
+    auto ET = tenType.getElementType();
+    DenseElementsAttr eAttr;
+
+    if (!matchPattern(val, m_Constant(&eAttr)))
+      return failure();
+
+    if (eAttr.isSplat()) {
+      auto splatVal = eAttr.getSplatValue<Attribute>();
+
+      if (isa<IntegerType>(ET)) {
+        return matchPattern(splatVal, m_Zero()) ? success() : failure();
+      } else if (isa<FloatType>(ET)) {
+        return matchPattern(splatVal, m_AnyZeroFloat()) ? success() : failure();
+      } else {
+        // TODO: handle complex
+        return failure();
+      }
+    } else {
+      if (isa<IntegerType>(ET)) {
+        return llvm::all_of(eAttr.getValues<APInt>(),
+                            [](const APInt &val) { return val.isZero(); })
+                   ? success()
+                   : failure();
+      } else if (isa<FloatType>(ET)) {
+        return llvm::all_of(eAttr.getValues<APFloat>(),
+                            [](const APFloat &val) { return val.isZero(); })
+                   ? success()
+                   : failure();
+      } else {
+        // TODO: handle complex
+        return failure();
+      }
+    }
+    return failure();
+  }
+
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -179,6 +226,13 @@ public:
     return failure();
   }
 
+  LogicalResult isZero(Type self, Value val) const {
+    if (matchPattern(val, m_Zero())) {
+      return success();
+    }
+    return failure();
+  }
+
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -213,6 +267,37 @@ public:
   bool isMutable(Type self) const { return false; }
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
+    return failure();
+  }
+
+  // possible reference impl. for hamndling complex values
+  // bool isZero(mlir::Value v) {
+  //   ArrayAttr lhs;
+  //   matchPattern(v, m_Constant(&lhs));
+  //   if (lhs) {
+  //     for (auto e : lhs) {
+  //       if (!cast<FloatAttr>(e).getValue().isZero())
+  //         return false;
+  //     }
+  //     return true;
+  //   }
+  //   return false;
+  // }
+  //
+
+  LogicalResult isZero(Type self, Value val) const {
+    ArrayAttr arrayAttr;
+    if (!matchPattern(val, m_Constant(&arrayAttr))) {
+      return failure();
+    }
+    if (arrayAttr) {
+      for (auto e : arrayAttr) {
+        if (!cast<FloatAttr>(e).getValue().isZero()) {
+          return failure();
+        }
+      }
+      return success();
+    }
     return failure();
   }
 
