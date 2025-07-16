@@ -1911,7 +1911,13 @@ void restoreCache(
            UI != E;) {
         Use &U = *UI;
         ++UI;
-        U.set(repVal);
+	auto newB = cast<Instruction>(U.getUser())->getParent();
+	
+	if (U.getUser() != newB->getTerminator()) continue;
+
+	if (newB == gutils->getNewFromOriginal(&BB)) {
+          U.set(repVal);
+	}
       }
     }
     if (reachables.size() == 1)
@@ -1947,7 +1953,13 @@ void restoreCache(
              UI != E;) {
           Use &U = *UI;
           ++UI;
-          U.set(repVal);
+	
+	  auto newB = cast<Instruction>(U.getUser())->getParent();
+	
+	  if (U.getUser() != newB->getTerminator()) continue;
+
+	  if (newB == gutils->getNewFromOriginal(&BB))
+            U.set(repVal);
         }
       }
   }
