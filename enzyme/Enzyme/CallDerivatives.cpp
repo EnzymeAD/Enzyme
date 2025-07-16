@@ -2751,7 +2751,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-          for (int i = 0; i < gutils->getWidth(); i++) {
+          for (size_t i = 0; i < gutils->getWidth(); i++) {
             SmallVector<Value *, 1> iargs;
             bool first = true;
             for (auto &arg : call.args()) {
