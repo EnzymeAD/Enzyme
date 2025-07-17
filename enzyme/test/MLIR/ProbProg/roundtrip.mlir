@@ -1,51 +1,35 @@
 // RUN: %eopt %s | FileCheck %s
 
 module {
-  func.func private @normal(%seed : i64, %mean : f64, %stddev : f64) -> f64
+  func.func private @normal(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+  func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
-  // CHECK:   func.func @sample_no_symbol(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res:.+]] = enzyme.sample @normal(%[[seed]], %[[mean]], %[[stddev]]) {name = "m"} : (i64, f64, f64) -> f64
-  // CHECK-NEXT:    return %[[res]] : f64
+  // CHECK:   func.func @sample(%[[seed:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+  // CHECK-NEXT:    %[[res:.+]]:2 = enzyme.sample @normal(%[[seed]], %[[mean]], %[[stddev]]) {logpdf = @logpdf, name = "r", symbol = #enzyme.symbol<3>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+  // CHECK-NEXT:    return %[[res]]#0, %[[res]]#1 : tensor<2xui64>, tensor<f64>
   // CHECK-NEXT:   }
-  func.func @sample_no_symbol(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %r = enzyme.sample @normal(%seed, %mean, %stddev) { name="m" } : (i64, f64, f64) -> (f64)
-    return %r : f64
+  func.func @sample(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    %r:2 = enzyme.sample @normal(%seed, %mean, %stddev) { logpdf = @logpdf, name="r", symbol = #enzyme.symbol<3> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    return %r#0, %r#1 : tensor<2xui64>, tensor<f64>
   }
 
-  // CHECK:   func.func @sample(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res:.+]] = enzyme.sample @normal(%[[seed]], %[[mean]], %[[stddev]]) {name = "m", symbol = 1 : ui64} : (i64, f64, f64) -> f64
-  // CHECK-NEXT:    return %[[res]] : f64
+  // CHECK:   func.func @simulate(%[[seed:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+  // CHECK-NEXT:    %[[trace:.+]], %[[weight:.+]], %[[outputs:.+]]:2 = enzyme.simulate @sample(%[[seed]], %[[mean]], %[[stddev]]) {name = "test"} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
+  // CHECK-NEXT:    return %[[trace]], %[[weight]], %[[outputs]]#0, %[[outputs]]#1 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
   // CHECK-NEXT:   }
-  func.func @sample(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %r = enzyme.sample @normal(%seed, %mean, %stddev) { name="m", symbol = 1 : ui64 } : (i64, f64, f64) -> (f64)
-    return %r : f64
+  func.func @simulate(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+    %res:4 = enzyme.simulate @sample(%seed, %mean, %stddev) { name = "test" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %res#0, %res#1, %res#2, %res#3 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
 
-  // CHECK:   func.func @generate_no_constraints(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
-  // CHECK-NEXT:    return %[[res0]] : f64
+  // CHECK:   func.func @generate(%[[seed:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+  // CHECK-NEXT:    %[[constraint:.+]] = enzyme.initConstraint : !enzyme.Constraint
+  // CHECK-NEXT:    %[[trace:.+]], %[[weight:.+]], %[[outputs:.+]]:2 = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) given %[[constraint]] {constrained_symbols = [#enzyme.symbol<2>, #enzyme.symbol<3>], name = "test"} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
+  // CHECK-NEXT:    return %[[trace]], %[[weight]], %[[outputs]]#0, %[[outputs]]#1 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
   // CHECK-NEXT:   }
-  func.func @generate_no_constraints(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %res = enzyme.generate @sample(%seed, %mean, %stddev) { name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
-    return %res : f64
-  }
-
-  // CHECK:   func.func @generate(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res0:.+]] = enzyme.generate @sample(%[[seed]], %[[mean]], %[[stddev]]) {constraints = [#enzyme.constraint<symbol = 1, values = [dense<0.000000e+00> : tensor<f64>]>], name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
-  // CHECK-NEXT:    return %[[res0]] : f64
-  // CHECK-NEXT:   }
-  func.func @generate(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %res = enzyme.generate @sample(%seed, %mean, %stddev) {
-      constraints = [ #enzyme.constraint<symbol = 1, values = [ dense<0.0> : tensor<f64> ]> ], name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
-    return %res : f64
-  }
-
-  // CHECK:   func.func @simulate(%[[seed:.+]]: i64, %[[mean:.+]]: f64, %[[stddev:.+]]: f64) -> f64 {
-  // CHECK-NEXT:    %[[res0:.+]] = enzyme.simulate @sample(%[[seed]], %[[mean]], %[[stddev]]) {name = "test", trace = 42 : ui64} : (i64, f64, f64) -> f64
-  // CHECK-NEXT:    return %[[res0]] : f64
-  // CHECK-NEXT:   }
-  func.func @simulate(%seed : i64, %mean : f64, %stddev : f64) -> f64 {
-    %res = enzyme.simulate @sample(%seed, %mean, %stddev) { name = "test", trace = 42 : ui64 } : (i64, f64, f64) -> f64
-    return %res : f64
+  func.func @generate(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>) {
+    %0 = enzyme.initConstraint : !enzyme.Constraint
+    %res:4 = enzyme.generate @sample(%seed, %mean, %stddev) given %0 { constrained_symbols = [#enzyme.symbol<2>, #enzyme.symbol<3>], name = "test" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %res#0, %res#1, %res#2, %res#3 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
 }

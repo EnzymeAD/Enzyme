@@ -135,7 +135,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues; // Values to replace uses of sample op
-        SmallVector<Value> tracedOutputs; // Values to add to trace
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {
@@ -152,23 +151,18 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           sampledValues.append(distCall.getResults().begin(),
                                distCall.getResults().end());
 
-          if (auto tracedOutputIndices =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndices.asArrayRef())
-              tracedOutputs.push_back(distCall.getResult(i));
-          }
-
           auto logpdfFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getLogpdfAttr()));
 
+          // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
           SmallVector<Value> logpdfOperands;
-          if (auto tracedOutputIndices = sampleOp.getTracedOutputIndicesAttr())
-            for (auto idx : tracedOutputIndices.asArrayRef())
-              logpdfOperands.push_back(sampledValues[idx]);
-          if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
-            for (auto idx : tracedInputIndices.asArrayRef())
-              logpdfOperands.push_back(sampleOp.getOperand(idx));
+          for (unsigned i = 1; i < sampledValues.size(); ++i) {
+            logpdfOperands.push_back(sampledValues[i]);
+          }
+          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+            logpdfOperands.push_back(sampleOp.getOperand(i));
+          }
 
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
             sampleOp.emitError("ProbProg: failed to construct logpdf call; "
@@ -186,12 +180,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // B1. Generative functions: generate a simulate op that will itself
           // be lowered in a subsequent rewrite. No direct call to the
           // generative function should be emitted here.
-          SmallVector<int64_t> tracedOutputIndices;
-          if (auto tracedOutputIndicesAttr =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndicesAttr.asArrayRef())
-              tracedOutputIndices.push_back(i);
-          }
           auto simulateOp = rewriter.create<enzyme::SimulateOp>(
               sampleOp.getLoc(),
               /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
@@ -199,8 +187,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               /*outputs*/ sampleOp.getResultTypes(),
               /*fn*/ sampleOp.getFnAttr(),
               /*inputs*/ sampleOp.getInputs(),
-              /*traced_output_indices*/
-              rewriter.getDenseI64ArrayAttr(tracedOutputIndices),
               /*name*/ sampleOp.getNameAttr());
 
           // The first two results of simulateOp are the subtrace and weight.
@@ -209,12 +195,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // values in the next step.
           for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
             sampledValues.push_back(simulateOp->getResult(i + 2));
-
-          if (auto tracedOutputIndices =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndices.asArrayRef())
-              tracedOutputs.push_back(simulateOp->getResult(i + 2));
-          }
 
           // B2. Add subtrace to trace.
           auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
@@ -230,14 +210,19 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               sampleOp.getLoc(), weightAccumulator, simulateOp->getResult(1));
         }
 
-        // C. Add traced sampled values to trace (common for both cases).
-        if (!tracedOutputs.empty()) {
+        // C. Add non-RNG sampled values to trace (common for both cases).
+        SmallVector<Value> valuesToTrace;
+        for (unsigned i = 1; i < sampledValues.size(); ++i) {
+          valuesToTrace.push_back(sampledValues[i]);
+        }
+
+        if (!valuesToTrace.empty()) {
           auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
               sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ tracedOutputs);
+              /*sample*/ valuesToTrace);
           currTrace = addSampleToTraceOp.getUpdatedTrace();
         }
 
@@ -270,17 +255,18 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
 
-        // E2. Add the function return value(s) to the trace.
-        if (auto tracedOutputIndices = CI.getTracedOutputIndicesAttr()) {
-          SmallVector<Value> retvalOperands;
-          for (auto idx : tracedOutputIndices.asArrayRef())
-            retvalOperands.push_back(retOp.getOperand(idx));
+        // E2. Add non-RNG return values to the trace.
+        SmallVector<Value> retvals;
+        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
+          retvals.push_back(retOp.getOperand(i));
+        }
 
+        if (!retvals.empty()) {
           auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
               retOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
               /*trace*/ currTrace,
-              /*retval*/ retvalOperands);
+              /*retval*/ retvals);
           currTrace = addRetvalOp.getUpdatedTrace();
         }
 
@@ -347,8 +333,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        SmallVector<Value> sampleOpResults;
-        SmallVector<Value> tracedOutputs; // Add to trace and pass to logpdf
+        SmallVector<Value> sampledValues;
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         bool isConstrained =
@@ -361,43 +346,21 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           if (isConstrained) {
             // Get sampled values from the constraint instead of sampling
             // from the distribution.
-            sampleOpResults.resize(sampleOp.getNumResults());
-            SmallVector<Type> tracedOutputTypes;
-            if (auto tracedOutputIndicesAttr =
-                    sampleOp.getTracedOutputIndicesAttr()) {
-              for (auto i : tracedOutputIndicesAttr.asArrayRef())
-                tracedOutputTypes.push_back(sampleOp.getResult(i).getType());
+            sampledValues.resize(sampleOp.getNumResults());
+
+            SmallVector<Type> constraintOutputTypes;
+            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+              constraintOutputTypes.push_back(sampleOp.getResult(i).getType());
             }
 
             auto gsfcOp = rewriter.create<enzyme::GetSampleFromConstraintOp>(
-                sampleOp.getLoc(), tracedOutputTypes, constraint,
+                sampleOp.getLoc(), constraintOutputTypes, constraint,
                 sampleOp.getSymbolAttr());
 
-            if (auto tracedOutputIndicesAttr =
-                    sampleOp.getTracedOutputIndicesAttr()) {
-              for (auto [j, i] :
-                   llvm::enumerate(tracedOutputIndicesAttr.asArrayRef()))
-                sampleOpResults[i] = gsfcOp->getResult(j);
-            }
-
-            // Pass aliased sample op inputs to the final values.
-            if (auto aliasAttr = sampleOp.getAliasMapAttr()) {
-              auto arr = aliasAttr.asArrayRef();
-              assert(arr.size() % 2 == 0 && "alias_map array must be even");
-              for (size_t k = 0; k < arr.size(); k += 2) {
-                assert(!sampleOpResults[arr[k]] &&
-                       "final value already set for aliased sample op input");
-                sampleOpResults[arr[k]] = sampleOp.getOperand(arr[k + 1]);
-              }
-            }
-
-            assert(llvm::all_of(sampleOpResults, [](Value v) { return v; }) &&
-                   "Incomplete sample op results");
-
-            if (auto tracedOutputIndicesAttr =
-                    sampleOp.getTracedOutputIndicesAttr()) {
-              for (auto i : tracedOutputIndicesAttr.asArrayRef())
-                tracedOutputs.push_back(sampleOpResults[i]);
+            // Pass RNG state from input to output.
+            sampledValues[0] = sampleOp.getOperand(0);
+            for (unsigned i = 0; i < gsfcOp->getNumResults(); ++i) {
+              sampledValues[i + 1] = gsfcOp->getResult(i);
             }
 
             // Compute weight via logpdf using constrained values.
@@ -405,11 +368,14 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getLogpdfAttr()));
 
+            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
             SmallVector<Value> logpdfOperands;
-            logpdfOperands.append(tracedOutputs);
-            if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
-              for (auto idx : tracedInputIndices.asArrayRef())
-                logpdfOperands.push_back(sampleOp.getOperand(idx));
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              logpdfOperands.push_back(sampledValues[i]);
+            }
+            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+              logpdfOperands.push_back(sampleOp.getOperand(i));
+            }
 
             if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
               sampleOp.emitError(
@@ -432,24 +398,21 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                 sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
                 sampleOp.getInputs());
 
-            sampleOpResults.append(distCall.getResults().begin(),
-                                   distCall.getResults().end());
-
-            if (auto tracedOutputIndices =
-                    sampleOp.getTracedOutputIndicesAttr()) {
-              for (auto i : tracedOutputIndices.asArrayRef())
-                tracedOutputs.push_back(distCall.getResult(i));
-            }
+            sampledValues.append(distCall.getResults().begin(),
+                                 distCall.getResults().end());
 
             auto logpdfFn =
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getLogpdfAttr()));
 
+            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
             SmallVector<Value> logpdfOperands;
-            logpdfOperands.append(tracedOutputs);
-            if (auto tracedInputIndices = sampleOp.getTracedInputIndicesAttr())
-              for (auto idx : tracedInputIndices.asArrayRef())
-                logpdfOperands.push_back(sampleOp.getOperand(idx));
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              logpdfOperands.push_back(sampledValues[i]);
+            }
+            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+              logpdfOperands.push_back(sampleOp.getOperand(i));
+            }
 
             if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
               sampleOp.emitError(
@@ -469,12 +432,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // B1. Generative functions: generate a `generate` op that will itself
           // be lowered in a subsequent rewrite. No direct call to the
           // generative function should be emitted here.
-          SmallVector<int64_t> tracedOutputIndices;
-          if (auto tracedOutputIndicesAttr =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndicesAttr.asArrayRef())
-              tracedOutputIndices.push_back(i);
-          }
           auto generateOp = rewriter.create<enzyme::GenerateOp>(
               sampleOp.getLoc(),
               /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
@@ -486,8 +443,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               rewriter.getArrayAttr({}),
               /*constraint*/
               CI.getConstraint(),
-              /*traced_output_indices*/
-              rewriter.getDenseI64ArrayAttr(tracedOutputIndices),
               /*name*/ sampleOp.getNameAttr());
 
           // The first two results of generateOp are the subtrace and weight.
@@ -495,13 +450,7 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
           // op's results. We will replace uses of the sample op with these
           // values in the next step.
           for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampleOpResults.push_back(generateOp->getResult(i + 2));
-
-          if (auto tracedOutputIndices =
-                  sampleOp.getTracedOutputIndicesAttr()) {
-            for (auto i : tracedOutputIndices.asArrayRef())
-              tracedOutputs.push_back(generateOp->getResult(i + 2));
-          }
+            sampledValues.push_back(generateOp->getResult(i + 2));
 
           // B2. Add subtrace to trace.
           auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
@@ -517,19 +466,24 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
               sampleOp.getLoc(), weightAccumulator, generateOp->getResult(1));
         }
 
-        // C. Add traced sampled values to trace (common for both cases).
-        if (!tracedOutputs.empty()) {
+        // C. Add non-RNG sampled values to trace (common for both cases).
+        SmallVector<Value> valuesToTrace;
+        for (unsigned i = 1; i < sampledValues.size(); ++i) {
+          valuesToTrace.push_back(sampledValues[i]);
+        }
+
+        if (!valuesToTrace.empty()) {
           auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
               sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ tracedOutputs);
+              /*sample*/ valuesToTrace);
           currTrace = addSampleToTraceOp.getUpdatedTrace();
         }
 
         // D. Replace uses of the original sample op with the new values.
-        sampleOp.replaceAllUsesWith(sampleOpResults);
+        sampleOp.replaceAllUsesWith(sampledValues);
 
         toErase.push_back(sampleOp);
         return WalkResult::advance();
@@ -557,17 +511,18 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
 
-        // E2. Add the function return value(s) to the trace.
-        if (auto tracedOutputIndices = CI.getTracedOutputIndicesAttr()) {
-          SmallVector<Value> retvalOperands;
-          for (auto idx : tracedOutputIndices.asArrayRef())
-            retvalOperands.push_back(retOp.getOperand(idx));
+        // E2. Add non-RNG return values to the trace.
+        SmallVector<Value> retvals;
+        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
+          retvals.push_back(retOp.getOperand(i));
+        }
 
+        if (!retvals.empty()) {
           auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
               retOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
               /*trace*/ currTrace,
-              /*retval*/ retvalOperands);
+              /*retval*/ retvals);
           currTrace = addRetvalOp.getUpdatedTrace();
         }
 

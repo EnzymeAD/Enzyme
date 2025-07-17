@@ -298,16 +298,19 @@ def Constraint : Enzyme_Type<"Constraint"> {
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Sample from a distribution";
+  let description = [{
+  Sample from a distribution. By convention, the 0th operand in `inputs`
+  or `outputs` is the initial RNG state (seed).
+  }];
+
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
-    OptionalAttr<DenseI64ArrayAttr>:$traced_input_indices,
-    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
-    OptionalAttr<DenseI64ArrayAttr>:$alias_map,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
+
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
@@ -318,7 +321,8 @@ def SampleOp : Enzyme_Op<"sample",
 def UntracedCallOp : Enzyme_Op<"untracedCall"> {
   let summary = "Call a probabilistic function without tracing";
   let description = [{
-  Call a probabilistic function without tracing.
+  Call a probabilistic function without tracing. By convention, the 0th operand in `inputs`
+  or `outputs` is the initial RNG state (seed).
   }];
 
   let arguments = (ins
@@ -339,14 +343,14 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let description = [{
   Simulate a probabilistic function to generate execution trace
   by replacing all SampleOps with distribution calls and recording
-  all sampled values into the trace. This op returns the trace and
-  the weight along with the original outputs.
+  all sampled values into the trace. This op returns the trace, the weight
+  (accumulated log-probability), and the other outputs. By convention,
+  the 0th operand in `inputs` or `outputs` is the initial RNG state (seed).
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -360,8 +364,12 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Generate an execution trace and weight from a probabilistic function";
   let description = [{
-  Generate an execution trace and weight from a probabilistic function. If a constraint dict
-  is provided, we will use the corresponding constraint values instead of generating new samples.
+  Generate an execution trace and weight from a probabilistic function.
+  If a `constraint` dict is provided AND the sample op's `symbol` is in the
+  `constrained_symbols` array, we will use the corresponding constraint value
+  instead of generating new samples from the probabilistic function.
+  By convention, the 0th operand in `inputs` or `outputs` is the initial RNG
+  state (seed).
   }];
 
   let arguments = (ins
@@ -369,7 +377,6 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     Variadic<AnyType>:$inputs,
     SymbolArrayAttr:$constrained_symbols,
     Constraint:$constraint,
-    OptionalAttr<DenseI64ArrayAttr>:$traced_output_indices,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
