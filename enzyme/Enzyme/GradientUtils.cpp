@@ -4262,7 +4262,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
-        startsWith(n, "_ZN4libm4math3log") || n.contains("__enzyme_ignore_derivatives")) {
+        startsWith(n, "_ZN4libm4math3log") ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
     if (isPointerArithmeticInst(ci))
