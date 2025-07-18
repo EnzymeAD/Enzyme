@@ -155,6 +155,7 @@ def CmpF : ArithInst<"CmpFOp">;
 def Arith_Select : ArithInst<"SelectOp">;
 
 def Arith_OEQ : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OEQ">;
+def Arith_OGE : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::CmpFPredicate::OGE">;
 
 def CheckedMulF : SubRoutine<(Op $diffret, $x),
                   (
