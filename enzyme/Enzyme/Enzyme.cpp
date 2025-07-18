@@ -153,6 +153,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
           addFunctionNoCapture(&F, arg.getArgNo());
         }
       }
+    }
   }
   if (F.getName() == "memcmp") {
     changed = true;
@@ -2385,7 +2386,8 @@ public:
 
         size_t num_args = CI->arg_size();
 
-        if (Fn->getName().contains("__enzyme_todense") || Fn->getName().contains("__enzyme_ignore_derivatives")) {
+        if (Fn->getName().contains("__enzyme_todense") ||
+            Fn->getName().contains("__enzyme_ignore_derivatives")) {
 #if LLVM_VERSION_MAJOR >= 16
           CI->setOnlyReadsMemory();
           CI->setOnlyWritesMemory();
@@ -2958,31 +2960,22 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,     &AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
+          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
+          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
+          &AADereferenceable::ID, &AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,          &AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
       AttributorConfig aconfig(CGUpdater);
@@ -3082,7 +3075,8 @@ public:
                 CI->eraseFromParent();
                 changed = true;
               }
-              if (F->getName() == "__enzyme_iter" || F->getName().contains("__enzyme_ignore_derivatives")) {
+              if (F->getName() == "__enzyme_iter" ||
+                  F->getName().contains("__enzyme_ignore_derivatives")) {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
                 CI->eraseFromParent();
                 changed = true;

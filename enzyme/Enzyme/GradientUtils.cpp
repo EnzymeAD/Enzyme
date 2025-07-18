@@ -4111,7 +4111,8 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
-        n == "omp_get_thread_num" || n == "omp_get_max_threads" || "__enzyme_ignore_derivatives") {
+        n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
 #if LLVM_VERSION_MAJOR >= 14
@@ -4261,7 +4262,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
-        startsWith(n, "_ZN4libm4math3log") || "__enzyme_ignore_derivatives") {
+        startsWith(n, "_ZN4libm4math3log") || n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
     if (isPointerArithmeticInst(ci))
