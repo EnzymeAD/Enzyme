@@ -211,6 +211,42 @@ static FunctionOpInterface batchCloneFunction(
   return NewF;
 }
 
+template <typename T>
+LogicalResult batchOperation(
+    SymbolTableCollection &symbolTable, T CI,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  SmallVector<mlir::Value, 2> args;
+
+  auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+  auto fn = cast<FunctionOpInterface>(symbolOp);
+
+  enzyme::batchutils::BatchCacheKey key{
+      fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
+                               CI.getBatchShape().end())};
+
+  // Check if we already have a batched version
+  auto it = batchedFunctionCache.find(key);
+  FunctionOpInterface newFunc;
+
+  if (it != batchedFunctionCache.end()) {
+    newFunc = it->second;
+  } else {
+    // Create new batched function and store in cache
+    newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
+                                 CI.getBatchShape(), batchedFunctionCache);
+    if (!newFunc) {
+      return failure();
+    }
+  }
+
+  OpBuilder builder(CI);
+  auto dCI = builder.create<func::CallOp>(
+      CI.getLoc(), newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
+  CI.replaceAllUsesWith(dCI);
+  CI->erase();
+  return success();
+}
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
@@ -223,41 +259,6 @@ struct BatchPass : public BatchPassBase<BatchPass> {
   // Cache mapping original function and batch sizes to batched function
   std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
       batchedFunctionCache;
-
-  template <typename T>
-  LogicalResult HandleBatch(SymbolTableCollection &symbolTable, T CI) {
-    SmallVector<mlir::Value, 2> args;
-
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
-
-    enzyme::batchutils::BatchCacheKey key{
-        fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
-                                 CI.getBatchShape().end())};
-
-    // Check if we already have a batched version
-    auto it = batchedFunctionCache.find(key);
-    FunctionOpInterface newFunc;
-
-    if (it != batchedFunctionCache.end()) {
-      newFunc = it->second;
-    } else {
-      // Create new batched function and store in cache
-      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
-                                   CI.getBatchShape(), batchedFunctionCache);
-      if (!newFunc) {
-        return failure();
-      }
-    }
-
-    OpBuilder builder(CI);
-    auto dCI =
-        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                     newFunc.getResultTypes(), CI.getInputs());
-    CI.replaceAllUsesWith(dCI);
-    CI->erase();
-    return success();
-  }
 
   void lowerEnzymeBatchCalls(SymbolTableCollection &symbolTable,
                              FunctionOpInterface op) {
@@ -274,7 +275,8 @@ struct BatchPass : public BatchPassBase<BatchPass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
-          auto res = HandleBatch(symbolTable, F);
+          auto res = enzyme::batchutils::batchOperation(symbolTable, F,
+                                                        batchedFunctionCache);
           if (!res.succeeded()) {
             signalPassFailure();
             return;

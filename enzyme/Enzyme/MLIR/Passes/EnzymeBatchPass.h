@@ -40,6 +40,11 @@ static LogicalResult handleCallOp(
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
+template <typename T>
+LogicalResult batchOperation(
+    SymbolTableCollection &symbolTable, T CI,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
