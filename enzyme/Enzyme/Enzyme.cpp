@@ -3082,7 +3082,7 @@ public:
                 CI->eraseFromParent();
                 changed = true;
               }
-              if (F->getName() == "__enzyme_iter") {
+              if (F->getName() == "__enzyme_iter" || F->getName().contains("__enzyme_ignore_derivatives")) {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
                 CI->eraseFromParent();
                 changed = true;
