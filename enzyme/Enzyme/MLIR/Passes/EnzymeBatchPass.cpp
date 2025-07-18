@@ -11,6 +11,7 @@
 // a generic parallel for representation
 //===----------------------------------------------------------------------===//
 
+#include "Passes/EnzymeBatchPass.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
@@ -26,25 +27,9 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
-namespace {
-
-struct BatchCacheKey {
-  FunctionOpInterface function;
-  SmallVector<int64_t> batchSizes;
-
-  // for use in std::map:
-  bool operator<(const BatchCacheKey &other) const {
-    if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName())
-      return const_cast<FunctionOpInterface &>(function).getName() <
-             const_cast<FunctionOpInterface &>(other.function).getName();
-    return batchSizes < other.batchSizes;
-  }
-};
-
-static FunctionOpInterface batchCloneFunction(
-    FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
-    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+namespace mlir {
+namespace enzyme {
+namespace batchutils {
 
 static mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                         llvm::ArrayRef<int64_t> batchSizes) {
@@ -226,11 +211,18 @@ static FunctionOpInterface batchCloneFunction(
   return NewF;
 }
 
+} // namespace batchutils
+} // namespace enzyme
+} // namespace mlir
+
+namespace {
+
 struct BatchPass : public BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function
-  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
+  std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
+      batchedFunctionCache;
 
   template <typename T>
   LogicalResult HandleBatch(SymbolTableCollection &symbolTable, T CI) {
@@ -239,8 +231,9 @@ struct BatchPass : public BatchPassBase<BatchPass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    BatchCacheKey key{fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
-                                               CI.getBatchShape().end())};
+    enzyme::batchutils::BatchCacheKey key{
+        fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
+                                 CI.getBatchShape().end())};
 
     // Check if we already have a batched version
     auto it = batchedFunctionCache.find(key);
