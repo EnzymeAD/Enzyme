@@ -1492,7 +1492,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         V = Call->getArgOperand(1);
         continue;
       }
-      // TODO: funcName.contains("__enzyme_ignore_derivatives")) {
+      if (funcName.contains("__enzyme_ignore_derivatives")) {
+        V = Call->getArgOperand(0);
+        continue;
+      }
       if (funcName.contains("__enzyme_todense")) {
 #if LLVM_VERSION_MAJOR >= 14
         size_t numargs = Call->arg_size();

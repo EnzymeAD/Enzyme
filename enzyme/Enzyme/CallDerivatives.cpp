@@ -3659,30 +3659,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     return true;
   }
 
-  if (funcName.contains("__enzyme_ignore_derivatives")) {
-    if (gutils->isConstantValue(&call)) {
-      eraseIfUnused(call);
-      return true;
-    }
-
-    auto ifound = gutils->invertedPointers.find(&call);
-    assert(ifound != gutils->invertedPointers.end());
-
-    auto placeholder = cast<PHINode>(&*ifound->second);
-
-    bool needShadow =
-        DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
-            gutils, &call, Mode, oldUnreachable);
-    if (!needShadow) {
-      gutils->invertedPointers.erase(ifound);
-      gutils->erase(placeholder);
-      eraseIfUnused(call);
-      return true;
-    }
-
-    // TODO: How to create a shadow from nothing?
-  }
-
   if (funcName == "memcpy" || funcName == "memmove") {
     auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
     visitMemTransferCommon(ID, /*srcAlign*/ MaybeAlign(1),
