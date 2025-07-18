@@ -8,10 +8,7 @@ module {
     %s:3 = enzyme.sample @joint(%rng, %mean, %stddev) {
       symbol = #enzyme.symbol<5>,
       name = "s",
-      logpdf = @joint_logpdf,
-      traced_input_indices = array<i64: 1, 2>,
-      traced_output_indices = array<i64: 1, 2>,
-      alias_map = array<i64: 0, 0>
+      logpdf = @joint_logpdf
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<2xf64>)
     return %s#0, %s#1, %s#2 : tensor<2xui64>, tensor<f64>, tensor<2xf64>
   }
@@ -19,8 +16,7 @@ module {
   func.func @foo(%rng : tensor<2xui64>, %x : tensor<f64>, %y : tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<2xf64>) {
     %constraint = enzyme.initConstraint : !enzyme.Constraint
     %res:5 = enzyme.generate @test(%rng, %x, %y) given %constraint {
-      constrained_symbols = [#enzyme.symbol<2>, #enzyme.symbol<5>],
-      traced_output_indices = array<i64: 1, 2>
+      constrained_symbols = [#enzyme.symbol<2>, #enzyme.symbol<5>]
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<2xf64>)
     return %res#1, %res#2, %res#3, %res#4 : tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<2xf64>
   }
