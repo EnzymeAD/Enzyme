@@ -215,11 +215,15 @@ template <typename T>
 LogicalResult batchOperation(
     SymbolTableCollection &symbolTable, T CI,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
-  SmallVector<mlir::Value, 2> args;
-
   auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-  auto fn = cast<FunctionOpInterface>(symbolOp);
+  return batchOperation(CI, cast<FunctionOpInterface>(symbolOp),
+                        batchedFunctionCache);
+}
 
+template <typename T>
+LogicalResult batchOperation(
+    T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   enzyme::batchutils::BatchCacheKey key{
       fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
                                CI.getBatchShape().end())};

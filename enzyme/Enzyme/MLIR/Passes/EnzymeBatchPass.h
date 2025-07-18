@@ -45,6 +45,11 @@ LogicalResult batchOperation(
     SymbolTableCollection &symbolTable, T CI,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
+template <typename T>
+LogicalResult batchOperation(
+    T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
