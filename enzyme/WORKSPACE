@@ -78,3 +78,12 @@ load("@rules_python//python:repositories.bzl", "py_repositories")
 
 py_repositories()
 
+# Abseil C++ library
+http_archive(
+    name = "com_google_absl",
+    sha256 = "733726b8c3a6d39a4120d7e45ea8b41a434cdacde401cba500f14236c49b39dc",
+    strip_prefix = "abseil-cpp-20240116.2",
+    urls = [
+        "https://github.com/abseil/abseil-cpp/releases/download/20240116.2/abseil-cpp-20240116.2.tar.gz",
+    ],
+)
