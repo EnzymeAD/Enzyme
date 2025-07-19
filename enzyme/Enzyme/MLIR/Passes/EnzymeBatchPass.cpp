@@ -31,8 +31,8 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
-static mlir::TensorType applyBatchSizes(mlir::Type Ty,
-                                        llvm::ArrayRef<int64_t> batchSizes) {
+mlir::TensorType applyBatchSizes(mlir::Type Ty,
+                                 llvm::ArrayRef<int64_t> batchSizes) {
   auto T = dyn_cast<TensorType>(Ty);
   if (!T) {
     return RankedTensorType::get(batchSizes, Ty);
@@ -44,7 +44,7 @@ static mlir::TensorType applyBatchSizes(mlir::Type Ty,
   return T2;
 }
 
-static LogicalResult handleCallOp(
+LogicalResult handleCallOp(
     func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
@@ -90,7 +90,7 @@ static LogicalResult handleCallOp(
   return success();
 }
 
-static void batchCloneRegion(
+void batchCloneRegion(
     Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
@@ -163,7 +163,7 @@ static void batchCloneRegion(
   }
 }
 
-static FunctionOpInterface batchCloneFunction(
+FunctionOpInterface batchCloneFunction(
     FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   assert(!F.getFunctionBody().empty());

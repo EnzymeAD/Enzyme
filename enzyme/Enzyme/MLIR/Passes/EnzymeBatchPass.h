@@ -23,19 +23,19 @@ struct BatchCacheKey {
   }
 };
 
-static mlir::TensorType applyBatchSizes(mlir::Type Ty,
-                                        llvm::ArrayRef<int64_t> batchSizes);
+mlir::TensorType applyBatchSizes(mlir::Type Ty,
+                                 llvm::ArrayRef<int64_t> batchSizes);
 
-static FunctionOpInterface batchCloneFunction(
+FunctionOpInterface batchCloneFunction(
     FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
-static void batchCloneRegion(
+void batchCloneRegion(
     Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
-static LogicalResult handleCallOp(
+LogicalResult handleCallOp(
     func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
