@@ -162,22 +162,8 @@ public:
         // TODO: handle complex
         return failure();
       }
-    } else {
-      if (isa<IntegerType>(ET)) {
-        return llvm::all_of(eAttr.getValues<APInt>(),
-                            [](const APInt &val) { return val.isZero(); })
-                   ? success()
-                   : failure();
-      } else if (isa<FloatType>(ET)) {
-        return llvm::all_of(eAttr.getValues<APFloat>(),
-                            [](const APFloat &val) { return val.isZero(); })
-                   ? success()
-                   : failure();
-      } else {
-        // TODO: handle complex
-        return failure();
-      }
     }
+
     return failure();
   }
 
@@ -269,21 +255,6 @@ public:
                             Value val) const {
     return failure();
   }
-
-  // possible reference impl. for hamndling complex values
-  // bool isZero(mlir::Value v) {
-  //   ArrayAttr lhs;
-  //   matchPattern(v, m_Constant(&lhs));
-  //   if (lhs) {
-  //     for (auto e : lhs) {
-  //       if (!cast<FloatAttr>(e).getValue().isZero())
-  //         return false;
-  //     }
-  //     return true;
-  //   }
-  //   return false;
-  // }
-  //
 
   LogicalResult isZero(Type self, Value val) const {
     ArrayAttr arrayAttr;
