@@ -178,7 +178,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
-    "__enzyme_pointer"};
+    "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 const StringSet<> KnownInactiveFunctions = {
     "mpfr_greater_p",

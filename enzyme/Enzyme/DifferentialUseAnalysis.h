@@ -387,6 +387,9 @@ inline bool is_value_needed_in_reverse(
       if (funcName.contains("__enzyme_todense")) {
         primalUsedInShadowPointer = false;
       }
+      if (funcName.contains("__enzyme_ignore_derivatives")) {
+        primalUsedInShadowPointer = false;
+      }
     }
     if (auto GEP = dyn_cast<GetElementPtrInst>(user)) {
       bool idxUsed = false;

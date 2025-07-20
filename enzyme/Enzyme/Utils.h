@@ -1432,6 +1432,9 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
+    if (funcName.contains("__enzyme_ignore_derivatives")) {
+      return true;
+    }
   }
 
   return false;
@@ -1493,6 +1496,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       }
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
         V = Call->getArgOperand(1);
+        continue;
+      }
+      if (funcName.contains("__enzyme_ignore_derivatives")) {
+        V = Call->getArgOperand(0);
         continue;
       }
       if (funcName.contains("__enzyme_todense")) {

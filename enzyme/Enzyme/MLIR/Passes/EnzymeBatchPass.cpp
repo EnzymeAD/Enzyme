@@ -11,6 +11,7 @@
 // a generic parallel for representation
 //===----------------------------------------------------------------------===//
 
+#include "Passes/EnzymeBatchPass.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
@@ -26,28 +27,12 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
-namespace {
+namespace mlir {
+namespace enzyme {
+namespace batchutils {
 
-struct BatchCacheKey {
-  FunctionOpInterface function;
-  SmallVector<int64_t> batchSizes;
-
-  // for use in std::map:
-  bool operator<(const BatchCacheKey &other) const {
-    if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName())
-      return const_cast<FunctionOpInterface &>(function).getName() <
-             const_cast<FunctionOpInterface &>(other.function).getName();
-    return batchSizes < other.batchSizes;
-  }
-};
-
-static FunctionOpInterface batchCloneFunction(
-    FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
-    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
-
-static mlir::TensorType applyBatchSizes(mlir::Type Ty,
-                                        llvm::ArrayRef<int64_t> batchSizes) {
+mlir::TensorType applyBatchSizes(mlir::Type Ty,
+                                 llvm::ArrayRef<int64_t> batchSizes) {
   auto T = dyn_cast<TensorType>(Ty);
   if (!T) {
     return RankedTensorType::get(batchSizes, Ty);
@@ -59,7 +44,7 @@ static mlir::TensorType applyBatchSizes(mlir::Type Ty,
   return T2;
 }
 
-static LogicalResult handleCallOp(
+LogicalResult handleCallOp(
     func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
@@ -105,7 +90,7 @@ static LogicalResult handleCallOp(
   return success();
 }
 
-static void batchCloneRegion(
+void batchCloneRegion(
     Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
@@ -178,7 +163,7 @@ static void batchCloneRegion(
   }
 }
 
-static FunctionOpInterface batchCloneFunction(
+FunctionOpInterface batchCloneFunction(
     FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   assert(!F.getFunctionBody().empty());
@@ -226,45 +211,58 @@ static FunctionOpInterface batchCloneFunction(
   return NewF;
 }
 
+template <typename T>
+LogicalResult batchOperation(
+    SymbolTableCollection &symbolTable, T CI,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+  return batchOperation(CI, cast<FunctionOpInterface>(symbolOp),
+                        batchedFunctionCache);
+}
+
+template <typename T>
+LogicalResult batchOperation(
+    T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  enzyme::batchutils::BatchCacheKey key{
+      fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
+                               CI.getBatchShape().end())};
+
+  // Check if we already have a batched version
+  auto it = batchedFunctionCache.find(key);
+  FunctionOpInterface newFunc;
+
+  if (it != batchedFunctionCache.end()) {
+    newFunc = it->second;
+  } else {
+    // Create new batched function and store in cache
+    newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
+                                 CI.getBatchShape(), batchedFunctionCache);
+    if (!newFunc) {
+      return failure();
+    }
+  }
+
+  OpBuilder builder(CI);
+  auto dCI = builder.create<func::CallOp>(
+      CI.getLoc(), newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
+  CI.replaceAllUsesWith(dCI);
+  CI->erase();
+  return success();
+}
+
+} // namespace batchutils
+} // namespace enzyme
+} // namespace mlir
+
+namespace {
+
 struct BatchPass : public BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function
-  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
-
-  template <typename T>
-  LogicalResult HandleBatch(SymbolTableCollection &symbolTable, T CI) {
-    SmallVector<mlir::Value, 2> args;
-
-    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbolOp);
-
-    BatchCacheKey key{fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
-                                               CI.getBatchShape().end())};
-
-    // Check if we already have a batched version
-    auto it = batchedFunctionCache.find(key);
-    FunctionOpInterface newFunc;
-
-    if (it != batchedFunctionCache.end()) {
-      newFunc = it->second;
-    } else {
-      // Create new batched function and store in cache
-      newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
-                                   CI.getBatchShape(), batchedFunctionCache);
-      if (!newFunc) {
-        return failure();
-      }
-    }
-
-    OpBuilder builder(CI);
-    auto dCI =
-        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                     newFunc.getResultTypes(), CI.getInputs());
-    CI.replaceAllUsesWith(dCI);
-    CI->erase();
-    return success();
-  }
+  std::map<enzyme::batchutils::BatchCacheKey, FunctionOpInterface>
+      batchedFunctionCache;
 
   void lowerEnzymeBatchCalls(SymbolTableCollection &symbolTable,
                              FunctionOpInterface op) {
@@ -281,7 +279,8 @@ struct BatchPass : public BatchPassBase<BatchPass> {
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
-          auto res = HandleBatch(symbolTable, F);
+          auto res = enzyme::batchutils::batchOperation(symbolTable, F,
+                                                        batchedFunctionCache);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
