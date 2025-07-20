@@ -79,6 +79,13 @@ public:
     return failure();
   }
 
+  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+    if (matchPattern(attr, m_AnyZeroFloat())) {
+      return success();
+    }
+    return failure();
+  }
+
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -152,21 +159,30 @@ public:
       return failure();
 
     if (eAttr.isSplat()) {
+      // recurse on the individual element type
       auto splatVal = eAttr.getSplatValue<Attribute>();
-
-      if (isa<IntegerType>(ET)) {
-        return matchPattern(splatVal, m_Zero()) ? success() : failure();
-      } else if (isa<FloatType>(ET)) {
-        return matchPattern(splatVal, m_AnyZeroFloat()) ? success() : failure();
-      } else {
-        // TODO: handle complex
-        return failure();
-      }
+      auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+      return ADET ? ADET.isZeroAttr(splatVal) : failure();
     }
 
     return failure();
   }
+  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+    auto eAttr = dyn_cast<DenseElementsAttr>(attr);
+    if (!eAttr)
+      return failure();
 
+    auto ET = eAttr.getType().getElementType();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+
+    if (!ADET)
+      return failure();
+
+    if (eAttr.isSplat()) {
+      return ADET.isZeroAttr(eAttr.getSplatValue<Attribute>());
+    } else
+      return failure();
+  }
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -219,6 +235,12 @@ public:
     return failure();
   }
 
+  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+    if (matchPattern(attr, m_Zero())) {
+      return success();
+    }
+    return failure();
+  }
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -270,6 +292,17 @@ public:
       return success();
     }
     return failure();
+  }
+
+  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+    auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+    if (!arrayAttr || arrayAttr.size() != 2)
+      return failure();
+
+    // Check that both elements of the complex number are zero.
+    bool firstIsZero = cast<FloatAttr>(arrayAttr[0]).getValue().isZero();
+    bool secondIsZero = cast<FloatAttr>(arrayAttr[1]).getValue().isZero();
+    return (firstIsZero && secondIsZero) ? success() : failure();
   }
 
   int64_t getApproxSize(Type self) const {
