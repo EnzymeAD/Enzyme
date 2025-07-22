@@ -280,18 +280,12 @@ public:
 
   LogicalResult isZero(Type self, Value val) const {
     ArrayAttr arrayAttr;
+
     if (!matchPattern(val, m_Constant(&arrayAttr))) {
       return failure();
     }
-    if (arrayAttr) {
-      for (auto e : arrayAttr) {
-        if (!cast<FloatAttr>(e).getValue().isZero()) {
-          return failure();
-        }
-      }
-      return success();
-    }
-    return failure();
+    // reuse attributr check
+    return this->isZeroAttr(self, arrayAttr);
   }
 
   LogicalResult isZeroAttr(Type self, Attribute attr) const {
@@ -299,10 +293,21 @@ public:
     if (!arrayAttr || arrayAttr.size() != 2)
       return failure();
 
-    // Check that both elements of the complex number are zero.
-    bool firstIsZero = cast<FloatAttr>(arrayAttr[0]).getValue().isZero();
-    bool secondIsZero = cast<FloatAttr>(arrayAttr[1]).getValue().isZero();
-    return (firstIsZero && secondIsZero) ? success() : failure();
+    // get the element type
+    auto compType = cast<ComplexType>(self);
+    auto elType = compType.getElementType();
+    auto eltIntf = dyn_cast<AutoDiffTypeInterface>(elType);
+
+    if (!eltIntf)
+      return failure();
+
+    // recurse and accumulate info per attribute
+    bool acc = true;
+    for (auto eltAttr : arrayAttr) {
+      acc = acc && mlir::succeeded(eltIntf.isZeroAttr(eltAttr));
+    }
+
+    return success(acc);
   }
 
   int64_t getApproxSize(Type self) const {
