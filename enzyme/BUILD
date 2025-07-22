@@ -1,4 +1,7 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+# generate compilation commands for enzymemlir-opt
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
 licenses(["notice"])
@@ -586,8 +589,8 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":EnzymeAttributesIncGen",
         ":EnzymeAttributeInterfacesIncGen",
+        ":EnzymeAttributesIncGen",
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",
@@ -598,13 +601,14 @@ cc_library(
         ":arith-derivatives",
         ":cf-derivatives",
         ":complex-derivatives",
+        ":enzyme-derivatives",
         ":func-derivatives",
         ":llvm-derivatives",
         ":math-derivatives",
         ":memref-derivatives",
         ":nvvm-derivatives",
         ":scf-derivatives",
-        ":enzyme-derivatives",
+        "@com_google_absl//absl/status:statusor",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Demangle",
@@ -688,8 +692,6 @@ cc_binary(
 
 exports_files(["run_lit.sh"])
 
-# generate compilation commands for enzymemlir-opt
-load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 refresh_compile_commands(
     name = "refresh_compile_commands",
     targets = [":enzymemlir-opt"],
