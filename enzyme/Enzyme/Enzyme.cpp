@@ -135,6 +135,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.getName().contains("__enzyme_integer") ||
       F.getName().contains("__enzyme_pointer") ||
       F.getName().contains("__enzyme_todense") ||
+      F.getName().contains("__enzyme_ignore_derivatives") ||
       F.getName().contains("__enzyme_iter") ||
       F.getName().contains("__enzyme_virtualreverse")) {
     changed = true;
@@ -144,13 +145,15 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #else
     F.addFnAttr(Attribute::ReadNone);
 #endif
-    if (!F.getName().contains("__enzyme_todense"))
+    if (!(F.getName().contains("__enzyme_todense") ||
+          F.getName().contains("__enzyme_ignore_derivatives"))) {
       for (auto &arg : F.args()) {
         if (arg.getType()->isPointerTy()) {
           arg.addAttr(Attribute::ReadNone);
           addFunctionNoCapture(&F, arg.getArgNo());
         }
       }
+    }
   }
   if (F.getName() == "memcmp") {
     changed = true;
@@ -2383,7 +2386,8 @@ public:
 
         size_t num_args = CI->arg_size();
 
-        if (Fn->getName().contains("__enzyme_todense")) {
+        if (Fn->getName().contains("__enzyme_todense") ||
+            Fn->getName().contains("__enzyme_ignore_derivatives")) {
 #if LLVM_VERSION_MAJOR >= 16
           CI->setOnlyReadsMemory();
           CI->setOnlyWritesMemory();
@@ -3080,7 +3084,8 @@ public:
                 CI->eraseFromParent();
                 changed = true;
               }
-              if (F->getName() == "__enzyme_iter") {
+              if (F->getName() == "__enzyme_iter" ||
+                  F->getName().contains("__enzyme_ignore_derivatives")) {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
                 CI->eraseFromParent();
                 changed = true;
@@ -3727,6 +3732,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "preserve-nvvm-end") {
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
           return true;
         }
         if (Name == "print-type-analysis") {

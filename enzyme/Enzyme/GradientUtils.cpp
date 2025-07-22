@@ -3306,7 +3306,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
             for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                            "enzymejl_allocart"})
+                            "enzymejl_allocart", "enzymejl_allocart_name"})
               if (auto M = I.getMetadata(MD))
                 replacement->setMetadata(MD, M);
             auto Alignment =
@@ -3553,8 +3553,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
-                  for (auto MD : {"enzyme_active", "enzyme_inactive",
-                                  "enzyme_type", "enzymejl_allocart"})
+                  for (auto MD :
+                       {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                        "enzymejl_allocart", "enzymejl_allocart_name"})
                     if (auto M = I.getMetadata(MD))
                       replacement->setMetadata(MD, M);
                   replacement->takeName(anti);
@@ -4110,7 +4111,8 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
-        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+        n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
 #if LLVM_VERSION_MAJOR >= 14
@@ -4260,7 +4262,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
-        startsWith(n, "_ZN4libm4math3log")) {
+        startsWith(n, "_ZN4libm4math3log") ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
     if (isPointerArithmeticInst(ci))

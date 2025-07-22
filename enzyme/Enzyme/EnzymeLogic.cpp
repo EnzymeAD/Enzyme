@@ -1723,7 +1723,20 @@ void clearFunctionAttributes(Function *f) {
     Attribute::WillReturn,
     Attribute::OptimizeNone
   };
+
   for (auto attr : fnattrs) {
+    if (f->hasFnAttribute(attr)) {
+      f->removeFnAttr(attr);
+    }
+  }
+
+  std::string strfnattrs[] = {
+      "enzymejl_mi",
+      "enzymejl_rt",
+      "enzyme_ta_norecur",
+  };
+
+  for (auto attr : strfnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
     }
@@ -1898,7 +1911,14 @@ void restoreCache(
            UI != E;) {
         Use &U = *UI;
         ++UI;
-        U.set(repVal);
+        auto newB = cast<Instruction>(U.getUser())->getParent();
+
+        if (U.getUser() != newB->getTerminator())
+          continue;
+
+        if (newB == gutils->getNewFromOriginal(&BB)) {
+          U.set(repVal);
+        }
       }
     }
     if (reachables.size() == 1)
@@ -1934,7 +1954,14 @@ void restoreCache(
              UI != E;) {
           Use &U = *UI;
           ++UI;
-          U.set(repVal);
+
+          auto newB = cast<Instruction>(U.getUser())->getParent();
+
+          if (U.getUser() != newB->getTerminator())
+            continue;
+
+          if (newB == gutils->getNewFromOriginal(&BB))
+            U.set(repVal);
         }
       }
   }

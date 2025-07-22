@@ -13,7 +13,7 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
     // Yield current iteration sum to next iteration %sum_iter or to %sum
     // if final iteration.
     scf.yield %sum_next : f32
-  }
+  } {enzyme.cache_use_tensor}
   return %sum : f32
 }
 
