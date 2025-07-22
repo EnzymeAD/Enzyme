@@ -31,6 +31,13 @@ def : MLIRDerivative<"arith", "DivFOp", (Op $x, $y),
                     ],
                     (CheckedDivF (SubF (SelectIfActive $x, (MulF (Shadow $x), $y), (ConstantFP<"0","arith", "ConstantOp"> $x)), (SelectIfActive $y, (MulF (Shadow $y), $x), (ConstantFP<"0","arith","ConstantOp"> $y))), (MulF $y, $y))
                   >;
+def : MLIRDerivative<"arith", "SelectOp", (Op $pred, $x, $y),
+                    [
+                      (AssertingInactiveArg),
+                      (Arith_Select $pred, (DiffeRet), (ConstantFP<"0","arith","ConstantOp"> $x)),
+                      (Arith_Select $pred, (ConstantFP<"0","arith","ConstantOp"> $x), (DiffeRet)),
+                    ]
+                  >;
 
 def ExtF : ArithInst<"ExtFOp">;
 def TruncF : ArithInst<"TruncFOp">;
