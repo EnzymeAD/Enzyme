@@ -68,6 +68,11 @@ public:
     // TODO inspect val and memset corresponding size
     return failure();
   }
+
+  LogicalResult isZero(Type self, Value val) const { return failure(); }
+  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+    return failure();
+  }
 };
 } // namespace
 
