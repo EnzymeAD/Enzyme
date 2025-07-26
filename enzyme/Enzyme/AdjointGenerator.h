@@ -2899,7 +2899,8 @@ public:
               args.push_back(op3);
 
             CallInst *cal;
-            if (startsWith(funcName, "memset_pattern"))
+            if (startsWith(funcName, "memset_pattern") ||
+                startsWith(funcName, "llvm.experimental.memset"))
               cal = Builder2.CreateMemSet(
                   op0, ConstantInt::get(Builder2.getInt8Ty(), 0), op2, {});
             else
@@ -2911,7 +2912,8 @@ public:
             if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
               cal->setMetadata("enzyme_zerostack", m);
 
-            if (startsWith(funcName, "memset_pattern")) {
+            if (startsWith(funcName, "memset_pattern") ||
+                startsWith(funcName, "llvm.experimental.memset")) {
               AttributeList NewAttrs;
               for (auto idx :
                    {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
@@ -3254,7 +3256,8 @@ public:
             args.push_back(op3l);
           CallInst *cal;
           auto funcName = getFuncNameFromCall(&MS);
-          if (startsWith(funcName, "memset_pattern"))
+          if (startsWith(funcName, "memset_pattern") ||
+              startsWith(funcName, "llvm.experimental.memset"))
             cal = Builder2.CreateMemSet(
                 op0, ConstantInt::get(Builder2.getInt8Ty(), 0), length, {});
           else
@@ -3265,7 +3268,8 @@ public:
           if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
             cal->setMetadata("enzyme_zerostack", m);
 
-          if (startsWith(funcName, "memset_pattern")) {
+          if (startsWith(funcName, "memset_pattern") ||
+              startsWith(funcName, "llvm.experimental.memset")) {
             AttributeList NewAttrs;
             for (auto idx :
                  {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
@@ -3709,6 +3713,12 @@ public:
       eraseIfUnused(II, /*erase*/ true, /*check*/ false);
       return;
     }
+#if LLVM_VERSION_MAJOR >= 20
+    if (II.getIntrinsicID() == Intrinsic::experimental_memset_pattern) {
+      visitMemSetCommon(II);
+      return;
+    }
+#endif
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
