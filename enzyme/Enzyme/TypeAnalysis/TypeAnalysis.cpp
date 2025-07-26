@@ -1473,7 +1473,7 @@ void TypeAnalyzer::considerTBAA() {
 #if LLVM_VERSION_MAJOR >= 20
         } else if (call->getCalledFunction() &&
                    (call->getCalledFunction()->getIntrinsicID() ==
-                        Intrinsic::experimental_memset_pattern)) {
+                    Intrinsic::experimental_memset_pattern)) {
           int64_t copySize = 1;
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
                                                          DT, intseen, SE)) {
