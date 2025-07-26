@@ -1470,6 +1470,24 @@ void TypeAnalyzer::considerTBAA() {
 
           updateAnalysis(call->getOperand(0), update, call);
           continue;
+#if LLVM_VERSION_MAJOR >= 20
+        } else if (call->getCalledFunction() &&
+                   (call->getCalledFunction()->getIntrinsicID() ==
+                        Intrinsic::experimental_memset_pattern)) {
+          int64_t copySize = 1;
+          for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
+                                                         DT, intseen, SE)) {
+            copySize = max(copySize, val);
+          }
+          TypeTree update =
+              vdptr
+                  .ShiftIndices(DL, /*init offset*/ 0,
+                                /*max size*/ copySize, /*new offset*/ 0)
+                  .Only(-1, call);
+
+          updateAnalysis(call->getOperand(0), update, call);
+          continue;
+#endif
         } else if (call->getCalledFunction() &&
                    call->getCalledFunction()->getIntrinsicID() ==
                        Intrinsic::masked_gather) {
