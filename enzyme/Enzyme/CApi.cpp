@@ -597,6 +597,13 @@ void EnzymeGradientUtilsSubTransferHelper(
                     (bool)allowForward, (bool)shadowsLookedUp);
 }
 
+void EnzymeGradientUtilsAddReverseBlock(GradientUtils *gutils,
+                                        LLVMValueRef block, const char *name,
+                                        uint8_t forkCache, uint8_t push) {
+  gutils->addReverseBlock(cast<BasicBlock>(unwrap(block)), name, forkCache,
+                          push);
+}
+
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
