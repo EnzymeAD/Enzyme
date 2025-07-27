@@ -607,7 +607,7 @@ LLVMBasicBlockRef EnzymeGradientUtilsAddReverseBlock(GradientUtils *gutils,
 }
 
 void EnzymeGradientUtilsSetReverseBlock(GradientUtils *gutils,
-                                                     LLVMBasicBlockRef block) {
+                                        LLVMBasicBlockRef block) {
   auto endBlock = cast<BasicBlock>(unwrap(block));
   auto found = gutils->reverseBlockToPrimal.find(endBlock);
   assert(found != gutils->reverseBlockToPrimal.end());
