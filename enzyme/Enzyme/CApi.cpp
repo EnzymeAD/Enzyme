@@ -606,6 +606,16 @@ LLVMBasicBlockRef EnzymeGradientUtilsAddReverseBlock(GradientUtils *gutils,
                                       forkCache, push));
 }
 
+void EnzymeGradientUtilsSetReverseBlock(GradientUtils *gutils,
+                                                     LLVMBasicBlockRef block) {
+  auto endBlock = cast<BasicBlock>(unwrap(block));
+  auto found = gutils->reverseBlockToPrimal.find(endBlock);
+  assert(found != gutils->reverseBlockToPrimal.end());
+  auto &vec = gutils->reverseBlocks[found->second];
+  assert(vec.size());
+  vec.push_back(endBlock);
+}
+
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
