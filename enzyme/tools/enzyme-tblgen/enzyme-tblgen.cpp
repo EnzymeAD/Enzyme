@@ -247,13 +247,29 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                                  const DagInit *resultRoot, StringRef builder,
                                  VariableSetting &nameToOrdinal, bool lookup,
                                  ArrayRef<unsigned> retidx, StringRef origName,
-                                 bool newFromOriginal, ActionType intrinsic) {
+                                 bool newFromOriginal, ActionType intrinsic,
+                                 bool broadcastInputs = true) {
   SmallVector<bool, 1> vectorValued;
 
   size_t idx = 0;
   for (auto &&[args, names] :
        zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
-    os << curIndent << "auto " << argName << "_" << idx << " = ";
+    bool has_vector = false;
+    if (isa<UnsetInit>(args) && names) {
+      auto [ord, vecValue, ext, isva] =
+          nameToOrdinal.lookup(names->getValue(), pattern, resultRoot);
+      if (!vecValue && !startsWith(ord, "local") && !isva && broadcastInputs) {
+        has_vector = true;
+      }
+    }
+    if (has_vector) {
+      if (intrinsic == MLIRDerivatives)
+        os << curIndent << "mlir::Value " << argName << "_" << idx << " = ";
+      else
+        os << curIndent << "llvm::Value* " << argName << "_" << idx << " = ";
+    } else {
+      os << curIndent << "auto " << argName << "_" << idx << " = ";
+    }
     idx++;
     if (isa<UnsetInit>(args) && names) {
       auto [ord, vecValue, ext, isva] =
@@ -291,24 +307,26 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
         }
         if (intrinsic == MLIRDerivatives) {
           os << ";\n";
-          os << curIndent << "if (gutils->width != 1) {\n";
-          if (isva) {
-            os << curIndent << INDENT << "for (auto &val : " << argName << "_"
-               << (idx - 1) << ") {\n";
-            os << curIndent << INDENT << INDENT
-               << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), val, "
-                  "llvm::SmallVector<int64_t>({gutils->width}));\n";
-            os << curIndent << INDENT << "}\n";
-          } else {
-            os << curIndent << " " << argName << "_" << (idx - 1)
-               << " = builder.create<enzyme::BroadcastOp>(\n"
-               << curIndent << "   op.getLoc(),\n"
-               << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
-               << curIndent
-               << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
+          if (broadcastInputs) {
+            os << curIndent << "if (gutils->width != 1) {\n";
+            if (isva) {
+              os << curIndent << INDENT << "for (auto &val : " << argName << "_"
+                 << (idx - 1) << ") {\n";
+              os << curIndent << INDENT << INDENT
+                 << "val = builder.create<enzyme::BroadcastOp>(op.getLoc(), "
+                    "val, "
+                    "llvm::SmallVector<int64_t>({gutils->width}));\n";
+              os << curIndent << INDENT << "}\n";
+            } else {
+              os << curIndent << " " << argName << "_" << (idx - 1)
+                 << " = builder.create<enzyme::BroadcastOp>(\n"
+                 << curIndent << "   op.getLoc(),\n"
+                 << curIndent << "   " << argName << "_" << (idx - 1) << ",\n"
+                 << curIndent
+                 << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
+            }
+            os << curIndent << "}";
           }
-
-          os << curIndent << "}";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)
@@ -514,6 +532,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
       os << ";\n";
 
       os << curIndent << INDENT << "bool vectorized = false;\n";
+      os << curIndent << INDENT << "(void)vectorized;\n";
 
       os << curIndent << INDENT << "if (condition) {\n";
 
@@ -603,7 +622,6 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           auto name = resultRoot->getArgName(0)->getAsUnquotedString();
           auto [ord1, isVec, ext, isva] =
               nameToOrdinal.lookup(name, pattern, resultTree);
-          assert(!isVec);
           assert(!ext.size());
           assert(!isva);
           ord = ord1;
@@ -943,9 +961,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
 
       os << "({\n";
       os << curIndent << INDENT << "// Computing subroutine " << opName << "\n";
-      SmallVector<bool, 1> vectorValued = prepareArgs(
-          curIndent + INDENT, os, argPattern, pattern, resultRoot, builder,
-          nameToOrdinal, lookup, retidx, origName, newFromOriginal, intrinsic);
+      SmallVector<bool, 1> vectorValued =
+          prepareArgs(curIndent + INDENT, os, argPattern, pattern, resultRoot,
+                      builder, nameToOrdinal, lookup, retidx, origName,
+                      newFromOriginal, intrinsic, false);
       bool anyVector = false;
       for (auto b : vectorValued)
         anyVector |= b;
@@ -1090,9 +1109,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         getIntrinsic(os, intrName, intrTypes, argPattern, origName);
         os << ", ArrayRef<Value*>({";
       } else if (opName == "CheckedMul") {
-        os << "checkedMul(" << builder << ", ";
+        os << "checkedMul(gutils->strongZero, " << builder << ", ";
       } else if (opName == "CheckedDiv") {
-        os << "checkedDiv(" << builder << ", ";
+        os << "checkedDiv(gutils->strongZero, " << builder << ", ";
       } else if (intrinsic == MLIRDerivatives) {
         if (intrinsic == MLIRDerivatives) {
           auto preop = Def->getValueAsString("preop");
@@ -1773,6 +1792,8 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
     os << "        }\n";
 
   if (intrinsic == MLIRDerivatives) {
+    os << "          if (gutils->isConstantInstruction(op) || "
+          "gutils->isConstantValue(op->getResult(0))) return success();\n";
     os << "   SmallVector<Value> operands(op->getNumOperands(), nullptr);\n";
     os << "          auto neededArgs = cachedArguments(op, gutils);\n";
     os << "          size_t count = 0;\n";

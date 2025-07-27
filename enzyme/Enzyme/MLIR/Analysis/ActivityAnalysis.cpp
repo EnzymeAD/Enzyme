@@ -211,7 +211,11 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 // TODO: these should be lifted to proper operations and implemented via the
 // interface.
 const static unsigned constantIntrinsics[] = {
+#if LLVM_VERSION_MAJOR <= 20
     llvm::Intrinsic::nvvm_barrier0,
+#else
+    llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all,
+#endif
     llvm::Intrinsic::nvvm_barrier0_popc,
     llvm::Intrinsic::nvvm_barrier0_and,
     llvm::Intrinsic::nvvm_barrier0_or,
@@ -923,7 +927,7 @@ static FunctionOpInterface getFunctionIfArgument(Value value) {
     return nullptr;
 
   Block *block = arg.getOwner();
-  if (block->isEntryBlock())
+  if (!block->isEntryBlock())
     return nullptr;
 
   return dyn_cast<FunctionOpInterface>(block->getParentOp());

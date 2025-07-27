@@ -27,6 +27,8 @@ def Enzyme_Dialect : Dialect {
     /// Names of analysis summary attributes
     static StringRef getPointerSummaryAttrName() { return "enzyme.p2p"; }
     static StringRef getAliasSummaryAttrName() { return "enzyme.alias"; }
+    static StringRef getDenseActivityAnnotationAttrName() { return "enzyme.denseactive"; }
+    static StringRef getSparseActivityAnnotationAttrName() { return "enzyme.sparseactive"; }
   }];
 }
 

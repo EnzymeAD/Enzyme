@@ -845,7 +845,7 @@ bool preserveNVVM(bool Begin, Module &M) {
         nvname += "f32";
         llname += "f32";
       } else {
-        nvname += "f32";
+        nvname += "f64";
         llname += "f64";
       }
 

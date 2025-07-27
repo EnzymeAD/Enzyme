@@ -173,6 +173,7 @@ struct ReverseCacheKey {
   bool forceAnonymousTape;
   const FnTypeInfo typeInfo;
   bool runtimeActivity;
+  bool strongZero;
 
   ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
     return {todiff,
@@ -189,7 +190,8 @@ struct ReverseCacheKey {
             additionalType,
             forceAnonymousTape,
             newTypeInfo,
-            runtimeActivity};
+            runtimeActivity,
+            strongZero};
   }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
@@ -289,6 +291,11 @@ struct ReverseCacheKey {
     if (runtimeActivity < rhs.runtimeActivity)
       return true;
     if (rhs.runtimeActivity < runtimeActivity)
+      return false;
+
+    if (strongZero < rhs.strongZero)
+      return true;
+    if (rhs.strongZero < strongZero)
       return false;
 
     // equal
@@ -464,6 +471,7 @@ public:
     bool omp;
     unsigned width;
     bool runtimeActivity;
+    bool strongZero;
 
     inline bool operator<(const AugmentedCacheKey &rhs) const {
       if (fn < rhs.fn)
@@ -539,6 +547,11 @@ public:
       if (rhs.runtimeActivity < runtimeActivity)
         return false;
 
+      if (strongZero < rhs.strongZero)
+        return true;
+      if (rhs.strongZero < strongZero)
+        return false;
+
       // equal
       return false;
     }
@@ -572,7 +585,8 @@ public:
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       bool subsequent_calls_may_write,
       const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
-      bool runtimeActivity, unsigned width, bool AtomicAdd, bool omp = false);
+      bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
+      bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -588,6 +602,7 @@ public:
     llvm::Type *additionalType;
     const FnTypeInfo typeInfo;
     bool runtimeActivity;
+    bool strongZero;
 
     inline bool operator<(const ForwardCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -653,6 +668,11 @@ public:
       if (rhs.runtimeActivity < runtimeActivity)
         return false;
 
+      if (strongZero < rhs.strongZero)
+        return true;
+      if (rhs.strongZero < strongZero)
+        return false;
+
       // equal
       return false;
     }
@@ -700,14 +720,16 @@ public:
   ///  \p augmented is the data structure created by prior call to an
   ///   augmented forward pass
   ///  \p omp is whether this function is an OpenMP closure body.
-  llvm::Function *CreateForwardDiff(
-      RequestContext context, llvm::Function *todiff, DIFFE_TYPE retType,
-      llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-      bool returnValue, DerivativeMode mode, bool freeMemory,
-      bool runtimeActivity, unsigned width, llvm::Type *additionalArg,
-      const FnTypeInfo &typeInfo, bool subsequent_calls_may_write,
-      const std::vector<bool> _overwritten_args,
-      const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *
+  CreateForwardDiff(RequestContext context, llvm::Function *todiff,
+                    DIFFE_TYPE retType,
+                    llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
+                    bool returnValue, DerivativeMode mode, bool freeMemory,
+                    bool runtimeActivity, bool strongZero, unsigned width,
+                    llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
+                    bool subsequent_calls_may_write,
+                    const std::vector<bool> _overwritten_args,
+                    const AugmentedReturn *augmented, bool omp = false);
 
   /// Create a function batched in its inputs.
   ///  \p context the instruction which requested this batch (or null).

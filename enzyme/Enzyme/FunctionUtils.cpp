@@ -564,7 +564,7 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
                         IntegerType::get(AI->getContext(), 64), align))}));
 
     for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                    "enzymejl_allocart"})
+                    "enzymejl_allocart", "enzymejl_allocart_name"})
       if (auto M = AI->getMetadata(MD))
         CI->setMetadata(MD, M);
 
@@ -800,7 +800,7 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
 
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
-#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 18 && LLVM_VERSION_MAJOR < 21
     auto F = CI->getCalledFunction();
     if (CI->getParent()->IsNewDbgInfoFormat != F->IsNewDbgInfoFormat) {
       if (CI->getParent()->IsNewDbgInfoFormat) {

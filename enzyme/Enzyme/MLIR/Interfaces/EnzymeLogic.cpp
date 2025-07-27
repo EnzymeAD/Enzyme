@@ -81,7 +81,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<bool> returnPrimals, DerivativeMode mode, bool freeMemory,
     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
     std::vector<bool> volatile_args, void *augmented, bool omp,
-    llvm::StringRef postpasses, bool verifyPostPasses) {
+    llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -95,7 +95,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       // std::map<Argument *, bool>(_uncacheable_args.begin(),
       //                           _uncacheable_args.end()),
       returnPrimals, mode, static_cast<unsigned>(width), addedType, type_args,
-      omp};
+      omp, strongZero};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -109,7 +109,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, returnPrimalsP, returnShadowsP,
       RetActivity, ArgActivity, addedType,
-      /*omp*/ false, postpasses, verifyPostPasses);
+      /*omp*/ false, postpasses, verifyPostPasses, strongZero);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
   insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(

@@ -128,6 +128,13 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
       /*description=*/"Annotate every operation and value with its activity"
     >,
     Option<
+      /*C++ variable name=*/"inferFromAutodiff",
+      /*CLI argument=*/"infer",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Infer the argument and return activity from an __enzyme_autodiff call"
+    >,
+    Option<
       /*C++ variable name=*/"dataflow",
       /*CLI argument=*/"dataflow",
       /*type=*/"bool",
@@ -192,7 +199,8 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
   let dependentDialects = [
-    "tensor::TensorDialect"
+    "tensor::TensorDialect",
+    "memref::MemRefDialect"
   ];
   let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
 }

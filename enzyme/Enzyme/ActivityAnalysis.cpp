@@ -178,7 +178,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
-    "__enzyme_pointer"};
+    "__enzyme_pointer", "__enzyme_ignore_derivatives"};
 
 const StringSet<> KnownInactiveFunctions = {
     "mpfr_greater_p",
@@ -314,7 +314,11 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::roundeven,
     Intrinsic::lround,
     Intrinsic::llround,
+#if LLVM_VERSION_MAJOR <= 20
     Intrinsic::nvvm_barrier0,
+#else
+    Intrinsic::nvvm_barrier_cta_sync_aligned_all,
+#endif
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,
@@ -1927,8 +1931,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
 
-      auto AARes = AA.getModRefInfo(
-          I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+      ModRefInfo AARes;
 
       // Still having failed to replace the location used by AA, fall back to
       // getModref against any location.
@@ -1945,6 +1948,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = mayRead ? (mayWrite ? ModRefInfo::ModRef : ModRefInfo::Ref)
                           : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
+      } else {
+        AARes = AA.getModRefInfo(
+            I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
       if (auto CB = dyn_cast<CallInst>(I)) {

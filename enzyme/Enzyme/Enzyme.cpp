@@ -135,6 +135,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.getName().contains("__enzyme_integer") ||
       F.getName().contains("__enzyme_pointer") ||
       F.getName().contains("__enzyme_todense") ||
+      F.getName().contains("__enzyme_ignore_derivatives") ||
       F.getName().contains("__enzyme_iter") ||
       F.getName().contains("__enzyme_virtualreverse")) {
     changed = true;
@@ -144,13 +145,15 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #else
     F.addFnAttr(Attribute::ReadNone);
 #endif
-    if (!F.getName().contains("__enzyme_todense"))
+    if (!(F.getName().contains("__enzyme_todense") ||
+          F.getName().contains("__enzyme_ignore_derivatives"))) {
       for (auto &arg : F.args()) {
         if (arg.getType()->isPointerTy()) {
           arg.addAttr(Attribute::ReadNone);
           addFunctionNoCapture(&F, arg.getArgNo());
         }
       }
+    }
   }
   if (F.getName() == "memcmp") {
     changed = true;
@@ -739,6 +742,7 @@ public:
     StringSet<> ActiveRandomVariables;
     std::vector<bool> overwritten_args;
     bool runtimeActivity;
+    bool strongZero;
     bool subsequent_calls_may_write;
   };
 
@@ -774,6 +778,7 @@ public:
     unsigned byRefSize = 0;
     bool primalReturn = false;
     bool runtimeActivity = false;
+    bool strongZero = false;
     bool subsequent_calls_may_write =
         mode != DerivativeMode::ForwardMode &&
         mode != DerivativeMode::ForwardModeError &&
@@ -1034,6 +1039,10 @@ public:
           break;
         } else if (*metaString == "enzyme_runtime_activity") {
           runtimeActivity = true;
+          skipArg = true;
+          break;
+        } else if (*metaString == "enzyme_strong_zero") {
+          strongZero = true;
           skipArg = true;
           break;
         } else if (*metaString == "enzyme_primal_return") {
@@ -1377,6 +1386,7 @@ public:
                     ActiveRandomVariables,
                     overwritten_args,
                     runtimeActivity,
+                    strongZero,
                     subsequent_calls_may_write});
   }
 
@@ -1718,7 +1728,7 @@ public:
         newFunc = Logic.CreateForwardDiff(
             context, fn, retType, constants, TA,
             /*should return*/ primalReturn, mode, freeMemory,
-            options.runtimeActivity, width,
+            options.runtimeActivity, options.strongZero, width,
             /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
             overwritten_args,
             /*augmented*/ nullptr);
@@ -1729,7 +1739,7 @@ public:
           context, fn, retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
           subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
-          options.runtimeActivity, width,
+          options.runtimeActivity, options.strongZero, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1766,7 +1776,7 @@ public:
       newFunc = Logic.CreateForwardDiff(
           context, fn, retType, constants, TA,
           /*should return*/ primalReturn, mode, freeMemory,
-          options.runtimeActivity, width,
+          options.runtimeActivity, options.strongZero, width,
           /*addedType*/ tapeType, type_args, subsequent_calls_may_write,
           overwritten_args, aug);
       break;
@@ -1790,7 +1800,8 @@ public:
                             .additionalType = nullptr,
                             .forceAnonymousTape = false,
                             .typeInfo = type_args,
-                            .runtimeActivity = options.runtimeActivity},
+                            .runtimeActivity = options.runtimeActivity,
+                            .strongZero = options.strongZero},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1806,7 +1817,8 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA, returnUsed, shadowReturnUsed,
           type_args, subsequent_calls_may_write, overwritten_args,
-          forceAnonymousTape, options.runtimeActivity, width,
+          forceAnonymousTape, options.runtimeActivity, options.strongZero,
+          width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = fn->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -1860,7 +1872,8 @@ public:
                               .additionalType = tapeType,
                               .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args,
-                              .runtimeActivity = options.runtimeActivity},
+                              .runtimeActivity = options.runtimeActivity,
+                              .strongZero = options.strongZero},
             TA, aug);
     }
     }
@@ -2373,7 +2386,8 @@ public:
 
         size_t num_args = CI->arg_size();
 
-        if (Fn->getName().contains("__enzyme_todense")) {
+        if (Fn->getName().contains("__enzyme_todense") ||
+            Fn->getName().contains("__enzyme_ignore_derivatives")) {
 #if LLVM_VERSION_MAJOR >= 16
           CI->setOnlyReadsMemory();
           CI->setOnlyWritesMemory();
@@ -2846,7 +2860,8 @@ public:
       auto val = GradientUtils::GetOrCreateShadowConstant(
           RequestContext(CI, &Builder), Logic,
           Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*runtimeActivity*/ false, /*width*/ 1, AtomicAdd);
+          pair.second, /*runtimeActivity*/ false, /*strongZero*/ false,
+          /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -3069,7 +3084,8 @@ public:
                 CI->eraseFromParent();
                 changed = true;
               }
-              if (F->getName() == "__enzyme_iter") {
+              if (F->getName() == "__enzyme_iter" ||
+                  F->getName().contains("__enzyme_ignore_derivatives")) {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
                 CI->eraseFromParent();
                 changed = true;
@@ -3729,6 +3745,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
 #endif
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+          return true;
+        }
+        if (Name == "preserve-nvvm-end") {
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
           return true;
         }
         if (Name == "print-type-analysis") {

@@ -312,10 +312,22 @@ struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
   }
 };
 
+struct IgnoreDerivativesSimplifyPattern
+    : public OpRewritePattern<enzyme::IgnoreDerivativesOp> {
+  using OpRewritePattern<enzyme::IgnoreDerivativesOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(enzyme::IgnoreDerivativesOp op,
+                                PatternRewriter &rewriter) const override {
+    rewriter.replaceOp(op, op.getOperand());
+    return success();
+  }
+};
+
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
-                  InitSimplify>(op->getContext());
+                  InitSimplify, IgnoreDerivativesSimplifyPattern>(
+      op->getContext());
 
   GreedyRewriteConfig config;
   config.enableFolding();
@@ -464,9 +476,8 @@ void PostOrderWalkDriver::notifyMatchFailure(
 }
 
 void PostOrderWalkDriver::initializeWorklist() {
-  root->walk(
+  root->walk<WalkOrder::PreOrder>(
       [this](EnzymeOpsRemoverOpInterface iface) { addToWorklist(iface); });
-  worklist.reverse();
 }
 
 LogicalResult PostOrderWalkDriver::processWorklist() {

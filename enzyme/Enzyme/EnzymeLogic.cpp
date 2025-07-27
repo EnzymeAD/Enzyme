@@ -362,8 +362,15 @@ struct CacheAnalysis {
         }
 
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+#if LLVM_VERSION_MAJOR > 20
+          if (II->getIntrinsicID() ==
+                  Intrinsic::nvvm_barrier_cta_sync_aligned_all ||
+              II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#else
+
           if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
               II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
+#endif
             allUnsyncdPredecessorsOf(
                 II,
                 [&](Instruction *mid) {
@@ -584,7 +591,8 @@ struct CacheAnalysis {
         if (CD == BaseType::Integer || CD.isFloat())
           continue;
 
-        if (llvm::isModSet(AA.getModRefInfo(
+        if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
+            llvm::isModSet(AA.getModRefInfo(
                 inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
@@ -977,6 +985,12 @@ void calculateUnusedValuesInFunction(
             if (isNoNeed(obj_op->getArgOperand(0)))
               return UseReq::Recur;
           }
+#if LLVM_VERSION_MAJOR >= 20
+          if (ID == Intrinsic::experimental_memset_pattern) {
+            if (isNoNeed(obj_op->getArgOperand(0)))
+              return UseReq::Recur;
+          }
+#endif
         }
 
         if (auto si = dyn_cast<StoreInst>(inst)) {
@@ -1715,7 +1729,20 @@ void clearFunctionAttributes(Function *f) {
     Attribute::WillReturn,
     Attribute::OptimizeNone
   };
+
   for (auto attr : fnattrs) {
+    if (f->hasFnAttribute(attr)) {
+      f->removeFnAttr(attr);
+    }
+  }
+
+  std::string strfnattrs[] = {
+      "enzymejl_mi",
+      "enzymejl_rt",
+      "enzyme_ta_norecur",
+  };
+
+  for (auto attr : strfnattrs) {
     if (f->hasFnAttribute(attr)) {
       f->removeFnAttr(attr);
     }
@@ -1890,7 +1917,14 @@ void restoreCache(
            UI != E;) {
         Use &U = *UI;
         ++UI;
-        U.set(repVal);
+        auto newB = cast<Instruction>(U.getUser())->getParent();
+
+        if (U.getUser() != newB->getTerminator())
+          continue;
+
+        if (newB == gutils->getNewFromOriginal(&BB)) {
+          U.set(repVal);
+        }
       }
     }
     if (reachables.size() == 1)
@@ -1926,7 +1960,14 @@ void restoreCache(
              UI != E;) {
           Use &U = *UI;
           ++UI;
-          U.set(repVal);
+
+          auto newB = cast<Instruction>(U.getUser())->getParent();
+
+          if (U.getUser() != newB->getTerminator())
+            continue;
+
+          if (newB == gutils->getNewFromOriginal(&BB))
+            U.set(repVal);
         }
       }
   }
@@ -1938,8 +1979,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
     bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
-    bool forceAnonymousTape, bool runtimeActivity, unsigned width,
-    bool AtomicAdd, bool omp) {
+    bool forceAnonymousTape, bool runtimeActivity, bool strongZero,
+    unsigned width, bool AtomicAdd, bool omp) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
@@ -1963,7 +2004,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            AtomicAdd,
                            omp,
                            width,
-                           runtimeActivity};
+                           runtimeActivity,
+                           strongZero};
 
   if (_overwritten_args.size() != todiff->arg_size()) {
     std::string s;
@@ -2024,9 +2066,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     if (hasconstant) {
-      EmitWarning("NoCustom", *todiff,
-                  "Massaging provided custom augmented forward pass to handle "
-                  "constant argumented");
+      EmitWarningAlways(
+          "NoCustom", *todiff,
+          "Massaging provided custom augmented forward pass to handle "
+          "constant argumented");
       SmallVector<Type *, 3> dupargs;
       std::vector<DIFFE_TYPE> next_constant_args(constant_args.begin(),
                                                  constant_args.end());
@@ -2055,8 +2098,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       auto &aug = CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
           shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
-          _overwritten_args, forceAnonymousTape, runtimeActivity, width,
-          AtomicAdd, omp);
+          _overwritten_args, forceAnonymousTape, runtimeActivity, strongZero,
+          width, AtomicAdd, omp);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2177,7 +2220,30 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Return] = 1;
         returnMapping[AugmentedStruct::DifferentialReturn] = 2;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType() ||
-            ST->getTypeAtIndex(2) != todiff->getReturnType()) {
+            ST->getTypeAtIndex(2) !=
+                GradientUtils::getShadowType(todiff->getReturnType(), width)) {
+          std::string str;
+          raw_string_ostream ss(str);
+          if (ST->getTypeAtIndex(1) != todiff->getReturnType())
+            ss << " Custom augmented primal for function " << todiff->getName()
+               << " (" << foundcalled->getName()
+               << ") had struct return with type at index 1 (primal return "
+                  "slot) of "
+               << *ST->getTypeAtIndex(1)
+               << " which did not match primal return type "
+               << *todiff->getReturnType()
+               << ", automatically casting one to the other\n";
+          if (ST->getTypeAtIndex(2) !=
+              GradientUtils::getShadowType(todiff->getReturnType(), width))
+            ss << " Custom augmented primal for function " << todiff->getName()
+               << " (" << foundcalled->getName()
+               << ") had struct return with type at index 2 (shadow return "
+                  "slot) of "
+               << *ST->getTypeAtIndex(2)
+               << " which did not match shadow return type "
+               << *GradientUtils::getShadowType(todiff->getReturnType(), width)
+               << ", automatically casting one to the other\n";
+          EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType(), todiff->getReturnType()};
           auto RT =
@@ -2210,7 +2276,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
                     AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
-            Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
+            auto ty = todiff->getReturnType();
+            if (i == 2)
+              ty = GradientUtils::getShadowType(ty, width);
+            Value *vres = bb.CreateLoad(ty, AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }
           bb.CreateRet(res);
@@ -2228,7 +2297,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             ->second;
       }
       if (ST->getNumElements() == 2 &&
-          ST->getElementType(0) == ST->getElementType(1)) {
+          ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
+          ST->getTypeAtIndex(1) ==
+              GradientUtils::getShadowType(todiff->getReturnType(), width)) {
         std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Return] = 0;
         returnMapping[AugmentedStruct::DifferentialReturn] = 1;
@@ -2243,6 +2314,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType()) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << " Custom augmented primal for function " << todiff->getName()
+             << " (" << foundcalled->getName()
+             << ") had struct return with type at index 1 (primal return slot) "
+                "of "
+             << *ST->getTypeAtIndex(1)
+             << " which did not match primal return type "
+             << *todiff->getReturnType()
+             << ", automatically casting one to the other\n";
+          EmitWarningAlways("RuleCast", *foundcalled, ss.str());
           Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
                             todiff->getReturnType()};
           auto RT =
@@ -2295,8 +2377,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     std::map<AugmentedStruct, int> returnMapping;
-    if (!foundcalled->getReturnType()->isVoidTy())
-      returnMapping[AugmentedStruct::Tape] = -1;
+    if (!foundcalled->getReturnType()->isVoidTy()) {
+      llvm::errs() << " aug: todiff: " << *todiff << "\n\n"
+                   << "aug foundcalled: " << *foundcalled << "\n";
+      if (foundcalled->getReturnType() == todiff->getReturnType())
+        returnMapping[AugmentedStruct::Return] = -1;
+      else
+        returnMapping[AugmentedStruct::Tape] = -1;
+    }
 
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
@@ -2308,8 +2396,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo, retType,
-      constant_args,
+      *this, runtimeActivity, strongZero, width, todiff, TLI, TA, oldTypeInfo,
+      retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
 
@@ -3043,7 +3131,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         context, *this, TLI, TA, todiff, pair.second, gutils->runtimeActivity,
-        width, gutils->AtomicAdd);
+        gutils->strongZero, width, gutils->AtomicAdd);
     SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
     GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
@@ -3648,7 +3736,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
-    if (subretType != key.retType) {
+
+    if (subretType == DIFFE_TYPE::OUT_DIFF &&
+        key.retType == DIFFE_TYPE::CONSTANT) {
+      hasconstant = true;
+    } else if (subretType != key.retType) {
       std::string str;
       raw_string_ostream ss(str);
       ss << "The required return activity calling into function: "
@@ -3693,8 +3785,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.subsequent_calls_may_write, key.overwritten_args,
-          /*forceAnonymousTape*/ false, key.runtimeActivity, key.width,
-          key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
+          key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3735,22 +3827,21 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){
-              .todiff = key.todiff,
-              .retType = key.retType,
-              .constant_args = key.constant_args,
-              .overwritten_args = key.overwritten_args,
-              .returnUsed = false,
-              .shadowReturnUsed = false,
-              .mode = DerivativeMode::ReverseModeGradient,
-              .width = key.width,
-              .freeMemory = key.freeMemory,
-              .AtomicAdd = key.AtomicAdd,
-              .additionalType = tape ? tape->getType() : nullptr,
-              .forceAnonymousTape = key.forceAnonymousTape,
-              .typeInfo = key.typeInfo,
-              .runtimeActivity = key.runtimeActivity,
-          },
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = key.constant_args,
+                            .overwritten_args = key.overwritten_args,
+                            .returnUsed = false,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = tape ? tape->getType() : nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
+                            .typeInfo = key.typeInfo,
+                            .runtimeActivity = key.runtimeActivity,
+                            .strongZero = key.strongZero},
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -3759,6 +3850,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
       if (tape) {
         revargs.push_back(tape);
+      }
+      if (!revfn->getFunctionType()->isVarArg() &&
+          revfn->getFunctionType()->getNumParams() != revargs.size()) {
+        llvm::errs() << " todiff: " << *key.todiff << "\n";
+        llvm::errs() << " revfn: " << *revfn << "\n";
+        llvm::errs() << " NewF: " << *NewF << "\n";
+        llvm::errs() << " key rettype: " << to_string(key.retType) << "\n";
+        for (auto arg : revargs) {
+          llvm::errs() << " + revarg: " << *arg << "\n";
+        }
       }
       auto revcal = bb.CreateCall(revfn, revargs);
       revcal->setCallingConv(revfn->getCallingConv());
@@ -3817,24 +3918,29 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
       }
 
+      auto nextRetType = key.retType;
+      if (nextRetType == DIFFE_TYPE::CONSTANT &&
+          subretType == DIFFE_TYPE::OUT_DIFF) {
+        nextRetType = DIFFE_TYPE::OUT_DIFF;
+      }
+
       auto revfn = CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){
-              .todiff = key.todiff,
-              .retType = key.retType,
-              .constant_args = next_constant_args,
-              .overwritten_args = key.overwritten_args,
-              .returnUsed = key.returnUsed,
-              .shadowReturnUsed = false,
-              .mode = DerivativeMode::ReverseModeGradient,
-              .width = key.width,
-              .freeMemory = key.freeMemory,
-              .AtomicAdd = key.AtomicAdd,
-              .additionalType = nullptr,
-              .forceAnonymousTape = key.forceAnonymousTape,
-              .typeInfo = key.typeInfo,
-              .runtimeActivity = key.runtimeActivity,
-          },
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = nextRetType,
+                            .constant_args = next_constant_args,
+                            .overwritten_args = key.overwritten_args,
+                            .returnUsed = key.returnUsed,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = key.additionalType,
+                            .forceAnonymousTape = key.forceAnonymousTape,
+                            .typeInfo = key.typeInfo,
+                            .runtimeActivity = key.runtimeActivity,
+                            .strongZero = key.strongZero},
           TA, augmenteddata, omp);
 
       {
@@ -3843,6 +3949,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           arg++;
           if (cidx == DIFFE_TYPE::DUP_ARG || cidx == DIFFE_TYPE::DUP_NONEED)
             arg++;
+        }
+        if (nextRetType != key.retType) {
+          arg++;
         }
         while (arg != revfn->arg_end()) {
           dupargs.push_back(arg->getType());
@@ -3884,6 +3993,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         act_idx++;
       }
       size_t pa = 0;
+      if (nextRetType != key.retType) {
+        revargs.push_back(getUndefinedValueForType(*revfn->getParent(),
+                                                   key.todiff->getReturnType(),
+                                                   /*forceZero*/ true));
+      }
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
         arg->setName("postarg" + Twine(pa));
@@ -3912,16 +4026,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(augmenteddata);
       bool badDiffRet = false;
       bool hasTape = true;
-      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
+      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/ &&
+          key.additionalType != nullptr) {
         auto lastarg = foundcalled->arg_end();
         lastarg--;
-        res.first.push_back(lastarg->getType());
+        res.first.push_back(key.additionalType);
         if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           lastarg--;
           if (lastarg->getType() != key.todiff->getReturnType())
             badDiffRet = true;
         }
-      } else if (foundcalled->arg_size() == res.first.size()) {
+      } else if (foundcalled->arg_size() == res.first.size() &&
+                 key.additionalType == nullptr) {
         if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           auto lastarg = foundcalled->arg_end();
           lastarg--;
@@ -3944,6 +4060,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           seen = true;
           ss << *a;
         }
+        if (key.additionalType) {
+          if (seen)
+            ss << ", /*tapeType=*/";
+          ss << *key.additionalType;
+        }
         ss << "]\n";
         ss << "  Instead found " << foundcalled->getName() << " of type "
            << *foundcalled->getFunctionType() << "\n";
@@ -3952,17 +4073,53 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         } else {
           ss << *key.todiff << "\n";
         }
-        if (!EmitNoDerivativeError(ss.str(), key.todiff, context)) {
+
+        SmallVector<Type *, 1> ftys(res.first.begin(), res.first.end());
+        if (key.additionalType) {
+          ftys.push_back(key.additionalType);
+        }
+
+        Type *FRetTy =
+            res.second.empty()
+                ? Type::getVoidTy(key.todiff->getContext())
+                : StructType::get(key.todiff->getContext(), {res.second});
+        FunctionType *FTy = FunctionType::get(
+            FRetTy, ftys, key.todiff->getFunctionType()->isVarArg());
+        Function *NewF = Function::Create(
+            FTy, Function::LinkageTypes::InternalLinkage,
+            "badgradient_" + key.todiff->getName(), key.todiff->getParent());
+
+        BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+        IRBuilder<> bb(BB);
+        auto context2 = context;
+        if (!context2.ip)
+          context2.ip = &bb;
+        if (!EmitNoDerivativeError(ss.str(), key.todiff, context2)) {
           assert(0 && "bad type for custom gradient");
           llvm_unreachable("bad type for custom gradient");
         }
+        if (!NewF->getReturnType()->isVoidTy())
+          bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+        else
+          bb.CreateRetVoid();
+
+        return insert_or_assign2<ReverseCacheKey, Function *>(
+                   ReverseCachedFunctions, key, NewF)
+            ->second;
+      }
+
+      bool wrongTape = false;
+      if (hasTape && key.additionalType != nullptr) {
+        auto lastarg = foundcalled->arg_end();
+        lastarg--;
+        if (lastarg->getType() != key.additionalType)
+          wrongTape = true;
       }
 
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());
       bool wrongRet =
           st == nullptr && !foundcalled->getReturnType()->isVoidTy();
-      if (wrongRet || badDiffRet) {
-        // if (wrongRet || !hasTape) {
+      if (wrongRet || badDiffRet || wrongTape) {
         Type *FRetTy =
             res.second.empty()
                 ? Type::getVoidTy(key.todiff->getContext())
@@ -4006,6 +4163,22 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           Value *vres = bb.CreateLoad(T, AI);
           args[idx] = vres;
         }
+
+        if (wrongTape) {
+          auto idx = args.size() - 1;
+          Type *T = (foundcalled->arg_begin() + idx)->getType();
+          if (args[idx]->getType()->isIntegerTy() && T->isIntegerTy()) {
+            args[idx] = bb.CreateZExtOrTrunc(args[idx], T);
+          } else {
+            auto AI = bb.CreateAlloca(T);
+            bb.CreateStore(args[idx],
+                           bb.CreatePointerCast(AI, PointerType::getUnqual(
+                                                        args[idx]->getType())));
+            Value *vres = bb.CreateLoad(T, AI);
+            args[idx] = vres;
+          }
+        }
+
         // if (!hasTape) {
         //  args.pop_back();
         //}
@@ -4062,8 +4235,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.runtimeActivity, key.width, key.todiff, TLI, TA,
-      oldTypeInfo, key.retType,
+      *this, key.mode, key.runtimeActivity, key.strongZero, key.width,
+      key.todiff, TLI, TA, oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
@@ -4426,9 +4599,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
+#if LLVM_VERSION_MAJOR > 20
+      auto BarrierInst = Arch == Triple::amdgcn
+                             ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
+                             : (llvm::Intrinsic::ID)
+                                   Intrinsic::nvvm_barrier_cta_sync_aligned_all;
+#else
       auto BarrierInst = Arch == Triple::amdgcn
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
+#endif
       instbuilder.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {});
@@ -4489,8 +4669,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 Function *EnzymeLogic::CreateForwardDiff(
     RequestContext context, Function *todiff, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, bool runtimeActivity, unsigned width,
-    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    DerivativeMode mode, bool freeMemory, bool runtimeActivity, bool strongZero,
+    unsigned width, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
     const AugmentedReturn *augmenteddata, bool omp) {
 
@@ -4524,7 +4704,8 @@ Function *EnzymeLogic::CreateForwardDiff(
                          width,
                          additionalArg,
                          oldTypeInfo,
-                         runtimeActivity};
+                         runtimeActivity,
+                         strongZero};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -4722,8 +4903,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, runtimeActivity, width, todiff, TLI, TA, oldTypeInfo,
-      retType,
+      *this, mode, runtimeActivity, strongZero, width, todiff, TLI, TA,
+      oldTypeInfo, retType,
       /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
       additionalArg, omp);
 

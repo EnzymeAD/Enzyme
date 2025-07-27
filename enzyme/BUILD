@@ -357,6 +357,19 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "EnzymeAttributeInterfacesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-attr-interface-decls"],
+            "Enzyme/MLIR/Dialect/EnzymeAttributeInterfaces.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
     name = "EnzymeAttributesIncGen",
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
@@ -537,6 +550,18 @@ gentbl_cc_library(
     deps = [":ImplementationsCommonTdFiles"],
 )
 
+gentbl_cc_library(
+    name = "enzyme-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [(
+        ["-gen-mlir-derivatives"],
+        "Enzyme/MLIR/Implementations/EnzymeDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/EnzymeDerivatives.td",
+    deps = [":ImplementationsCommonTdFiles"],
+)
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
@@ -562,6 +587,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeAttributesIncGen",
+        ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",
@@ -578,6 +604,7 @@ cc_library(
         ":memref-derivatives",
         ":nvvm-derivatives",
         ":scf-derivatives",
+        ":enzyme-derivatives",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Demangle",
@@ -660,3 +687,10 @@ cc_binary(
 )
 
 exports_files(["run_lit.sh"])
+
+# generate compilation commands for enzymemlir-opt
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    targets = [":enzymemlir-opt"],
+)

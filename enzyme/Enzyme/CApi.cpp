@@ -200,6 +200,11 @@ int64_t EnzymeGetCLInteger(void *ptr) {
   return (int64_t)cl->getValue();
 }
 
+void EnzymeSetCLString(void *ptr, const char *val) {
+  if (auto *clopt = static_cast<cl::opt<std::string> *>(ptr))
+    clopt->setValue(val);
+}
+
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
@@ -391,6 +396,10 @@ void EnzymeRegisterDiffUseCallHandler(char *Name,
 
 uint8_t EnzymeGradientUtilsGetRuntimeActivity(GradientUtils *gutils) {
   return gutils->runtimeActivity;
+}
+
+uint8_t EnzymeGradientUtilsGetStrongZero(GradientUtils *gutils) {
+  return gutils->strongZero;
 }
 
 uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
@@ -588,14 +597,34 @@ void EnzymeGradientUtilsSubTransferHelper(
                     (bool)allowForward, (bool)shadowsLookedUp);
 }
 
+LLVMBasicBlockRef EnzymeGradientUtilsAddReverseBlock(GradientUtils *gutils,
+                                                     LLVMBasicBlockRef block,
+                                                     const char *name,
+                                                     uint8_t forkCache,
+                                                     uint8_t push) {
+  return wrap(gutils->addReverseBlock(cast<BasicBlock>(unwrap(block)), name,
+                                      forkCache, push));
+}
+
+void EnzymeGradientUtilsSetReverseBlock(GradientUtils *gutils,
+                                        LLVMBasicBlockRef block) {
+  auto endBlock = cast<BasicBlock>(unwrap(block));
+  auto found = gutils->reverseBlockToPrimal.find(endBlock);
+  assert(found != gutils->reverseBlockToPrimal.end());
+  auto &vec = gutils->reverseBlocks[found->second];
+  assert(vec.size());
+  vec.push_back(endBlock);
+}
+
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
     CDerivativeMode mode, uint8_t freeMemory, uint8_t runtimeActivity,
-    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented) {
+    uint8_t strongZero, unsigned width, LLVMTypeRef additionalArg,
+    CFnTypeInfo typeInfo, uint8_t subsequent_calls_may_write,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented) {
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
@@ -609,7 +638,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
                      unwrap(request_ip)),
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory,
-      runtimeActivity, width, unwrap(additionalArg),
+      runtimeActivity, strongZero, width, unwrap(additionalArg),
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       subsequent_calls_may_write, overwritten_args, eunwrap(augmented)));
 }
@@ -618,8 +647,8 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA, uint8_t returnValue,
     uint8_t dretUsed, CDerivativeMode mode, uint8_t runtimeActivity,
-    unsigned width, uint8_t freeMemory, LLVMTypeRef additionalArg,
-    uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t strongZero, unsigned width, uint8_t freeMemory,
+    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
     uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
     size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented,
     uint8_t AtomicAdd) {
@@ -649,7 +678,8 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .additionalType = unwrap(additionalArg),
           .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-          .runtimeActivity = (bool)runtimeActivity},
+          .runtimeActivity = (bool)runtimeActivity,
+          .strongZero = (bool)strongZero},
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
@@ -659,7 +689,8 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     uint8_t shadowReturnUsed, CFnTypeInfo typeInfo,
     uint8_t subsequent_calls_may_write, uint8_t *_overwritten_args,
     size_t overwritten_args_size, uint8_t forceAnonymousTape,
-    uint8_t runtimeActivity, unsigned width, uint8_t AtomicAdd) {
+    uint8_t runtimeActivity, uint8_t strongZero, unsigned width,
+    uint8_t AtomicAdd) {
 
   SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
@@ -676,7 +707,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       subsequent_calls_may_write, overwritten_args, forceAnonymousTape,
-      runtimeActivity, width, AtomicAdd));
+      runtimeActivity, strongZero, width, AtomicAdd));
 }
 
 LLVMValueRef EnzymeCreateBatch(EnzymeLogicRef Logic, LLVMValueRef request_req,
@@ -1001,6 +1032,22 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 
   return Changed == ChangeStatus::CHANGED;
 }
+
+extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
+  auto &M = *unwrap(M0);
+  AnalysisGetter AG;
+  SetVector<Function *> Functions;
+  for (Function &F : M)
+    Functions.insert(&F);
+
+  CallGraphUpdater CGUpdater;
+  BumpPtrAllocator Allocator;
+  InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+  runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                           /* DeleteFns*/ true,
+                           /* IsModulePass */ true);
+}
+
 struct MyAttributorLegacyPass : public ModulePass {
   static char ID;
 
