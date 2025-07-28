@@ -297,9 +297,10 @@ const StringSet<> KnownInactiveFunctions = {
     "\01_fopen",
     "fopen",
     "fclose",
-    "__ubsan_handle_type_mismatch_v1",
     "__ubsan_handle_dynamic_type_cache_miss",
     "__ubsan_handle_pointer_overflow",
+    "__ubsan_handle_type_mismatch_v1",
+    "__ubsan_vptr_type_cache",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
