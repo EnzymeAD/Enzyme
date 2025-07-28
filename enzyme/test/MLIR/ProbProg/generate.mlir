@@ -11,7 +11,8 @@ module {
   }
 
   func.func @generate(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>) {
-    %0 = enzyme.initConstraint : !enzyme.Constraint
+    %cst = arith.constant dense<42> : tensor<ui64>
+    %0 = builtin.unrealized_conversion_cast %cst : tensor<ui64> to !enzyme.Constraint
     // CHECK: %[[call_res:.+]]:4 = call @test.generate(%[[constraint:.+]], %[[arg0:.+]], %[[arg1:.+]], %[[arg2:.+]]) : (!enzyme.Constraint, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
     %res:4 = enzyme.generate @test(%rng, %mean, %stddev) given %0 { name = "test", constrained_symbols = [#enzyme.symbol<2>, #enzyme.symbol<3>] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
