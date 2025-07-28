@@ -285,7 +285,8 @@ def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
   let assemblyFormat = "`<` $ptr `>`";
 }
 
-def SymbolArrayAttr : TypedArrayAttrBase<SymbolAttr, "Array of symbols">;
+def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
+def AddressArrayAttr : TypedArrayAttrBase<AddressAttr, "Array of addresses">;
 
 def Constraint : Enzyme_Type<"Constraint"> {
   let summary = "A mutable storage mapping symbols to value constraints";
@@ -375,7 +376,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    SymbolArrayAttr:$constrained_symbols,
+    AddressArrayAttr:$constrained_addresses,
     Constraint:$constraint,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -481,6 +482,20 @@ def GetSampleFromConstraintOp : Enzyme_Op<"getSampleFromConstraint"> {
 
   let assemblyFormat = [{
     $constraint attr-dict `:` type(results)
+  }];
+}
+
+def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
+  let summary = "Get a subconstraint from a constraint for a given symbol";
+  let description = [{
+  Get a subconstraint from a constraint for a given symbol.
+  }];
+  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
+
+  let results = (outs Constraint:$subconstraint);
+
+  let assemblyFormat = [{
+    $constraint attr-dict
   }];
 }
 

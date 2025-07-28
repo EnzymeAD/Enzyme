@@ -336,13 +336,24 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
         SmallVector<Value> sampledValues;
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
-        bool isConstrained =
-            llvm::is_contained(CI.getConstrainedSymbolsAttr().getValue(),
-                               sampleOp.getSymbolAttr());
-
         if (isDistribution) {
           // A1. Distribution function: replace sample op uses with call to the
           // distribution function.
+          bool isConstrained = false;
+          for (auto addr : CI.getConstrainedAddressesAttr()) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              if (address.size() != 1) {
+                sampleOp.emitError(
+                    "ProbProg: distribution function cannot have composite "
+                    "constrained address");
+                return WalkResult::interrupt();
+              }
+              isConstrained = true;
+              break;
+            }
+          }
+
           if (isConstrained) {
             // Get sampled values from the constraint instead of sampling
             // from the distribution.
@@ -429,41 +440,88 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
                 sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
           }
         } else {
-          // B1. Generative functions: generate a `generate` op that will itself
-          // be lowered in a subsequent rewrite. No direct call to the
-          // generative function should be emitted here.
-          auto generateOp = rewriter.create<enzyme::GenerateOp>(
-              sampleOp.getLoc(),
-              /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
-              /*outputs*/ sampleOp.getResultTypes(),
-              /*fn*/ sampleOp.getFnAttr(),
-              /*inputs*/ sampleOp.getInputs(),
-              /*constrained_symbols*/
-              rewriter.getArrayAttr({}),
-              /*constraint*/
-              CI.getConstraint(),
-              /*name*/ sampleOp.getNameAttr());
+          // B1. Generative functions: generate a recursive op (simulate when
+          // unconstrained, generate when constrained) that will itself be
+          // lowered in a subsequent rewrite.
+          SmallVector<Attribute> subContrainedAddresses;
+          bool isConstrained = false;
+          for (auto addr : CI.getConstrainedAddressesAttr()) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              isConstrained = true;
+              if (address.size() == 1) {
+                sampleOp.emitError(
+                    "ProbProg: generative function cannot be constrained with "
+                    "singleton address - composite addresses are required to "
+                    "ensure proper weight calculation");
+                return WalkResult::interrupt();
+              }
 
-          // The first two results of generateOp are the subtrace and weight.
-          // The remaining results correspond 1-to-1 with the original sample
-          // op's results. We will replace uses of the sample op with these
-          // values in the next step.
+              SmallVector<Attribute> tailAddresses;
+              for (size_t i = 1; i < address.size(); ++i) {
+                tailAddresses.push_back(address[i]);
+              }
+              subContrainedAddresses.push_back(
+                  rewriter.getArrayAttr(tailAddresses));
+              break;
+            }
+          }
+
+          // B2. Generate a recursive op (simulate when unconstrained, generate
+          // when constrained).
+          Operation *recursiveOp = nullptr;
+
+          if (isConstrained) {
+            auto getSubconstraintOp =
+                rewriter.create<enzyme::GetSubconstraintOp>(
+                    sampleOp.getLoc(),
+                    /*subconstraint*/
+                    enzyme::ConstraintType::get(sampleOp.getContext()),
+                    /*constraint*/ constraint,
+                    /*symbol*/ sampleOp.getSymbolAttr());
+            Value subConstraint = getSubconstraintOp.getSubconstraint();
+
+            recursiveOp = rewriter.create<enzyme::GenerateOp>(
+                sampleOp.getLoc(),
+                /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
+                /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
+                /*outputs*/ sampleOp.getResultTypes(),
+                /*fn*/ sampleOp.getFnAttr(),
+                /*inputs*/ sampleOp.getInputs(),
+                /*constrained_addresses*/
+                rewriter.getArrayAttr(subContrainedAddresses),
+                /*constraint*/
+                subConstraint,
+                /*name*/ sampleOp.getNameAttr());
+          } else {
+            recursiveOp = rewriter.create<enzyme::SimulateOp>(
+                sampleOp.getLoc(),
+                /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
+                /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
+                /*outputs*/ sampleOp.getResultTypes(),
+                /*fn*/ sampleOp.getFnAttr(),
+                /*inputs*/ sampleOp.getInputs(),
+                /*name*/ sampleOp.getNameAttr());
+          }
+
+          // The first two results of the recursive op are the subtrace and
+          // weight. The remaining results correspond 1-to-1 with the original
+          // sample op's results.
           for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampledValues.push_back(generateOp->getResult(i + 2));
+            sampledValues.push_back(recursiveOp->getResult(i + 2));
 
           // B2. Add subtrace to trace.
           auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
               sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*subtrace*/ generateOp->getResult(0),
+              /*subtrace*/ recursiveOp->getResult(0),
               /*symbol*/ sampleOp.getSymbolAttr(),
               /*trace*/ currTrace);
           currTrace = addSubtraceOp.getUpdatedTrace();
 
-          // B3. Accumulate weight returned by generateOp.
+          // B3. Accumulate weight returned by recursive op.
           weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, generateOp->getResult(1));
+              sampleOp.getLoc(), weightAccumulator, recursiveOp->getResult(1));
         }
 
         // C. Add non-RNG sampled values to trace (common for both cases).
