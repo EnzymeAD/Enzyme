@@ -62,12 +62,12 @@ jobs:
       id: cache-mlir
       uses: actions/cache@v4
       with:
-        path: ${{ env.REACTANT_DIR }}/llvm-project/mlir-build
+        path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
-      working-directory: ${{ env.REACTANT_DIR }}/'llvm-project'
+      working-directory: ${{ env.BASE_DIR }}/'llvm-project'
       run: |
         mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
@@ -76,10 +76,10 @@ jobs:
         -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
 
     - name: Enzyme build
-      working-directory: ${{ env.REACTANT_DIR }}/'Enzyme'
+      working-directory: ${{ env.BASE_DIR }}/'Enzyme'
       run: |
           mkdir enzyme-build && cd enzyme-build
-          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.REACTANT_DIR }}/llvm-project/mlir-build -DENZYME_MLIR=ON
+          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build -DENZYME_MLIR=ON
           ninja
 
     - name: Check enzyme-mlir
