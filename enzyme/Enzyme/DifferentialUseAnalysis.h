@@ -123,7 +123,9 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
-    if (gutils->mode == DerivativeMode::ForwardModeError &&
+#ifdef ENZYME_ENABLE_FPOPT
+    if ((hasFPOptLogger(gutils->oldFunc->getParent()) ||
+         gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (EnzymePrintDiffUse)
         llvm::errs()
@@ -131,6 +133,7 @@ inline bool is_value_needed_in_reverse(
             << " in reverse as forward mode error always needs result\n";
       return seen[idx] = true;
     }
+#endif
   }
 
   if (auto CI = dyn_cast<CallInst>(inst)) {
