@@ -220,7 +220,8 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
   let dependentDialects = [
-    "tensor::TensorDialect"
+    "tensor::TensorDialect",
+    "memref::MemRefDialect"
   ];
   let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
 }

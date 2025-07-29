@@ -9,7 +9,7 @@ module {
     %r = scf.for %iv = %c0 to %n step %c1 iter_args(%r_it = %cst) -> f64 {
       %r_next = arith.mulf %r_it, %x : f64
       scf.yield %r_next : f64
-    }
+    } {enzyme.cache_use_tensor}
     return %r : f64
   }
 
