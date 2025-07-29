@@ -72,6 +72,7 @@ if (ENZYME_ENABLE_PLUGINS)
                     intrinsics_gen
             	LINK_COMPONENTS
             	LLVM
+              clang
                 )
                     target_compile_definitions(ClangEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
             endif()
