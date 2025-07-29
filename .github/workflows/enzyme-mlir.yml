@@ -19,15 +19,19 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["Release"]
-        os: [openstack22-large]
+        os: [linux-x86-n2-32]
 
     timeout-minutes: 500
+
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
 
     steps:
     - name: Install dependencies
       run: |
-          sudo apt-get update
-          sudo apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
+          apt-get install sudo
+          apt-get update
+          apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
     - uses: actions/checkout@v4
       with:
