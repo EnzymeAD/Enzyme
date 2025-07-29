@@ -42,6 +42,17 @@ jobs:
         ref: '8d8a3d9fdcbe823b94e2821b7beb8ead5288b14e'
         path: 'llvm-project'
 
+    - name: Set BASE_DIR
+      # We have to use `${GITHUB_WORKSPACE}` instead of `github.workspace` because GitHub
+      # is terrible and the two don't match inside containers:
+      # https://github.com/actions/runner/issues/2058
+      run: |
+        BASE_DIR=${GITHUB_WORKSPACE}
+        # Make sure this directory exists, for good measure
+        ls -lhrt "${BASE_DIR}"/Enzyme
+        ls -lhrt "${BASE_DIR}"/llvm-project
+        echo "BASE_DIR=${BASE_DIR}" >> ${GITHUB_ENV}
+
     - name: Get MLIR commit hash
       id: mlir-commit
       working-directory: 'llvm-project'
@@ -51,12 +62,12 @@ jobs:
       id: cache-mlir
       uses: actions/cache@v4
       with:
-        path: llvm-project/mlir-build
+        path: ${{ env.REACTANT_DIR }}/llvm-project/mlir-build
         key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-${{ steps.mlir-commit.outputs.sha_short }}
 
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
-      working-directory: 'llvm-project'
+      working-directory: ${{ env.REACTANT_DIR }}/'llvm-project'
       run: |
         mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
@@ -65,10 +76,10 @@ jobs:
         -DLLVM_OPTIMIZED_TABLEGEN=ON && ninja || echo "already built"
 
     - name: Enzyme build
-      working-directory: 'Enzyme'
+      working-directory: ${{ env.REACTANT_DIR }}/'Enzyme'
       run: |
           mkdir enzyme-build && cd enzyme-build
-          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ github.workspace }}/llvm-project/mlir-build -DENZYME_MLIR=ON
+          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.REACTANT_DIR }}/llvm-project/mlir-build -DENZYME_MLIR=ON
           ninja
 
     - name: Check enzyme-mlir
