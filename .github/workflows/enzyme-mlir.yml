@@ -29,7 +29,6 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-          apt-get install sudo
           apt-get update
           apt-get install -y binutils ninja-build cmake gcc g++ python3 python3-dev
 
