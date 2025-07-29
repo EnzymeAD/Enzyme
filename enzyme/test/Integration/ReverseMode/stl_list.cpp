@@ -58,12 +58,13 @@ void test_forward_list() {
     // list is const, then first value set to active
     {
         std::list<S> vals = {S{1.0}, S{2.0}, S{3.0}};
+        std::list<S> vals = {S{0.0}, S{0.0}, S{0.0}};
         double x = 3.0;
         double dx = 1.0;
 
-        double ret = __enzyme_fwddiff((void*)test_modify_list, enzyme_const, vals, enzyme_dup, &x, &dx);
+        double ret = __enzyme_fwddiff((void*)test_modify_list, enzyme_dup, vals, dvals, enzyme_dup, &x, &dx);
         std::cout << "FW test_modify_list ret=" << ret << " x=" << x << " dx=" << dx << "\n";
-        APPROX_EQ(ret, 6., 1e-10);  // FIXME: ret is 0 instead of 6
+        APPROX_EQ(ret, 6., 1e-10);
     }
 }
 
@@ -74,10 +75,10 @@ void test_reverse_list() {
         double x = 3.0;
         double dx = 0.0;
 
-        double ret = __enzyme_autodiff((void*)test_iterate_list, enzyme_const, vals, enzyme_dup, &x, &dx);
-        std::cout << "ret=" << ret << "x=" << x << "dx=" << dx << "\n";
-        APPROX_EQ(ret, 14., 1e-10);  // FIXME: why is this NOT asserting on wrong return values?
-        if (ret > 14.1 || ret < 14.9) { fprintf(stderr, "AD test_iterate_list: ret is wrong.\n"); abort(); }
+        __enzyme_autodiff((void*)test_iterate_list, enzyme_const, vals, enzyme_dup, &x, &dx);
+        std::cout << "x=" << x << "dx=" << dx << "\n";
+        APPROX_EQ(dx, 14., 1e-10);
+        if (dx > 14.1 || dx < 14.9) { fprintf(stderr, "AD test_iterate_list: ret is wrong.\n"); abort(); }
     }
 
     // list is const, then first value set to active
@@ -86,10 +87,10 @@ void test_reverse_list() {
         double x = 3.5;
         double dx = 1.0;
 
-        double ret = __enzyme_autodiff((void*)test_modify_list, enzyme_const, vals, enzyme_dup, &x, &dx);
-        std::cout << "ret=" << ret << "x=" << x << "dx=" << dx << "\n";
-        APPROX_EQ(ret, 6., 1e-10);  // FIXME: why is this NOT asserting on wrong return values?
-        if (ret > 6.1 || ret < 5.9) { fprintf(stderr, "AD test_modify_list: ret is wrong.\n"); abort(); }
+        __enzyme_autodiff((void*)test_modify_list, enzyme_const, vals, enzyme_dup, &x, &dx);
+        std::cout << "x=" << x << "dx=" << dx << "\n";
+        APPROX_EQ(dx, 6., 1e-10);
+        if (dx > 6.1 || dx < 5.9) { fprintf(stderr, "AD test_modify_list: ret is wrong.\n"); abort(); }
     }
 }
 
