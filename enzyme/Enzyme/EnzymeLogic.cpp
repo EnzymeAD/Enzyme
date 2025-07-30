@@ -986,10 +986,10 @@ void calculateUnusedValuesInFunction(
               return UseReq::Recur;
           }
 #if LLVM_VERSION_MAJOR >= 20
-	  if (ID == Intrinsic::experimental_memset_pattern) {
+          if (ID == Intrinsic::experimental_memset_pattern) {
             if (isNoNeed(obj_op->getArgOperand(0)))
               return UseReq::Recur;
-	  }
+          }
 #endif
         }
 
