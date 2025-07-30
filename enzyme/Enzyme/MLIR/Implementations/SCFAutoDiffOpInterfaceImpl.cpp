@@ -527,7 +527,6 @@ public:
               rewriter.eraseOp(user);
           }
         } else {
-          shouldDealloc = true;
           popValue = rewriter.create<memref::LoadOp>(
               info.popOp->getLoc(), popNewValue, newInductionVariable);
         }
