@@ -495,7 +495,6 @@ public:
                   .getResult();
         }
       } else if (cacheType == MEMREF) {
-        bool shouldDealloc = false;
 
         if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
           auto shape = MT.getShape();
