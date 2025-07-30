@@ -40,13 +40,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
+          - linux-x86-n2-32
         build:
           - Release
         llbuild:
           - Release
     timeout-minutes: 500 
+
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+
     steps:
       - name: Install Python dependencies
         run: python -m pip install lit
