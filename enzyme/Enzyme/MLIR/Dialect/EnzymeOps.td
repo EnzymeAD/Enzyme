@@ -254,17 +254,6 @@ def BroadcastOp : Enzyme_Op<"broadcast"> {
   ];
 }
 
-def SampleOp : Enzyme_Op<"sample",
-    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Sample from a distribution. Arguments to the distribution are: a random number generator object, followed by arguments to the sample op itself";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DefaultValuedStrAttr<StrAttr, "">:$name);
-  let results = (outs Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
 def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
     [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
   let summary = "Prevents the flow of gradients (and higher-order derivatives) by creating a new value that is detached from the original value. This is an identity operation on the primal.";
@@ -273,6 +262,240 @@ def IgnoreDerivativesOp : Enzyme_Op<"ignore_derivatives",
 
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+// Probabilistic programming
+def Trace : Enzyme_Type<"Trace"> {
+  let summary = "Execution trace for probabilistic programs";
+  let description = [{
+    Reference: https://www.gen.dev/docs/stable/tutorials/basics/gfi/#Traces
+    Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
+    and various other information from executing a traced probabilistic function.
+  }];
+  let mnemonic = "Trace";
+}
+
+def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
+  let summary = "Symbol associated with a Sample op";
+  let description = [{
+  Symbol associated with a Sample op.
+  }];
+  let parameters = (ins "uint64_t":$ptr);
+  let assemblyFormat = "`<` $ptr `>`";
+}
+
+def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
+def AddressArrayAttr : TypedArrayAttrBase<AddressAttr, "Array of addresses">;
+
+def Constraint : Enzyme_Type<"Constraint"> {
+  let summary = "A mutable storage mapping symbols to value constraints";
+  let description = [{
+  A mutable storage mapping symbols to value constraints.
+  }];
+  let mnemonic = "Constraint";
+}
+
+def SampleOp : Enzyme_Op<"sample",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Sample from a distribution";
+  let description = [{
+  Sample from a distribution. By convention, the 0th operand in `inputs`
+  or `outputs` is the initial RNG state (seed).
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf,
+    OptionalAttr<SymbolAttr>:$symbol,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def UntracedCallOp : Enzyme_Op<"untracedCall"> {
+  let summary = "Call a probabilistic function without tracing";
+  let description = [{
+  Call a probabilistic function without tracing. By convention, the 0th operand in `inputs`
+  or `outputs` is the initial RNG state (seed).
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+  
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Simulate a probabilistic function to generate execution trace";
+  let description = [{
+  Simulate a probabilistic function to generate execution trace
+  by replacing all SampleOps with distribution calls and recording
+  all sampled values into the trace. This op returns the trace, the weight
+  (accumulated log-probability), and the other outputs. By convention,
+  the 0th operand in `inputs` or `outputs` is the initial RNG state (seed).
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Generate an execution trace and weight from a probabilistic function";
+  let description = [{
+  Generate an execution trace and weight from a probabilistic function.
+  If a `constraint` dict is provided AND the sample op's `symbol` is in the
+  `constrained_symbols` array, we will use the corresponding constraint value
+  instead of generating new samples from the probabilistic function.
+  By convention, the 0th operand in `inputs` or `outputs` is the initial RNG
+  state (seed).
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    AddressArrayAttr:$constrained_addresses,
+    Constraint:$constraint,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def InitTraceOp : Enzyme_Op<"initTrace"> {
+  let summary = "Initialize an execution trace for a probabilistic function";
+  let description = [{
+    Initialize an execution trace for a probabilistic function.
+  }];
+  let arguments = (ins );
+  let results = (outs Trace:$trace);
+  let assemblyFormat = "attr-dict `:` type($trace)";
+}
+
+def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+  let summary = "Add a sampled value into the execution trace";
+  let description = [{
+  Add a sampled value into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    SymbolAttr:$symbol,
+    Variadic<AnyType>:$sample
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
+  let summary = "Insert a subtrace into a parent trace";
+  let description = [{
+  Insert a subtrace into a parent trace.
+  }];
+
+  let arguments = (ins
+    Trace:$subtrace,
+    SymbolAttr:$symbol,
+    Trace:$trace
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    $subtrace `into` $trace attr-dict
+  }];
+}
+
+def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace"> {
+  let summary = "Add the aggregated weight into the execution trace";
+  let description = [{
+  Add the aggregated log-probability weight to the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    AnyType:$weight
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
+  }];
+}
+
+def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace"> {
+  let summary = "Add the function's return value(s) into the execution trace";
+  let description = [{
+  Add the function's return value(s) into the execution trace.
+  }];
+
+  let arguments = (ins
+    Trace:$trace,
+    Variadic<AnyType>:$retval
+  );
+
+  let results = (outs Trace:$updated_trace);
+
+  let assemblyFormat = [{
+    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
+  }];
+}
+
+def GetSampleFromConstraintOp : Enzyme_Op<"getSampleFromConstraint"> {
+  let summary = "Get sampled values from a constraint for a given symbol";
+  let description = [{
+  Get sampled values from a constraint for a given symbol.
+  }];
+  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $constraint attr-dict `:` type(results)
+  }];
+}
+
+def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
+  let summary = "Get a subconstraint from a constraint for a given symbol";
+  let description = [{
+  Get a subconstraint from a constraint for a given symbol.
+  }];
+  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
+
+  let results = (outs Constraint:$subconstraint);
+
+  let assemblyFormat = [{
+    $constraint attr-dict
   }];
 }
 
