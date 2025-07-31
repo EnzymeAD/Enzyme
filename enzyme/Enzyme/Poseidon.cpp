@@ -235,543 +235,500 @@ double getOneULP(double value) {
   return ulp;
 }
 
-class FPNode {
-public:
-  enum class NodeType { Node, LLValue, Const };
+FPNode::FPNode(const std::string &op, const std::string &dtype)
+    : ntype(NodeType::Node), op(op), dtype(dtype) {}
 
-private:
-  const NodeType ntype;
+FPNode::FPNode(NodeType ntype, const std::string &op, const std::string &dtype)
+    : ntype(ntype), op(op), dtype(dtype) {}
 
-public:
-  std::string op;
-  std::string dtype;
-  std::string symbol;
-  SmallVector<std::shared_ptr<FPNode>, 2> operands;
-  double grad;
-  double geoMean;
-  double arithMean;
-  double maxAbs;
-  unsigned executions;
+FPNode::NodeType FPNode::getType() const { return ntype; }
 
-  explicit FPNode(const std::string &op, const std::string &dtype)
-      : ntype(NodeType::Node), op(op), dtype(dtype) {}
-  explicit FPNode(NodeType ntype, const std::string &op,
-                  const std::string &dtype)
-      : ntype(ntype), op(op), dtype(dtype) {}
-  virtual ~FPNode() = default;
+void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
+  operands.push_back(operand);
+}
 
-  NodeType getType() const { return ntype; }
+bool FPNode::hasSymbol() const {
+  std::string msg = "Unexpected invocation of `hasSymbol` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
 
-  void addOperand(std::shared_ptr<FPNode> operand) {
-    operands.push_back(operand);
+std::string FPNode::toFullExpression(
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    unsigned depth) {
+  std::string msg = "Unexpected invocation of `toFullExpression` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
+
+unsigned FPNode::getMPFRPrec() const {
+  if (dtype == "f16")
+    return 11;
+  if (dtype == "f32")
+    return 24;
+  if (dtype == "f64")
+    return 53;
+  std::string msg =
+      "getMPFRPrec: operator " + op + " has unknown dtype " + dtype;
+  llvm_unreachable(msg.c_str());
+}
+
+void FPNode::markAsInput() {
+  std::string msg = "Unexpected invocation of `markAsInput` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
+
+void FPNode::updateBounds(double lower, double upper) {
+  std::string msg = "Unexpected invocation of `updateBounds` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
+
+double FPNode::getLowerBound() const {
+  std::string msg = "Unexpected invocation of `getLowerBound` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
+
+double FPNode::getUpperBound() const {
+  std::string msg = "Unexpected invocation of `getUpperBound` on an "
+                    "unmaterialized " +
+                    op + " FPNode";
+  llvm_unreachable(msg.c_str());
+}
+
+Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
+  Module *M = builder.GetInsertBlock()->getModule();
+  if (op == "if") {
+    Value *condValue = operands[0]->getLLValue(builder, VMap);
+    auto IP = builder.GetInsertPoint();
+
+    Instruction *Then, *Else;
+    SplitBlockAndInsertIfThenElse(condValue, &*IP, &Then, &Else);
+
+    Then->getParent()->setName("herbie.then");
+    builder.SetInsertPoint(Then);
+    Value *ThenVal = operands[1]->getLLValue(builder, VMap);
+    if (Instruction *I = dyn_cast<Instruction>(ThenVal))
+      I->setName("herbie.then_val");
+
+    Else->getParent()->setName("herbie.else");
+    builder.SetInsertPoint(Else);
+    Value *ElseVal = operands[2]->getLLValue(builder, VMap);
+    if (Instruction *I = dyn_cast<Instruction>(ElseVal))
+      I->setName("herbie.else_val");
+
+    builder.SetInsertPoint(&*IP);
+    auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
+    Phi->addIncoming(ThenVal, Then->getParent());
+    Phi->addIncoming(ElseVal, Else->getParent());
+    Phi->setName("herbie.merge");
+    return Phi;
   }
 
-  virtual bool hasSymbol() const {
-    std::string msg = "Unexpected invocation of `hasSymbol` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
+  SmallVector<Value *, 3> operandValues;
+  for (auto operand : operands) {
+    Value *val = operand->getLLValue(builder, VMap);
+    assert(val && "Operand produced a null value!");
+    operandValues.push_back(val);
   }
 
-  virtual std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0) {
-    std::string msg = "Unexpected invocation of `toFullExpression` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
-  }
-
-  unsigned getMPFRPrec() const {
-    if (dtype == "f16")
-      return 11;
-    if (dtype == "f32")
-      return 24;
-    if (dtype == "f64")
-      return 53;
-    std::string msg =
-        "getMPFRPrec: operator " + op + " has unknown dtype " + dtype;
-    llvm_unreachable(msg.c_str());
-  }
-
-  virtual void markAsInput() {
-    std::string msg = "Unexpected invocation of `markAsInput` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
-  }
-
-  virtual void updateBounds(double lower, double upper) {
-    std::string msg = "Unexpected invocation of `updateBounds` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
-  }
-  virtual double getLowerBound() const {
-    std::string msg = "Unexpected invocation of `getLowerBound` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
-  }
-  virtual double getUpperBound() const {
-    std::string msg = "Unexpected invocation of `getUpperBound` on an "
-                      "unmaterialized " +
-                      op + " FPNode";
-    llvm_unreachable(msg.c_str());
-  }
-
-  virtual Value *getLLValue(IRBuilder<> &builder,
-                            const ValueToValueMapTy *VMap = nullptr) {
-    Module *M = builder.GetInsertBlock()->getModule();
-    if (op == "if") {
-      Value *condValue = operands[0]->getLLValue(builder, VMap);
-      auto IP = builder.GetInsertPoint();
-
-      Instruction *Then, *Else;
-      SplitBlockAndInsertIfThenElse(condValue, &*IP, &Then, &Else);
-
-      Then->getParent()->setName("herbie.then");
-      builder.SetInsertPoint(Then);
-      Value *ThenVal = operands[1]->getLLValue(builder, VMap);
-      if (Instruction *I = dyn_cast<Instruction>(ThenVal))
-        I->setName("herbie.then_val");
-
-      Else->getParent()->setName("herbie.else");
-      builder.SetInsertPoint(Else);
-      Value *ElseVal = operands[2]->getLLValue(builder, VMap);
-      if (Instruction *I = dyn_cast<Instruction>(ElseVal))
-        I->setName("herbie.else_val");
-
-      builder.SetInsertPoint(&*IP);
-      auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
-      Phi->addIncoming(ThenVal, Then->getParent());
-      Phi->addIncoming(ElseVal, Else->getParent());
-      Phi->setName("herbie.merge");
-      return Phi;
-    }
-
-    SmallVector<Value *, 3> operandValues;
-    for (auto operand : operands) {
-      Value *val = operand->getLLValue(builder, VMap);
-      assert(val && "Operand produced a null value!");
-      operandValues.push_back(val);
-    }
-
-    static const std::unordered_map<
-        std::string, std::function<Value *(IRBuilder<> &, Module *,
-                                           const SmallVectorImpl<Value *> &)>>
-        opMap = {
-            {"neg",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-                 -> Value * { return b.CreateFNeg(ops[0], "herbie.neg"); }},
-            {"+",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFAdd(ops[0], ops[1], "herbie.add");
-             }},
-            {"-",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFSub(ops[0], ops[1], "herbie.sub");
-             }},
-            {"*",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFMul(ops[0], ops[1], "herbie.mul");
-             }},
-            {"/",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFDiv(ops[0], ops[1], "herbie.div");
-             }},
-            {"fmin",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateBinaryIntrinsic(Intrinsic::minnum, ops[0], ops[1],
-                                              nullptr, "herbie.fmin");
-             }},
-            {"fmax",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateBinaryIntrinsic(Intrinsic::maxnum, ops[0], ops[1],
-                                              nullptr, "herbie.fmax");
-             }},
-            {"sin",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::sin, ops[0], nullptr,
-                                             "herbie.sin");
-             }},
-            {"cos",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::cos, ops[0], nullptr,
-                                             "herbie.cos");
-             }},
-            {"tan",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
+  static const std::unordered_map<
+      std::string, std::function<Value *(IRBuilder<> &, Module *,
+                                         const SmallVectorImpl<Value *> &)>>
+      opMap = {
+          {"neg",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return b.CreateFNeg(ops[0], "herbie.neg"); }},
+          {"+",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFAdd(ops[0], ops[1], "herbie.add");
+           }},
+          {"-",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFSub(ops[0], ops[1], "herbie.sub");
+           }},
+          {"*",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFMul(ops[0], ops[1], "herbie.mul");
+           }},
+          {"/",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFDiv(ops[0], ops[1], "herbie.div");
+           }},
+          {"fmin",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateBinaryIntrinsic(Intrinsic::minnum, ops[0], ops[1],
+                                            nullptr, "herbie.fmin");
+           }},
+          {"fmax",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateBinaryIntrinsic(Intrinsic::maxnum, ops[0], ops[1],
+                                            nullptr, "herbie.fmax");
+           }},
+          {"sin",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::sin, ops[0], nullptr,
+                                           "herbie.sin");
+           }},
+          {"cos",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::cos, ops[0], nullptr,
+                                           "herbie.cos");
+           }},
+          {"tan",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
 #if LLVM_VERSION_MAJOR > 16
-               return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
-                                             "herbie.tan");
+             return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
+                                           "herbie.tan");
 #else
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "tan" : "tanf";
-               Function *tanFunc = M->getFunction(funcName);
-               if (!tanFunc) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 tanFunc = Function::Create(FT, Function::ExternalLinkage,
-                                            funcName, M);
-               }
-               return b.CreateCall(tanFunc, {ops[0]}, "herbie.tan");
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "tan" : "tanf";
+             Function *tanFunc = M->getFunction(funcName);
+             if (!tanFunc) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               tanFunc =
+                   Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(tanFunc, {ops[0]}, "herbie.tan");
 #endif
-             }},
-            {"exp",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::exp, ops[0], nullptr,
-                                             "herbie.exp");
-             }},
-            {"expm1",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "expm1" : "expm1f";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.expm1");
-             }},
-            {"log",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::log, ops[0], nullptr,
-                                             "herbie.log");
-             }},
-            {"log1p",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "log1p" : "log1pf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.log1p");
-             }},
-            {"sqrt",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::sqrt, ops[0], nullptr,
-                                             "herbie.sqrt");
-             }},
-            {"cbrt",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "cbrt" : "cbrtf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.cbrt");
-             }},
-            {"pow",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               // Use powi when possible
-               if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
-                 double value = CF->getValueAPF().convertToDouble();
-                 if (value == std::floor(value) && value >= INT_MIN &&
-                     value <= INT_MAX) {
-                   int exp = static_cast<int>(value);
-                   SmallVector<Type *, 1> overloadedTypes = {
-                       ops[0]->getType(), Type::getInt32Ty(M->getContext())};
+           }},
+          {"exp",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::exp, ops[0], nullptr,
+                                           "herbie.exp");
+           }},
+          {"expm1",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "expm1" : "expm1f";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.expm1");
+           }},
+          {"log",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::log, ops[0], nullptr,
+                                           "herbie.log");
+           }},
+          {"log1p",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "log1p" : "log1pf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.log1p");
+           }},
+          {"sqrt",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::sqrt, ops[0], nullptr,
+                                           "herbie.sqrt");
+           }},
+          {"cbrt",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "cbrt" : "cbrtf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.cbrt");
+           }},
+          {"pow",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             // Use powi when possible
+             if (auto *CF = dyn_cast<ConstantFP>(ops[1])) {
+               double value = CF->getValueAPF().convertToDouble();
+               if (value == std::floor(value) && value >= INT_MIN &&
+                   value <= INT_MAX) {
+                 int exp = static_cast<int>(value);
+                 SmallVector<Type *, 1> overloadedTypes = {
+                     ops[0]->getType(), Type::getInt32Ty(M->getContext())};
 #if LLVM_VERSION_MAJOR >= 21
-                   Function *powiFunc = Intrinsic::getOrInsertDeclaration(
-                       M, Intrinsic::powi, overloadedTypes);
+                 Function *powiFunc = Intrinsic::getOrInsertDeclaration(
+                     M, Intrinsic::powi, overloadedTypes);
 #else
-                   Function *powiFunc = getIntrinsicDeclaration(
-                       M, Intrinsic::powi, overloadedTypes);
+                 Function *powiFunc = getIntrinsicDeclaration(
+                     M, Intrinsic::powi, overloadedTypes);
 #endif
 
-                   Value *exponent =
-                       ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
-                   return b.CreateCall(powiFunc, {ops[0], exponent},
-                                       "herbie.powi");
-                 }
+                 Value *exponent =
+                     ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
+                 return b.CreateCall(powiFunc, {ops[0], exponent},
+                                     "herbie.powi");
                }
+             }
 
-               return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
-                                              nullptr, "herbie.pow");
-             }},
-            {"fma",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
-                                        {ops[0], ops[1], ops[2]}, nullptr,
-                                        "herbie.fma");
-             }},
-            {"fabs",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateUnaryIntrinsic(Intrinsic::fabs, ops[0], nullptr,
-                                             "herbie.fabs");
-             }},
-            {"hypot",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "hypot" : "hypotf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0], ops[1]}, "herbie.hypot");
-             }},
-            {"asin",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "asin" : "asinf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.asin");
-             }},
-            {"acos",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "acos" : "acosf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.acos");
-             }},
-            {"atan",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "atan" : "atanf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.atan");
-             }},
-            {"atan2",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "atan2" : "atan2f";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0], ops[1]}, "herbie.atan2");
-             }},
-            {"sinh",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "sinh" : "sinhf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.sinh");
-             }},
-            {"cosh",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "cosh" : "coshf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.cosh");
-             }},
-            {"tanh",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               Type *Ty = ops[0]->getType();
-               std::string funcName = Ty->isDoubleTy() ? "tanh" : "tanhf";
-               Function *f = M->getFunction(funcName);
-               if (!f) {
-                 FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-                 f = Function::Create(FT, Function::ExternalLinkage, funcName,
-                                      M);
-               }
-               return b.CreateCall(f, {ops[0]}, "herbie.tanh");
-             }},
-            {"==",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpOEQ(ops[0], ops[1], "herbie.eq");
-             }},
-            {"!=",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpONE(ops[0], ops[1], "herbie.ne");
-             }},
-            {"<",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpOLT(ops[0], ops[1], "herbie.lt");
-             }},
-            {">",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpOGT(ops[0], ops[1], "herbie.gt");
-             }},
-            {"<=",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpOLE(ops[0], ops[1], "herbie.le");
-             }},
-            {">=",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateFCmpOGE(ops[0], ops[1], "herbie.ge");
-             }},
-            {"and",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateAnd(ops[0], ops[1], "herbie.and");
-             }},
-            {"or",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &ops) -> Value * {
-               return b.CreateOr(ops[0], ops[1], "herbie.or");
-             }},
-            {"not",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
-                 -> Value * { return b.CreateNot(ops[0], "herbie.not"); }},
-            {"TRUE",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-                 -> Value * { return ConstantInt::getTrue(b.getContext()); }},
-            {"FALSE",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-                 -> Value * { return ConstantInt::getFalse(b.getContext()); }},
-            {"PI",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-                 -> Value * { return ConstantFP::get(b.getDoubleTy(), M_PI); }},
-            {"E",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-                 -> Value * { return ConstantFP::get(b.getDoubleTy(), M_E); }},
-            {"INFINITY",
-             [](IRBuilder<> &b, Module *M,
-                const SmallVectorImpl<Value *> &) -> Value * {
-               return ConstantFP::getInfinity(b.getDoubleTy(), false);
-             }},
-            {"NaN",
-             [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
-                 -> Value * { return ConstantFP::getNaN(b.getDoubleTy()); }},
-        };
+             return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
+                                            nullptr, "herbie.pow");
+           }},
+          {"fma",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
+                                      {ops[0], ops[1], ops[2]}, nullptr,
+                                      "herbie.fma");
+           }},
+          {"fabs",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::fabs, ops[0], nullptr,
+                                           "herbie.fabs");
+           }},
+          {"hypot",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "hypot" : "hypotf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.hypot");
+           }},
+          {"asin",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "asin" : "asinf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.asin");
+           }},
+          {"acos",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "acos" : "acosf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.acos");
+           }},
+          {"atan",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "atan" : "atanf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.atan");
+           }},
+          {"atan2",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "atan2" : "atan2f";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.atan2");
+           }},
+          {"sinh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "sinh" : "sinhf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.sinh");
+           }},
+          {"cosh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "cosh" : "coshf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.cosh");
+           }},
+          {"tanh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "tanh" : "tanhf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.tanh");
+           }},
+          {"==",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpOEQ(ops[0], ops[1], "herbie.eq");
+           }},
+          {"!=",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpONE(ops[0], ops[1], "herbie.ne");
+           }},
+          {"<",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpOLT(ops[0], ops[1], "herbie.lt");
+           }},
+          {">",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpOGT(ops[0], ops[1], "herbie.gt");
+           }},
+          {"<=",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpOLE(ops[0], ops[1], "herbie.le");
+           }},
+          {">=",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFCmpOGE(ops[0], ops[1], "herbie.ge");
+           }},
+          {"and",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateAnd(ops[0], ops[1], "herbie.and");
+           }},
+          {"or",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return b.CreateOr(ops[0], ops[1], "herbie.or"); }},
+          {"not",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return b.CreateNot(ops[0], "herbie.not"); }},
+          {"TRUE",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+               -> Value * { return ConstantInt::getTrue(b.getContext()); }},
+          {"FALSE",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+               -> Value * { return ConstantInt::getFalse(b.getContext()); }},
+          {"PI",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+               -> Value * { return ConstantFP::get(b.getDoubleTy(), M_PI); }},
+          {"E",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+               -> Value * { return ConstantFP::get(b.getDoubleTy(), M_E); }},
+          {"INFINITY",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &) -> Value * {
+             return ConstantFP::getInfinity(b.getDoubleTy(), false);
+           }},
+          {"NaN",
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
+               -> Value * { return ConstantFP::getNaN(b.getDoubleTy()); }},
+      };
 
-    auto it = opMap.find(op);
-    if (it != opMap.end())
-      return it->second(builder, M, operandValues);
-    else {
-      std::string msg = "FPNode getLLValue: Unexpected operator " + op;
+  auto it = opMap.find(op);
+  if (it != opMap.end())
+    return it->second(builder, M, operandValues);
+  else {
+    std::string msg = "FPNode getLLValue: Unexpected operator " + op;
+    llvm_unreachable(msg.c_str());
+  }
+}
+
+FPLLValue::FPLLValue(Value *value, const std::string &op,
+                     const std::string &dtype)
+    : FPNode(NodeType::LLValue, op, dtype), value(value) {}
+
+bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
+
+std::string FPLLValue::toFullExpression(
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    unsigned depth) {
+  if (input) {
+    assert(hasSymbol() && "FPLLValue has no symbol!");
+    return symbol;
+  } else {
+    assert(!operands.empty() && "FPNode has no operands!");
+
+    if (depth > FPOptMaxExprDepth) {
+      std::string msg = "Expression depth exceeded maximum allowed depth of " +
+                        std::to_string(FPOptMaxExprDepth) + " for " + op +
+                        "; consider disabling loop unrolling";
+
       llvm_unreachable(msg.c_str());
     }
-  }
-};
 
-// Represents a true LLVM Value
-class FPLLValue : public FPNode {
-  double lb = std::numeric_limits<double>::infinity();
-  double ub = -std::numeric_limits<double>::infinity();
-  bool input = false; // Whether `llvm::Value` is an input of an FPCC
-
-public:
-  Value *value;
-
-  explicit FPLLValue(Value *value, const std::string &op,
-                     const std::string &dtype)
-      : FPNode(NodeType::LLValue, op, dtype), value(value) {}
-
-  bool hasSymbol() const override { return !symbol.empty(); }
-
-  std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0) override {
-    if (input) {
-      assert(hasSymbol() && "FPLLValue has no symbol!");
-      return symbol;
-    } else {
-      assert(!operands.empty() && "FPNode has no operands!");
-
-      if (depth > FPOptMaxExprDepth) {
-        std::string msg =
-            "Expression depth exceeded maximum allowed depth of " +
-            std::to_string(FPOptMaxExprDepth) + " for " + op +
-            "; consider disabling loop unrolling";
-
-        llvm_unreachable(msg.c_str());
-      }
-
-      std::string expr = "(" + (op == "neg" ? "-" : op);
-      for (auto operand : operands) {
-        expr += " " + operand->toFullExpression(valueToNodeMap, depth + 1);
-      }
-      expr += ")";
-      return expr;
+    std::string expr = "(" + (op == "neg" ? "-" : op);
+    for (auto operand : operands) {
+      expr += " " + operand->toFullExpression(valueToNodeMap, depth + 1);
     }
+    expr += ")";
+    return expr;
   }
+}
 
-  void markAsInput() override { input = true; }
+void FPLLValue::markAsInput() { input = true; }
 
-  void updateBounds(double lower, double upper) override {
-    lb = std::min(lb, lower);
-    ub = std::max(ub, upper);
-    if (EnzymePrintFPOpt)
-      llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", "
-                   << ub << "]\n";
+void FPLLValue::updateBounds(double lower, double upper) {
+  lb = std::min(lb, lower);
+  ub = std::max(ub, upper);
+  if (EnzymePrintFPOpt)
+    llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
+                 << "]\n";
+}
+
+double FPLLValue::getLowerBound() const { return lb; }
+double FPLLValue::getUpperBound() const { return ub; }
+
+Value *FPLLValue::getLLValue(IRBuilder<> &builder,
+                             const ValueToValueMapTy *VMap) {
+  if (VMap) {
+    assert(VMap->count(value) && "FPLLValue not found in passed-in VMap!");
+    return VMap->lookup(value);
   }
+  return value;
+}
 
-  double getLowerBound() const override { return lb; }
-  double getUpperBound() const override { return ub; }
-
-  Value *getLLValue(IRBuilder<> &builder,
-                    const ValueToValueMapTy *VMap = nullptr) override {
-    if (VMap) {
-      assert(VMap->count(value) && "FPLLValue not found in passed-in VMap!");
-      return VMap->lookup(value);
-    }
-    return value;
-  }
-
-  static bool classof(const FPNode *N) {
-    return N->getType() == NodeType::LLValue;
-  }
-};
+bool FPLLValue::classof(const FPNode *N) {
+  return N->getType() == NodeType::LLValue;
+}
 
 double stringToDouble(const std::string &str) {
   char *end;
@@ -789,95 +746,90 @@ double stringToDouble(const std::string &str) {
   return result; // Denormalized values are fine
 }
 
-class FPConst : public FPNode {
-  std::string strValue;
+FPConst::FPConst(const std::string &strValue, const std::string &dtype)
+    : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
-public:
-  explicit FPConst(const std::string &strValue, const std::string &dtype)
-      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
+std::string FPConst::toFullExpression(
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    unsigned depth) {
+  return strValue;
+}
 
-  std::string toFullExpression(
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0) override {
-    return strValue;
+bool FPConst::hasSymbol() const {
+  std::string msg = "Unexpected invocation of `hasSymbol` on an FPConst";
+  llvm_unreachable(msg.c_str());
+}
+
+void FPConst::markAsInput() { return; }
+
+void FPConst::updateBounds(double lower, double upper) { return; }
+
+double FPConst::getLowerBound() const {
+  if (strValue == "+inf.0") {
+    return std::numeric_limits<double>::infinity();
+  } else if (strValue == "-inf.0") {
+    return -std::numeric_limits<double>::infinity();
   }
 
-  bool hasSymbol() const override {
-    std::string msg = "Unexpected invocation of `hasSymbol` on an FPConst";
+  double constantValue;
+  size_t div = strValue.find('/');
+
+  if (div != std::string::npos) {
+    std::string numerator = strValue.substr(0, div);
+    std::string denominator = strValue.substr(div + 1);
+    double num = stringToDouble(numerator);
+    double denom = stringToDouble(denominator);
+
+    constantValue = num / denom;
+  } else {
+    constantValue = stringToDouble(strValue);
+  }
+
+  return constantValue;
+}
+
+double FPConst::getUpperBound() const { return getLowerBound(); }
+
+Value *FPConst::getLLValue(IRBuilder<> &builder,
+                           const ValueToValueMapTy *VMap) {
+  Type *Ty;
+  if (dtype == "f64") {
+    Ty = builder.getDoubleTy();
+  } else if (dtype == "f32") {
+    Ty = builder.getFloatTy();
+  } else {
+    std::string msg = "FPConst getValue: Unexpected dtype: " + dtype;
     llvm_unreachable(msg.c_str());
   }
-
-  void markAsInput() override { return; }
-
-  void updateBounds(double lower, double upper) override { return; }
-
-  double getLowerBound() const override {
-    if (strValue == "+inf.0") {
-      return std::numeric_limits<double>::infinity();
-    } else if (strValue == "-inf.0") {
-      return -std::numeric_limits<double>::infinity();
-    }
-
-    double constantValue;
-    size_t div = strValue.find('/');
-
-    if (div != std::string::npos) {
-      std::string numerator = strValue.substr(0, div);
-      std::string denominator = strValue.substr(div + 1);
-      double num = stringToDouble(numerator);
-      double denom = stringToDouble(denominator);
-
-      constantValue = num / denom;
-    } else {
-      constantValue = stringToDouble(strValue);
-    }
-
-    return constantValue;
+  if (strValue == "+inf.0") {
+    return ConstantFP::getInfinity(Ty, false);
+  } else if (strValue == "-inf.0") {
+    return ConstantFP::getInfinity(Ty, true);
   }
 
-  double getUpperBound() const override { return getLowerBound(); }
+  double constantValue;
+  size_t div = strValue.find('/');
 
-  virtual Value *getLLValue(IRBuilder<> &builder,
-                            const ValueToValueMapTy *VMap = nullptr) override {
-    Type *Ty;
-    if (dtype == "f64") {
-      Ty = builder.getDoubleTy();
-    } else if (dtype == "f32") {
-      Ty = builder.getFloatTy();
-    } else {
-      std::string msg = "FPConst getValue: Unexpected dtype: " + dtype;
-      llvm_unreachable(msg.c_str());
-    }
-    if (strValue == "+inf.0") {
-      return ConstantFP::getInfinity(Ty, false);
-    } else if (strValue == "-inf.0") {
-      return ConstantFP::getInfinity(Ty, true);
-    }
+  if (div != std::string::npos) {
+    std::string numerator = strValue.substr(0, div);
+    std::string denominator = strValue.substr(div + 1);
+    double num = stringToDouble(numerator);
+    double denom = stringToDouble(denominator);
 
-    double constantValue;
-    size_t div = strValue.find('/');
-
-    if (div != std::string::npos) {
-      std::string numerator = strValue.substr(0, div);
-      std::string denominator = strValue.substr(div + 1);
-      double num = stringToDouble(numerator);
-      double denom = stringToDouble(denominator);
-
-      constantValue = num / denom;
-    } else {
-      constantValue = stringToDouble(strValue);
-    }
-
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Returning " << strValue << " as " << dtype
-    //                << " constant: " << constantValue << "\n";
-    return ConstantFP::get(Ty, constantValue);
+    constantValue = num / denom;
+  } else {
+    constantValue = stringToDouble(strValue);
   }
 
-  static bool classof(const FPNode *N) {
-    return N->getType() == NodeType::Const;
-  }
-};
+  // if (EnzymePrintFPOpt)
+  //   llvm::errs() << "Returning " << strValue << " as " << dtype
+  //                << " constant: " << constantValue << "\n";
+  return ConstantFP::get(Ty, constantValue);
+}
+
+bool FPConst::classof(const FPNode *N) {
+  return N->getType() == NodeType::Const;
+}
 
 void topoSort(const SetVector<Instruction *> &insts,
               SmallVectorImpl<Instruction *> &instsSorted) {
@@ -917,8 +869,6 @@ void topoSort(const SetVector<Instruction *> &insts,
 
   std::reverse(instsSorted.begin(), instsSorted.end());
 }
-
-enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
 
 unsigned getMPFRPrec(PrecisionChangeType type) {
   switch (type) {
@@ -1022,30 +972,14 @@ std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   return "";
 }
 
-// Floating-Point Connected Component
-struct FPCC {
-  SetVector<Value *> inputs;
-  SetVector<Instruction *> outputs;
-  SetVector<Instruction *> operations;
-  size_t outputs_rewritten = 0;
+FPCC::FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
+           SetVector<Instruction *> operations)
+    : inputs(inputs), outputs(outputs), operations(operations) {}
 
-  FPCC() = default;
-  explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
-                SetVector<Instruction *> operations)
-      : inputs(inputs), outputs(outputs), operations(operations) {}
-};
-
-struct PrecisionChange {
-  SetVector<FPLLValue *>
-      nodes; // Only nodes with existing `llvm::Value`s can be changed
-  PrecisionChangeType oldType;
-  PrecisionChangeType newType;
-
-  explicit PrecisionChange(SetVector<FPLLValue *> &nodes,
-                           PrecisionChangeType oldType,
-                           PrecisionChangeType newType)
-      : nodes(nodes), oldType(oldType), newType(newType) {}
-};
+PrecisionChange::PrecisionChange(SetVector<FPLLValue *> &nodes,
+                                 PrecisionChangeType oldType,
+                                 PrecisionChangeType newType)
+    : nodes(nodes), oldType(oldType), newType(newType) {}
 
 void changePrecision(Instruction *I, PrecisionChange &change,
                      MapVector<Value *, Value *> &oldToNew) {
@@ -1197,500 +1131,481 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   oldToNew[I] = newI;
 }
 
-struct PTCandidate {
-  // Only one PT candidate per FPCC can be applied
-  SmallVector<PrecisionChange, 1> changes;
-  double accuracyCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
-  std::string desc;
-  std::unordered_map<FPNode *, double> perOutputAccCost;
-  std::unordered_map<FPNode *, SmallVector<double, 4>> errors;
+PTCandidate::PTCandidate(SmallVector<PrecisionChange> changes,
+                         const std::string &desc)
+    : changes(std::move(changes)), desc(desc) {}
 
-  explicit PTCandidate(SmallVector<PrecisionChange> changes,
-                       const std::string &desc)
-      : changes(std::move(changes)), desc(desc) {}
+// If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
+// values and change outputs in VMap to new casted outputs.
+void PTCandidate::apply(FPCC &component, ValueToValueMapTy *VMap) {
+  SetVector<Instruction *> operations;
+  ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
+  if (VMap) {
+    for (auto *I : component.operations) {
+      assert(VMap->count(I));
+      operations.insert(cast<Instruction>(VMap->lookup(I)));
 
-  // If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
-  // values and change outputs in VMap to new casted outputs.
-  void apply(FPCC &component, ValueToValueMapTy *VMap = nullptr) {
-    SetVector<Instruction *> operations;
-    ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
-    if (VMap) {
-      for (auto *I : component.operations) {
+      clonedToOriginal[VMap->lookup(I)] = I;
+      // llvm::errs() << "Mapping back: " << *VMap->lookup(I) << " (in "
+      //              << cast<Instruction>(VMap->lookup(I))
+      //                     ->getParent()
+      //                     ->getParent()
+      //                     ->getName()
+      //              << ") --> " << *I << " (in "
+      //              << I->getParent()->getParent()->getName() << ")\n";
+    }
+  } else {
+    operations = component.operations;
+  }
+
+  for (auto &change : changes) {
+    SmallPtrSet<Instruction *, 8> seen;
+    SmallVector<Instruction *, 8> todo;
+    MapVector<Value *, Value *> oldToNew;
+
+    SetVector<Instruction *> instsToChange;
+    for (auto node : change.nodes) {
+      if (!node || !node->value) {
+        continue;
+      }
+      assert(isa<Instruction>(node->value));
+      auto *I = cast<Instruction>(node->value);
+      if (VMap) {
         assert(VMap->count(I));
-        operations.insert(cast<Instruction>(VMap->lookup(I)));
-
-        clonedToOriginal[VMap->lookup(I)] = I;
-        // llvm::errs() << "Mapping back: " << *VMap->lookup(I) << " (in "
-        //              << cast<Instruction>(VMap->lookup(I))
-        //                     ->getParent()
-        //                     ->getParent()
-        //                     ->getName()
-        //              << ") --> " << *I << " (in "
-        //              << I->getParent()->getParent()->getName() << ")\n";
+        I = cast<Instruction>(VMap->lookup(I));
       }
-    } else {
-      operations = component.operations;
+      if (!operations.contains(I)) {
+        // Already erased by `AO.apply()`.
+        continue;
+      }
+      instsToChange.insert(I);
     }
 
-    for (auto &change : changes) {
-      SmallPtrSet<Instruction *, 8> seen;
-      SmallVector<Instruction *, 8> todo;
-      MapVector<Value *, Value *> oldToNew;
+    SmallVector<Instruction *, 8> instsToChangeSorted;
+    topoSort(instsToChange, instsToChangeSorted);
 
-      SetVector<Instruction *> instsToChange;
-      for (auto node : change.nodes) {
-        if (!node || !node->value) {
-          continue;
+    for (auto *I : instsToChangeSorted) {
+      changePrecision(I, change, oldToNew);
+    }
+
+    // Restore the precisions of the last level of instructions to be changed.
+    // Clean up old instructions.
+    for (auto &[oldV, newV] : oldToNew) {
+      if (!isa<Instruction>(oldV)) {
+        continue;
+      }
+
+      if (!instsToChange.contains(cast<Instruction>(oldV))) {
+        continue;
+      }
+
+      SmallPtrSet<Instruction *, 8> users;
+      for (auto *user : oldV->users()) {
+        assert(isa<Instruction>(user) &&
+               "PT: Unexpected non-instruction user of a changed instruction");
+        if (!instsToChange.contains(cast<Instruction>(user))) {
+          users.insert(cast<Instruction>(user));
         }
-        assert(isa<Instruction>(node->value));
-        auto *I = cast<Instruction>(node->value);
+      }
+
+      Value *casted = nullptr;
+      if (!users.empty()) {
+        IRBuilder<> builder(cast<Instruction>(oldV)->getParent(),
+                            ++BasicBlock::iterator(cast<Instruction>(oldV)));
+        casted = builder.CreateFPCast(
+            newV, getLLVMFPType(change.oldType, builder.getContext()));
+
         if (VMap) {
-          assert(VMap->count(I));
-          I = cast<Instruction>(VMap->lookup(I));
+          assert(VMap->count(clonedToOriginal[oldV]));
+          (*VMap)[clonedToOriginal[oldV]] = casted;
         }
-        if (!operations.contains(I)) {
-          // Already erased by `AO.apply()`.
-          continue;
-        }
-        instsToChange.insert(I);
       }
 
-      SmallVector<Instruction *, 8> instsToChangeSorted;
-      topoSort(instsToChange, instsToChangeSorted);
-
-      for (auto *I : instsToChangeSorted) {
-        changePrecision(I, change, oldToNew);
+      for (auto *user : users) {
+        user->replaceUsesOfWith(oldV, casted);
       }
 
-      // Restore the precisions of the last level of instructions to be changed.
-      // Clean up old instructions.
-      for (auto &[oldV, newV] : oldToNew) {
-        if (!isa<Instruction>(oldV)) {
-          continue;
-        }
+      // Assumes no external uses of the old value since all corresponding new
+      // values are already restored to original precision and used to replace
+      // uses of their old value. This is also advantageous to the solvers.
+      for (auto *user : oldV->users()) {
+        assert(instsToChange.contains(cast<Instruction>(user)) &&
+               "PT: Unexpected external user of a changed instruction");
+      }
 
-        if (!instsToChange.contains(cast<Instruction>(oldV))) {
-          continue;
-        }
+      if (!oldV->use_empty()) {
+        oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
+      }
 
-        SmallPtrSet<Instruction *, 8> users;
-        for (auto *user : oldV->users()) {
-          assert(
-              isa<Instruction>(user) &&
-              "PT: Unexpected non-instruction user of a changed instruction");
-          if (!instsToChange.contains(cast<Instruction>(user))) {
-            users.insert(cast<Instruction>(user));
-          }
-        }
+      cast<Instruction>(oldV)->eraseFromParent();
 
-        Value *casted = nullptr;
-        if (!users.empty()) {
-          IRBuilder<> builder(cast<Instruction>(oldV)->getParent(),
-                              ++BasicBlock::iterator(cast<Instruction>(oldV)));
-          casted = builder.CreateFPCast(
-              newV, getLLVMFPType(change.oldType, builder.getContext()));
+      // The change is being materialized to the original component
+      if (!VMap)
+        component.operations.remove(cast<Instruction>(oldV));
+    }
+  }
+}
 
-          if (VMap) {
-            assert(VMap->count(clonedToOriginal[oldV]));
-            (*VMap)[clonedToOriginal[oldV]] = casted;
-          }
-        }
-
-        for (auto *user : users) {
-          user->replaceUsesOfWith(oldV, casted);
-        }
-
-        // Assumes no external uses of the old value since all corresponding new
-        // values are already restored to original precision and used to replace
-        // uses of their old value. This is also advantageous to the solvers.
-        for (auto *user : oldV->users()) {
-          assert(instsToChange.contains(cast<Instruction>(user)) &&
-                 "PT: Unexpected external user of a changed instruction");
-        }
-
-        if (!oldV->use_empty()) {
-          oldV->replaceAllUsesWith(UndefValue::get(oldV->getType()));
-        }
-
-        cast<Instruction>(oldV)->eraseFromParent();
-
-        // The change is being materialized to the original component
-        if (!VMap)
-          component.operations.remove(cast<Instruction>(oldV));
+FPEvaluator::FPEvaluator(PTCandidate *pt) {
+  if (pt) {
+    for (const auto &change : pt->changes) {
+      for (auto node : change.nodes) {
+        nodePrecisions[node] = change.newType;
       }
     }
   }
-};
+}
 
-class FPEvaluator {
-  std::unordered_map<const FPNode *, double> cache;
-  std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
+PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
+  // If the node has a new precision from PT, use it
+  PrecisionChangeType precType;
 
-public:
-  FPEvaluator(PTCandidate *pt = nullptr) {
-    if (pt) {
-      for (const auto &change : pt->changes) {
-        for (auto node : change.nodes) {
-          nodePrecisions[node] = change.newType;
-        }
-      }
-    }
-  }
-
-  PrecisionChangeType getNodePrecision(const FPNode *node) const {
-    // If the node has a new precision from PT, use it
-    PrecisionChangeType precType;
-
-    auto it = nodePrecisions.find(node);
-    if (it != nodePrecisions.end()) {
-      precType = it->second;
+  auto it = nodePrecisions.find(node);
+  if (it != nodePrecisions.end()) {
+    precType = it->second;
+  } else {
+    // Otherwise, use the node's original precision
+    if (node->dtype == "f32") {
+      precType = PrecisionChangeType::FP32;
+    } else if (node->dtype == "f64") {
+      precType = PrecisionChangeType::FP64;
     } else {
-      // Otherwise, use the node's original precision
-      if (node->dtype == "f32") {
-        precType = PrecisionChangeType::FP32;
-      } else if (node->dtype == "f64") {
-        precType = PrecisionChangeType::FP64;
-      } else {
-        llvm_unreachable(
-            ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
-                .c_str());
-      }
+      llvm_unreachable(
+          ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
+              .c_str());
     }
-
-    if (precType != PrecisionChangeType::FP32 &&
-        precType != PrecisionChangeType::FP64) {
-      llvm_unreachable("Unsupported FP precision");
-    }
-
-    return precType;
   }
 
-  void evaluateNode(const FPNode *node,
-                    const SmallMapVector<Value *, double, 4> &inputValues) {
-    if (cache.find(node) != cache.end())
-      return;
+  if (precType != PrecisionChangeType::FP32 &&
+      precType != PrecisionChangeType::FP64) {
+    llvm_unreachable("Unsupported FP precision");
+  }
 
-    if (isa<FPConst>(node)) {
-      double constVal = node->getLowerBound();
-      cache.emplace(node, constVal);
-      return;
-    }
+  return precType;
+}
 
-    if (isa<FPLLValue>(node) &&
-        inputValues.count(cast<FPLLValue>(node)->value)) {
-      double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-      cache.emplace(node, inputValue);
-      return;
-    }
+void FPEvaluator::evaluateNode(const FPNode *node,
+                               const MapVector<Value *, double> &inputValues) {
+  if (cache.find(node) != cache.end())
+    return;
 
-    if (node->op == "if") {
-      evaluateNode(node->operands[0].get(), inputValues);
-      double cond = getResult(node->operands[0].get());
+  if (isa<FPConst>(node)) {
+    double constVal = node->getLowerBound();
+    cache.emplace(node, constVal);
+    return;
+  }
 
-      if (cond == 1.0) {
-        evaluateNode(node->operands[1].get(), inputValues);
-        double then_val = getResult(node->operands[1].get());
-        cache.emplace(node, then_val);
-      } else {
-        evaluateNode(node->operands[2].get(), inputValues);
-        double else_val = getResult(node->operands[2].get());
-        cache.emplace(node, else_val);
-      }
-      return;
-    } else if (node->op == "and") {
-      evaluateNode(node->operands[0].get(), inputValues);
-      double op0 = getResult(node->operands[0].get());
-      if (op0 != 1.0) {
-        cache.emplace(node, 0.0);
-        return;
-      }
+  if (isa<FPLLValue>(node) && inputValues.count(cast<FPLLValue>(node)->value)) {
+    double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
+    cache.emplace(node, inputValue);
+    return;
+  }
+
+  if (node->op == "if") {
+    evaluateNode(node->operands[0].get(), inputValues);
+    double cond = getResult(node->operands[0].get());
+
+    if (cond == 1.0) {
       evaluateNode(node->operands[1].get(), inputValues);
-      double op1 = getResult(node->operands[1].get());
-      if (op1 != 1.0) {
-        cache.emplace(node, 0.0);
-        return;
-      }
-      cache.emplace(node, 1.0);
-      return;
-    } else if (node->op == "or") {
-      evaluateNode(node->operands[0].get(), inputValues);
-      double op0 = getResult(node->operands[0].get());
-      if (op0 == 1.0) {
-        cache.emplace(node, 1.0);
-        return;
-      }
-      evaluateNode(node->operands[1].get(), inputValues);
-      double op1 = getResult(node->operands[1].get());
-      if (op1 == 1.0) {
-        cache.emplace(node, 1.0);
-        return;
-      }
-      cache.emplace(node, 0.0);
-      return;
-    } else if (node->op == "not") {
-      evaluateNode(node->operands[0].get(), inputValues);
-      double op = getResult(node->operands[0].get());
-      cache.emplace(node, (op == 1.0) ? 0.0 : 1.0);
-      return;
-    } else if (node->op == "TRUE") {
-      cache.emplace(node, 1.0);
-      return;
-    } else if (node->op == "FALSE") {
+      double then_val = getResult(node->operands[1].get());
+      cache.emplace(node, then_val);
+    } else {
+      evaluateNode(node->operands[2].get(), inputValues);
+      double else_val = getResult(node->operands[2].get());
+      cache.emplace(node, else_val);
+    }
+    return;
+  } else if (node->op == "and") {
+    evaluateNode(node->operands[0].get(), inputValues);
+    double op0 = getResult(node->operands[0].get());
+    if (op0 != 1.0) {
       cache.emplace(node, 0.0);
       return;
     }
-
-    PrecisionChangeType nodePrec = getNodePrecision(node);
-
-    for (const auto &operand : node->operands) {
-      evaluateNode(operand.get(), inputValues);
+    evaluateNode(node->operands[1].get(), inputValues);
+    double op1 = getResult(node->operands[1].get());
+    if (op1 != 1.0) {
+      cache.emplace(node, 0.0);
+      return;
     }
+    cache.emplace(node, 1.0);
+    return;
+  } else if (node->op == "or") {
+    evaluateNode(node->operands[0].get(), inputValues);
+    double op0 = getResult(node->operands[0].get());
+    if (op0 == 1.0) {
+      cache.emplace(node, 1.0);
+      return;
+    }
+    evaluateNode(node->operands[1].get(), inputValues);
+    double op1 = getResult(node->operands[1].get());
+    if (op1 == 1.0) {
+      cache.emplace(node, 1.0);
+      return;
+    }
+    cache.emplace(node, 0.0);
+    return;
+  } else if (node->op == "not") {
+    evaluateNode(node->operands[0].get(), inputValues);
+    double op = getResult(node->operands[0].get());
+    cache.emplace(node, (op == 1.0) ? 0.0 : 1.0);
+    return;
+  } else if (node->op == "TRUE") {
+    cache.emplace(node, 1.0);
+    return;
+  } else if (node->op == "FALSE") {
+    cache.emplace(node, 0.0);
+    return;
+  }
 
-    double res = 0.0;
+  PrecisionChangeType nodePrec = getNodePrecision(node);
 
-    auto evalUnary = [&](auto doubleFunc, auto floatFunc) -> double {
-      double op = getResult(node->operands[0].get());
-      if (nodePrec == PrecisionChangeType::FP32)
-        return floatFunc(static_cast<float>(op));
-      else
-        return doubleFunc(op);
-    };
+  for (const auto &operand : node->operands) {
+    evaluateNode(operand.get(), inputValues);
+  }
 
-    auto evalBinary = [&](auto doubleFunc, auto floatFunc) -> double {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      if (nodePrec == PrecisionChangeType::FP32)
-        return floatFunc(static_cast<float>(op0), static_cast<float>(op1));
-      else
-        return doubleFunc(op0, op1);
-    };
+  double res = 0.0;
 
-    auto evalTernary = [&](auto doubleFunc, auto floatFunc) -> double {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      double op2 = getResult(node->operands[2].get());
-      if (nodePrec == PrecisionChangeType::FP32)
-        return floatFunc(static_cast<float>(op0), static_cast<float>(op1),
-                         static_cast<float>(op2));
-      else
-        return doubleFunc(op0, op1, op2);
-    };
+  auto evalUnary = [&](auto doubleFunc, auto floatFunc) -> double {
+    double op = getResult(node->operands[0].get());
+    if (nodePrec == PrecisionChangeType::FP32)
+      return floatFunc(static_cast<float>(op));
+    else
+      return doubleFunc(op);
+  };
 
-    if (node->op == "neg") {
-      double op = getResult(node->operands[0].get());
-      res = (nodePrec == PrecisionChangeType::FP32) ? -static_cast<float>(op)
-                                                    : -op;
-    } else if (node->op == "+") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? static_cast<float>(op0) + static_cast<float>(op1)
-                : op0 + op1;
-    } else if (node->op == "-") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? static_cast<float>(op0) - static_cast<float>(op1)
-                : op0 - op1;
-    } else if (node->op == "*") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? static_cast<float>(op0) * static_cast<float>(op1)
-                : op0 * op1;
-    } else if (node->op == "/") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      res = (nodePrec == PrecisionChangeType::FP32)
-                ? static_cast<float>(op0) / static_cast<float>(op1)
-                : op0 / op1;
-    } else if (node->op == "sin") {
-      res = evalUnary(static_cast<double (*)(double)>(std::sin),
-                      static_cast<float (*)(float)>(sinf));
-    } else if (node->op == "cos") {
-      res = evalUnary(static_cast<double (*)(double)>(std::cos),
-                      static_cast<float (*)(float)>(cosf));
-    } else if (node->op == "tan") {
-      res = evalUnary(static_cast<double (*)(double)>(std::tan),
-                      static_cast<float (*)(float)>(tanf));
-    } else if (node->op == "exp") {
-      res = evalUnary(static_cast<double (*)(double)>(std::exp),
-                      static_cast<float (*)(float)>(expf));
-    } else if (node->op == "expm1") {
-      res = evalUnary(static_cast<double (*)(double)>(std::expm1),
-                      static_cast<float (*)(float)>(expm1f));
-    } else if (node->op == "log") {
-      res = evalUnary(static_cast<double (*)(double)>(std::log),
-                      static_cast<float (*)(float)>(logf));
-    } else if (node->op == "log1p") {
-      res = evalUnary(static_cast<double (*)(double)>(std::log1p),
-                      static_cast<float (*)(float)>(log1pf));
-    } else if (node->op == "sqrt") {
-      res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
-                      static_cast<float (*)(float)>(sqrtf));
-    } else if (node->op == "cbrt") {
-      res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
-                      static_cast<float (*)(float)>(cbrtf));
-    } else if (node->op == "asin") {
-      res = evalUnary(static_cast<double (*)(double)>(std::asin),
-                      static_cast<float (*)(float)>(asinf));
-    } else if (node->op == "acos") {
-      res = evalUnary(static_cast<double (*)(double)>(std::acos),
-                      static_cast<float (*)(float)>(acosf));
-    } else if (node->op == "atan") {
-      res = evalUnary(static_cast<double (*)(double)>(std::atan),
-                      static_cast<float (*)(float)>(atanf));
-    } else if (node->op == "sinh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::sinh),
-                      static_cast<float (*)(float)>(sinhf));
-    } else if (node->op == "cosh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::cosh),
-                      static_cast<float (*)(float)>(coshf));
-    } else if (node->op == "tanh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::tanh),
-                      static_cast<float (*)(float)>(tanhf));
-    } else if (node->op == "asinh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::asinh),
-                      static_cast<float (*)(float)>(asinhf));
-    } else if (node->op == "acosh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::acosh),
-                      static_cast<float (*)(float)>(acoshf));
-    } else if (node->op == "atanh") {
-      res = evalUnary(static_cast<double (*)(double)>(std::atanh),
-                      static_cast<float (*)(float)>(atanhf));
-    } else if (node->op == "ceil") {
-      res = evalUnary(static_cast<double (*)(double)>(std::ceil),
-                      static_cast<float (*)(float)>(ceilf));
-    } else if (node->op == "floor") {
-      res = evalUnary(static_cast<double (*)(double)>(std::floor),
-                      static_cast<float (*)(float)>(floorf));
-    } else if (node->op == "exp2") {
-      res = evalUnary(static_cast<double (*)(double)>(std::exp2),
-                      static_cast<float (*)(float)>(exp2f));
-    } else if (node->op == "log10") {
-      res = evalUnary(static_cast<double (*)(double)>(std::log10),
-                      static_cast<float (*)(float)>(log10f));
-    } else if (node->op == "log2") {
-      res = evalUnary(static_cast<double (*)(double)>(std::log2),
-                      static_cast<float (*)(float)>(log2f));
-    } else if (node->op == "rint") {
-      res = evalUnary(static_cast<double (*)(double)>(std::rint),
-                      static_cast<float (*)(float)>(rintf));
-    } else if (node->op == "round") {
-      res = evalUnary(static_cast<double (*)(double)>(std::round),
-                      static_cast<float (*)(float)>(roundf));
-    } else if (node->op == "trunc") {
-      res = evalUnary(static_cast<double (*)(double)>(std::trunc),
-                      static_cast<float (*)(float)>(truncf));
-    } else if (node->op == "pow") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::pow),
-                       static_cast<float (*)(float, float)>(powf));
-    } else if (node->op == "fabs") {
-      res = evalUnary(static_cast<double (*)(double)>(std::fabs),
-                      static_cast<float (*)(float)>(fabsf));
-    } else if (node->op == "hypot") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::hypot),
-                       static_cast<float (*)(float, float)>(hypotf));
-    } else if (node->op == "atan2") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::atan2),
-                       static_cast<float (*)(float, float)>(atan2f));
-    } else if (node->op == "copysign") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::copysign),
-                       static_cast<float (*)(float, float)>(copysignf));
-    } else if (node->op == "fmax") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::fmax),
-                       static_cast<float (*)(float, float)>(fmaxf));
-    } else if (node->op == "fmin") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::fmin),
-                       static_cast<float (*)(float, float)>(fminf));
-    } else if (node->op == "fdim") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::fdim),
-                       static_cast<float (*)(float, float)>(fdimf));
-    } else if (node->op == "fmod") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::fmod),
-                       static_cast<float (*)(float, float)>(fmodf));
-    } else if (node->op == "remainder") {
-      res = evalBinary(static_cast<double (*)(double, double)>(std::remainder),
-                       static_cast<float (*)(float, float)>(remainderf));
-    } else if (node->op == "fma") {
-      res =
-          evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
+  auto evalBinary = [&](auto doubleFunc, auto floatFunc) -> double {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    if (nodePrec == PrecisionChangeType::FP32)
+      return floatFunc(static_cast<float>(op0), static_cast<float>(op1));
+    else
+      return doubleFunc(op0, op1);
+  };
+
+  auto evalTernary = [&](auto doubleFunc, auto floatFunc) -> double {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    double op2 = getResult(node->operands[2].get());
+    if (nodePrec == PrecisionChangeType::FP32)
+      return floatFunc(static_cast<float>(op0), static_cast<float>(op1),
+                       static_cast<float>(op2));
+    else
+      return doubleFunc(op0, op1, op2);
+  };
+
+  if (node->op == "neg") {
+    double op = getResult(node->operands[0].get());
+    res =
+        (nodePrec == PrecisionChangeType::FP32) ? -static_cast<float>(op) : -op;
+  } else if (node->op == "+") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    res = (nodePrec == PrecisionChangeType::FP32)
+              ? static_cast<float>(op0) + static_cast<float>(op1)
+              : op0 + op1;
+  } else if (node->op == "-") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    res = (nodePrec == PrecisionChangeType::FP32)
+              ? static_cast<float>(op0) - static_cast<float>(op1)
+              : op0 - op1;
+  } else if (node->op == "*") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    res = (nodePrec == PrecisionChangeType::FP32)
+              ? static_cast<float>(op0) * static_cast<float>(op1)
+              : op0 * op1;
+  } else if (node->op == "/") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    res = (nodePrec == PrecisionChangeType::FP32)
+              ? static_cast<float>(op0) / static_cast<float>(op1)
+              : op0 / op1;
+  } else if (node->op == "sin") {
+    res = evalUnary(static_cast<double (*)(double)>(std::sin),
+                    static_cast<float (*)(float)>(sinf));
+  } else if (node->op == "cos") {
+    res = evalUnary(static_cast<double (*)(double)>(std::cos),
+                    static_cast<float (*)(float)>(cosf));
+  } else if (node->op == "tan") {
+    res = evalUnary(static_cast<double (*)(double)>(std::tan),
+                    static_cast<float (*)(float)>(tanf));
+  } else if (node->op == "exp") {
+    res = evalUnary(static_cast<double (*)(double)>(std::exp),
+                    static_cast<float (*)(float)>(expf));
+  } else if (node->op == "expm1") {
+    res = evalUnary(static_cast<double (*)(double)>(std::expm1),
+                    static_cast<float (*)(float)>(expm1f));
+  } else if (node->op == "log") {
+    res = evalUnary(static_cast<double (*)(double)>(std::log),
+                    static_cast<float (*)(float)>(logf));
+  } else if (node->op == "log1p") {
+    res = evalUnary(static_cast<double (*)(double)>(std::log1p),
+                    static_cast<float (*)(float)>(log1pf));
+  } else if (node->op == "sqrt") {
+    res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
+                    static_cast<float (*)(float)>(sqrtf));
+  } else if (node->op == "cbrt") {
+    res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
+                    static_cast<float (*)(float)>(cbrtf));
+  } else if (node->op == "asin") {
+    res = evalUnary(static_cast<double (*)(double)>(std::asin),
+                    static_cast<float (*)(float)>(asinf));
+  } else if (node->op == "acos") {
+    res = evalUnary(static_cast<double (*)(double)>(std::acos),
+                    static_cast<float (*)(float)>(acosf));
+  } else if (node->op == "atan") {
+    res = evalUnary(static_cast<double (*)(double)>(std::atan),
+                    static_cast<float (*)(float)>(atanf));
+  } else if (node->op == "sinh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::sinh),
+                    static_cast<float (*)(float)>(sinhf));
+  } else if (node->op == "cosh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::cosh),
+                    static_cast<float (*)(float)>(coshf));
+  } else if (node->op == "tanh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::tanh),
+                    static_cast<float (*)(float)>(tanhf));
+  } else if (node->op == "asinh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::asinh),
+                    static_cast<float (*)(float)>(asinhf));
+  } else if (node->op == "acosh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::acosh),
+                    static_cast<float (*)(float)>(acoshf));
+  } else if (node->op == "atanh") {
+    res = evalUnary(static_cast<double (*)(double)>(std::atanh),
+                    static_cast<float (*)(float)>(atanhf));
+  } else if (node->op == "ceil") {
+    res = evalUnary(static_cast<double (*)(double)>(std::ceil),
+                    static_cast<float (*)(float)>(ceilf));
+  } else if (node->op == "floor") {
+    res = evalUnary(static_cast<double (*)(double)>(std::floor),
+                    static_cast<float (*)(float)>(floorf));
+  } else if (node->op == "exp2") {
+    res = evalUnary(static_cast<double (*)(double)>(std::exp2),
+                    static_cast<float (*)(float)>(exp2f));
+  } else if (node->op == "log10") {
+    res = evalUnary(static_cast<double (*)(double)>(std::log10),
+                    static_cast<float (*)(float)>(log10f));
+  } else if (node->op == "log2") {
+    res = evalUnary(static_cast<double (*)(double)>(std::log2),
+                    static_cast<float (*)(float)>(log2f));
+  } else if (node->op == "rint") {
+    res = evalUnary(static_cast<double (*)(double)>(std::rint),
+                    static_cast<float (*)(float)>(rintf));
+  } else if (node->op == "round") {
+    res = evalUnary(static_cast<double (*)(double)>(std::round),
+                    static_cast<float (*)(float)>(roundf));
+  } else if (node->op == "trunc") {
+    res = evalUnary(static_cast<double (*)(double)>(std::trunc),
+                    static_cast<float (*)(float)>(truncf));
+  } else if (node->op == "pow") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::pow),
+                     static_cast<float (*)(float, float)>(powf));
+  } else if (node->op == "fabs") {
+    res = evalUnary(static_cast<double (*)(double)>(std::fabs),
+                    static_cast<float (*)(float)>(fabsf));
+  } else if (node->op == "hypot") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::hypot),
+                     static_cast<float (*)(float, float)>(hypotf));
+  } else if (node->op == "atan2") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::atan2),
+                     static_cast<float (*)(float, float)>(atan2f));
+  } else if (node->op == "copysign") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::copysign),
+                     static_cast<float (*)(float, float)>(copysignf));
+  } else if (node->op == "fmax") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::fmax),
+                     static_cast<float (*)(float, float)>(fmaxf));
+  } else if (node->op == "fmin") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::fmin),
+                     static_cast<float (*)(float, float)>(fminf));
+  } else if (node->op == "fdim") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::fdim),
+                     static_cast<float (*)(float, float)>(fdimf));
+  } else if (node->op == "fmod") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::fmod),
+                     static_cast<float (*)(float, float)>(fmodf));
+  } else if (node->op == "remainder") {
+    res = evalBinary(static_cast<double (*)(double, double)>(std::remainder),
+                     static_cast<float (*)(float, float)>(remainderf));
+  } else if (node->op == "fma") {
+    res = evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
                       static_cast<float (*)(float, float, float)>(fmaf));
-    } else if (node->op == "lgamma") {
-      res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
-                      static_cast<float (*)(float)>(lgammaf));
-    } else if (node->op == "tgamma") {
-      res = evalUnary(static_cast<double (*)(double)>(std::tgamma),
-                      static_cast<float (*)(float)>(tgammaf));
-    } else if (node->op == "==") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) == static_cast<float>(op1)
-                        : op0 == op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == "!=") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) != static_cast<float>(op1)
-                        : op0 != op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == "<") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) < static_cast<float>(op1)
-                        : op0 < op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == ">") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) > static_cast<float>(op1)
-                        : op0 > op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == "<=") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) <= static_cast<float>(op1)
-                        : op0 <= op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == ">=") {
-      double op0 = getResult(node->operands[0].get());
-      double op1 = getResult(node->operands[1].get());
-      bool result = (nodePrec == PrecisionChangeType::FP32)
-                        ? static_cast<float>(op0) >= static_cast<float>(op1)
-                        : op0 >= op1;
-      res = result ? 1.0 : 0.0;
-    } else if (node->op == "PI") {
-      res = M_PI;
-    } else if (node->op == "E") {
-      res = M_E;
-    } else if (node->op == "INFINITY") {
-      res = INFINITY;
-    } else if (node->op == "NAN") {
-      res = NAN;
-    } else {
-      std::string msg = "FPEvaluator: Unexpected operator " + node->op;
-      llvm_unreachable(msg.c_str());
-    }
-
-    cache.emplace(node, res);
+  } else if (node->op == "lgamma") {
+    res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
+                    static_cast<float (*)(float)>(lgammaf));
+  } else if (node->op == "tgamma") {
+    res = evalUnary(static_cast<double (*)(double)>(std::tgamma),
+                    static_cast<float (*)(float)>(tgammaf));
+  } else if (node->op == "==") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) == static_cast<float>(op1)
+                      : op0 == op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == "!=") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) != static_cast<float>(op1)
+                      : op0 != op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == "<") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) < static_cast<float>(op1)
+                      : op0 < op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == ">") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) > static_cast<float>(op1)
+                      : op0 > op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == "<=") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) <= static_cast<float>(op1)
+                      : op0 <= op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == ">=") {
+    double op0 = getResult(node->operands[0].get());
+    double op1 = getResult(node->operands[1].get());
+    bool result = (nodePrec == PrecisionChangeType::FP32)
+                      ? static_cast<float>(op0) >= static_cast<float>(op1)
+                      : op0 >= op1;
+    res = result ? 1.0 : 0.0;
+  } else if (node->op == "PI") {
+    res = M_PI;
+  } else if (node->op == "E") {
+    res = M_E;
+  } else if (node->op == "INFINITY") {
+    res = INFINITY;
+  } else if (node->op == "NAN") {
+    res = NAN;
+  } else {
+    std::string msg = "FPEvaluator: Unexpected operator " + node->op;
+    llvm_unreachable(msg.c_str());
   }
 
-  double getResult(const FPNode *node) const {
-    auto it = cache.find(node);
-    assert(it != cache.end() && "Node not evaluated yet");
-    return it->second;
-  }
-};
+  cache.emplace(node, res);
+}
+
+double FPEvaluator::getResult(const FPNode *node) const {
+  auto it = cache.find(node);
+  assert(it != cache.end() && "Node not evaluated yet");
+  return it->second;
+}
 
 // Emulate computation using native floating-point types
 void getFPValues(ArrayRef<FPNode *> outputs,
-                 const SmallMapVector<Value *, double, 4> &inputValues,
+                 const MapVector<Value *, double> &inputValues,
                  SmallVectorImpl<double> &results, PTCandidate *pt = nullptr) {
   assert(!outputs.empty());
   results.resize(outputs.size());
@@ -1706,483 +1621,464 @@ void getFPValues(ArrayRef<FPNode *> outputs,
   }
 }
 
-class MPFREvaluator {
-  struct CachedValue {
-    mpfr_t value;
-    unsigned prec;
+MPFREvaluator::CachedValue::CachedValue(unsigned prec) : prec(prec) {
+  mpfr_init2(value, prec);
+  mpfr_set_zero(value, 1);
+}
 
-    CachedValue(unsigned prec) : prec(prec) {
-      mpfr_init2(value, prec);
-      mpfr_set_zero(value, 1);
-    }
+MPFREvaluator::CachedValue::CachedValue(CachedValue &&other) noexcept
+    : prec(other.prec) {
+  mpfr_init2(value, other.prec);
+  mpfr_swap(value, other.value);
+}
 
-    CachedValue(const CachedValue &) = delete;
-    CachedValue &operator=(const CachedValue &) = delete;
+MPFREvaluator::CachedValue &
+MPFREvaluator::CachedValue::operator=(CachedValue &&other) noexcept {
+  if (this != &other) {
+    mpfr_set_prec(value, other.prec);
+    prec = other.prec;
+    mpfr_swap(value, other.value);
+  }
+  return *this;
+}
 
-    CachedValue(CachedValue &&other) noexcept : prec(other.prec) {
-      mpfr_init2(value, other.prec);
-      mpfr_swap(value, other.value);
-    }
+MPFREvaluator::CachedValue::~CachedValue() { mpfr_clear(value); }
 
-    CachedValue &operator=(CachedValue &&other) noexcept {
-      if (this != &other) {
-        mpfr_set_prec(value, other.prec);
-        prec = other.prec;
-        mpfr_swap(value, other.value);
-      }
-      return *this;
-    }
-
-    virtual ~CachedValue() { mpfr_clear(value); }
-  };
-
-  std::unordered_map<const FPNode *, CachedValue> cache;
-  unsigned prec; // Used only for ground truth evaluation
-  std::unordered_map<const FPNode *, unsigned> nodeToNewPrec;
-
-public:
-  MPFREvaluator(unsigned prec, PTCandidate *pt = nullptr) : prec(prec) {
-    if (pt) {
-      for (const auto &change : pt->changes) {
-        for (auto node : change.nodes) {
-          nodeToNewPrec[node] = getMPFRPrec(change.newType);
-        }
+MPFREvaluator::MPFREvaluator(unsigned prec, PTCandidate *pt) : prec(prec) {
+  if (pt) {
+    for (const auto &change : pt->changes) {
+      for (auto node : change.nodes) {
+        nodeToNewPrec[node] = getMPFRPrec(change.newType);
       }
     }
   }
+}
 
-  virtual ~MPFREvaluator() = default;
+unsigned MPFREvaluator::getNodePrecision(const FPNode *node,
+                                         bool groundTruth) const {
+  // If trying to evaluate the ground truth, use the current MPFR precision
+  if (groundTruth)
+    return prec;
 
-  unsigned getNodePrecision(const FPNode *node, bool groundTruth) const {
-    // If trying to evaluate the ground truth, use the current MPFR precision
-    if (groundTruth)
-      return prec;
-
-    // If the node has a new precision for PT, use it
-    auto it = nodeToNewPrec.find(node);
-    if (it != nodeToNewPrec.end()) {
-      return it->second;
-    }
-
-    // Otherwise, use the original precision
-    return node->getMPFRPrec();
+  // If the node has a new precision for PT, use it
+  auto it = nodeToNewPrec.find(node);
+  if (it != nodeToNewPrec.end()) {
+    return it->second;
   }
 
-  // Compute the expression with MPFR at `prec` precision
-  // recursively. When operand is a FPConst, use its lower
-  // bound. When operand is a FPLLValue, get its inputs from
-  // `inputs`.
-  void evaluateNode(const FPNode *node,
-                    const SmallMapVector<Value *, double, 4> &inputValues,
-                    bool groundTruth) {
-    if (cache.find(node) != cache.end())
-      return;
+  // Otherwise, use the original precision
+  return node->getMPFRPrec();
+}
 
-    if (isa<FPConst>(node)) {
-      double constVal = node->getLowerBound();
-      CachedValue cv(53);
-      mpfr_set_d(cv.value, constVal, MPFR_RNDN);
-      cache.emplace(node, CachedValue(std::move(cv)));
-      return;
-    }
+// Compute the expression with MPFR at `prec` precision
+// recursively. When operand is a FPConst, use its lower
+// bound. When operand is a FPLLValue, get its inputs from
+// `inputs`.
+void MPFREvaluator::evaluateNode(const FPNode *node,
+                                 const MapVector<Value *, double> &inputValues,
+                                 bool groundTruth) {
+  if (cache.find(node) != cache.end())
+    return;
 
-    if (isa<FPLLValue>(node) &&
-        inputValues.count(cast<FPLLValue>(node)->value)) {
-      double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-      CachedValue cv(53);
-      mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
-      cache.emplace(node, std::move(cv));
-      return;
-    }
+  if (isa<FPConst>(node)) {
+    double constVal = node->getLowerBound();
+    CachedValue cv(53);
+    mpfr_set_d(cv.value, constVal, MPFR_RNDN);
+    cache.emplace(node, CachedValue(std::move(cv)));
+    return;
+  }
 
-    if (node->op == "if") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &cond = getResult(node->operands[0].get());
-      if (0 == mpfr_cmp_ui(cond, 1)) {
-        evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-        mpfr_t &then_val = getResult(node->operands[1].get());
-        cache.emplace(node,
-                      CachedValue(cache.at(node->operands[1].get()).prec));
-        mpfr_set(cache.at(node).value, then_val, MPFR_RNDN);
-      } else {
-        evaluateNode(node->operands[2].get(), inputValues, groundTruth);
-        mpfr_t &else_val = getResult(node->operands[2].get());
-        cache.emplace(node,
-                      CachedValue(cache.at(node->operands[2].get()).prec));
-        mpfr_set(cache.at(node).value, else_val, MPFR_RNDN);
-      }
-      return;
-    }
+  if (isa<FPLLValue>(node) && inputValues.count(cast<FPLLValue>(node)->value)) {
+    double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
+    CachedValue cv(53);
+    mpfr_set_d(cv.value, inputValue, MPFR_RNDN);
+    cache.emplace(node, std::move(cv));
+    return;
+  }
 
-    unsigned nodePrec = getNodePrecision(node, groundTruth);
-    cache.emplace(node, CachedValue(nodePrec));
-    mpfr_t &res = cache.at(node).value;
-
-    if (node->op == "neg") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_neg(res, op, MPFR_RNDN);
-    } else if (node->op == "+") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+  if (node->op == "if") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &cond = getResult(node->operands[0].get());
+    if (0 == mpfr_cmp_ui(cond, 1)) {
       evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_add(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "-") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_sub(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "*") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_mul(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "/") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_div(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "sin") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_sin(res, op, MPFR_RNDN);
-    } else if (node->op == "cos") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_cos(res, op, MPFR_RNDN);
-    } else if (node->op == "tan") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_tan(res, op, MPFR_RNDN);
-    } else if (node->op == "asin") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_asin(res, op, MPFR_RNDN);
-    } else if (node->op == "acos") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_acos(res, op, MPFR_RNDN);
-    } else if (node->op == "atan") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_atan(res, op, MPFR_RNDN);
-    } else if (node->op == "atan2") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_atan2(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "exp") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_exp(res, op, MPFR_RNDN);
-    } else if (node->op == "expm1") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_expm1(res, op, MPFR_RNDN);
-    } else if (node->op == "log") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_log(res, op, MPFR_RNDN);
-    } else if (node->op == "log1p") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_log1p(res, op, MPFR_RNDN);
-    } else if (node->op == "sqrt") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_sqrt(res, op, MPFR_RNDN);
-    } else if (node->op == "cbrt") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_cbrt(res, op, MPFR_RNDN);
-    } else if (node->op == "pow") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_pow(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "fma") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[2].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_t &op2 = getResult(node->operands[2].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op2, nodePrec, MPFR_RNDN);
-      mpfr_fma(res, op0, op1, op2, MPFR_RNDN);
-    } else if (node->op == "fabs") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_abs(res, op, MPFR_RNDN);
-    } else if (node->op == "hypot") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_hypot(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "asinh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_asinh(res, op, MPFR_RNDN);
-    } else if (node->op == "acosh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_acosh(res, op, MPFR_RNDN);
-    } else if (node->op == "atanh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_atanh(res, op, MPFR_RNDN);
-    } else if (node->op == "sinh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_sinh(res, op, MPFR_RNDN);
-    } else if (node->op == "cosh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_cosh(res, op, MPFR_RNDN);
-    } else if (node->op == "tanh") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_tanh(res, op, MPFR_RNDN);
-    } else if (node->op == "ceil") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_ceil(res, op);
-    } else if (node->op == "floor") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_floor(res, op);
-    } else if (node->op == "erf") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_erf(res, op, MPFR_RNDN);
-    } else if (node->op == "exp2") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_exp2(res, op, MPFR_RNDN);
-    } else if (node->op == "log10") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_log10(res, op, MPFR_RNDN);
-    } else if (node->op == "log2") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_log2(res, op, MPFR_RNDN);
-    } else if (node->op == "rint") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_rint(res, op, MPFR_RNDN);
-    } else if (node->op == "round") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_round(res, op);
-    } else if (node->op == "trunc") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_prec_round(op, nodePrec, MPFR_RNDN);
-      mpfr_trunc(res, op);
-    } else if (node->op == "copysign") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_copysign(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "fdim") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_dim(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "fmod") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_fmod(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "remainder") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_remainder(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "fmax") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_max(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "fmin") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
-      mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
-      mpfr_min(res, op0, op1, MPFR_RNDN);
-    } else if (node->op == "==") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 == mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "!=") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 != mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "<") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 > mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == ">") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 < mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "<=") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 >= mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == ">=") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 <= mpfr_cmp(op0, op1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "and") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "or") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      evaluateNode(node->operands[1].get(), inputValues, groundTruth);
-      mpfr_t &op0 = getResult(node->operands[0].get());
-      mpfr_t &op1 = getResult(node->operands[1].get());
-      if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1))
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "not") {
-      evaluateNode(node->operands[0].get(), inputValues, groundTruth);
-      mpfr_t &op = getResult(node->operands[0].get());
-      mpfr_set_prec(res, nodePrec);
-      if (0 == mpfr_cmp_ui(op, 1))
-        mpfr_set_ui(res, 0, MPFR_RNDN);
-      else
-        mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else if (node->op == "TRUE") {
-      mpfr_set_ui(res, 1, MPFR_RNDN);
-    } else if (node->op == "FALSE") {
-      mpfr_set_ui(res, 0, MPFR_RNDN);
-    } else if (node->op == "PI") {
-      mpfr_const_pi(res, MPFR_RNDN);
-    } else if (node->op == "E") {
-      mpfr_const_euler(res, MPFR_RNDN);
-    } else if (node->op == "INFINITY") {
-      mpfr_set_inf(res, 1);
-    } else if (node->op == "NAN") {
-      mpfr_set_nan(res);
+      mpfr_t &then_val = getResult(node->operands[1].get());
+      cache.emplace(node, CachedValue(cache.at(node->operands[1].get()).prec));
+      mpfr_set(cache.at(node).value, then_val, MPFR_RNDN);
     } else {
-      llvm::errs() << "MPFREvaluator: Unexpected operator '" << node->op
-                   << "'\n";
-      llvm_unreachable("Unexpected operator encountered");
+      evaluateNode(node->operands[2].get(), inputValues, groundTruth);
+      mpfr_t &else_val = getResult(node->operands[2].get());
+      cache.emplace(node, CachedValue(cache.at(node->operands[2].get()).prec));
+      mpfr_set(cache.at(node).value, else_val, MPFR_RNDN);
     }
+    return;
   }
 
-  mpfr_t &getResult(FPNode *node) {
-    assert(cache.count(node) > 0 &&
-           "MPFREvaluator: Unexpected unevaluated node");
-    return cache.at(node).value;
+  unsigned nodePrec = getNodePrecision(node, groundTruth);
+  cache.emplace(node, CachedValue(nodePrec));
+  mpfr_t &res = cache.at(node).value;
+
+  if (node->op == "neg") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_neg(res, op, MPFR_RNDN);
+  } else if (node->op == "+") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_add(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "-") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_sub(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "*") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_mul(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "/") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_div(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "sin") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_sin(res, op, MPFR_RNDN);
+  } else if (node->op == "cos") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_cos(res, op, MPFR_RNDN);
+  } else if (node->op == "tan") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_tan(res, op, MPFR_RNDN);
+  } else if (node->op == "asin") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_asin(res, op, MPFR_RNDN);
+  } else if (node->op == "acos") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_acos(res, op, MPFR_RNDN);
+  } else if (node->op == "atan") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_atan(res, op, MPFR_RNDN);
+  } else if (node->op == "atan2") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_atan2(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "exp") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_exp(res, op, MPFR_RNDN);
+  } else if (node->op == "expm1") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_expm1(res, op, MPFR_RNDN);
+  } else if (node->op == "log") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_log(res, op, MPFR_RNDN);
+  } else if (node->op == "log1p") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_log1p(res, op, MPFR_RNDN);
+  } else if (node->op == "sqrt") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_sqrt(res, op, MPFR_RNDN);
+  } else if (node->op == "cbrt") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_cbrt(res, op, MPFR_RNDN);
+  } else if (node->op == "pow") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_pow(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "fma") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[2].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_t &op2 = getResult(node->operands[2].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op2, nodePrec, MPFR_RNDN);
+    mpfr_fma(res, op0, op1, op2, MPFR_RNDN);
+  } else if (node->op == "fabs") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_abs(res, op, MPFR_RNDN);
+  } else if (node->op == "hypot") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_hypot(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "asinh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_asinh(res, op, MPFR_RNDN);
+  } else if (node->op == "acosh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_acosh(res, op, MPFR_RNDN);
+  } else if (node->op == "atanh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_atanh(res, op, MPFR_RNDN);
+  } else if (node->op == "sinh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_sinh(res, op, MPFR_RNDN);
+  } else if (node->op == "cosh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_cosh(res, op, MPFR_RNDN);
+  } else if (node->op == "tanh") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_tanh(res, op, MPFR_RNDN);
+  } else if (node->op == "ceil") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_ceil(res, op);
+  } else if (node->op == "floor") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_floor(res, op);
+  } else if (node->op == "erf") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_erf(res, op, MPFR_RNDN);
+  } else if (node->op == "exp2") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_exp2(res, op, MPFR_RNDN);
+  } else if (node->op == "log10") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_log10(res, op, MPFR_RNDN);
+  } else if (node->op == "log2") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_log2(res, op, MPFR_RNDN);
+  } else if (node->op == "rint") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_rint(res, op, MPFR_RNDN);
+  } else if (node->op == "round") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_round(res, op);
+  } else if (node->op == "trunc") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_prec_round(op, nodePrec, MPFR_RNDN);
+    mpfr_trunc(res, op);
+  } else if (node->op == "copysign") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_copysign(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "fdim") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_dim(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "fmod") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_fmod(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "remainder") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_remainder(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "fmax") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_max(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "fmin") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    mpfr_prec_round(op0, nodePrec, MPFR_RNDN);
+    mpfr_prec_round(op1, nodePrec, MPFR_RNDN);
+    mpfr_min(res, op0, op1, MPFR_RNDN);
+  } else if (node->op == "==") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 == mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "!=") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 != mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "<") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 > mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == ">") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 < mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "<=") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 >= mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == ">=") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 <= mpfr_cmp(op0, op1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "and") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 == mpfr_cmp_ui(op0, 1) && 0 == mpfr_cmp_ui(op1, 1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "or") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    evaluateNode(node->operands[1].get(), inputValues, groundTruth);
+    mpfr_t &op0 = getResult(node->operands[0].get());
+    mpfr_t &op1 = getResult(node->operands[1].get());
+    if (0 == mpfr_cmp_ui(op0, 1) || 0 == mpfr_cmp_ui(op1, 1))
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "not") {
+    evaluateNode(node->operands[0].get(), inputValues, groundTruth);
+    mpfr_t &op = getResult(node->operands[0].get());
+    mpfr_set_prec(res, nodePrec);
+    if (0 == mpfr_cmp_ui(op, 1))
+      mpfr_set_ui(res, 0, MPFR_RNDN);
+    else
+      mpfr_set_ui(res, 1, MPFR_RNDN);
+  } else if (node->op == "TRUE") {
+    mpfr_set_ui(res, 1, MPFR_RNDN);
+  } else if (node->op == "FALSE") {
+    mpfr_set_ui(res, 0, MPFR_RNDN);
+  } else if (node->op == "PI") {
+    mpfr_const_pi(res, MPFR_RNDN);
+  } else if (node->op == "E") {
+    mpfr_const_euler(res, MPFR_RNDN);
+  } else if (node->op == "INFINITY") {
+    mpfr_set_inf(res, 1);
+  } else if (node->op == "NAN") {
+    mpfr_set_nan(res);
+  } else {
+    llvm::errs() << "MPFREvaluator: Unexpected operator '" << node->op << "'\n";
+    llvm_unreachable("Unexpected operator encountered");
   }
-};
+}
+
+mpfr_t &MPFREvaluator::getResult(FPNode *node) {
+  assert(cache.count(node) > 0 && "MPFREvaluator: Unexpected unevaluated node");
+  return cache.at(node).value;
+}
 
 // If looking for ground truth, compute a "correct" answer with MPFR.
 //   For each sampled input configuration:
@@ -2196,7 +2092,7 @@ public:
 // Otherwise, compute the expression with MPFR at precisions specified within
 // `FPNode`s or new precisions specified by `pt`.
 void getMPFRValues(ArrayRef<FPNode *> outputs,
-                   const SmallMapVector<Value *, double, 4> &inputValues,
+                   const MapVector<Value *, double> &inputValues,
                    SmallVectorImpl<double> &results, bool groundTruth = false,
                    const unsigned groundTruthPrec = 53,
                    PTCandidate *pt = nullptr) {
@@ -2307,12 +2203,12 @@ void getSampledPoints(
     ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
+    SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
   std::default_random_engine gen;
   gen.seed(FPOptRandomSeed);
   std::uniform_real_distribution<> dis;
 
-  SmallMapVector<Value *, SmallVector<double, 2>, 4> hypercube;
+  MapVector<Value *, SmallVector<double, 2>> hypercube;
   for (const auto input : inputs) {
     const auto node = valueToNodeMap.at(input);
 
@@ -2336,7 +2232,7 @@ void getSampledPoints(
   sampledPoints.clear();
   sampledPoints.resize(FPOptNumSamples);
   for (int i = 0; i < FPOptNumSamples; ++i) {
-    SmallMapVector<Value *, double, 4> point;
+    MapVector<Value *, double> point;
     for (const auto &entry : hypercube) {
       Value *val = entry.first;
       double lower = entry.second[0];
@@ -2357,7 +2253,7 @@ void getSampledPoints(
     const std::string &expr,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVector<SmallMapVector<Value *, double, 4>, 4> &sampledPoints) {
+    SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -2952,17 +2848,9 @@ InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
   return cost;
 }
 
-struct RewriteCandidate {
-  // Only one rewrite candidate per output `llvm::Value` can be applied
-  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
-  double herbieCost = std::numeric_limits<double>::quiet_NaN();
-  double herbieAccuracy = std::numeric_limits<double>::quiet_NaN();
-  double accuracyCost = std::numeric_limits<double>::quiet_NaN();
-  std::string expr;
-
-  RewriteCandidate(double cost, double accuracy, std::string expression)
-      : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
-};
+RewriteCandidate::RewriteCandidate(double cost, double accuracy,
+                                   std::string expression)
+    : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 
 void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
   std::unordered_map<Instruction *, int> shortestDistances;
@@ -3077,343 +2965,293 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
   }
 }
 
-class ApplicableOutput;
-class ApplicableFPCC;
+SolutionStep::SolutionStep(ApplicableOutput *ao_, size_t idx)
+    : item(ao_), candidateIndex(idx) {}
 
-struct SolutionStep {
-  std::variant<ApplicableOutput *, ApplicableFPCC *> item;
-  size_t candidateIndex;
+SolutionStep::SolutionStep(ApplicableFPCC *acc_, size_t idx)
+    : item(acc_), candidateIndex(idx) {}
 
-  SolutionStep(ApplicableOutput *ao_, size_t idx)
-      : item(ao_), candidateIndex(idx) {}
+ApplicableOutput::ApplicableOutput(FPCC &component, Value *oldOutput,
+                                   std::string expr, double grad,
+                                   unsigned executions,
+                                   const TargetTransformInfo &TTI)
+    : component(&component), oldOutput(oldOutput), expr(expr), grad(grad),
+      executions(executions), TTI(&TTI) {
+  initialCompCost = getCompCost({oldOutput}, component.inputs, TTI);
+  findErasableInstructions();
+}
 
-  SolutionStep(ApplicableFPCC *acc_, size_t idx)
-      : item(acc_), candidateIndex(idx) {}
-};
+void ApplicableOutput::apply(
+    size_t candidateIndex,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  // 4) parse the output string solution from herbieland
+  // 5) convert into a solution in llvm vals/instructions
 
-class ApplicableOutput {
-public:
-  FPCC *component;
-  Value *oldOutput;
-  std::string expr;
-  double grad = std::numeric_limits<double>::quiet_NaN();
-  unsigned executions = 0;
-  const TargetTransformInfo *TTI = nullptr;
-  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost initialCompCost =
-      std::numeric_limits<InstructionCost>::quiet_NaN();
-  double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
-  double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
-  SmallVector<RewriteCandidate> candidates;
-  SmallPtrSet<Instruction *, 8> erasableInsts;
+  // if (EnzymePrintFPOpt)
+  //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
+  auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
+                                    valueToNodeMap, symbolToValueMap);
+  // if (EnzymePrintFPOpt)
+  //   llvm::errs() << "Parsed Herbie output: "
+  //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
-  explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
-                            double grad, unsigned executions,
-                            const TargetTransformInfo &TTI)
-      : component(&component), oldOutput(oldOutput), expr(expr), grad(grad),
-        executions(executions), TTI(&TTI) {
-    initialCompCost = getCompCost({oldOutput}, component.inputs, TTI);
-    findErasableInstructions();
+  IRBuilder<> builder(cast<Instruction>(oldOutput)->getParent(),
+                      ++BasicBlock::iterator(cast<Instruction>(oldOutput)));
+  builder.setFastMathFlags(cast<Instruction>(oldOutput)->getFastMathFlags());
+
+  // auto *F = cast<Instruction>(oldOutput)->getParent()->getParent();
+  // llvm::errs() << "Before: " << *F << "\n";
+  Value *newOutput = parsedNode->getLLValue(builder);
+  assert(newOutput && "Failed to get value from parsed node");
+
+  oldOutput->replaceAllUsesWith(newOutput);
+  symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
+  valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+      newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
+
+  for (auto *I : erasableInsts) {
+    if (!I->use_empty())
+      I->replaceAllUsesWith(UndefValue::get(I->getType()));
+    I->eraseFromParent();
+    component->operations.remove(I); // Avoid a second removal
+    cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
   }
 
-  void
-  apply(size_t candidateIndex,
-        std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-        std::unordered_map<std::string, Value *> &symbolToValueMap) {
-    // 4) parse the output string solution from herbieland
-    // 5) convert into a solution in llvm vals/instructions
+  // llvm::errs() << "After: " << *F << "\n";
 
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
-    auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
-                                      valueToNodeMap, symbolToValueMap);
-    // if (EnzymePrintFPOpt)
-    //   llvm::errs() << "Parsed Herbie output: "
-    //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
+  component->outputs_rewritten++;
+}
 
-    IRBuilder<> builder(cast<Instruction>(oldOutput)->getParent(),
-                        ++BasicBlock::iterator(cast<Instruction>(oldOutput)));
-    builder.setFastMathFlags(cast<Instruction>(oldOutput)->getFastMathFlags());
+// Lower is better
+InstructionCost ApplicableOutput::getCompCostDelta(size_t candidateIndex) {
+  InstructionCost erasableCost = 0;
 
-    // auto *F = cast<Instruction>(oldOutput)->getParent()->getParent();
-    // llvm::errs() << "Before: " << *F << "\n";
-    Value *newOutput = parsedNode->getLLValue(builder);
-    assert(newOutput && "Failed to get value from parsed node");
-
-    oldOutput->replaceAllUsesWith(newOutput);
-    symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
-    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
-        newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
-
-    for (auto *I : erasableInsts) {
-      if (!I->use_empty())
-        I->replaceAllUsesWith(UndefValue::get(I->getType()));
-      I->eraseFromParent();
-      component->operations.remove(I); // Avoid a second removal
-      cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
-    }
-
-    // llvm::errs() << "After: " << *F << "\n";
-
-    component->outputs_rewritten++;
+  for (auto *I : erasableInsts) {
+    erasableCost += getInstructionCompCost(I, *TTI);
   }
 
-  // Lower is better
-  InstructionCost getCompCostDelta(size_t candidateIndex) {
-    InstructionCost erasableCost = 0;
+  return (candidates[candidateIndex].CompCost - erasableCost) * executions;
+}
 
-    for (auto *I : erasableInsts) {
-      erasableCost += getInstructionCompCost(I, *TTI);
-    }
+void ApplicableOutput::findErasableInstructions() {
+  SmallPtrSet<Value *, 8> visited;
+  SmallPtrSet<Instruction *, 8> exprInsts;
+  collectExprInsts(oldOutput, component->inputs, exprInsts, visited);
+  visited.clear();
 
-    return (candidates[candidateIndex].CompCost - erasableCost) * executions;
-  }
+  SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
 
-  // Lower is better
-  double getAccCostDelta(size_t candidateIndex) {
-    return candidates[candidateIndex].accuracyCost - initialAccCost;
-  }
+  SmallVector<Instruction *, 8> instsToProcessSorted;
+  topoSort(instsToProcess, instsToProcessSorted);
 
-  void findErasableInstructions() {
-    SmallPtrSet<Value *, 8> visited;
-    SmallPtrSet<Instruction *, 8> exprInsts;
-    collectExprInsts(oldOutput, component->inputs, exprInsts, visited);
-    visited.clear();
+  // `oldOutput` is trivially erasable
+  erasableInsts.clear();
+  erasableInsts.insert(cast<Instruction>(oldOutput));
 
-    SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
+  for (auto *I : reverse(instsToProcessSorted)) {
+    if (erasableInsts.contains(I))
+      continue;
 
-    SmallVector<Instruction *, 8> instsToProcessSorted;
-    topoSort(instsToProcess, instsToProcessSorted);
-
-    // `oldOutput` is trivially erasable
-    erasableInsts.clear();
-    erasableInsts.insert(cast<Instruction>(oldOutput));
-
-    for (auto *I : reverse(instsToProcessSorted)) {
-      if (erasableInsts.contains(I))
-        continue;
-
-      bool usedOutside = false;
-      for (auto user : I->users()) {
-        if (auto *userI = dyn_cast<Instruction>(user)) {
-          if (erasableInsts.contains(userI)) {
-            continue;
-          }
+    bool usedOutside = false;
+    for (auto user : I->users()) {
+      if (auto *userI = dyn_cast<Instruction>(user)) {
+        if (erasableInsts.contains(userI)) {
+          continue;
         }
-        // If the user is not an intruction or the user instruction is not an
-        // erasable instruction, then the current instruction is not erasable
-        // llvm::errs() << "Can't erase " << *I << " because of " << *user <<
-        // "\n";
-        usedOutside = true;
-        break;
       }
-
-      if (!usedOutside) {
-        erasableInsts.insert(I);
-      }
+      // If the user is not an intruction or the user instruction is not an
+      // erasable instruction, then the current instruction is not erasable
+      // llvm::errs() << "Can't erase " << *I << " because of " << *user <<
+      // "\n";
+      usedOutside = true;
+      break;
     }
 
-    // llvm::errs() << "Erasable instructions:\n";
-    // for (auto *I : erasableInsts) {
-    //   llvm::errs() << *I << "\n";
-    // }
-    // llvm::errs() << "End of erasable instructions\n";
+    if (!usedOutside) {
+      erasableInsts.insert(I);
+    }
   }
-};
+
+  // llvm::errs() << "Erasable instructions:\n";
+  // for (auto *I : erasableInsts) {
+  //   llvm::errs() << *I << "\n";
+  // }
+  // llvm::errs() << "End of erasable instructions\n";
+}
 
 void setUnifiedAccuracyCost(
     ApplicableFPCC &ACC,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 
-class ApplicableFPCC {
-public:
-  FPCC *component;
-  const TargetTransformInfo &TTI;
-  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
+bool ApplicableFPCC::CacheKey::operator==(const CacheKey &other) const {
+  return candidateIndex == other.candidateIndex &&
+         applicableOutputs == other.applicableOutputs;
+}
+
+std::size_t
+ApplicableFPCC::CacheKeyHash::operator()(const CacheKey &key) const {
+  std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
+  for (const auto *ao : key.applicableOutputs) {
+    seed ^= std::hash<const ApplicableOutput *>{}(ao) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+  }
+  return seed;
+}
+
+ApplicableFPCC::ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
+    : component(&fpcc), TTI(TTI) {
+  initialCompCost =
+      getCompCost({component->outputs.begin(), component->outputs.end()},
+                  component->inputs, TTI);
+}
+
+void ApplicableFPCC::apply(size_t candidateIndex) {
+  if (candidateIndex >= candidates.size()) {
+    llvm_unreachable("Invalid candidate index");
+  }
+
+  // Traverse all the instructions to be changed precisions in a
+  // topological order with respect to operand dependencies. Insert FP casts
+  // between llvm::Value inputs and first level of instructions to be changed.
+  // Restore precisions of the last level of instructions to be changed.
+  candidates[candidateIndex].apply(*component);
+}
+
+// Lower is better
+InstructionCost ApplicableFPCC::getCompCostDelta(size_t candidateIndex) {
+  // TODO: adjust this based on erasured instructions
+  return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
+}
+
+// Lower is better
+double ApplicableFPCC::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+// Lower is better
+double ApplicableOutput::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+InstructionCost ApplicableFPCC::getAdjustedCompCostDelta(
+    size_t candidateIndex, const SmallVectorImpl<SolutionStep> &steps) {
+  ApplicableOutputSet applicableOutputs;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      if ((*ptr)->component == component) {
+        applicableOutputs.insert(*ptr);
+      }
+    }
+  }
+
+  CacheKey key{candidateIndex, applicableOutputs};
+
+  auto cacheIt = compCostDeltaCache.find(key);
+  if (cacheIt != compCostDeltaCache.end()) {
+    return cacheIt->second;
+  }
+
+  FPCC newComponent = *this->component;
+
+  for (auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      const auto &AO = **ptr;
+      if (AO.component == component) {
+        // Eliminate erasadable instructions from the adjusted ACC
+        newComponent.operations.remove_if(
+            [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
+        newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
+      }
+    }
+  }
+
+  // If all outputs are rewritten, then the adjusted ACC is empty
+  if (newComponent.outputs.empty()) {
+    compCostDeltaCache[key] = 0;
+    return 0;
+  }
+
   InstructionCost initialCompCost =
-      std::numeric_limits<InstructionCost>::quiet_NaN();
-  unsigned executions = 0;
-  std::unordered_map<FPNode *, double> perOutputInitialAccCost;
+      getCompCost({newComponent.outputs.begin(), newComponent.outputs.end()},
+                  newComponent.inputs, TTI);
 
-  SmallVector<PTCandidate, 8> candidates;
+  InstructionCost candidateCompCost =
+      getCompCost(newComponent, TTI, candidates[candidateIndex]);
 
-  // Caches for adjusted cost calculations
-  using ApplicableOutputSet = std::set<ApplicableOutput *>;
-  struct CacheKey {
-    size_t candidateIndex;
-    ApplicableOutputSet applicableOutputs;
+  InstructionCost adjustedCostDelta =
+      (candidateCompCost - initialCompCost) * executions;
+  // llvm::errs() << "Initial cost: " << initialCompCost << "\n";
+  // llvm::errs() << "Candidate cost: " << candidateCompCost << "\n";
+  // llvm::errs() << "Num executions: " << executions << "\n";
+  // llvm::errs() << "Adjusted cost delta: " << adjustedCostDelta << "\n\n";
 
-    bool operator==(const CacheKey &other) const {
-      return candidateIndex == other.candidateIndex &&
-             applicableOutputs == other.applicableOutputs;
-    }
-  };
+  compCostDeltaCache[key] = adjustedCostDelta;
+  return adjustedCostDelta;
+}
 
-  struct CacheKeyHash {
-    std::size_t operator()(const CacheKey &key) const {
-      std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
-      for (const auto *ao : key.applicableOutputs) {
-        seed ^= std::hash<const ApplicableOutput *>{}(ao) + 0x9e3779b9 +
-                (seed << 6) + (seed >> 2);
+double ApplicableFPCC::getAdjustedAccCostDelta(
+    size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  ApplicableOutputSet applicableOutputs;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      if ((*ptr)->component == component) {
+        applicableOutputs.insert(*ptr);
       }
-      return seed;
     }
-  };
-
-  std::unordered_map<CacheKey, InstructionCost, CacheKeyHash>
-      compCostDeltaCache;
-  std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
-
-  explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
-      : component(&fpcc), TTI(TTI) {
-    initialCompCost =
-        getCompCost({component->outputs.begin(), component->outputs.end()},
-                    component->inputs, TTI);
   }
 
-  void apply(size_t candidateIndex) {
-    if (candidateIndex >= candidates.size()) {
-      llvm_unreachable("Invalid candidate index");
-    }
+  CacheKey key{candidateIndex, applicableOutputs};
 
-    // Traverse all the instructions to be changed precisions in a
-    // topological order with respect to operand dependencies. Insert FP casts
-    // between llvm::Value inputs and first level of instructions to be changed.
-    // Restore precisions of the last level of instructions to be changed.
-    candidates[candidateIndex].apply(*component);
+  auto cacheIt = accCostDeltaCache.find(key);
+  if (cacheIt != accCostDeltaCache.end()) {
+    return cacheIt->second;
   }
 
-  // Lower is better
-  InstructionCost getCompCostDelta(size_t candidateIndex) {
-    // TODO: adjust this based on erasured instructions
-    return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
+  double totalCandidateAccCost = 0.0;
+  double totalInitialAccCost = 0.0;
+
+  // Collect erased output nodes
+  SmallPtrSet<FPNode *, 8> stepNodes;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      const auto &AO = **ptr;
+      if (AO.component == component) {
+        auto it = valueToNodeMap.find(AO.oldOutput);
+        assert(it != valueToNodeMap.end() && it->second);
+        stepNodes.insert(it->second.get());
+      }
+    }
   }
 
-  // Lower is better
-  double getAccCostDelta(size_t candidateIndex) {
-    return candidates[candidateIndex].accuracyCost - initialAccCost;
+  // Iterate over all output nodes and sum costs for nodes not erased
+  for (auto &[node, cost] : perOutputInitialAccCost) {
+    if (!stepNodes.count(node)) {
+      totalInitialAccCost += cost;
+    }
   }
 
-  InstructionCost
-  getAdjustedCompCostDelta(size_t candidateIndex,
-                           const SmallVectorImpl<SolutionStep> &steps) {
-    ApplicableOutputSet applicableOutputs;
-    for (const auto &step : steps) {
-      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-        if ((*ptr)->component == component) {
-          applicableOutputs.insert(*ptr);
-        }
-      }
+  for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
+    if (!stepNodes.count(node)) {
+      totalCandidateAccCost += cost;
     }
-
-    CacheKey key{candidateIndex, applicableOutputs};
-
-    auto cacheIt = compCostDeltaCache.find(key);
-    if (cacheIt != compCostDeltaCache.end()) {
-      return cacheIt->second;
-    }
-
-    FPCC newComponent = *this->component;
-
-    for (auto &step : steps) {
-      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-        const auto &AO = **ptr;
-        if (AO.component == component) {
-          // Eliminate erasadable instructions from the adjusted ACC
-          newComponent.operations.remove_if(
-              [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
-          newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
-        }
-      }
-    }
-
-    // If all outputs are rewritten, then the adjusted ACC is empty
-    if (newComponent.outputs.empty()) {
-      compCostDeltaCache[key] = 0;
-      return 0;
-    }
-
-    InstructionCost initialCompCost =
-        getCompCost({newComponent.outputs.begin(), newComponent.outputs.end()},
-                    newComponent.inputs, TTI);
-
-    InstructionCost candidateCompCost =
-        getCompCost(newComponent, TTI, candidates[candidateIndex]);
-
-    InstructionCost adjustedCostDelta =
-        (candidateCompCost - initialCompCost) * executions;
-    // llvm::errs() << "Initial cost: " << initialCompCost << "\n";
-    // llvm::errs() << "Candidate cost: " << candidateCompCost << "\n";
-    // llvm::errs() << "Num executions: " << executions << "\n";
-    // llvm::errs() << "Adjusted cost delta: " << adjustedCostDelta << "\n\n";
-
-    compCostDeltaCache[key] = adjustedCostDelta;
-    return adjustedCostDelta;
   }
 
-  double getAdjustedAccCostDelta(
-      size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
-      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      std::unordered_map<std::string, Value *> &symbolToValueMap) {
-    ApplicableOutputSet applicableOutputs;
-    for (const auto &step : steps) {
-      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-        if ((*ptr)->component == component) {
-          applicableOutputs.insert(*ptr);
-        }
-      }
-    }
+  double adjustedAccCostDelta = totalCandidateAccCost - totalInitialAccCost;
 
-    CacheKey key{candidateIndex, applicableOutputs};
-
-    auto cacheIt = accCostDeltaCache.find(key);
-    if (cacheIt != accCostDeltaCache.end()) {
-      return cacheIt->second;
-    }
-
-    double totalCandidateAccCost = 0.0;
-    double totalInitialAccCost = 0.0;
-
-    // Collect erased output nodes
-    SmallPtrSet<FPNode *, 8> stepNodes;
-    for (const auto &step : steps) {
-      if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-        const auto &AO = **ptr;
-        if (AO.component == component) {
-          auto it = valueToNodeMap.find(AO.oldOutput);
-          assert(it != valueToNodeMap.end() && it->second);
-          stepNodes.insert(it->second.get());
-        }
-      }
-    }
-
-    // Iterate over all output nodes and sum costs for nodes not erased
-    for (auto &[node, cost] : perOutputInitialAccCost) {
-      if (!stepNodes.count(node)) {
-        totalInitialAccCost += cost;
-      }
-    }
-
-    for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
-      if (!stepNodes.count(node)) {
-        totalCandidateAccCost += cost;
-      }
-    }
-
-    double adjustedAccCostDelta = totalCandidateAccCost - totalInitialAccCost;
-
-    accCostDeltaCache[key] = adjustedAccCostDelta;
-    return adjustedAccCostDelta;
-  }
-};
+  accCostDeltaCache[key] = adjustedAccCostDelta;
+  return adjustedAccCostDelta;
+}
 
 void setUnifiedAccuracyCost(
     ApplicableOutput &AO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
-  SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
+  SmallVector<MapVector<Value *, double>, 4> sampledPoints;
   getSampledPoints(AO.component->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
@@ -3593,11 +3431,11 @@ void setUnifiedAccuracyCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
-  SmallVector<SmallMapVector<Value *, double, 4>, 4> sampledPoints;
+  SmallVector<MapVector<Value *, double>, 4> sampledPoints;
   getSampledPoints(ACC.component->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
-  SmallMapVector<FPNode *, SmallVector<double, 4>, 4> goldVals;
+  MapVector<FPNode *, SmallVector<double, 4>> goldVals;
   for (auto *output : ACC.component->outputs) {
     auto *node = valueToNodeMap[output].get();
     goldVals[node].resize(FPOptNumSamples);
@@ -4217,7 +4055,6 @@ struct GradInfo {
   GradInfo() : geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
 };
 
-// Updated ValueInfo structure
 struct ValueInfo {
   double minRes;
   double maxRes;
@@ -5889,26 +5726,21 @@ B2:
   return changed;
 }
 
-namespace {
-
-class FPOpt final : public FunctionPass {
-public:
-  static char ID;
-  FPOpt() : FunctionPass(ID) {}
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TargetTransformInfoWrapperPass>();
-    FunctionPass::getAnalysisUsage(AU);
-  }
-  bool runOnFunction(Function &F) override {
-    auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
-    return fpOptimize(F, TTI);
-  }
-};
-
-} // namespace
+namespace {} // namespace
 
 char FPOpt::ID = 0;
+
+FPOpt::FPOpt() : FunctionPass(ID) {}
+
+void FPOpt::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<TargetTransformInfoWrapperPass>();
+  FunctionPass::getAnalysisUsage(AU);
+}
+
+bool FPOpt::runOnFunction(Function &F) {
+  auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+  return fpOptimize(F, TTI);
+}
 
 static RegisterPass<FPOpt>
     X("fp-opt", "Run Enzyme/Poseidon Floating point optimizations");
