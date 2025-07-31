@@ -6391,6 +6391,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       return res;
     }
+  } else if (auto FPMO = dyn_cast<FPMathOperator>(oval)) {
+    if (FPMO->getOpcode() == Instruction::FNeg) {
+      switch (mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeGradient:
+        if (TR.query(FPMO)[{-1}].isFloat()) {
+          return Constant::getNullValue(getShadowType(FPMO->getType()));
+        }
+        break;
+      default:
+        break;
+      }
+    }
   }
 
 end:;
