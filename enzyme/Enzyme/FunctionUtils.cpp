@@ -8038,6 +8038,11 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       continue;
     }
     if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getValueOperand() == val) {
+          EmitFailure("IllegalSparse", SI->getDebugLoc(), SI,
+                      " result of __enzyme_todense was captured (e.g. stored into memory and not directly loaded from or stored into) ", *SI);
+	  continue;
+      }
       assert(SI->getValueOperand() != val);
       auto diff = toInt(B, replacements[SI->getPointerOperand()]);
       SmallVector<Value *, 2> args;
