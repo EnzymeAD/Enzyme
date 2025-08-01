@@ -55,7 +55,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           apt update 
-          apt-get python3-pip
+          apt-get install python3-pip -y
           python3 -m pip install lit
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
