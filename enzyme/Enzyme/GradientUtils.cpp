@@ -8954,9 +8954,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-      if (II->getCalledFunction().getName() == "llvm.enzyme.lifetime_start") {
+      if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
         LifetimeStarts.insert(II);
-      } else if (II->getCalledFunction().getName() == "llvm.enzyme.lifetime_end") {
+      } else if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_end") {
       } else {
       switch (II->getIntrinsicID()) {
       case Intrinsic::lifetime_start:

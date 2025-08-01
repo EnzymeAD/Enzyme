@@ -63,11 +63,11 @@ static inline bool isMemFreeLibMFunction(llvm::StringRef str,
   llvm::StringRef ogstr = str;
   if (ID) {
     if (str == "llvm.enzyme.lifetime_start") {
-      *ID = Intrinsic::lifetime_start;
+      *ID = llvm::Intrinsic::lifetime_start;
       return false;
     }
     if (str == "llvm.enzyme.lifetime_end") {
-      *ID = Intrinsic::lifetime_end;
+      *ID = llvm::Intrinsic::lifetime_end;
       return false;
     }
   }

@@ -870,7 +870,7 @@ void calculateUnusedValuesInFunction(
       },
       [&](const Instruction *inst) {
         if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-          if (II->getCalledFunction() == "llvm.enzyme.lifetime_start" || "llvm.enzyme.lifetime_end") {
+          if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start" || II->getCalledFunction()->getName()  == "llvm.enzyme.lifetime_end") {
             return UseReq::Cached;
           }
           if (II->getIntrinsicID() == Intrinsic::lifetime_start ||

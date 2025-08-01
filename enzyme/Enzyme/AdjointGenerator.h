@@ -3721,7 +3721,7 @@ public:
     }
     if (II.getIntrinsicID() == Intrinsic::stackrestore ||
         II.getIntrinsicID() == Intrinsic::lifetime_end ||
-        II.getCalledFunction().getName() == "llvm.enzyme.lifetime_end") {
+        II.getCalledFunction()->getName() == "llvm.enzyme.lifetime_end") {
       eraseIfUnused(II, /*erase*/ true, /*check*/ false);
       return;
     }

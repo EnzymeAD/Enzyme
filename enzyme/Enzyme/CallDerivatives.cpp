@@ -2886,11 +2886,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   }
 
   if (funcName == "llvm.enzyme.lifetime_start") {
+      SmallVector<Value *, 2> orig_ops(call.getNumOperands());
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        orig_ops[i] = call.getOperand(i);
+      }
     handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
     eraseIfUnused(call);
     return true;
   }
   if (funcName == "llvm.enzyme.lifetime_end") {
+      SmallVector<Value *, 2> orig_ops(call.getNumOperands());
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        orig_ops[i] = call.getOperand(i);
+      }
     handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
     eraseIfUnused(call);
     return true;
