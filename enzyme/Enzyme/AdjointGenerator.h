@@ -2988,6 +2988,17 @@ public:
                   break;
                 if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
                   if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                    if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
+                      if (getBaseObject(II->getOperand(1)) == root) {
+                        if (auto CI2 =
+                                dyn_cast<ConstantInt>(II->getOperand(0))) {
+                          if (MCI->getValue().ule(CI2->getValue()))
+                            break;
+                        }
+                      }
+                      cur = cur->getPrevNode();
+                      continue;
+                    }
                     // If the start of the lifetime for more memory than being
                     // memset, its valid.
                     if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
@@ -3709,7 +3720,8 @@ public:
       return;
     }
     if (II.getIntrinsicID() == Intrinsic::stackrestore ||
-        II.getIntrinsicID() == Intrinsic::lifetime_end) {
+        II.getIntrinsicID() == Intrinsic::lifetime_end ||
+        II.getCalledFunction().getName() == "llvm.enzyme.lifetime_end") {
       eraseIfUnused(II, /*erase*/ true, /*check*/ false);
       return;
     }

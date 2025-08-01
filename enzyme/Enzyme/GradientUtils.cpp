@@ -8954,6 +8954,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+      if (II->getCalledFunction().getName() == "llvm.enzyme.lifetime_start") {
+        LifetimeStarts.insert(II);
+      } else if (II->getCalledFunction().getName() == "llvm.enzyme.lifetime_end") {
+      } else {
       switch (II->getIntrinsicID()) {
       case Intrinsic::lifetime_start:
         LifetimeStarts.insert(II);
@@ -8980,6 +8984,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
                     " due to unknown intrinsic ", *cur);
         break;
+      }
       }
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);

@@ -534,9 +534,43 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     }
   }
 
+#if LLVM_VERSION_MAJOR >= 22
+  Function *start_lifetime = nullptr;
+  Function *end_lifetime = nullptr;
+#endif
+
   for (auto AI : ToConvert) {
     std::string nam = AI->getName().str();
     AI->setName("");
+
+#if LLVM_VERSION_MAJOR >= 22
+    for (auto U : llvm::make_early_inc_range(AI->users())) {
+      if (auto II = dyn_cast<IntrinsicInst>(U)) {
+        if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+          if (!start_lifetime) {
+            start_lifetime = cast<Function>(NewF->getParent()->getOrInsertFunction("llvm.enzyme.lifetime_start", FunctionType::get(VoidType::get(NewF->getContext()), {}, true) ));
+          }
+          IRBuilder<> B(II);
+          auto newI = B.CreateCall(start_lifetime, II->getArgOperands());
+          newI->takeName(II);
+          newI->setDebugLoc(II->getDebugLoc());
+          II->eraseFromParent();
+          continue;
+        }
+        if (II->getIntrinsicID() == Intrinsic::lifetime_end) {
+          if (!end_lifetime) {
+            end_lifetime = cast<Function>(NewF->getParent()->getOrInsertFunction("llvm.enzyme.lifetime_end", FunctionType::get(VoidType::get(NewF->getContext()), {}, true) ));
+          }
+          IRBuilder<> B(II);
+          auto newI = B.CreateCall(end_lifetime, II->getArgOperands());
+          newI->takeName(II);
+          newI->setDebugLoc(II->getDebugLoc());
+          II->eraseFromParent();
+          continue;
+        }
+      } 
+    }
+#endif
 
     // Ensure we insert the malloc after the allocas
     Instruction *insertBefore = AI;
@@ -583,6 +617,7 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
       AI->eraseFromParent();
     }
   }
+
 }
 
 // Create a stack variable containing the size of the allocation
@@ -884,6 +919,38 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
 #endif
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
   }
+
+  #if LLVM_VERSION_MAJOR >= 22
+  {
+    auto start_lifetime = NewF->getParent()->getFunction("llvm.enzyme.lifetime_start");
+    auto end_lifetime = NewF->getParent()->getFunction("llvm.enzyme.lifetime_end");
+
+    SmallVector<CallInst *, 1> Todo;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+        if (auto CB = dyn_cast<CallInst>(&CB)) {
+          if (CB->getCalledFunction() == start_lifetime || CB->getCalledFunction() == end_lifetime) {
+            Todo.push_back(CB);
+          }
+        }
+      }
+    }
+
+    for (auto CB : Todo) {
+      if (!isa<AllocaInst>(CB->getArgOperand(0))) {
+        CB->eraseFromParent();
+        continue;
+      }
+      IRBuilder <>B(CB);
+      if (CB.getCalledFunction() == start_lifetime) {
+        B.CreateLifetimeStart(CB->getArgOperand(0), CB->getArgOperand(1));
+      } else {
+        B.CreateLifetimeEnd(CB->getArgOperand(0), CB->getArgOperand(1));
+      }
+      CB->eraseFromParent();
+    }
+    }
+#endif
 }
 
 /// Calls to realloc with an appropriate implementation

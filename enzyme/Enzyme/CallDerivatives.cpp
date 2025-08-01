@@ -2885,6 +2885,17 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
   }
 
+  if (funcName == "llvm.enzyme.lifetime_start") {
+    handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
+    eraseIfUnused(call);
+    return true;
+  }
+  if (funcName == "llvm.enzyme.lifetime_end") {
+    handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
+    eraseIfUnused(call);
+    return true;
+  }
+
   if (funcName == "realloc") {
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
