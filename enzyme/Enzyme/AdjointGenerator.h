@@ -2988,7 +2988,8 @@ public:
                   break;
                 if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
                   if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-                    if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
+                    if (II->getCalledFunction()->getName() ==
+                        "llvm.enzyme.lifetime_start") {
                       if (getBaseObject(II->getOperand(1)) == root) {
                         if (auto CI2 =
                                 dyn_cast<ConstantInt>(II->getOperand(0))) {

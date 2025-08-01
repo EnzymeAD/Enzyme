@@ -8956,15 +8956,16 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
       if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
         LifetimeStarts.insert(II);
-      } else if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_end") {
+      } else if (II->getCalledFunction()->getName() ==
+                 "llvm.enzyme.lifetime_end") {
       } else {
-      switch (II->getIntrinsicID()) {
-      case Intrinsic::lifetime_start:
-        LifetimeStarts.insert(II);
-        break;
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
-      case Intrinsic::dbg_label:
+        switch (II->getIntrinsicID()) {
+        case Intrinsic::lifetime_start:
+          LifetimeStarts.insert(II);
+          break;
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
+        case Intrinsic::dbg_label:
 #if LLVM_VERSION_MAJOR <= 16
       case llvm::Intrinsic::dbg_addr:
 #endif

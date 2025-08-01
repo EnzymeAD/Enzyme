@@ -644,7 +644,8 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
 static inline bool isDebugFunction(llvm::Function *called) {
   if (!called)
     return false;
-  if (called->getName() == "llvm.enzyme.lifetime_start" || called->getName() == "llvm.enzyme.lifetime_end") {
+  if (called->getName() == "llvm.enzyme.lifetime_start" ||
+      called->getName() == "llvm.enzyme.lifetime_end") {
     return true;
   }
   switch (called->getIntrinsicID()) {
@@ -1732,7 +1733,8 @@ static inline bool isNoAlias(const llvm::Value *val) {
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
     return true;
-  if (F->getName() == "llvm.enzyme.lifetime_start" || F->getName() == "llvm.enzyme.lifetime_end") {
+  if (F->getName() == "llvm.enzyme.lifetime_start" ||
+      F->getName() == "llvm.enzyme.lifetime_end") {
     return true;
   }
   using namespace llvm;

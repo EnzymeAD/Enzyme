@@ -548,13 +548,19 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
       if (auto II = dyn_cast<IntrinsicInst>(U)) {
         if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
           if (!start_lifetime) {
-            start_lifetime = cast<Function>(NewF->getParent()->getOrInsertFunction("llvm.enzyme.lifetime_start", FunctionType::get(Type::getVoidTy(NewF->getContext()), {}, true) ).getCallee ());
+            start_lifetime = cast<Function>(
+                NewF->getParent()
+                    ->getOrInsertFunction(
+                        "llvm.enzyme.lifetime_start",
+                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
+                                          {}, true))
+                    .getCallee());
           }
           IRBuilder<> B(II);
-      SmallVector<Value *, 2> args(II->arg_size());
-      for (unsigned i = 0; i < II->arg_size(); ++i) {
-        args[i] = II->getArgOperand(i);
-      }
+          SmallVector<Value *, 2> args(II->arg_size());
+          for (unsigned i = 0; i < II->arg_size(); ++i) {
+            args[i] = II->getArgOperand(i);
+          }
           auto newI = B.CreateCall(start_lifetime, args);
           newI->takeName(II);
           newI->setDebugLoc(II->getDebugLoc());
@@ -563,20 +569,26 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         }
         if (II->getIntrinsicID() == Intrinsic::lifetime_end) {
           if (!end_lifetime) {
-            end_lifetime = cast<Function>(NewF->getParent()->getOrInsertFunction("llvm.enzyme.lifetime_end", FunctionType::get(Type::getVoidTy(NewF->getContext()), {}, true) ).getCallee ());
+            end_lifetime = cast<Function>(
+                NewF->getParent()
+                    ->getOrInsertFunction(
+                        "llvm.enzyme.lifetime_end",
+                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
+                                          {}, true))
+                    .getCallee());
           }
           IRBuilder<> B(II);
-      SmallVector<Value *, 2> args(II->arg_size());
-      for (unsigned i = 0; i < II->arg_size(); ++i) {
-        args[i] = II->getArgOperand(i);
-      }
+          SmallVector<Value *, 2> args(II->arg_size());
+          for (unsigned i = 0; i < II->arg_size(); ++i) {
+            args[i] = II->getArgOperand(i);
+          }
           auto newI = B.CreateCall(end_lifetime, args);
           newI->takeName(II);
           newI->setDebugLoc(II->getDebugLoc());
           II->eraseFromParent();
           continue;
         }
-      } 
+      }
     }
 #endif
 
@@ -625,7 +637,6 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
       AI->eraseFromParent();
     }
   }
-
 }
 
 // Create a stack variable containing the size of the allocation
@@ -928,16 +939,19 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
   }
 
-  #if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22
   {
-    auto start_lifetime = NewF->getParent()->getFunction("llvm.enzyme.lifetime_start");
-    auto end_lifetime = NewF->getParent()->getFunction("llvm.enzyme.lifetime_end");
+    auto start_lifetime =
+        NewF->getParent()->getFunction("llvm.enzyme.lifetime_start");
+    auto end_lifetime =
+        NewF->getParent()->getFunction("llvm.enzyme.lifetime_end");
 
     SmallVector<CallInst *, 1> Todo;
     for (auto &BB : *NewF) {
       for (auto &I : BB) {
         if (auto CB = dyn_cast<CallInst>(&I)) {
-          if (CB->getCalledFunction() == start_lifetime || CB->getCalledFunction() == end_lifetime) {
+          if (CB->getCalledFunction() == start_lifetime ||
+              CB->getCalledFunction() == end_lifetime) {
             Todo.push_back(CB);
           }
         }
@@ -949,15 +963,17 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
         CB->eraseFromParent();
         continue;
       }
-      IRBuilder <>B(CB);
+      IRBuilder<> B(CB);
       if (CB->getCalledFunction() == start_lifetime) {
-        B.CreateLifetimeStart(CB->getArgOperand(0), cast<ConstantInt>(CB->getArgOperand(1)));
+        B.CreateLifetimeStart(CB->getArgOperand(0),
+                              cast<ConstantInt>(CB->getArgOperand(1)));
       } else {
-        B.CreateLifetimeEnd(CB->getArgOperand(0), cast<ConstantInt>(CB->getArgOperand(1)));
+        B.CreateLifetimeEnd(CB->getArgOperand(0),
+                            cast<ConstantInt>(CB->getArgOperand(1)));
       }
       CB->eraseFromParent();
     }
-    }
+  }
 #endif
 }
 

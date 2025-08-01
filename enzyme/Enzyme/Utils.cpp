@@ -2801,7 +2801,8 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
     }
 
     if (auto II = dyn_cast<IntrinsicInst>(U)) {
-      if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start" || II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_end")
+      if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start" ||
+          II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_end")
         continue;
       if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
           II->getIntrinsicID() == Intrinsic::lifetime_end)
