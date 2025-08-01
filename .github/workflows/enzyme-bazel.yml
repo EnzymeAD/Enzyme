@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 500 
 
     container:
-      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:1624f6ac1e7241772be1e5276abd8247f9493f04a1ef6674a0e0dcb1d5625646' ) || '' }}
 
     steps:
       - name: Install Python dependencies
