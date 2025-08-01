@@ -53,7 +53,10 @@ jobs:
 
     steps:
       - name: Install Python dependencies
-        run: python -m pip install lit
+        run: |
+          apt update
+          apt install python
+          python -m pip install lit
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
