@@ -7393,6 +7393,8 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
     ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
     for (auto I : ctx.Assumptions) {
       bool legal = true;
+      if (I->getParent()->getParent() != ctx.loopToSolve->getHeader()->getParent())
+        continue;
       auto parsedCond = getSparseConditions(legal, I->getOperand(0),
                                             Constraints::none(), nullptr, ctx2);
       bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());
