@@ -256,7 +256,7 @@ public:
         auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
 
         if (ETintf && !isMutable(ET) && ETintf.isZero(inp).succeeded()) {
-        // skip and promote to const
+          // skip and promote to const
           auto new_const = mlir::enzyme::ActivityAttr::get(
               rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
           newInActivityArgs.push_back(new_const);
