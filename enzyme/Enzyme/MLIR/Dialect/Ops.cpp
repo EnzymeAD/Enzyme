@@ -198,7 +198,6 @@ public:
     if (uop.getOutputs().size() == 0)
       return failure();
 
-    auto retActivity = uop.getRetActivity();
     auto inActivity = uop.getActivity();
 
     auto in_idx = 0;
