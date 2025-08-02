@@ -8982,8 +8982,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         default:
           promotable = false;
           shadowpromotable = false;
-          EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
-                      " due to unknown intrinsic ", *cur);
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                      *V, " due to unknown intrinsic ", *cur);
           break;
         }
       }
