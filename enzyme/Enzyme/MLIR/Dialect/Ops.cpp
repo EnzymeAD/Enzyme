@@ -228,9 +228,10 @@ public:
 
         // selectively push or skip directional derivative
         inp = uop.getInputs()[in_idx];
-        if (!isMutable(inp.getType()) &&
-            (matchPattern(inp, m_Zero()) ||
-             matchPattern(inp, m_AnyZeroFloat()))) {
+        auto ET = inp.getType();
+        auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
+
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp).succeeded()) {
           // skip and promote to const
           auto new_const = mlir::enzyme::ActivityAttr::get(
               rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
@@ -251,9 +252,10 @@ public:
 
         // selectively push or skip directional derivative
         inp = uop.getInputs()[in_idx];
-        if (!isMutable(inp.getType()) &&
-            (matchPattern(inp, m_Zero()) ||
-             matchPattern(inp, m_AnyZeroFloat()))) {
+        auto ET = inp.getType();
+        auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
+
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp).succeeded()) {
           // skip and promote to const
           auto new_const = mlir::enzyme::ActivityAttr::get(
               rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
