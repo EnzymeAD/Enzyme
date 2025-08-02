@@ -8967,25 +8967,25 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         case Intrinsic::dbg_value:
         case Intrinsic::dbg_label:
 #if LLVM_VERSION_MAJOR <= 16
-      case llvm::Intrinsic::dbg_addr:
+        case llvm::Intrinsic::dbg_addr:
 #endif
-      case Intrinsic::lifetime_end:
-        break;
-      case Intrinsic::memset: {
-        stores.insert(II);
-        storingOps.insert(II);
-        break;
-      }
-      // TODO memtransfer(cpy/move)
-      case Intrinsic::memcpy:
-      case Intrinsic::memmove:
-      default:
-        promotable = false;
-        shadowpromotable = false;
-        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
-                    " due to unknown intrinsic ", *cur);
-        break;
-      }
+        case Intrinsic::lifetime_end:
+          break;
+        case Intrinsic::memset: {
+          stores.insert(II);
+          storingOps.insert(II);
+          break;
+        }
+        // TODO memtransfer(cpy/move)
+        case Intrinsic::memcpy:
+        case Intrinsic::memmove:
+        default:
+          promotable = false;
+          shadowpromotable = false;
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
+                      " due to unknown intrinsic ", *cur);
+          break;
+        }
       }
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);
