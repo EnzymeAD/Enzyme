@@ -950,8 +950,9 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     for (auto &BB : *NewF) {
       for (auto &I : BB) {
         if (auto CB = dyn_cast<CallInst>(&I)) {
-          if (!CB->getCalledFunction()) continue;
-	  if (CB->getCalledFunction() == start_lifetime ||
+          if (!CB->getCalledFunction())
+            continue;
+          if (CB->getCalledFunction() == start_lifetime ||
               CB->getCalledFunction() == end_lifetime) {
             Todo.push_back(CB);
           }
@@ -961,7 +962,7 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
 
     for (auto CB : Todo) {
       if (!isa<AllocaInst>(CB->getArgOperand(1))) {
-	 CB->eraseFromParent();
+        CB->eraseFromParent();
         continue;
       }
       IRBuilder<> B(CB);

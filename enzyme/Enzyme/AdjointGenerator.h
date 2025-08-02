@@ -6082,7 +6082,7 @@ public:
     using namespace llvm;
 
     StringRef funcName = getFuncNameFromCall(&call);
-    
+
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the
@@ -6094,19 +6094,19 @@ public:
       return;
     }
 
-  if (funcName == "llvm.enzyme.lifetime_start") {
-    visitIntrinsicInst(cast<IntrinsicInst>(call));
-    return;
-  }
-  if (funcName == "llvm.enzyme.lifetime_end") {
-    SmallVector<Value *, 2> orig_ops(call.getNumOperands());
-    for (unsigned i = 0; i < call.getNumOperands(); ++i) {
-      orig_ops[i] = call.getOperand(i);
+    if (funcName == "llvm.enzyme.lifetime_start") {
+      visitIntrinsicInst(cast<IntrinsicInst>(call));
+      return;
     }
-    handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
-    eraseIfUnused(call);
-    return;
-  }
+    if (funcName == "llvm.enzyme.lifetime_end") {
+      SmallVector<Value *, 2> orig_ops(call.getNumOperands());
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        orig_ops[i] = call.getOperand(i);
+      }
+      handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
+      eraseIfUnused(call);
+      return;
+    }
 
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);
