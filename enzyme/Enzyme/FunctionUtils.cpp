@@ -950,7 +950,8 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     for (auto &BB : *NewF) {
       for (auto &I : BB) {
         if (auto CB = dyn_cast<CallInst>(&I)) {
-          if (CB->getCalledFunction() == start_lifetime ||
+          if (!CB->getCalledFunction()) continue;
+	  if (CB->getCalledFunction() == start_lifetime ||
               CB->getCalledFunction() == end_lifetime) {
             Todo.push_back(CB);
           }
@@ -959,17 +960,17 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     }
 
     for (auto CB : Todo) {
-      if (!isa<AllocaInst>(CB->getArgOperand(0))) {
-        CB->eraseFromParent();
+      if (!isa<AllocaInst>(CB->getArgOperand(1))) {
+	 CB->eraseFromParent();
         continue;
       }
       IRBuilder<> B(CB);
       if (CB->getCalledFunction() == start_lifetime) {
-        B.CreateLifetimeStart(CB->getArgOperand(0),
-                              cast<ConstantInt>(CB->getArgOperand(1)));
+        B.CreateLifetimeStart(CB->getArgOperand(1),
+                              cast<ConstantInt>(CB->getArgOperand(0)));
       } else {
-        B.CreateLifetimeEnd(CB->getArgOperand(0),
-                            cast<ConstantInt>(CB->getArgOperand(1)));
+        B.CreateLifetimeEnd(CB->getArgOperand(1),
+                            cast<ConstantInt>(CB->getArgOperand(0)));
       }
       CB->eraseFromParent();
     }
