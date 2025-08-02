@@ -534,9 +534,63 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     }
   }
 
+#if LLVM_VERSION_MAJOR >= 22
+  Function *start_lifetime = nullptr;
+  Function *end_lifetime = nullptr;
+#endif
+
   for (auto AI : ToConvert) {
     std::string nam = AI->getName().str();
     AI->setName("");
+
+#if LLVM_VERSION_MAJOR >= 22
+    for (auto U : llvm::make_early_inc_range(AI->users())) {
+      if (auto II = dyn_cast<IntrinsicInst>(U)) {
+        if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+          if (!start_lifetime) {
+            start_lifetime = cast<Function>(
+                NewF->getParent()
+                    ->getOrInsertFunction(
+                        "llvm.enzyme.lifetime_start",
+                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
+                                          {}, true))
+                    .getCallee());
+          }
+          IRBuilder<> B(II);
+          SmallVector<Value *, 2> args(II->arg_size());
+          for (unsigned i = 0; i < II->arg_size(); ++i) {
+            args[i] = II->getArgOperand(i);
+          }
+          auto newI = B.CreateCall(start_lifetime, args);
+          newI->takeName(II);
+          newI->setDebugLoc(II->getDebugLoc());
+          II->eraseFromParent();
+          continue;
+        }
+        if (II->getIntrinsicID() == Intrinsic::lifetime_end) {
+          if (!end_lifetime) {
+            end_lifetime = cast<Function>(
+                NewF->getParent()
+                    ->getOrInsertFunction(
+                        "llvm.enzyme.lifetime_end",
+                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
+                                          {}, true))
+                    .getCallee());
+          }
+          IRBuilder<> B(II);
+          SmallVector<Value *, 2> args(II->arg_size());
+          for (unsigned i = 0; i < II->arg_size(); ++i) {
+            args[i] = II->getArgOperand(i);
+          }
+          auto newI = B.CreateCall(end_lifetime, args);
+          newI->takeName(II);
+          newI->setDebugLoc(II->getDebugLoc());
+          II->eraseFromParent();
+          continue;
+        }
+      }
+    }
+#endif
 
     // Ensure we insert the malloc after the allocas
     Instruction *insertBefore = AI;
@@ -884,6 +938,45 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
 #endif
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
   }
+
+#if LLVM_VERSION_MAJOR >= 22
+  {
+    auto start_lifetime =
+        NewF->getParent()->getFunction("llvm.enzyme.lifetime_start");
+    auto end_lifetime =
+        NewF->getParent()->getFunction("llvm.enzyme.lifetime_end");
+
+    SmallVector<CallInst *, 1> Todo;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+        if (auto CB = dyn_cast<CallInst>(&I)) {
+          if (!CB->getCalledFunction())
+            continue;
+          if (CB->getCalledFunction() == start_lifetime ||
+              CB->getCalledFunction() == end_lifetime) {
+            Todo.push_back(CB);
+          }
+        }
+      }
+    }
+
+    for (auto CB : Todo) {
+      if (!isa<AllocaInst>(CB->getArgOperand(1))) {
+        CB->eraseFromParent();
+        continue;
+      }
+      IRBuilder<> B(CB);
+      if (CB->getCalledFunction() == start_lifetime) {
+        B.CreateLifetimeStart(CB->getArgOperand(1),
+                              cast<ConstantInt>(CB->getArgOperand(0)));
+      } else {
+        B.CreateLifetimeEnd(CB->getArgOperand(1),
+                            cast<ConstantInt>(CB->getArgOperand(0)));
+      }
+      CB->eraseFromParent();
+    }
+  }
+#endif
 }
 
 /// Calls to realloc with an appropriate implementation
@@ -7300,6 +7393,9 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
     ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
     for (auto I : ctx.Assumptions) {
       bool legal = true;
+      if (I->getParent()->getParent() !=
+          ctx.loopToSolve->getHeader()->getParent())
+        continue;
       auto parsedCond = getSparseConditions(legal, I->getOperand(0),
                                             Constraints::none(), nullptr, ctx2);
       bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());

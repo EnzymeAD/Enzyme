@@ -301,6 +301,8 @@ const StringSet<> KnownInactiveFunctions = {
     "__ubsan_handle_pointer_overflow",
     "__ubsan_handle_type_mismatch_v1",
     "__ubsan_vptr_type_cache",
+    "llvm.enzyme.lifetime_start",
+    "llvm.enzyme.lifetime_end",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
