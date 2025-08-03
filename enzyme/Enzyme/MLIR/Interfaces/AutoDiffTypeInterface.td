@@ -53,7 +53,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       /*desc=*/[{
         Check if the value with the given type is 0
       }],
-      /*retTy=*/"::mlir::LogicalResult",
+      /*retTy=*/"bool",
       /*methodName=*/"isZero",
       /*args=*/(ins  "::mlir::Value":$val)
     >,
@@ -61,7 +61,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       /*desc=*/[{
         Check if the mlir Attribute with the given type is 0.       
       }],
-      /*retTy=*/"::mlir::LogicalResult",
+      /*retTy=*/"bool",
       /*methodName=*/"isZeroAttr",
       /*args=*/(ins  "::mlir::Attribute":$attr)
     >,

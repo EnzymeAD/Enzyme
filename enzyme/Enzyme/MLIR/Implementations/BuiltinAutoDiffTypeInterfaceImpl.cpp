@@ -72,18 +72,12 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const {
-    if (matchPattern(val, m_AnyZeroFloat())) {
-      return success();
-    }
-    return failure();
+  bool isZero(Type self, Value val) const {
+    return matchPattern(val, m_AnyZeroFloat());
   }
 
-  LogicalResult isZeroAttr(Type self, Attribute attr) const {
-    if (matchPattern(attr, m_AnyZeroFloat())) {
-      return success();
-    }
-    return failure();
+  bool isZeroAttr(Type self, Attribute attr) const {
+    return matchPattern(attr, m_AnyZeroFloat());
   }
 
   int64_t getApproxSize(Type self) const {
@@ -150,39 +144,39 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const {
+  bool isZero(Type self, Value val) const {
     auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
     DenseElementsAttr eAttr;
 
     if (!matchPattern(val, m_Constant(&eAttr)))
-      return failure();
+      return false;
 
-    if (eAttr.isSplat()) {
-      // recurse on the individual element type
-      auto splatVal = eAttr.getSplatValue<Attribute>();
-      auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
-      return ADET ? ADET.isZeroAttr(splatVal) : failure();
-    }
-
-    return failure();
+    if (!eAttr.isSplat())
+      return false;
+    // recurse on the individual element type
+    auto splatVal = eAttr.getSplatValue<Attribute>();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+    return ADET && ADET.isZeroAttr(splatVal);
   }
-  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+
+  bool isZeroAttr(Type self, Attribute attr) const {
     auto eAttr = dyn_cast<DenseElementsAttr>(attr);
     if (!eAttr)
-      return failure();
+      return false;
+
+    if (!eAttr.isSplat())
+      return false;
 
     auto ET = eAttr.getType().getElementType();
     auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
 
     if (!ADET)
-      return failure();
+      return false;
 
-    if (eAttr.isSplat()) {
-      return ADET.isZeroAttr(eAttr.getSplatValue<Attribute>());
-    } else
-      return failure();
+    return ADET.isZeroAttr(eAttr.getSplatValue<Attribute>());
   }
+
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -228,19 +222,14 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const {
-    if (matchPattern(val, m_Zero())) {
-      return success();
-    }
-    return failure();
+  bool isZero(Type self, Value val) const {
+    return matchPattern(val, m_Zero());
   }
 
-  LogicalResult isZeroAttr(Type self, Attribute attr) const {
-    if (matchPattern(attr, m_Zero())) {
-      return success();
-    }
-    return failure();
+  bool isZeroAttr(Type self, Attribute attr) const {
+    return matchPattern(attr, m_Zero());
   }
+
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -278,20 +267,20 @@ public:
     return failure();
   }
 
-  LogicalResult isZero(Type self, Value val) const {
+  bool isZero(Type self, Value val) const {
     ArrayAttr arrayAttr;
 
     if (!matchPattern(val, m_Constant(&arrayAttr))) {
-      return failure();
+      return false;
     }
     // reuse attributr check
     return this->isZeroAttr(self, arrayAttr);
   }
 
-  LogicalResult isZeroAttr(Type self, Attribute attr) const {
+  bool isZeroAttr(Type self, Attribute attr) const {
     auto arrayAttr = dyn_cast<ArrayAttr>(attr);
     if (!arrayAttr || arrayAttr.size() != 2)
-      return failure();
+      return false;
 
     // get the element type
     auto compType = cast<ComplexType>(self);
@@ -299,15 +288,15 @@ public:
     auto eltIntf = dyn_cast<AutoDiffTypeInterface>(elType);
 
     if (!eltIntf)
-      return failure();
+      return false;
 
     // recurse and accumulate info per attribute
-    bool acc = true;
     for (auto eltAttr : arrayAttr) {
-      acc = acc && mlir::succeeded(eltIntf.isZeroAttr(eltAttr));
+      if (!eltIntf.isZeroAttr(eltAttr))
+        return false;
     }
 
-    return success(acc);
+    return true;
   }
 
   int64_t getApproxSize(Type self) const {

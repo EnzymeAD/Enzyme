@@ -235,8 +235,8 @@ public:
     return success();
   }
 
-  LogicalResult isZero(Type self, Value val) const { return failure(); }
-  LogicalResult isZeroAttr(Type self, Attribute val) const { return failure(); }
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute val) const { return false; }
 };
 } // namespace
 
