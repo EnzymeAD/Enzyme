@@ -540,22 +540,6 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
   build(builder, result, resultTy, input, shapeAttr);
 }
 
-//===----------------------------------------------------------------------===//
-// SampleOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
-
 /**
  *
  * Modifies activities for the AutoDiffOp.
@@ -813,4 +797,61 @@ public:
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<ReverseRetOpt>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// SampleOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  if (getLogpdfAttr()) {
+    auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
+        *this, getLogpdfAttr());
+    if (!global)
+      return emitOpError("'")
+             << getLogpdf().value() << "' does not reference a valid global "
+             << "funcOp";
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// GenerateOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// SimulateOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
 }
