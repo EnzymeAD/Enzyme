@@ -230,7 +230,7 @@ public:
         auto ET = inp.getType();
         auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
 
-        if (ETintf && !isMutable(ET) && ETintf.isZero(inp).succeeded()) {
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp)) {
           // skip and promote to const
           auto new_const = mlir::enzyme::ActivityAttr::get(
               rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
@@ -254,7 +254,7 @@ public:
         auto ET = inp.getType();
         auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
 
-        if (ETintf && !isMutable(ET) && ETintf.isZero(inp).succeeded()) {
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp)) {
           // skip and promote to const
           auto new_const = mlir::enzyme::ActivityAttr::get(
               rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
