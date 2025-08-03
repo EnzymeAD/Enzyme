@@ -163,7 +163,7 @@ public:
   bool isZeroAttr(Type self, Attribute attr) const {
     auto eAttr = dyn_cast<DenseElementsAttr>(attr);
     if (!eAttr)
-      return failure();
+      return false;
 
     if (!eAttr.isSplat())
       return false;
