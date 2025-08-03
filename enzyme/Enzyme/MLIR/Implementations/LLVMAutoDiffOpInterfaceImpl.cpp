@@ -70,9 +70,7 @@ public:
   }
 
   bool isZero(Type self, Value val) const { return false; }
-  bool isZeroAttr(Type self, Attribute attr) const {
-    return false;
-  }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 } // namespace
 

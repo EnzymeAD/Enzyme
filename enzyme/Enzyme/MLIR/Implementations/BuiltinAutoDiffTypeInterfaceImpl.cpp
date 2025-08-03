@@ -157,7 +157,7 @@ public:
     // recurse on the individual element type
     auto splatVal = eAttr.getSplatValue<Attribute>();
     auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
-    return ADET &&  ADET.isZeroAttr(splatVal);
+    return ADET && ADET.isZeroAttr(splatVal);
   }
 
   bool isZeroAttr(Type self, Attribute attr) const {
