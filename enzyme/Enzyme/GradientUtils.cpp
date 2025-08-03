@@ -3306,7 +3306,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
             for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                            "enzymejl_allocart"})
+                            "enzymejl_allocart", "enzymejl_allocart_name"})
               if (auto M = I.getMetadata(MD))
                 replacement->setMetadata(MD, M);
             auto Alignment =
@@ -3553,8 +3553,9 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 auto rule = [&](Value *anti) {
                   AllocaInst *replacement = NB.CreateAlloca(
                       Type::getInt8Ty(orig->getContext()), args[0]);
-                  for (auto MD : {"enzyme_active", "enzyme_inactive",
-                                  "enzyme_type", "enzymejl_allocart"})
+                  for (auto MD :
+                       {"enzyme_active", "enzyme_inactive", "enzyme_type",
+                        "enzymejl_allocart", "enzymejl_allocart_name"})
                     if (auto M = I.getMetadata(MD))
                       replacement->setMetadata(MD, M);
                   replacement->takeName(anti);
@@ -4110,7 +4111,8 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
-        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+        n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
 #if LLVM_VERSION_MAJOR >= 14
@@ -4260,7 +4262,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || startsWith(n, "enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads" ||
-        startsWith(n, "_ZN4libm4math3log")) {
+        startsWith(n, "_ZN4libm4math3log") ||
+        n.contains("__enzyme_ignore_derivatives")) {
       return true;
     }
     if (isPointerArithmeticInst(ci))
@@ -6387,6 +6390,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
 
       return res;
+    }
+  } else if (auto FPMO = dyn_cast<FPMathOperator>(oval)) {
+    if (FPMO->getOpcode() == Instruction::FNeg) {
+      switch (mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeGradient:
+        if (TR.query(FPMO)[{-1}].isFloat()) {
+          return Constant::getNullValue(getShadowType(FPMO->getType()));
+        }
+        break;
+      default:
+        break;
+      }
     }
   }
 
@@ -8937,32 +8954,38 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-      switch (II->getIntrinsicID()) {
-      case Intrinsic::lifetime_start:
+      if (II->getCalledFunction()->getName() == "llvm.enzyme.lifetime_start") {
         LifetimeStarts.insert(II);
-        break;
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
-      case Intrinsic::dbg_label:
+      } else if (II->getCalledFunction()->getName() ==
+                 "llvm.enzyme.lifetime_end") {
+      } else {
+        switch (II->getIntrinsicID()) {
+        case Intrinsic::lifetime_start:
+          LifetimeStarts.insert(II);
+          break;
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
+        case Intrinsic::dbg_label:
 #if LLVM_VERSION_MAJOR <= 16
-      case llvm::Intrinsic::dbg_addr:
+        case llvm::Intrinsic::dbg_addr:
 #endif
-      case Intrinsic::lifetime_end:
-        break;
-      case Intrinsic::memset: {
-        stores.insert(II);
-        storingOps.insert(II);
-        break;
-      }
-      // TODO memtransfer(cpy/move)
-      case Intrinsic::memcpy:
-      case Intrinsic::memmove:
-      default:
-        promotable = false;
-        shadowpromotable = false;
-        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
-                    " due to unknown intrinsic ", *cur);
-        break;
+        case Intrinsic::lifetime_end:
+          break;
+        case Intrinsic::memset: {
+          stores.insert(II);
+          storingOps.insert(II);
+          break;
+        }
+        // TODO memtransfer(cpy/move)
+        case Intrinsic::memcpy:
+        case Intrinsic::memmove:
+        default:
+          promotable = false;
+          shadowpromotable = false;
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                      *V, " due to unknown intrinsic ", *cur);
+          break;
+        }
       }
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);

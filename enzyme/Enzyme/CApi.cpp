@@ -597,6 +597,25 @@ void EnzymeGradientUtilsSubTransferHelper(
                     (bool)allowForward, (bool)shadowsLookedUp);
 }
 
+LLVMBasicBlockRef EnzymeGradientUtilsAddReverseBlock(GradientUtils *gutils,
+                                                     LLVMBasicBlockRef block,
+                                                     const char *name,
+                                                     uint8_t forkCache,
+                                                     uint8_t push) {
+  return wrap(gutils->addReverseBlock(cast<BasicBlock>(unwrap(block)), name,
+                                      forkCache, push));
+}
+
+void EnzymeGradientUtilsSetReverseBlock(GradientUtils *gutils,
+                                        LLVMBasicBlockRef block) {
+  auto endBlock = cast<BasicBlock>(unwrap(block));
+  auto found = gutils->reverseBlockToPrimal.find(endBlock);
+  assert(found != gutils->reverseBlockToPrimal.end());
+  auto &vec = gutils->reverseBlocks[found->second];
+  assert(vec.size());
+  vec.push_back(endBlock);
+}
+
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef request_req, LLVMBuilderRef request_ip,
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
@@ -1013,6 +1032,22 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 
   return Changed == ChangeStatus::CHANGED;
 }
+
+extern "C" void RunAttributorOnModule(LLVMModuleRef M0) {
+  auto &M = *unwrap(M0);
+  AnalysisGetter AG;
+  SetVector<Function *> Functions;
+  for (Function &F : M)
+    Functions.insert(&F);
+
+  CallGraphUpdater CGUpdater;
+  BumpPtrAllocator Allocator;
+  InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+  runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                           /* DeleteFns*/ true,
+                           /* IsModulePass */ true);
+}
+
 struct MyAttributorLegacyPass : public ModulePass {
   static char ID;
 

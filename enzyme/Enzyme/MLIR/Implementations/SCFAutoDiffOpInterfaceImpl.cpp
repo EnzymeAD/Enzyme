@@ -19,6 +19,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -65,11 +66,21 @@ static Value getNumberOfIterations(OpBuilder &builder, scf::ForOp forOp) {
 struct ForOpEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<ForOpEnzymeOpsRemover,
                                                         scf::ForOp> {
+private:
+  enum CacheType { TENSOR, MEMREF };
 
+public:
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
     auto forOp = cast<scf::ForOp>(op);
     scf::ForOp otherForOp; // where caches pops are
+
+    // There is support for two push/pop removal modes, one is using immutable
+    // tensors, the other uses memrefs. memref is the default, but tensor can be
+    // enabled with enzyme.cache_use_tensor
+    enum CacheType cacheType = MEMREF;
+    if (op->hasAttr("enzyme.cache_use_tensor"))
+      cacheType = TENSOR;
 
     // Gradients whose values need to be passed as iteration variables.
     llvm::SetVector<Value> updatedGradients;
@@ -159,6 +170,8 @@ struct ForOpEnzymeOpsRemover
       inductionVariable = body->getArgument(0);
     }
 
+    SmallVector<Value> newPushValues;
+
     for (auto &info : caches) {
       Value cache = info.initOp.getResult();
 
@@ -204,9 +217,20 @@ struct ForOpEnzymeOpsRemover
         }
       }
 
-      auto newType = cast<ShapedType>(
-          cast<AutoDiffTypeInterface>(info.cachedType())
-              .getShadowType(numIters.value_or(mlir::ShapedType::kDynamic)));
+      SmallVector<int64_t> newShape;
+      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+
+      auto ET = info.cachedType();
+      ShapedType NT;
+
+      if (auto ST = dyn_cast<ShapedType>(ET)) {
+        newShape.append(ST.getShape().begin(), ST.getShape().end());
+        ET = ST.getElementType();
+      }
+
+      auto newType = cacheType == TENSOR
+                         ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
+                         : cast<ShapedType>(MemRefType::get(newShape, ET));
 
       SmallVector<Value> dynamicDims;
 
@@ -219,48 +243,89 @@ struct ForOpEnzymeOpsRemover
         }
       }
 
-      Value initValue = rewriter.create<tensor::EmptyOp>(info.initOp->getLoc(),
-                                                         newType, dynamicDims);
+      if (cacheType == TENSOR) {
+        Value initValue = rewriter.create<tensor::EmptyOp>(
+            info.initOp->getLoc(), newType, dynamicDims);
 
-      // cast<AutoDiffTypeInterface>(newType).createNullValue(
-      // rewriter, info.initOp->getLoc());
+        newOperands.push_back(initValue);
 
-      newOperands.push_back(initValue);
+        auto cacheValue = body->addArgument(newType, info.pushOp->getLoc());
 
-      auto cacheValue = body->addArgument(newType, info.pushOp->getLoc());
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.pushOp);
 
-      {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(info.pushOp);
+          Value newCacheValue;
+          if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
+            auto shape = TT.getShape();
 
-        // TODO: if type is tensor, use insert_slice instead
-        Value newCacheValue;
-        if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
-          auto shape = TT.getShape();
+            SmallVector<int64_t> offsets(shape.size() + 1, 0);
+            offsets[0] = ShapedType::kDynamic;
 
-          SmallVector<int64_t> offsets(shape.size() + 1, 0);
-          offsets[0] = ShapedType::kDynamic;
+            SmallVector<int64_t> sizes;
+            sizes.reserve(shape.size() + 1);
+            sizes.push_back(1);
+            sizes.append(shape.begin(), shape.end());
 
-          SmallVector<int64_t> sizes;
-          sizes.reserve(shape.size() + 1);
-          sizes.push_back(1);
-          sizes.append(shape.begin(), shape.end());
+            SmallVector<int64_t> strides(shape.size() + 1, 1);
 
-          SmallVector<int64_t> strides(shape.size() + 1, 1);
+            newCacheValue = rewriter.create<tensor::InsertSliceOp>(
+                info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+                ValueRange(inductionVariable), ValueRange(), ValueRange(),
+                rewriter.getDenseI64ArrayAttr(offsets),
+                rewriter.getDenseI64ArrayAttr(sizes),
+                rewriter.getDenseI64ArrayAttr(strides));
+          } else {
+            newCacheValue = rewriter.create<tensor::InsertOp>(
+                info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+                inductionVariable);
+          }
 
-          newCacheValue = rewriter.create<tensor::InsertSliceOp>(
-              info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
-              ValueRange(inductionVariable), ValueRange(), ValueRange(),
-              rewriter.getDenseI64ArrayAttr(offsets),
-              rewriter.getDenseI64ArrayAttr(sizes),
-              rewriter.getDenseI64ArrayAttr(strides));
-        } else {
-          newCacheValue = rewriter.create<tensor::InsertOp>(
-              info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
-              inductionVariable);
+          term->insertOperands(term->getNumOperands(),
+                               ValueRange(newCacheValue));
         }
+      } else if (cacheType == MEMREF) {
+        Value initValue = rewriter.create<memref::AllocOp>(
+            info.initOp->getLoc(), cast<MemRefType>(newType), dynamicDims);
+        newPushValues.push_back(initValue);
 
-        term->insertOperands(term->getNumOperands(), ValueRange(newCacheValue));
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.pushOp);
+
+          if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+            auto memref = info.pushOp.getValue();
+            auto shape = MT.getShape();
+
+            SmallVector<int64_t> offsets(shape.size() + 1, 0);
+            offsets[0] = ShapedType::kDynamic;
+
+            SmallVector<int64_t> sizes;
+            sizes.push_back(1);
+            sizes.append(shape.begin(), shape.end());
+
+            SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+            auto RT = memref::SubViewOp::inferRankReducedResultType(
+                MT.getShape(), cast<MemRefType>(initValue.getType()), offsets,
+                sizes, strides);
+
+            rewriter.setInsertionPoint(memref.getDefiningOp());
+            rewriter.replaceOpWithNewOp<memref::SubViewOp>(
+                memref.getDefiningOp(), RT, initValue,
+                /*offsets*/ ValueRange(inductionVariable),
+                /*sizes*/ ValueRange(),
+                /*strides*/ ValueRange(),
+                /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+                /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+                /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+
+          } else {
+            rewriter.create<memref::StoreOp>(info.pushOp->getLoc(),
+                                             info.pushOp.getValue(), initValue,
+                                             ValueRange(inductionVariable));
+          }
+        }
       }
     }
 
@@ -274,6 +339,13 @@ struct ForOpEnzymeOpsRemover
     for (auto &&[res, newRes] :
          llvm::zip(forOp->getResults(), newFor->getResults())) {
       rewriter.replaceAllUsesWith(res, newRes);
+    }
+
+    if (cacheType == TENSOR) {
+      for (auto res : newFor->getResults().slice(forOp.getNumResults(),
+                                                 newFor.getNumResults() -
+                                                     forOp.getNumResults()))
+        newPushValues.push_back(res);
     }
 
     rewriter.eraseOp(forOp);
@@ -338,15 +410,28 @@ struct ForOpEnzymeOpsRemover
       otherForOp = newOtherForOp;
     }
 
+    int pushedValueIdx = 0;
     for (auto &info : caches) {
       if (info.pushedValue().getParentRegion() != newFor.getRegion())
         continue;
 
       Value cache = info.initOp.getResult();
 
-      auto newType =
-          cast<AutoDiffTypeInterface>(info.cachedType())
-              .getShadowType(numIters.value_or(ShapedType::kDynamic));
+      SmallVector<int64_t> newShape;
+      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+
+      auto ET = info.cachedType();
+      ShapedType NT;
+
+      if (auto ST = dyn_cast<ShapedType>(ET)) {
+        newShape.append(ST.getShape().begin(), ST.getShape().end());
+        ET = ST.getElementType();
+      }
+
+      auto newType = cacheType == TENSOR
+                         ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
+                         : cast<ShapedType>(MemRefType::get(newShape, ET));
+
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
@@ -359,28 +444,28 @@ struct ForOpEnzymeOpsRemover
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPointAfter(newFor);
         auto newPush = rewriter.create<enzyme::PushOp>(
-            cache.getLoc(), newInit.getResult(), newFor->getResult(resultIdx));
+            cache.getLoc(), newInit.getResult(), newPushValues[pushedValueIdx]);
         rewriter.eraseOp(info.pushOp);
         newPush;
       });
 
-      resultIdx++;
+      pushedValueIdx++;
 
-      {
-        OpBuilder::InsertionGuard guard(rewriter);
+      OpBuilder::InsertionGuard guard(rewriter);
 
-        rewriter.setInsertionPoint(otherForOp);
+      rewriter.setInsertionPoint(otherForOp);
 
-        auto popNewValue = rewriter.create<enzyme::PopOp>(
-            info.popOp->getLoc(), newType, newInit.getResult());
+      auto popNewValue = rewriter.create<enzyme::PopOp>(
+          info.popOp->getLoc(), newType, newInit.getResult());
 
-        Block *popBody = otherForOp.getBody();
-        rewriter.setInsertionPoint(info.popOp);
+      Block *popBody = otherForOp.getBody();
+      rewriter.setInsertionPoint(info.popOp);
 
-        Value newInductionVariable =
-            popBody->getArgument(popBody->getNumArguments() - 1);
+      Value newInductionVariable =
+          popBody->getArgument(popBody->getNumArguments() - 1);
 
-        Value popValue;
+      Value popValue;
+      if (cacheType == TENSOR) {
         if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
           auto shape = TT.getShape();
           SmallVector<int64_t> offsets(shape.size() + 1, 0);
@@ -409,10 +494,50 @@ struct ForOpEnzymeOpsRemover
                                              newInductionVariable)
                   .getResult();
         }
+      } else if (cacheType == MEMREF) {
 
-        rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
-        rewriter.eraseOp(info.popOp);
+        if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+          auto shape = MT.getShape();
+
+          SmallVector<int64_t> offsets(shape.size() + 1, 0);
+          offsets[0] = ShapedType::kDynamic;
+
+          SmallVector<int64_t> sizes;
+          sizes.reserve(shape.size() + 1);
+          sizes.push_back(1);
+          sizes.append(shape.begin(), shape.end());
+
+          SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+          auto RT = memref::SubViewOp::inferRankReducedResultType(
+              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
+              sizes, strides);
+
+          popValue = rewriter.create<memref::SubViewOp>(
+              info.popOp->getLoc(), RT, popNewValue,
+              /*offsets*/ ValueRange(newInductionVariable),
+              /*sizes*/ ValueRange(),
+              /*strides*/ ValueRange(),
+              /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+              /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+              /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+
+          for (auto user : info.popOp.getResult().getUsers()) {
+            if (isa<memref::DeallocOp>(user))
+              rewriter.eraseOp(user);
+          }
+        } else {
+          popValue = rewriter.create<memref::LoadOp>(
+              info.popOp->getLoc(), popNewValue, newInductionVariable);
+        }
+
+        // this memref was allocated on push, dealloc it
+        rewriter.setInsertionPointAfter(otherForOp);
+        rewriter.create<memref::DeallocOp>(info.initOp->getLoc(), popNewValue);
       }
+
+      rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
+      rewriter.eraseOp(info.popOp);
     }
 
     return success();

@@ -6,34 +6,22 @@
 //===----------------------------------------------------------------------===//
 
 #include "Ops.h"
-#include "Dialect.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/IntegerSet.h"
 
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
 
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -187,6 +175,119 @@ static inline bool isMutable(Type type) {
   return false;
 }
 
+/**
+ *
+ * Modifies input activites for the FwdDiffOp
+ * The activity promotion flow is as follows
+ * (depending on variable use):
+ *
+ *           -----> enzyme_dupnoneed
+ *          /              /
+ * enzyme_dup            /
+ *          \          v
+ *           ------> enzyme_const
+ *
+ */
+class FwdInpOpt final : public OpRewritePattern<ForwardDiffOp> {
+public:
+  using OpRewritePattern<ForwardDiffOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ForwardDiffOp uop,
+                                PatternRewriter &rewriter) const override {
+
+    if (uop.getOutputs().size() == 0)
+      return failure();
+
+    auto inActivity = uop.getActivity();
+
+    auto in_idx = 0;
+    SmallVector<mlir::Value, 2> in_args;
+    SmallVector<ActivityAttr, 2> newInActivityArgs;
+    bool changed = false;
+    for (auto [idx, act] : llvm::enumerate(inActivity)) {
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+
+      // Forward mode Input activities can only take values {dup, dupnoneed,
+      // const }
+
+      mlir::Value inp = uop.getInputs()[in_idx];
+
+      switch (val) {
+
+      case mlir::enzyme::Activity::enzyme_const:
+        in_args.push_back(inp);
+        newInActivityArgs.push_back(iattr);
+        break;
+
+      case Activity::enzyme_dupnoneed: {
+        // always pass in primal
+        in_args.push_back(inp);
+        in_idx++;
+
+        // selectively push or skip directional derivative
+        inp = uop.getInputs()[in_idx];
+        auto ET = inp.getType();
+        auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
+
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp)) {
+          // skip and promote to const
+          auto new_const = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
+          newInActivityArgs.push_back(new_const);
+          changed = true;
+        } else {
+          // push derivative value
+          in_args.push_back(inp);
+          newInActivityArgs.push_back(iattr);
+        }
+        break;
+      }
+
+      case Activity::enzyme_dup: {
+        // always pass in primal
+        in_args.push_back(inp);
+        in_idx++;
+
+        // selectively push or skip directional derivative
+        inp = uop.getInputs()[in_idx];
+        auto ET = inp.getType();
+        auto ETintf = dyn_cast<AutoDiffTypeInterface>(ET);
+
+        if (ETintf && !isMutable(ET) && ETintf.isZero(inp)) {
+          // skip and promote to const
+          auto new_const = mlir::enzyme::ActivityAttr::get(
+              rewriter.getContext(), mlir::enzyme::Activity::enzyme_const);
+          newInActivityArgs.push_back(new_const);
+          changed = true;
+        } else {
+          // push derivative value
+          in_args.push_back(inp);
+          newInActivityArgs.push_back(iattr);
+        }
+        break;
+      }
+      default:
+        llvm_unreachable("unexpected input activity arg");
+      }
+
+      in_idx++;
+    }
+
+    if (!changed)
+      return failure();
+
+    // create the new op
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
+    rewriter.replaceOpWithNewOp<ForwardDiffOp>(
+        uop, uop->getResultTypes(), uop.getFnAttr(), in_args, newInActivity,
+        uop.getRetActivityAttr(), uop.getWidthAttr(), uop.getStrongZeroAttr());
+    return success();
+  }
+};
 /**
  *
  * Modifies return activites for the FwdDiffOp
@@ -398,7 +499,7 @@ public:
 void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                 MLIRContext *context) {
 
-  patterns.add<FwdRetOpt>(context);
+  patterns.add<FwdRetOpt, FwdInpOpt>(context);
 }
 
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -437,22 +538,6 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
     resultTy = cast<AutoDiffTypeInterface>(resultTy).getShadowType(s);
   }
   build(builder, result, resultTy, input, shapeAttr);
-}
-
-//===----------------------------------------------------------------------===//
-// SampleOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
 }
 
 /**
@@ -759,4 +844,61 @@ public:
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<ReverseRetOpt>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// SampleOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  if (getLogpdfAttr()) {
+    auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
+        *this, getLogpdfAttr());
+    if (!global)
+      return emitOpError("'")
+             << getLogpdf().value() << "' does not reference a valid global "
+             << "funcOp";
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// GenerateOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// SimulateOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
 }
