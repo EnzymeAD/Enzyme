@@ -1,7 +1,6 @@
 #ifndef ENZYME_POSEIDON_H
 #define ENZYME_POSEIDON_H
 
-#include <functional>
 #include <limits>
 #include <memory>
 #include <set>
@@ -10,19 +9,16 @@
 #include <unordered_set>
 #include <variant>
 
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/ValueMap.h"
 #include "llvm/Pass.h"
-#include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InstructionCost.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <mpfr.h>
 
@@ -160,49 +156,6 @@ struct SolutionStep {
 };
 
 // Classes
-class FPEvaluator {
-private:
-  std::unordered_map<const FPNode *, double> cache;
-  std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
-
-public:
-  FPEvaluator(PTCandidate *pt = nullptr);
-
-  PrecisionChangeType getNodePrecision(const FPNode *node) const;
-  void evaluateNode(const FPNode *node,
-                    const MapVector<Value *, double> &inputValues);
-  double getResult(const FPNode *node) const;
-};
-
-class MPFREvaluator {
-private:
-  struct CachedValue {
-    mpfr_t value;
-    unsigned prec;
-
-    CachedValue(unsigned prec);
-    CachedValue(const CachedValue &) = delete;
-    CachedValue &operator=(const CachedValue &) = delete;
-    CachedValue(CachedValue &&other) noexcept;
-    CachedValue &operator=(CachedValue &&other) noexcept;
-    virtual ~CachedValue();
-  };
-
-  std::unordered_map<const FPNode *, CachedValue> cache;
-  unsigned prec;
-  std::unordered_map<const FPNode *, unsigned> nodeToNewPrec;
-
-public:
-  MPFREvaluator(unsigned prec, PTCandidate *pt = nullptr);
-  virtual ~MPFREvaluator() = default;
-
-  unsigned getNodePrecision(const FPNode *node, bool groundTruth) const;
-  void evaluateNode(const FPNode *node,
-                    const MapVector<Value *, double> &inputValues,
-                    bool groundTruth);
-  mpfr_t &getResult(FPNode *node);
-};
-
 class ApplicableOutput {
 public:
   FPCC *component;
