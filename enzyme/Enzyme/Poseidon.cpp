@@ -235,12 +235,6 @@ double getOneULP(double value) {
   return ulp;
 }
 
-FPNode::FPNode(const std::string &op, const std::string &dtype)
-    : ntype(NodeType::Node), op(op), dtype(dtype) {}
-
-FPNode::FPNode(NodeType ntype, const std::string &op, const std::string &dtype)
-    : ntype(ntype), op(op), dtype(dtype) {}
-
 FPNode::NodeType FPNode::getType() const { return ntype; }
 
 void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
@@ -672,10 +666,6 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
   }
 }
 
-FPLLValue::FPLLValue(Value *value, const std::string &op,
-                     const std::string &dtype)
-    : FPNode(NodeType::LLValue, op, dtype), value(value) {}
-
 bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
 
 std::string FPLLValue::toFullExpression(
@@ -745,9 +735,6 @@ double stringToDouble(const std::string &str) {
 
   return result; // Denormalized values are fine
 }
-
-FPConst::FPConst(const std::string &strValue, const std::string &dtype)
-    : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
 std::string FPConst::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -4046,7 +4033,6 @@ std::string getHerbieOperator(const Instruction &I) {
     assert(0 && "getHerbieOperator: Unknown operator");
   }
 }
-
 
 bool extractValueFromLog(const std::string &logPath,
                          const std::string &functionName, size_t blockIdx,

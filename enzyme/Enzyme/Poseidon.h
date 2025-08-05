@@ -133,9 +133,11 @@ public:
   double maxAbs;
   unsigned executions;
 
-  explicit FPNode(const std::string &op, const std::string &dtype);
+  explicit FPNode(const std::string &op, const std::string &dtype)
+      : ntype(NodeType::Node), op(op), dtype(dtype) {}
   explicit FPNode(NodeType ntype, const std::string &op,
-                  const std::string &dtype);
+                  const std::string &dtype)
+      : ntype(ntype), op(op), dtype(dtype) {}
   virtual ~FPNode() = default;
 
   NodeType getType() const;
@@ -163,7 +165,8 @@ public:
   Value *value;
 
   explicit FPLLValue(Value *value, const std::string &op,
-                     const std::string &dtype);
+                     const std::string &dtype)
+      : FPNode(NodeType::LLValue, op, dtype), value(value) {}
 
   bool hasSymbol() const override;
   std::string toFullExpression(
@@ -184,7 +187,8 @@ private:
   std::string strValue;
 
 public:
-  explicit FPConst(const std::string &strValue, const std::string &dtype);
+  explicit FPConst(const std::string &strValue, const std::string &dtype)
+      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
 
   std::string toFullExpression(
       std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
