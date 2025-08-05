@@ -20,6 +20,18 @@
 #include "PoseidonPrecUtils.h"
 #include "PoseidonTypes.h"
 
+using namespace llvm;
+
+cl::opt<bool> FPOptStrictMode(
+    "fpopt-strict-mode", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Discard all FPOpt candidates that produce NaN or inf outputs for any "
+        "input point that originally produced finite outputs"));
+cl::opt<double> FPOptGeoMeanEps(
+    "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
+    cl::desc("The offset used in the geometric mean "
+             "calculation; if = 0, zeros are replaced with ULPs"));
+
 FPEvaluator::FPEvaluator(PTCandidate *pt) {
   if (pt) {
     for (const auto &change : pt->changes) {

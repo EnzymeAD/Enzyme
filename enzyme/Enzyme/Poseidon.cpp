@@ -22,10 +22,8 @@
 
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InstructionCost.h"
-#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
@@ -34,20 +32,14 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
-#include <mpfr.h>
-
 #include <cerrno>
 #include <cmath>
 #include <cstring>
-#include <fstream>
-#include <limits>
-#include <random>
 #include <regex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 
 #include "Poseidon.h"
 #include "PoseidonHerbieUtils.h"
@@ -75,16 +67,6 @@ cl::opt<bool> FPOptPrintPreproc(
     cl::desc("Enable Enzyme to print FPOpt preprocesing info"));
 }
 
-// Command line options that are not in extern "C"
-cl::opt<bool>
-    EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
-                      cl::desc("Enable Enzyme to print Herbie expressions"));
-cl::opt<std::string>
-    FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
-                 cl::desc("Which log to use in the FPOpt pass"));
-cl::opt<std::string>
-    FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
-                       cl::desc("Use a custom cost model in the FPOpt pass"));
 cl::opt<std::string> FPOptTargetFuncRegex(
     "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
     cl::desc("Regex pattern to match target functions in the FPOpt pass"));
@@ -94,95 +76,13 @@ cl::opt<bool> FPOptEnableHerbie(
 cl::opt<bool> FPOptEnablePT(
     "fpopt-enable-pt", cl::init(false), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
-cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1), cl::Hidden,
-                              cl::desc("Number of threads Herbie uses"));
-cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
-                           cl::desc("Herbie's timeout to use for each "
-                                    "candidate expressions."));
 cl::opt<std::string> FPOptCachePath("fpopt-cache-path", cl::init("cache"),
                                     cl::Hidden,
                                     cl::desc("Path to cache Herbie results"));
-cl::opt<int>
-    HerbieNumPoints("herbie-num-pts", cl::init(1024), cl::Hidden,
-                    cl::desc("Number of input points Herbie uses to evaluate "
-                             "candidate expressions."));
-cl::opt<int> HerbieNumIters(
-    "herbie-num-iters", cl::init(6), cl::Hidden,
-    cl::desc("Number of times Herbie attempts to improve accuracy."));
-cl::opt<bool> HerbieDisableNumerics(
-    "herbie-disable-numerics", cl::init(false), cl::Hidden,
-    cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
-             "expm1, log1p, fma, and hypot"));
-cl::opt<bool> HerbieDisableArithmetic(
-    "herbie-disable-arithmetic", cl::init(false), cl::Hidden,
-    cl::desc("Disable Herbie rewrite rules on basic arithmetic fasts."));
-cl::opt<bool> HerbieDisableFractions(
-    "herbie-disable-fractions", cl::init(false), cl::Hidden,
-    cl::desc("Disable Herbie rewrite rules on fraction arithmetic."));
-cl::opt<bool>
-    HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
-                        cl::desc("Disable Herbie's series expansion"));
-cl::opt<bool> HerbieDisableSetupSimplify(
-    "herbie-disable-setup-simplify", cl::init(false), cl::Hidden,
-    cl::desc("Stop Herbie from pre-simplifying expressions"));
-cl::opt<bool> HerbieDisableGenSimplify(
-    "herbie-disable-gen-simplify", cl::init(false), cl::Hidden,
-    cl::desc("Stop Herbie from simplifying expressions "
-             "during the main improvement loop"));
-cl::opt<bool> HerbieDisableRegime(
-    "herbie-disable-regime", cl::init(false), cl::Hidden,
-    cl::desc("Stop Herbie from branching between expressions candidates"));
-cl::opt<bool> HerbieDisableBranchExpr(
-    "herbie-disable-branch-expr", cl::init(false), cl::Hidden,
-    cl::desc("Stop Herbie from branching on expressions"));
-cl::opt<bool> HerbieDisableAvgError(
-    "herbie-disable-avg-error", cl::init(false), cl::Hidden,
-    cl::desc("Make Herbie choose the candidates with the least maximum error"));
 cl::opt<bool> FPOptEnableSolver(
     "fpopt-enable-solver", cl::init(false), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
-cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
-                                     cl::Hidden,
-                                     cl::desc("Which solver to use; "
-                                              "either 'dp' or 'greedy'"));
-cl::opt<bool> FPOptStrictMode(
-    "fpopt-strict-mode", cl::init(false), cl::Hidden,
-    cl::desc(
-        "Discard all FPOpt candidates that produce NaN or inf outputs for any "
-        "input point that originally produced finite outputs"));
-cl::opt<std::string> FPOptReductionProf(
-    "fpopt-reduction-prof", cl::init("geomean"), cl::Hidden,
-    cl::desc("Which reduction result to extract from profiles. "
-             "Options are 'geomean', 'arithmean', and 'maxabs'"));
-cl::opt<std::string> FPOptReductionEval(
-    "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
-    cl::desc("Which reduction result to use in candidate evaluation. "
-             "Options are 'geomean', 'arithmean', and 'maxabs'"));
-cl::opt<double> FPOptGeoMeanEps(
-    "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
-    cl::desc("The offset used in the geometric mean "
-             "calculation; if = 0, zeros are replaced with ULPs"));
-cl::opt<bool> FPOptLooseCoverage(
-    "fpopt-loose-coverage", cl::init(false), cl::Hidden,
-    cl::desc("Allow unexecuted FP instructions in subgraph indentification"));
-cl::opt<bool> FPOptShowTable(
-    "fpopt-show-table", cl::init(false), cl::Hidden,
-    cl::desc(
-        "Print the full DP table (highly verbose for large applications)"));
-cl::list<int64_t> FPOptShowTableCosts(
-    "fpopt-show-table-costs", cl::ZeroOrMore, cl::CommaSeparated, cl::Hidden,
-    cl::desc(
-        "Comma-separated list of computation costs for which to print DP table "
-        "entries. If provided, only specified computation costs are "
-        "printed. "));
-cl::opt<bool> FPOptShowPTDetails(
-    "fpopt-show-pt-details", cl::init(false), cl::Hidden,
-    cl::desc("Print details of precision tuning candidates along with the DP "
-             "table (highly verbose for large applications)"));
-cl::opt<int64_t> FPOptComputationCostBudget(
-    "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
-    cl::desc("The maximum computation cost budget for the solver"));
 // TODO: Fix this
 cl::opt<unsigned> FPOptMaxFPCCDepth(
     "fpopt-max-fpcc-depth", cl::init(99999), cl::Hidden,
@@ -194,28 +94,14 @@ cl::opt<unsigned> FPOptMaxExprDepth(
 cl::opt<unsigned> FPOptMaxExprLength(
     "fpopt-max-expr-length", cl::init(10000), cl::Hidden,
     cl::desc("The maximum length of an expression; abort if exceeded"));
-cl::opt<unsigned>
-    FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
-                    cl::desc("The random seed used in the FPOpt pass"));
-cl::opt<unsigned>
-    FPOptNumSamples("fpopt-num-samples", cl::init(1024), cl::Hidden,
-                    cl::desc("Number of sampled points for input hypercube"));
-cl::opt<unsigned>
-    FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
-                     cl::desc("Max precision for MPFR gold value computation"));
-cl::opt<double>
-    FPOptWidenRange("fpopt-widen-range", cl::init(1), cl::Hidden,
-                    cl::desc("Ablation study only: widen the range of input "
-                             "hypercube by this factor"));
-cl::opt<bool> FPOptEarlyPrune(
-    "fpopt-early-prune", cl::init(false), cl::Hidden,
-    cl::desc("Prune dominated candidates in expression transformation phases"));
-cl::opt<double> FPOptCostDominanceThreshold(
-    "fpopt-cost-dom-thres", cl::init(0.05), cl::Hidden,
-    cl::desc("The threshold for cost dominance in DP solver"));
-cl::opt<double> FPOptAccuracyDominanceThreshold(
-    "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
-    cl::desc("The threshold for accuracy dominance in DP solver"));
+cl::opt<std::string> FPOptReductionProf(
+    "fpopt-reduction-prof", cl::init("geomean"), cl::Hidden,
+    cl::desc("Which reduction result to extract from profiles. "
+             "Options are 'geomean', 'arithmean', and 'maxabs'"));
+cl::opt<std::string> FPOptReductionEval(
+    "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
+    cl::desc("Which reduction result to use in candidate evaluation. "
+             "Options are 'geomean', 'arithmean', and 'maxabs'"));
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.

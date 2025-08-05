@@ -28,6 +28,14 @@
 
 using namespace llvm;
 
+cl::opt<bool> FPOptShowPTDetails(
+    "fpopt-show-pt-details", cl::init(false), cl::Hidden,
+    cl::desc("Print details of precision tuning candidates along with the DP "
+             "table (highly verbose for large applications)"));
+cl::opt<unsigned>
+    FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
+                     cl::desc("Max precision for MPFR gold value computation"));
+
 unsigned getMPFRPrec(PrecisionChangeType type) {
   switch (type) {
   case PrecisionChangeType::BF16:

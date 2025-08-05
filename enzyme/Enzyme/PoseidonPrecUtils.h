@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
@@ -27,6 +28,9 @@
 #include <unordered_map>
 
 using namespace llvm;
+
+extern llvm::cl::opt<bool> FPOptShowPTDetails;
+extern llvm::cl::opt<unsigned> FPOptMaxMPFRPrec;
 
 class FPNode;
 class FPLLValue;

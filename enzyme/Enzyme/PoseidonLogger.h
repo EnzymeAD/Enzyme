@@ -15,10 +15,15 @@
 #define ENZYME_POSEIDON_LOGGER_H
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <limits>
 
 using namespace llvm;
+
+extern llvm::cl::opt<std::string> FPOptLogPath;
+extern llvm::cl::opt<bool> FPOptLooseCoverage;
+extern llvm::cl::opt<double> FPOptWidenRange;
 
 struct GradInfo {
   double geoMean;

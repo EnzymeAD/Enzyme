@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/CommandLine.h"
 #include <mpfr.h>
 #include <unordered_map>
 
@@ -23,6 +24,9 @@
 #include "PoseidonTypes.h"
 
 using namespace llvm;
+
+extern llvm::cl::opt<bool> FPOptStrictMode;
+extern llvm::cl::opt<double> FPOptGeoMeanEps;
 
 class FPEvaluator {
 private:

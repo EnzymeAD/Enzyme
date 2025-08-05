@@ -33,6 +33,53 @@
 #include <string>
 #include <unordered_map>
 
+using namespace llvm;
+
+cl::opt<bool>
+    EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
+                      cl::desc("Enable Enzyme to print Herbie expressions"));
+cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1), cl::Hidden,
+                              cl::desc("Number of threads Herbie uses"));
+cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
+                           cl::desc("Herbie's timeout to use for each "
+                                    "candidate expressions."));
+cl::opt<int>
+    HerbieNumPoints("herbie-num-pts", cl::init(1024), cl::Hidden,
+                    cl::desc("Number of input points Herbie uses to evaluate "
+                             "candidate expressions."));
+cl::opt<int> HerbieNumIters(
+    "herbie-num-iters", cl::init(6), cl::Hidden,
+    cl::desc("Number of times Herbie attempts to improve accuracy."));
+cl::opt<bool> HerbieDisableNumerics(
+    "herbie-disable-numerics", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
+             "expm1, log1p, fma, and hypot"));
+cl::opt<bool> HerbieDisableArithmetic(
+    "herbie-disable-arithmetic", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules on basic arithmetic fasts."));
+cl::opt<bool> HerbieDisableFractions(
+    "herbie-disable-fractions", cl::init(false), cl::Hidden,
+    cl::desc("Disable Herbie rewrite rules on fraction arithmetic."));
+cl::opt<bool>
+    HerbieDisableTaylor("herbie-disable-taylor", cl::init(false), cl::Hidden,
+                        cl::desc("Disable Herbie's series expansion"));
+cl::opt<bool> HerbieDisableSetupSimplify(
+    "herbie-disable-setup-simplify", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from pre-simplifying expressions"));
+cl::opt<bool> HerbieDisableGenSimplify(
+    "herbie-disable-gen-simplify", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from simplifying expressions "
+             "during the main improvement loop"));
+cl::opt<bool> HerbieDisableRegime(
+    "herbie-disable-regime", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from branching between expressions candidates"));
+cl::opt<bool> HerbieDisableBranchExpr(
+    "herbie-disable-branch-expr", cl::init(false), cl::Hidden,
+    cl::desc("Stop Herbie from branching on expressions"));
+cl::opt<bool> HerbieDisableAvgError(
+    "herbie-disable-avg-error", cl::init(false), cl::Hidden,
+    cl::desc("Make Herbie choose the candidates with the least maximum error"));
+
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,

@@ -24,6 +24,33 @@
 
 using namespace llvm;
 
+cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
+                                     cl::Hidden,
+                                     cl::desc("Which solver to use; "
+                                              "either 'dp' or 'greedy'"));
+cl::opt<int64_t> FPOptComputationCostBudget(
+    "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
+    cl::desc("The maximum computation cost budget for the solver"));
+cl::opt<bool> FPOptShowTable(
+    "fpopt-show-table", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Print the full DP table (highly verbose for large applications)"));
+cl::list<int64_t> FPOptShowTableCosts(
+    "fpopt-show-table-costs", cl::ZeroOrMore, cl::CommaSeparated, cl::Hidden,
+    cl::desc(
+        "Comma-separated list of computation costs for which to print DP table "
+        "entries. If provided, only specified computation costs are "
+        "printed. "));
+cl::opt<bool> FPOptEarlyPrune(
+    "fpopt-early-prune", cl::init(false), cl::Hidden,
+    cl::desc("Prune dominated candidates in expression transformation phases"));
+cl::opt<double> FPOptCostDominanceThreshold(
+    "fpopt-cost-dom-thres", cl::init(0.05), cl::Hidden,
+    cl::desc("The threshold for cost dominance in DP solver"));
+cl::opt<double> FPOptAccuracyDominanceThreshold(
+    "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
+    cl::desc("The threshold for accuracy dominance in DP solver"));
+
 #if LLVM_VERSION_MAJOR >= 21
 #define GET_INSTRUCTION_COST(cost) (cost.getValue())
 #else

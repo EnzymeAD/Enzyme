@@ -56,6 +56,17 @@
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
 
+using namespace llvm;
+
+cl::opt<std::string>
+    FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
+                       cl::desc("Use a custom cost model in the FPOpt pass"));
+cl::opt<unsigned>
+    FPOptNumSamples("fpopt-num-samples", cl::init(1024), cl::Hidden,
+                    cl::desc("Number of sampled points for input hypercube"));
+cl::opt<unsigned>
+    FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
+                    cl::desc("The random seed used in the FPOpt pass"));
 
 static const std::unordered_set<std::string> LibmFuncs = {
     "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
@@ -73,9 +84,6 @@ double getOneULP(double value) {
 
   return ulp;
 }
-
-
-
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   static const std::unordered_set<std::string> libmFunctions = {

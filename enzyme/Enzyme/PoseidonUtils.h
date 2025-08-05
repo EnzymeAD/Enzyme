@@ -29,6 +29,10 @@
 
 using namespace llvm;
 
+extern llvm::cl::opt<std::string> FPOptCostModelPath;
+extern llvm::cl::opt<unsigned> FPOptNumSamples;
+extern llvm::cl::opt<unsigned> FPOptRandomSeed;
+
 struct FPCC;
 
 // Utility function declarations
