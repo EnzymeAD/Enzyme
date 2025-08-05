@@ -42,6 +42,51 @@ extern llvm::cl::opt<bool> EnzymePrintFPOpt;
 extern llvm::cl::opt<bool> FPOptPrintPreproc;
 }
 
+extern llvm::cl::opt<bool> EnzymePrintHerbie;
+extern llvm::cl::opt<std::string> FPOptLogPath;
+extern llvm::cl::opt<std::string> FPOptCostModelPath;
+extern llvm::cl::opt<std::string> FPOptTargetFuncRegex;
+extern llvm::cl::opt<bool> FPOptEnableHerbie;
+extern llvm::cl::opt<bool> FPOptEnablePT;
+extern llvm::cl::opt<int> HerbieNumThreads;
+extern llvm::cl::opt<int> HerbieTimeout;
+extern llvm::cl::opt<std::string> FPOptCachePath;
+extern llvm::cl::opt<int> HerbieNumPoints;
+extern llvm::cl::opt<int> HerbieNumIters;
+extern llvm::cl::opt<bool> HerbieDisableNumerics;
+extern llvm::cl::opt<bool> HerbieDisableArithmetic;
+extern llvm::cl::opt<bool> HerbieDisableFractions;
+extern llvm::cl::opt<bool> HerbieDisableTaylor;
+extern llvm::cl::opt<bool> HerbieDisableSetupSimplify;
+extern llvm::cl::opt<bool> HerbieDisableGenSimplify;
+extern llvm::cl::opt<bool> HerbieDisableRegime;
+extern llvm::cl::opt<bool> HerbieDisableBranchExpr;
+extern llvm::cl::opt<bool> HerbieDisableAvgError;
+extern llvm::cl::opt<bool> FPOptEnableSolver;
+extern llvm::cl::opt<std::string> FPOptSolverType;
+extern llvm::cl::opt<bool> FPOptStrictMode;
+extern llvm::cl::opt<std::string> FPOptReductionProf;
+extern llvm::cl::opt<std::string> FPOptReductionEval;
+extern llvm::cl::opt<double> FPOptGeoMeanEps;
+extern llvm::cl::opt<bool> FPOptLooseCoverage;
+extern llvm::cl::opt<bool> FPOptShowTable;
+extern llvm::cl::list<int64_t> FPOptShowTableCosts;
+extern llvm::cl::opt<bool> FPOptShowPTDetails;
+extern llvm::cl::opt<int64_t> FPOptComputationCostBudget;
+extern llvm::cl::opt<unsigned> FPOptMaxFPCCDepth;
+extern llvm::cl::opt<unsigned> FPOptMaxExprDepth;
+extern llvm::cl::opt<unsigned> FPOptMaxExprLength;
+extern llvm::cl::opt<unsigned> FPOptRandomSeed;
+extern llvm::cl::opt<unsigned> FPOptNumSamples;
+extern llvm::cl::opt<unsigned> FPOptMaxMPFRPrec;
+extern llvm::cl::opt<double> FPOptWidenRange;
+extern llvm::cl::opt<bool> FPOptEarlyPrune;
+extern llvm::cl::opt<double> FPOptCostDominanceThreshold;
+extern llvm::cl::opt<double> FPOptAccuracyDominanceThreshold;
+
+// LibM functions set
+extern const std::unordered_set<std::string> LibmFuncs;
+
 // Forward declarations
 class FPNode;
 class FPLLValue;
