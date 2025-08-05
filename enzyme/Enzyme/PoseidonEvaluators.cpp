@@ -15,7 +15,6 @@
 
 #include <cmath>
 
-#include "Poseidon.h"
 #include "PoseidonEvaluators.h"
 #include "PoseidonPrecUtils.h"
 #include "PoseidonTypes.h"

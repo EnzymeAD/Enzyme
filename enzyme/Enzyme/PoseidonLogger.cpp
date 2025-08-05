@@ -14,7 +14,6 @@
 #include <fstream>
 #include <regex>
 
-#include "Poseidon.h"
 #include "PoseidonLogger.h"
 #include "PoseidonUtils.h"
 
