@@ -19,11 +19,10 @@
 #include <mpfr.h>
 #include <unordered_map>
 
-using namespace llvm;
+#include "PoseidonPrecUtils.h"
+#include "PoseidonTypes.h"
 
-class FPNode;
-struct PTCandidate;
-enum class PrecisionChangeType;
+using namespace llvm;
 
 class FPEvaluator {
 private:
@@ -67,5 +66,15 @@ public:
                     bool groundTruth);
   mpfr_t &getResult(FPNode *node);
 };
+
+void getFPValues(ArrayRef<FPNode *> outputs,
+                 const MapVector<Value *, double> &inputValues,
+                 SmallVectorImpl<double> &results, PTCandidate *pt = nullptr);
+
+void getMPFRValues(ArrayRef<FPNode *> outputs,
+                   const MapVector<Value *, double> &inputValues,
+                   SmallVectorImpl<double> &results, bool groundTruth,
+                   const unsigned groundTruthPrec = 53,
+                   PTCandidate *pt = nullptr);
 
 #endif // ENZYME_POSEIDON_EVALUATORS_H

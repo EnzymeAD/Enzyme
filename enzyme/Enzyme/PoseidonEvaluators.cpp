@@ -11,11 +11,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PoseidonEvaluators.h"
-#include "Poseidon.h"
-#include "PoseidonNodes.h"
 #include "llvm/Support/raw_ostream.h"
+
 #include <cmath>
+
+#include "Poseidon.h"
+#include "PoseidonEvaluators.h"
+#include "PoseidonPrecUtils.h"
+#include "PoseidonTypes.h"
 
 FPEvaluator::FPEvaluator(PTCandidate *pt) {
   if (pt) {
@@ -831,4 +834,128 @@ void MPFREvaluator::evaluateNode(const FPNode *node,
 mpfr_t &MPFREvaluator::getResult(FPNode *node) {
   assert(cache.count(node) > 0 && "MPFREvaluator: Unexpected unevaluated node");
   return cache.at(node).value;
+}
+
+// Emulate computation using native floating-point types
+void getFPValues(ArrayRef<FPNode *> outputs,
+                 const MapVector<Value *, double> &inputValues,
+                 SmallVectorImpl<double> &results, PTCandidate *pt) {
+  assert(!outputs.empty());
+  results.resize(outputs.size());
+
+  FPEvaluator evaluator(pt);
+
+  for (const auto *output : outputs) {
+    evaluator.evaluateNode(output, inputValues);
+  }
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    results[i] = evaluator.getResult(outputs[i]);
+  }
+}
+
+// If looking for ground truth, compute a "correct" answer with MPFR.
+//   For each sampled input configuration:
+//     0. Ignore `FPNode.dtype`.
+//     1. Compute the expression with MPFR at `prec` precision
+//        by calling `MPFRValueHelper`. When operand is a FPConst, use its
+//        lower bound. When operand is a FPLLValue, get its inputs from
+//        `inputs`.
+//     2. Dynamically extend precisions
+//        until the first `groundTruthPrec` bits of significand don't change.
+// Otherwise, compute the expression with MPFR at precisions specified within
+// `FPNode`s or new precisions specified by `pt`.
+void getMPFRValues(ArrayRef<FPNode *> outputs,
+                   const MapVector<Value *, double> &inputValues,
+                   SmallVectorImpl<double> &results, bool groundTruth,
+                   const unsigned groundTruthPrec, PTCandidate *pt) {
+  assert(!outputs.empty());
+  results.resize(outputs.size());
+
+  if (!groundTruth) {
+    MPFREvaluator evaluator(0, pt);
+    // if (pt) {
+    //   llvm::errs() << "getMPFRValues: PT candidate detected: " << pt->desc
+    //                << "\n";
+    // } else {
+    //   llvm::errs() << "getMPFRValues: emulating original computation\n";
+    // }
+
+    for (const auto *output : outputs) {
+      evaluator.evaluateNode(output, inputValues, false);
+    }
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+    }
+    return;
+  }
+
+  unsigned curPrec = 64;
+  std::vector<mpfr_exp_t> prevResExp(outputs.size(), 0);
+  std::vector<char *> prevResStr(outputs.size(), nullptr);
+  std::vector<int> prevResSign(outputs.size(), 0);
+  std::vector<bool> converged(outputs.size(), false);
+  size_t numConverged = 0;
+
+  while (true) {
+    MPFREvaluator evaluator(curPrec, nullptr);
+
+    // llvm::errs() << "getMPFRValues: computing ground truth with precision "
+    //              << curPrec << "\n";
+
+    for (const auto *output : outputs) {
+      evaluator.evaluateNode(output, inputValues, true);
+    }
+
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      if (converged[i])
+        continue;
+
+      mpfr_t &res = evaluator.getResult(outputs[i]);
+      int resSign = mpfr_sgn(res);
+      mpfr_exp_t resExp;
+      char *resStr =
+          mpfr_get_str(nullptr, &resExp, 2, groundTruthPrec, res, MPFR_RNDN);
+
+      if (prevResStr[i] != nullptr && resSign == prevResSign[i] &&
+          resExp == prevResExp[i] && strcmp(resStr, prevResStr[i]) == 0) {
+        converged[i] = true;
+        numConverged++;
+        mpfr_free_str(resStr);
+        mpfr_free_str(prevResStr[i]);
+        prevResStr[i] = nullptr;
+        continue;
+      }
+
+      if (prevResStr[i]) {
+        mpfr_free_str(prevResStr[i]);
+      }
+      prevResStr[i] = resStr;
+      prevResExp[i] = resExp;
+      prevResSign[i] = resSign;
+    }
+
+    if (numConverged == outputs.size()) {
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+      }
+      break;
+    }
+
+    curPrec *= 2;
+
+    if (curPrec > FPOptMaxMPFRPrec) {
+      llvm::errs() << "getMPFRValues: MPFR precision limit reached for some "
+                      "outputs, returning NaN\n";
+      for (size_t i = 0; i < outputs.size(); ++i) {
+        if (!converged[i]) {
+          mpfr_free_str(prevResStr[i]);
+          results[i] = std::numeric_limits<double>::quiet_NaN();
+        } else {
+          results[i] = mpfr_get_d(evaluator.getResult(outputs[i]), MPFR_RNDN);
+        }
+      }
+      return;
+    }
+  }
 }

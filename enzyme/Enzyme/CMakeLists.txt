@@ -66,7 +66,7 @@ if(ENZYME_ENABLE_FPOPT)
     )
     list(APPEND ENZYME_SRC Poseidon.cpp)
     add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
-    set_source_files_properties(Poseidon.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+    set_source_files_properties(PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
 endif()
 
 

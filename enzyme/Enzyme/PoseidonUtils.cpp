@@ -17,17 +17,12 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
-#include "llvm/Demangle/Demangle.h"
-
-#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
@@ -35,15 +30,11 @@
 
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/InstructionCost.h"
-#include "llvm/Support/JSON.h"
-#include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
 
-#include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -53,7 +44,6 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
-#include <iomanip>
 #include <limits>
 #include <random>
 #include <regex>
@@ -62,16 +52,15 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 
 #include "Poseidon.h"
-#include "Utils.h"
+#include "PoseidonTypes.h"
+#include "PoseidonUtils.h"
 
 // TODO: Move utility functions here:
 // - getCompCost (all overloads)
 // - splitFPCC
 // - collectExprInsts
-// - getHerbieOperator
 // - extractValueFromLog
 // - extractGradFromLog
 // - isLogged
@@ -86,80 +75,8 @@ double getOneULP(double value) {
   return ulp;
 }
 
-unsigned getMPFRPrec(PrecisionChangeType type) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return 8;
-  case PrecisionChangeType::FP16:
-    return 11;
-  case PrecisionChangeType::FP32:
-    return 24;
-  case PrecisionChangeType::FP64:
-    return 53;
-  case PrecisionChangeType::FP80:
-    return 64;
-  case PrecisionChangeType::FP128:
-    return 113;
-  default:
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
 
-Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return Type::getBFloatTy(context);
-  case PrecisionChangeType::FP16:
-    return Type::getHalfTy(context);
-  case PrecisionChangeType::FP32:
-    return Type::getFloatTy(context);
-  case PrecisionChangeType::FP64:
-    return Type::getDoubleTy(context);
-  case PrecisionChangeType::FP80:
-    return Type::getX86_FP80Ty(context);
-  case PrecisionChangeType::FP128:
-    return Type::getFP128Ty(context);
-  default:
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
 
-PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (type->isHalfTy()) {
-    return PrecisionChangeType::BF16;
-  } else if (type->isHalfTy()) {
-    return PrecisionChangeType::FP16;
-  } else if (type->isFloatTy()) {
-    return PrecisionChangeType::FP32;
-  } else if (type->isDoubleTy()) {
-    return PrecisionChangeType::FP64;
-  } else if (type->isX86_FP80Ty()) {
-    return PrecisionChangeType::FP80;
-  } else if (type->isFP128Ty()) {
-    return PrecisionChangeType::FP128;
-  } else {
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
-
-StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return "BF16";
-  case PrecisionChangeType::FP16:
-    return "FP16";
-  case PrecisionChangeType::FP32:
-    return "FP32";
-  case PrecisionChangeType::FP64:
-    return "FP64";
-  case PrecisionChangeType::FP80:
-    return "FP80";
-  case PrecisionChangeType::FP128:
-    return "FP128";
-  default:
-    return "Unknown PT type";
-  }
-}
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   static const std::unordered_set<std::string> libmFunctions = {
@@ -554,4 +471,141 @@ InstructionCost computeMaxCost(
   MaxCost[BB] = totalCost;
   Visited.erase(BB);
   return totalCost;
+}
+
+void getSampledPoints(
+    ArrayRef<Value *> inputs,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
+  std::default_random_engine gen;
+  gen.seed(FPOptRandomSeed);
+  std::uniform_real_distribution<> dis;
+
+  MapVector<Value *, SmallVector<double, 2>> hypercube;
+  for (const auto input : inputs) {
+    const auto node = valueToNodeMap.at(input);
+
+    double lower = node->getLowerBound();
+    double upper = node->getUpperBound();
+
+    hypercube.insert({input, {lower, upper}});
+  }
+
+  // llvm::errs() << "Hypercube:\n";
+  // for (const auto &entry : hypercube) {
+  //   Value *val = entry.first;
+  //   double lower = entry.second[0];
+  //   double upper = entry.second[1];
+  //   llvm::errs() << valueToNodeMap.at(val)->symbol << ": [" << lower << ", "
+  //                << upper << "]\n";
+  // }
+
+  // Sample `FPOptNumSamples` points from the hypercube. Store it in
+  // `sampledPoints`.
+  sampledPoints.clear();
+  sampledPoints.resize(FPOptNumSamples);
+  for (int i = 0; i < FPOptNumSamples; ++i) {
+    MapVector<Value *, double> point;
+    for (const auto &entry : hypercube) {
+      Value *val = entry.first;
+      double lower = entry.second[0];
+      double upper = entry.second[1];
+      double sample = dis(gen, decltype(dis)::param_type{lower, upper});
+      point.insert({val, sample});
+    }
+    sampledPoints[i] = point;
+    // llvm::errs() << "Sample " << i << ":\n";
+    // for (const auto &entry : point) {
+    //   llvm::errs() << valueToNodeMap.at(entry.first)->symbol << ": "
+    //                << entry.second << "\n";
+    // }
+  }
+}
+
+void getSampledPoints(
+    const std::string &expr,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
+  SmallVector<Value *, 4> inputs;
+  for (const auto &argStr : argStrSet) {
+    inputs.push_back(symbolToValueMap.at(argStr));
+  }
+
+  getSampledPoints(inputs, valueToNodeMap, symbolToValueMap, sampledPoints);
+}
+
+InstructionCost getCompCost(Function *F, const TargetTransformInfo &TTI) {
+  std::unordered_map<BasicBlock *, InstructionCost> MaxCost;
+  std::unordered_set<BasicBlock *> Visited;
+
+  BasicBlock *EntryBB = &F->getEntryBlock();
+  InstructionCost TotalCost = computeMaxCost(EntryBB, MaxCost, Visited, TTI);
+  // llvm::errs() << "Total cost: " << TotalCost << "\n";
+  return TotalCost;
+}
+
+// Sum up the cost of `output` and its FP operands recursively up to `inputs`
+// (exclusive).
+InstructionCost getCompCost(const SmallVector<Value *> &outputs,
+                            const SetVector<Value *> &inputs,
+                            const TargetTransformInfo &TTI) {
+  assert(!outputs.empty());
+  SmallPtrSet<Value *, 8> seen;
+  SmallVector<Value *, 8> todo;
+  InstructionCost cost = 0;
+
+  todo.insert(todo.end(), outputs.begin(), outputs.end());
+  while (!todo.empty()) {
+    auto cur = todo.pop_back_val();
+    if (!seen.insert(cur).second)
+      continue;
+
+    if (inputs.contains(cur))
+      continue;
+
+    if (auto *I = dyn_cast<Instruction>(cur)) {
+      // TODO: unfair to ignore branches when calculating cost
+      auto instCost = getInstructionCompCost(I, TTI);
+
+      // if (EnzymePrintFPOpt)
+      //   llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
+
+      // Only add the cost of the instruction if it is not an input
+      cost += instCost;
+
+      auto operands =
+          isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+      for (auto &operand : operands) {
+        todo.push_back(operand);
+      }
+    }
+  }
+
+  return cost;
+}
+
+void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
+                      SmallPtrSetImpl<Instruction *> &exprInsts,
+                      SmallPtrSetImpl<Value *> &visited) {
+  if (!V || inputs.contains(V) || visited.contains(V)) {
+    return;
+  }
+
+  visited.insert(V);
+
+  if (auto *I = dyn_cast<Instruction>(V)) {
+    exprInsts.insert(I);
+
+    auto operands =
+        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+
+    for (auto &op : operands) {
+      collectExprInsts(op, inputs, exprInsts, visited);
+    }
+  }
 }

@@ -11,10 +11,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "PoseidonNodes.h"
-#include "Poseidon.h"
-#include "PoseidonUtils.h"
-
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -29,6 +25,12 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
+
+#include "Poseidon.h"
+#include "PoseidonHerbieUtils.h"
+#include "PoseidonPrecUtils.h"
+#include "PoseidonTypes.h"
+#include "PoseidonUtils.h"
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
 
@@ -595,4 +597,257 @@ Value *FPConst::getLLValue(IRBuilder<> &builder,
 
 bool FPConst::classof(const FPNode *N) {
   return N->getType() == NodeType::Const;
+}
+
+void ApplicableOutput::apply(
+    size_t candidateIndex,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  // 4) parse the output string solution from herbieland
+  // 5) convert into a solution in llvm vals/instructions
+
+  // if (EnzymePrintFPOpt)
+  //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
+  auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
+                                    valueToNodeMap, symbolToValueMap);
+  // if (EnzymePrintFPOpt)
+  //   llvm::errs() << "Parsed Herbie output: "
+  //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
+
+  IRBuilder<> builder(cast<Instruction>(oldOutput)->getParent(),
+                      ++BasicBlock::iterator(cast<Instruction>(oldOutput)));
+  builder.setFastMathFlags(cast<Instruction>(oldOutput)->getFastMathFlags());
+
+  // auto *F = cast<Instruction>(oldOutput)->getParent()->getParent();
+  // llvm::errs() << "Before: " << *F << "\n";
+  Value *newOutput = parsedNode->getLLValue(builder);
+  assert(newOutput && "Failed to get value from parsed node");
+
+  oldOutput->replaceAllUsesWith(newOutput);
+  symbolToValueMap[valueToNodeMap[oldOutput]->symbol] = newOutput;
+  valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+      newOutput, "__no", valueToNodeMap[oldOutput]->dtype);
+
+  for (auto *I : erasableInsts) {
+    if (!I->use_empty())
+      I->replaceAllUsesWith(UndefValue::get(I->getType()));
+    I->eraseFromParent();
+    component->operations.remove(I); // Avoid a second removal
+    cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
+  }
+
+  // llvm::errs() << "After: " << *F << "\n";
+
+  component->outputs_rewritten++;
+}
+
+// Lower is better
+InstructionCost ApplicableOutput::getCompCostDelta(size_t candidateIndex) {
+  InstructionCost erasableCost = 0;
+
+  for (auto *I : erasableInsts) {
+    erasableCost += getInstructionCompCost(I, *TTI);
+  }
+
+  return (candidates[candidateIndex].CompCost - erasableCost) * executions;
+}
+
+void ApplicableOutput::findErasableInstructions() {
+  SmallPtrSet<Value *, 8> visited;
+  SmallPtrSet<Instruction *, 8> exprInsts;
+  collectExprInsts(oldOutput, component->inputs, exprInsts, visited);
+  visited.clear();
+
+  SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
+
+  SmallVector<Instruction *, 8> instsToProcessSorted;
+  topoSort(instsToProcess, instsToProcessSorted);
+
+  // `oldOutput` is trivially erasable
+  erasableInsts.clear();
+  erasableInsts.insert(cast<Instruction>(oldOutput));
+
+  for (auto *I : reverse(instsToProcessSorted)) {
+    if (erasableInsts.contains(I))
+      continue;
+
+    bool usedOutside = false;
+    for (auto user : I->users()) {
+      if (auto *userI = dyn_cast<Instruction>(user)) {
+        if (erasableInsts.contains(userI)) {
+          continue;
+        }
+      }
+      // If the user is not an intruction or the user instruction is not an
+      // erasable instruction, then the current instruction is not erasable
+      // llvm::errs() << "Can't erase " << *I << " because of " << *user <<
+      // "\n";
+      usedOutside = true;
+      break;
+    }
+
+    if (!usedOutside) {
+      erasableInsts.insert(I);
+    }
+  }
+
+  // llvm::errs() << "Erasable instructions:\n";
+  // for (auto *I : erasableInsts) {
+  //   llvm::errs() << *I << "\n";
+  // }
+  // llvm::errs() << "End of erasable instructions\n";
+}
+
+bool ApplicableFPCC::CacheKey::operator==(const CacheKey &other) const {
+  return candidateIndex == other.candidateIndex &&
+         applicableOutputs == other.applicableOutputs;
+}
+
+std::size_t
+ApplicableFPCC::CacheKeyHash::operator()(const CacheKey &key) const {
+  std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
+  for (const auto *ao : key.applicableOutputs) {
+    seed ^= std::hash<const ApplicableOutput *>{}(ao) + 0x9e3779b9 +
+            (seed << 6) + (seed >> 2);
+  }
+  return seed;
+}
+
+void ApplicableFPCC::apply(size_t candidateIndex) {
+  if (candidateIndex >= candidates.size()) {
+    llvm_unreachable("Invalid candidate index");
+  }
+
+  // Traverse all the instructions to be changed precisions in a
+  // topological order with respect to operand dependencies. Insert FP casts
+  // between llvm::Value inputs and first level of instructions to be changed.
+  // Restore precisions of the last level of instructions to be changed.
+  candidates[candidateIndex].apply(*component);
+}
+
+// Lower is better
+InstructionCost ApplicableFPCC::getCompCostDelta(size_t candidateIndex) {
+  // TODO: adjust this based on erasured instructions
+  return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
+}
+
+// Lower is better
+double ApplicableFPCC::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+// Lower is better
+double ApplicableOutput::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+InstructionCost ApplicableFPCC::getAdjustedCompCostDelta(
+    size_t candidateIndex, const SmallVectorImpl<SolutionStep> &steps) {
+  ApplicableOutputSet applicableOutputs;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      if ((*ptr)->component == component) {
+        applicableOutputs.insert(*ptr);
+      }
+    }
+  }
+
+  CacheKey key{candidateIndex, applicableOutputs};
+
+  auto cacheIt = compCostDeltaCache.find(key);
+  if (cacheIt != compCostDeltaCache.end()) {
+    return cacheIt->second;
+  }
+
+  FPCC newComponent = *this->component;
+
+  for (auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      const auto &AO = **ptr;
+      if (AO.component == component) {
+        // Eliminate erasadable instructions from the adjusted ACC
+        newComponent.operations.remove_if(
+            [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
+        newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
+      }
+    }
+  }
+
+  // If all outputs are rewritten, then the adjusted ACC is empty
+  if (newComponent.outputs.empty()) {
+    compCostDeltaCache[key] = 0;
+    return 0;
+  }
+
+  InstructionCost initialCompCost =
+      getCompCost({newComponent.outputs.begin(), newComponent.outputs.end()},
+                  newComponent.inputs, TTI);
+
+  InstructionCost candidateCompCost =
+      getCompCost(newComponent, TTI, candidates[candidateIndex]);
+
+  InstructionCost adjustedCostDelta =
+      (candidateCompCost - initialCompCost) * executions;
+  // llvm::errs() << "Initial cost: " << initialCompCost << "\n";
+  // llvm::errs() << "Candidate cost: " << candidateCompCost << "\n";
+  // llvm::errs() << "Num executions: " << executions << "\n";
+  // llvm::errs() << "Adjusted cost delta: " << adjustedCostDelta << "\n\n";
+
+  compCostDeltaCache[key] = adjustedCostDelta;
+  return adjustedCostDelta;
+}
+
+double ApplicableFPCC::getAdjustedAccCostDelta(
+    size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  ApplicableOutputSet applicableOutputs;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      if ((*ptr)->component == component) {
+        applicableOutputs.insert(*ptr);
+      }
+    }
+  }
+
+  CacheKey key{candidateIndex, applicableOutputs};
+
+  auto cacheIt = accCostDeltaCache.find(key);
+  if (cacheIt != accCostDeltaCache.end()) {
+    return cacheIt->second;
+  }
+
+  double totalCandidateAccCost = 0.0;
+  double totalInitialAccCost = 0.0;
+
+  // Collect erased output nodes
+  SmallPtrSet<FPNode *, 8> stepNodes;
+  for (const auto &step : steps) {
+    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+      const auto &AO = **ptr;
+      if (AO.component == component) {
+        auto it = valueToNodeMap.find(AO.oldOutput);
+        assert(it != valueToNodeMap.end() && it->second);
+        stepNodes.insert(it->second.get());
+      }
+    }
+  }
+
+  // Iterate over all output nodes and sum costs for nodes not erased
+  for (auto &[node, cost] : perOutputInitialAccCost) {
+    if (!stepNodes.count(node)) {
+      totalInitialAccCost += cost;
+    }
+  }
+
+  for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
+    if (!stepNodes.count(node)) {
+      totalCandidateAccCost += cost;
+    }
+  }
+
+  double adjustedAccCostDelta = totalCandidateAccCost - totalInitialAccCost;
+
+  accCostDeltaCache[key] = adjustedAccCostDelta;
+  return adjustedAccCostDelta;
 }
