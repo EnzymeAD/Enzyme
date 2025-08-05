@@ -23,7 +23,6 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
 #include "llvm/Passes/PassBuilder.h"
@@ -57,14 +56,14 @@
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
 
-// TODO: Move utility functions here:
-// - getCompCost (all overloads)
-// - splitFPCC
-// - collectExprInsts
-// - extractValueFromLog
-// - extractGradFromLog
-// - isLogged
-// - getPrecondition
+
+static const std::unordered_set<std::string> LibmFuncs = {
+    "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
+    "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "exp",
+    "log",   "sqrt",  "cbrt",     "pow",   "fabs",   "fma",   "hypot",
+    "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
+    "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
+    "fdim",  "fmod",  "remainder"};
 
 double getOneULP(double value) {
   assert(!std::isnan(value) && !std::isinf(value));
@@ -607,5 +606,97 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
     for (auto &op : operands) {
       collectExprInsts(op, inputs, exprInsts, visited);
     }
+  }
+}
+
+void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
+  std::unordered_map<Instruction *, int> shortestDistances;
+
+  for (auto &op : CC.operations) {
+    shortestDistances[op] = std::numeric_limits<int>::max();
+  }
+
+  // find the shortest distance from inputs to each operation
+  for (auto input : CC.inputs) {
+    if (isa<Constant>(input)) {
+      continue;
+    }
+
+    SmallVector<std::pair<Instruction *, int>, 8> todo;
+    for (auto user : input->users()) {
+      if (auto *I = dyn_cast<Instruction>(user)) {
+        if (CC.operations.count(I))
+          todo.emplace_back(I, 1);
+      }
+    }
+
+    while (!todo.empty()) {
+      auto [cur, dist] = todo.pop_back_val();
+      if (dist < shortestDistances[cur]) {
+        shortestDistances[cur] = dist;
+        for (auto user : cur->users()) {
+          if (auto *I = dyn_cast<Instruction>(user);
+              I && CC.operations.count(I)) {
+            todo.emplace_back(I, dist + 1);
+          }
+        }
+      }
+    }
+  }
+
+  // llvm::errs() << "Shortest distances:\n";
+  // for (auto &[op, dist] : shortestDistances) {
+  //   llvm::errs() << *op << ": " << dist << "\n";
+  // }
+
+  int maxDepth =
+      std::max_element(shortestDistances.begin(), shortestDistances.end(),
+                       [](const auto &lhs, const auto &rhs) {
+                         return lhs.second < rhs.second;
+                       })
+          ->second;
+
+  if (maxDepth <= FPOptMaxFPCCDepth) {
+    newCCs.push_back(CC);
+    return;
+  }
+
+  newCCs.resize(maxDepth / FPOptMaxFPCCDepth + 1);
+
+  // Split `operations` based on the shortest distance
+  for (const auto &[op, dist] : shortestDistances) {
+    newCCs[dist / FPOptMaxFPCCDepth].operations.insert(op);
+  }
+
+  // Reconstruct `inputs` and `outputs` for new components
+  for (auto &newCC : newCCs) {
+    for (auto &op : newCC.operations) {
+      auto operands =
+          isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
+      for (auto &operand : operands) {
+        if (newCC.inputs.count(operand) || isa<Constant>(operand)) {
+          continue;
+        }
+
+        // Original non-Poseidonable operands or Poseidonable intermediate
+        // operations
+        if (CC.inputs.count(operand) ||
+            !newCC.operations.count(cast<Instruction>(operand))) {
+          newCC.inputs.insert(operand);
+        }
+      }
+
+      for (auto user : op->users()) {
+        if (auto *I = dyn_cast<Instruction>(user);
+            I && !newCC.operations.count(I)) {
+          newCC.outputs.insert(op);
+        }
+      }
+    }
+  }
+
+  if (EnzymePrintFPOpt) {
+    llvm::errs() << "Splitting the FPCC into " << newCCs.size()
+                 << " components\n";
   }
 }

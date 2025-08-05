@@ -29,6 +29,8 @@
 
 using namespace llvm;
 
+struct FPCC;
+
 // Utility function declarations
 double getOneULP(double value);
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType);
@@ -60,5 +62,7 @@ InstructionCost getCompCost(const SmallVector<Value *> &outputs,
 void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
                       SmallPtrSetImpl<Instruction *> &exprInsts,
                       SmallPtrSetImpl<Value *> &visited);
+
+void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs);
 
 #endif // ENZYME_POSEIDON_UTILS_H
