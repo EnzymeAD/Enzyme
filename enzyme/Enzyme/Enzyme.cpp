@@ -3333,7 +3333,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
 #ifdef ENZYME_ENABLE_FPOPT
-#include "Poseidon.h"
+#include "Poseidon/Poseidon.h"
 #endif
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"

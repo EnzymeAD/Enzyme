@@ -115,7 +115,7 @@
 #include "CacheUtility.h"
 
 #ifdef ENZYME_ENABLE_FPOPT
-#include "Poseidon.h"
+#include "Poseidon/Poseidon.h"
 #endif
 
 #define addAttribute addAttributeAtIndex

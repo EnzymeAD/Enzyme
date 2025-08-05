@@ -46,7 +46,7 @@
 #include "PoseidonSolvers.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
-#include "Utils.h"
+#include "../Utils.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE
