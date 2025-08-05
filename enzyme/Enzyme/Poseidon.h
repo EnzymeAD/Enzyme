@@ -1,34 +1,13 @@
 #ifndef ENZYME_POSEIDON_H
 #define ENZYME_POSEIDON_H
 
-#include <limits>
-#include <memory>
-#include <set>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <variant>
 
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
-
-#include <mpfr.h>
-
-namespace llvm {
-class FunctionPass;
-class TargetTransformInfo;
-class Function;
-class Module;
-class AnalysisUsage;
-} // namespace llvm
 
 using namespace llvm;
 
@@ -79,9 +58,6 @@ extern llvm::cl::opt<double> FPOptWidenRange;
 extern llvm::cl::opt<bool> FPOptEarlyPrune;
 extern llvm::cl::opt<double> FPOptCostDominanceThreshold;
 extern llvm::cl::opt<double> FPOptAccuracyDominanceThreshold;
-
-
-// Classes
 
 class FPOpt final : public FunctionPass {
 public:
