@@ -234,6 +234,9 @@ public:
     }
     return success();
   }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute val) const { return false; }
 };
 } // namespace
 

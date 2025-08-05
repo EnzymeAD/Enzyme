@@ -51,6 +51,22 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Check if the value with the given type is 0
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isZero",
+      /*args=*/(ins  "::mlir::Value":$val)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Check if the mlir Attribute with the given type is 0.       
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isZeroAttr",
+      /*args=*/(ins  "::mlir::Attribute":$attr)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Returns the type that can contain the adjoint value for this type. If
         `width` is provided, returns the type that can store `width` instances
         of the adjoint.

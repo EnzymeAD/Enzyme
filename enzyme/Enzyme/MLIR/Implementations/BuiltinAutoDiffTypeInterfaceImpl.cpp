@@ -19,6 +19,7 @@
 #include "mlir/IR/BuiltinDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LLVM.h"
 
 using namespace mlir;
@@ -65,9 +66,18 @@ public:
   }
 
   bool isMutable(Type self) const { return false; }
+
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
+  }
+
+  bool isZero(Type self, Value val) const {
+    return matchPattern(val, m_AnyZeroFloat());
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    return matchPattern(attr, m_AnyZeroFloat());
   }
 
   int64_t getApproxSize(Type self) const {
@@ -134,6 +144,39 @@ public:
     return failure();
   }
 
+  bool isZero(Type self, Value val) const {
+    auto tenType = cast<TensorType>(self);
+    auto ET = tenType.getElementType();
+    DenseElementsAttr eAttr;
+
+    if (!matchPattern(val, m_Constant(&eAttr)))
+      return false;
+
+    if (!eAttr.isSplat())
+      return false;
+    // recurse on the individual element type
+    auto splatVal = eAttr.getSplatValue<Attribute>();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+    return ADET && ADET.isZeroAttr(splatVal);
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    auto eAttr = dyn_cast<DenseElementsAttr>(attr);
+    if (!eAttr)
+      return false;
+
+    if (!eAttr.isSplat())
+      return false;
+
+    auto ET = eAttr.getType().getElementType();
+    auto ADET = dyn_cast<AutoDiffTypeInterface>(ET);
+
+    if (!ADET)
+      return false;
+
+    return ADET.isZeroAttr(eAttr.getSplatValue<Attribute>());
+  }
+
   int64_t getApproxSize(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto elType = cast<AutoDiffTypeInterface>(tenType.getElementType());
@@ -179,6 +222,14 @@ public:
     return failure();
   }
 
+  bool isZero(Type self, Value val) const {
+    return matchPattern(val, m_Zero());
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    return matchPattern(attr, m_Zero());
+  }
+
   int64_t getApproxSize(Type self) const {
     return self.getIntOrFloatBitWidth();
   }
@@ -214,6 +265,38 @@ public:
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();
+  }
+
+  bool isZero(Type self, Value val) const {
+    ArrayAttr arrayAttr;
+
+    if (!matchPattern(val, m_Constant(&arrayAttr))) {
+      return false;
+    }
+    // reuse attributr check
+    return this->isZeroAttr(self, arrayAttr);
+  }
+
+  bool isZeroAttr(Type self, Attribute attr) const {
+    auto arrayAttr = dyn_cast<ArrayAttr>(attr);
+    if (!arrayAttr || arrayAttr.size() != 2)
+      return false;
+
+    // get the element type
+    auto compType = cast<ComplexType>(self);
+    auto elType = compType.getElementType();
+    auto eltIntf = dyn_cast<AutoDiffTypeInterface>(elType);
+
+    if (!eltIntf)
+      return false;
+
+    // recurse and accumulate info per attribute
+    for (auto eltAttr : arrayAttr) {
+      if (!eltIntf.isZeroAttr(eltAttr))
+        return false;
+    }
+
+    return true;
   }
 
   int64_t getApproxSize(Type self) const {

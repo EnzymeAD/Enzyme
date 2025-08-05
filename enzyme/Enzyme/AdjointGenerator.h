@@ -2988,6 +2988,18 @@ public:
                   break;
                 if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
                   if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                    if (II->getCalledFunction()->getName() ==
+                        "llvm.enzyme.lifetime_start") {
+                      if (getBaseObject(II->getOperand(1)) == root) {
+                        if (auto CI2 =
+                                dyn_cast<ConstantInt>(II->getOperand(0))) {
+                          if (MCI->getValue().ule(CI2->getValue()))
+                            break;
+                        }
+                      }
+                      cur = cur->getPrevNode();
+                      continue;
+                    }
                     // If the start of the lifetime for more memory than being
                     // memset, its valid.
                     if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
@@ -3709,7 +3721,8 @@ public:
       return;
     }
     if (II.getIntrinsicID() == Intrinsic::stackrestore ||
-        II.getIntrinsicID() == Intrinsic::lifetime_end) {
+        II.getIntrinsicID() == Intrinsic::lifetime_end ||
+        II.getCalledFunction()->getName() == "llvm.enzyme.lifetime_end") {
       eraseIfUnused(II, /*erase*/ true, /*check*/ false);
       return;
     }
@@ -6068,14 +6081,30 @@ public:
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
 
+    StringRef funcName = getFuncNameFromCall(&call);
+
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the
     // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
     // presented with the intrinsic - hence why we are handling it here.
-    if (startsWith(getFuncNameFromCall(&call), ("llvm.intel.subscript"))) {
+    if (startsWith(funcName, ("llvm.intel.subscript"))) {
       assert(isa<IntrinsicInst>(call));
       visitIntrinsicInst(cast<IntrinsicInst>(call));
+      return;
+    }
+
+    if (funcName == "llvm.enzyme.lifetime_start") {
+      visitIntrinsicInst(cast<IntrinsicInst>(call));
+      return;
+    }
+    if (funcName == "llvm.enzyme.lifetime_end") {
+      SmallVector<Value *, 2> orig_ops(call.getNumOperands());
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        orig_ops[i] = call.getOperand(i);
+      }
+      handleAdjointForIntrinsic(Intrinsic::lifetime_end, call, orig_ops);
+      eraseIfUnused(call);
       return;
     }
 
@@ -6107,7 +6136,6 @@ public:
             : overwritten_args_map.find(&call)->second.second;
 
     auto called = getFunctionFromCall(&call);
-    StringRef funcName = getFuncNameFromCall(&call);
 
     bool subretused = false;
     bool shadowReturnUsed = false;

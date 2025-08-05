@@ -870,6 +870,12 @@ void calculateUnusedValuesInFunction(
       },
       [&](const Instruction *inst) {
         if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+          if (II->getCalledFunction()->getName() ==
+                  "llvm.enzyme.lifetime_start" ||
+              II->getCalledFunction()->getName() ==
+                  "llvm.enzyme.lifetime_end") {
+            return UseReq::Cached;
+          }
           if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
               II->getIntrinsicID() == Intrinsic::lifetime_end ||
               II->getIntrinsicID() == Intrinsic::stacksave ||
@@ -6637,7 +6643,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "__assertfail",
                          "__kmpc_global_thread_num",
                          "nlopt_force_stop",
-                         "cudaRuntimeGetVersion"
+                         "cudaRuntimeGetVersion",                         
+                        "llvm.enzyme.lifetime_start",
+                        "llvm.enzyme.lifetime_end",
   };
   // clang-format on
 

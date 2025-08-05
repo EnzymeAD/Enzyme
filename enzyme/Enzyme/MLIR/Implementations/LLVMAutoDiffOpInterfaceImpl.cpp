@@ -68,6 +68,9 @@ public:
     // TODO inspect val and memset corresponding size
     return failure();
   }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 } // namespace
 
