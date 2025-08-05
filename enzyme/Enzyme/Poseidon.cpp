@@ -4047,30 +4047,6 @@ std::string getHerbieOperator(const Instruction &I) {
   }
 }
 
-struct GradInfo {
-  double geoMean;
-  double arithMean;
-  double maxAbs;
-
-  GradInfo() : geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
-};
-
-struct ValueInfo {
-  double minRes;
-  double maxRes;
-  unsigned executions;
-  double geoMean;
-  double arithMean;
-  double maxAbs;
-
-  SmallVector<double, 2> minOperands;
-  SmallVector<double, 2> maxOperands;
-
-  ValueInfo()
-      : minRes(std::numeric_limits<double>::max()),
-        maxRes(std::numeric_limits<double>::lowest()), executions(0),
-        geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
-};
 
 bool extractValueFromLog(const std::string &logPath,
                          const std::string &functionName, size_t blockIdx,

@@ -1,24 +1,24 @@
 #ifndef ENZYME_POSEIDON_H
 #define ENZYME_POSEIDON_H
 
-#include <string>
+#include <functional>
+#include <limits>
 #include <memory>
+#include <set>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
-#include <functional>
-#include <limits>
-#include <set>
 
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/ValueMap.h"
-#include "llvm/IR/InstrTypes.h"
 #include "llvm/Pass.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
@@ -32,7 +32,7 @@ class TargetTransformInfo;
 class Function;
 class Module;
 class AnalysisUsage;
-}
+} // namespace llvm
 
 using namespace llvm;
 
@@ -134,7 +134,8 @@ public:
   unsigned executions;
 
   explicit FPNode(const std::string &op, const std::string &dtype);
-  explicit FPNode(NodeType ntype, const std::string &op, const std::string &dtype);
+  explicit FPNode(NodeType ntype, const std::string &op,
+                  const std::string &dtype);
   virtual ~FPNode() = default;
 
   NodeType getType() const;
@@ -174,7 +175,7 @@ public:
   double getUpperBound() const override;
   Value *getLLValue(IRBuilder<> &builder,
                     const ValueToValueMapTy *VMap = nullptr) override;
-  
+
   static bool classof(const FPNode *N);
 };
 
@@ -195,7 +196,7 @@ public:
   double getUpperBound() const override;
   Value *getLLValue(IRBuilder<> &builder,
                     const ValueToValueMapTy *VMap = nullptr) override;
-  
+
   static bool classof(const FPNode *N);
 };
 
@@ -251,7 +252,8 @@ public:
   unsigned executions = 0;
   const TargetTransformInfo *TTI = nullptr;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost initialCompCost = std::numeric_limits<InstructionCost>::quiet_NaN();
+  InstructionCost initialCompCost =
+      std::numeric_limits<InstructionCost>::quiet_NaN();
   double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
   double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   SmallVector<RewriteCandidate> candidates;
@@ -261,9 +263,10 @@ public:
                             double grad, unsigned executions,
                             const TargetTransformInfo &TTI);
 
-  void apply(size_t candidateIndex,
-             std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-             std::unordered_map<std::string, Value *> &symbolToValueMap);
+  void
+  apply(size_t candidateIndex,
+        std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+        std::unordered_map<std::string, Value *> &symbolToValueMap);
   InstructionCost getCompCostDelta(size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
 
@@ -276,7 +279,8 @@ public:
   FPCC *component;
   const TargetTransformInfo &TTI;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost initialCompCost = std::numeric_limits<InstructionCost>::quiet_NaN();
+  InstructionCost initialCompCost =
+      std::numeric_limits<InstructionCost>::quiet_NaN();
   unsigned executions = 0;
   std::unordered_map<FPNode *, double> perOutputInitialAccCost;
   SmallVector<PTCandidate, 8> candidates;
@@ -292,7 +296,8 @@ public:
     std::size_t operator()(const CacheKey &key) const;
   };
 
-  std::unordered_map<CacheKey, InstructionCost, CacheKeyHash> compCostDeltaCache;
+  std::unordered_map<CacheKey, InstructionCost, CacheKeyHash>
+      compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI);
@@ -300,12 +305,38 @@ public:
   void apply(size_t candidateIndex);
   InstructionCost getCompCostDelta(size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
-  InstructionCost getAdjustedCompCostDelta(size_t candidateIndex,
-                                           const SmallVectorImpl<SolutionStep> &steps);
-  double getAdjustedAccCostDelta(size_t candidateIndex,
-                                 SmallVectorImpl<SolutionStep> &steps,
-                                 std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-                                 std::unordered_map<std::string, Value *> &symbolToValueMap);
+  InstructionCost
+  getAdjustedCompCostDelta(size_t candidateIndex,
+                           const SmallVectorImpl<SolutionStep> &steps);
+  double getAdjustedAccCostDelta(
+      size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
+      std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+      std::unordered_map<std::string, Value *> &symbolToValueMap);
+};
+
+struct GradInfo {
+  double geoMean;
+  double arithMean;
+  double maxAbs;
+
+  GradInfo() : geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
+};
+
+struct ValueInfo {
+  double minRes;
+  double maxRes;
+  unsigned executions;
+  double geoMean;
+  double arithMean;
+  double maxAbs;
+
+  SmallVector<double, 2> minOperands;
+  SmallVector<double, 2> maxOperands;
+
+  ValueInfo()
+      : minRes(std::numeric_limits<double>::max()),
+        maxRes(std::numeric_limits<double>::lowest()), executions(0),
+        geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
 };
 
 class FPOpt final : public FunctionPass {
