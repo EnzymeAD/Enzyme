@@ -19,13 +19,13 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonEvaluators.h"
 #include "PoseidonHerbieUtils.h"
 #include "PoseidonSolvers.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
-#include "../Utils.h"
 
 #include <fstream>
 #include <iomanip>
@@ -35,6 +35,7 @@
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<bool>
     EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
                       cl::desc("Enable Enzyme to print Herbie expressions"));
@@ -79,6 +80,7 @@ cl::opt<bool> HerbieDisableBranchExpr(
 cl::opt<bool> HerbieDisableAvgError(
     "herbie-disable-avg-error", cl::init(false), cl::Hidden,
     cl::desc("Make Herbie choose the candidates with the least maximum error"));
+}
 
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,

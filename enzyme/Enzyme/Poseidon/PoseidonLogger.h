@@ -21,9 +21,11 @@
 
 using namespace llvm;
 
+extern "C" {
 extern llvm::cl::opt<std::string> FPOptLogPath;
 extern llvm::cl::opt<bool> FPOptLooseCoverage;
 extern llvm::cl::opt<double> FPOptWidenRange;
+}
 
 struct GradInfo {
   double geoMean;

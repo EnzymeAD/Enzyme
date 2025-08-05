@@ -39,6 +39,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonHerbieUtils.h"
 #include "PoseidonLogger.h"
@@ -46,7 +47,6 @@
 #include "PoseidonSolvers.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
-#include "../Utils.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE
@@ -63,8 +63,6 @@ cl::opt<bool> EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false),
 cl::opt<bool> FPOptPrintPreproc(
     "fpopt-print-preproc", cl::init(false), cl::Hidden,
     cl::desc("Enable Enzyme to print FPOpt preprocesing info"));
-}
-
 cl::opt<std::string> FPOptTargetFuncRegex(
     "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
     cl::desc("Regex pattern to match target functions in the FPOpt pass"));
@@ -100,6 +98,7 @@ cl::opt<std::string> FPOptReductionEval(
     "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
+}
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.

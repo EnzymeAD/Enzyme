@@ -19,15 +19,16 @@
 #include <string>
 #include <unordered_map>
 
+#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonEvaluators.h"
 #include "PoseidonPrecUtils.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
-#include "../Utils.h"
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<bool> FPOptShowPTDetails(
     "fpopt-show-pt-details", cl::init(false), cl::Hidden,
     cl::desc("Print details of precision tuning candidates along with the DP "
@@ -35,6 +36,7 @@ cl::opt<bool> FPOptShowPTDetails(
 cl::opt<unsigned>
     FPOptMaxMPFRPrec("fpopt-max-mpfr-prec", cl::init(1024), cl::Hidden,
                      cl::desc("Max precision for MPFR gold value computation"));
+}
 
 unsigned getMPFRPrec(PrecisionChangeType type) {
   switch (type) {

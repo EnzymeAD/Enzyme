@@ -25,6 +25,7 @@
 
 using namespace llvm;
 
+extern "C" {
 extern llvm::cl::opt<std::string> FPOptSolverType;
 extern llvm::cl::opt<int64_t> FPOptComputationCostBudget;
 extern llvm::cl::opt<bool> FPOptShowTable;
@@ -32,6 +33,7 @@ extern llvm::cl::list<int64_t> FPOptShowTableCosts;
 extern llvm::cl::opt<bool> FPOptEarlyPrune;
 extern llvm::cl::opt<double> FPOptCostDominanceThreshold;
 extern llvm::cl::opt<double> FPOptAccuracyDominanceThreshold;
+}
 
 bool accuracyGreedySolver(
     SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,

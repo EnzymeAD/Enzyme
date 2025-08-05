@@ -19,6 +19,7 @@
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<std::string>
     FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
                  cl::desc("Which log to use in the FPOpt pass"));
@@ -29,6 +30,7 @@ cl::opt<double>
     FPOptWidenRange("fpopt-widen-range", cl::init(1), cl::Hidden,
                     cl::desc("Ablation study only: widen the range of input "
                              "hypercube by this factor"));
+}
 
 bool extractValueFromLog(const std::string &logPath,
                          const std::string &functionName, size_t blockIdx,

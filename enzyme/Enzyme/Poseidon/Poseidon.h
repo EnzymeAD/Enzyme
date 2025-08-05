@@ -15,8 +15,6 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymeEnableFPOpt;
 extern llvm::cl::opt<bool> EnzymePrintFPOpt;
 extern llvm::cl::opt<bool> FPOptPrintPreproc;
-}
-
 extern llvm::cl::opt<std::string> FPOptTargetFuncRegex;
 extern llvm::cl::opt<bool> FPOptEnableHerbie;
 extern llvm::cl::opt<bool> FPOptEnablePT;
@@ -27,6 +25,7 @@ extern llvm::cl::opt<unsigned> FPOptMaxExprLength;
 extern llvm::cl::opt<std::string> FPOptReductionProf;
 extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
+}
 
 class FPOpt final : public FunctionPass {
 public:

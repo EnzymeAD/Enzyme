@@ -29,8 +29,10 @@
 
 using namespace llvm;
 
+extern "C" {
 extern llvm::cl::opt<bool> FPOptShowPTDetails;
 extern llvm::cl::opt<unsigned> FPOptMaxMPFRPrec;
+}
 
 class FPNode;
 class FPLLValue;

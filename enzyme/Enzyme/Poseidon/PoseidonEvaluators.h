@@ -25,8 +25,10 @@
 
 using namespace llvm;
 
+extern "C" {
 extern llvm::cl::opt<bool> FPOptStrictMode;
 extern llvm::cl::opt<double> FPOptGeoMeanEps;
+}
 
 class FPEvaluator {
 private:

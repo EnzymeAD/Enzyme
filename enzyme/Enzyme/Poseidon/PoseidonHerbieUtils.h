@@ -27,6 +27,7 @@
 
 using namespace llvm;
 
+extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintHerbie;
 extern llvm::cl::opt<int> HerbieNumThreads;
 extern llvm::cl::opt<int> HerbieTimeout;
@@ -41,6 +42,7 @@ extern llvm::cl::opt<bool> HerbieDisableGenSimplify;
 extern llvm::cl::opt<bool> HerbieDisableRegime;
 extern llvm::cl::opt<bool> HerbieDisableBranchExpr;
 extern llvm::cl::opt<bool> HerbieDisableAvgError;
+}
 
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,

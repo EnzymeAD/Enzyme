@@ -21,6 +21,7 @@
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<bool> FPOptStrictMode(
     "fpopt-strict-mode", cl::init(false), cl::Hidden,
     cl::desc(
@@ -30,6 +31,7 @@ cl::opt<double> FPOptGeoMeanEps(
     "fpopt-geo-mean-eps", cl::init(0.0), cl::Hidden,
     cl::desc("The offset used in the geometric mean "
              "calculation; if = 0, zeros are replaced with ULPs"));
+}
 
 FPEvaluator::FPEvaluator(PTCandidate *pt) {
   if (pt) {

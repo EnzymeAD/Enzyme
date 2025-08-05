@@ -58,6 +58,7 @@
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<std::string>
     FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
                        cl::desc("Use a custom cost model in the FPOpt pass"));
@@ -67,6 +68,7 @@ cl::opt<unsigned>
 cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
                     cl::desc("The random seed used in the FPOpt pass"));
+}
 
 static const std::unordered_set<std::string> LibmFuncs = {
     "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",

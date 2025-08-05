@@ -24,6 +24,7 @@
 
 using namespace llvm;
 
+extern "C" {
 cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                      cl::Hidden,
                                      cl::desc("Which solver to use; "
@@ -50,6 +51,7 @@ cl::opt<double> FPOptCostDominanceThreshold(
 cl::opt<double> FPOptAccuracyDominanceThreshold(
     "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
     cl::desc("The threshold for accuracy dominance in DP solver"));
+}
 
 #if LLVM_VERSION_MAJOR >= 21
 #define GET_INSTRUCTION_COST(cost) (cost.getValue())
