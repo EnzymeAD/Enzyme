@@ -76,6 +76,18 @@ if(ENZYME_ENABLE_FPOPT)
     )
     add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
     set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+    
+    add_library(EnzymeFPProfile STATIC
+        Runtimes/FPProfiler/FPProfiler.cpp
+    )
+    target_compile_features(EnzymeFPProfile PRIVATE cxx_std_17)
+    target_include_directories(EnzymeFPProfile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Runtimes/FPProfiler)
+    
+    install(TARGETS EnzymeFPProfile
+        EXPORT EnzymeTargets
+        ARCHIVE DESTINATION lib
+        COMPONENT dev
+    )
 endif()
 
 
