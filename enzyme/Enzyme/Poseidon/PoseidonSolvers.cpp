@@ -105,7 +105,7 @@ bool accuracyGreedySolver(
       AO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
-      if (EnzymePrintFPOpt) {
+      if (FPOptPrint) {
         llvm::errs() << "Greedy solver selected candidate "
                      << bestCandidateIndex << " for " << AO.expr
                      << " with accuracy cost: " << bestAccuracyCost
@@ -149,7 +149,7 @@ bool accuracyGreedySolver(
       ACC.apply(bestCandidateIndex);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
-      if (EnzymePrintFPOpt) {
+      if (FPOptPrint) {
         llvm::errs() << "Greedy solver selected candidate "
                      << bestCandidateIndex << " for "
                      << ACC.candidates[bestCandidateIndex].desc
@@ -308,7 +308,7 @@ bool accuracyDPSolver(
           InstructionCost newCompCost = currCompCost + candCompCost;
           double newAccCost = currAccCost + candAccCost;
 
-          // if (EnzymePrintFPOpt)
+          // if (FPOptPrint)
           //   llvm::errs() << "AO candidate " << i
           //                << " has accuracy cost: " << candAccCost
           //                << " and computation cost: " << candCompCost <<
@@ -320,7 +320,7 @@ bool accuracyDPSolver(
             newCostToAccuracyMap[newCompCost] = newAccCost;
             newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
             newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
-            // if (EnzymePrintFPOpt)
+            // if (FPOptPrint)
             //   llvm::errs() << "Updating accuracy map (AO candidate " << i
             //                << "): computation cost " << newCompCost
             //                << " -> accuracy cost " << newAccCost << "\n";
@@ -354,7 +354,7 @@ bool accuracyDPSolver(
                             GET_INSTRUCTION_COST(otherCompCost)) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
-            // if (EnzymePrintFPOpt)
+            // if (FPOptPrint)
             //   llvm::errs() << "AO candidate with computation cost: "
             //                << currCompCost
             //                << " and accuracy cost: " << currAccCost
@@ -414,7 +414,7 @@ bool accuracyDPSolver(
           InstructionCost newCompCost = currCompCost + candCompCost;
           double newAccCost = currAccCost + candAccCost;
 
-          // if (EnzymePrintFPOpt)
+          // if (FPOptPrint)
           //   llvm::errs() << "ACC candidate " << i << " ("
           //                << candidate.value().desc
           //                << ") has accuracy cost: " << candAccCost
@@ -427,7 +427,7 @@ bool accuracyDPSolver(
             newCostToAccuracyMap[newCompCost] = newAccCost;
             newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
             newCostToSolutionMap[newCompCost].emplace_back(&ACC, i);
-            // if (EnzymePrintFPOpt) {
+            // if (FPOptPrint) {
             // llvm::errs() << "ACC candidate " << i << " ("
             //              << candidate.value().desc
             //              << ") added; has accuracy cost: " << candAccCost
@@ -455,7 +455,7 @@ bool accuracyDPSolver(
                             GET_INSTRUCTION_COST(otherCompCost)) &&
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
-            // if (EnzymePrintFPOpt)
+            // if (FPOptPrint)
             //   llvm::errs() << "ACC candidate with computation cost: "
             //                << currCompCost
             //                << " and accuracy cost: " << currAccCost
@@ -535,7 +535,7 @@ bool accuracyDPSolver(
     }
   }
 
-  if (EnzymePrintFPOpt) {
+  if (FPOptPrint) {
     if (FPOptShowTable) {
       llvm::errs() << "\n*** DP Table ***\n";
       for (const auto &pair : costToAccuracyMap) {

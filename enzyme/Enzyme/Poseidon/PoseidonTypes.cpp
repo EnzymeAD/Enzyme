@@ -495,7 +495,7 @@ void FPLLValue::markAsInput() { input = true; }
 void FPLLValue::updateBounds(double lower, double upper) {
   lb = std::min(lb, lower);
   ub = std::max(ub, upper);
-  if (EnzymePrintFPOpt)
+  if (FPOptPrint)
     llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
                  << "]\n";
 }
@@ -588,7 +588,7 @@ Value *FPConst::getLLValue(IRBuilder<> &builder,
     constantValue = stringToDouble(strValue);
   }
 
-  // if (EnzymePrintFPOpt)
+  // if (FPOptPrint)
   //   llvm::errs() << "Returning " << strValue << " as " << dtype
   //                << " constant: " << constantValue << "\n";
   return ConstantFP::get(Ty, constantValue);
@@ -605,11 +605,11 @@ void ApplicableOutput::apply(
   // 4) parse the output string solution from herbieland
   // 5) convert into a solution in llvm vals/instructions
 
-  // if (EnzymePrintFPOpt)
+  // if (FPOptPrint)
   //   llvm::errs() << "Parsing Herbie output: " << herbieOutput << "\n";
   auto parsedNode = parseHerbieExpr(candidates[candidateIndex].expr,
                                     valueToNodeMap, symbolToValueMap);
-  // if (EnzymePrintFPOpt)
+  // if (FPOptPrint)
   //   llvm::errs() << "Parsed Herbie output: "
   //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 

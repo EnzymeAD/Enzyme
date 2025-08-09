@@ -55,14 +55,11 @@ using namespace llvm;
 #define DEBUG_TYPE "fp-opt"
 
 extern "C" {
-cl::opt<bool> EnzymeEnableFPOpt("enzyme-enable-fpopt", cl::init(false),
-                                cl::Hidden, cl::desc("Run the FPOpt pass"));
-cl::opt<bool> EnzymePrintFPOpt("enzyme-print-fpopt", cl::init(false),
-                               cl::Hidden,
-                               cl::desc("Enable Enzyme to print FPOpt info"));
-cl::opt<bool> FPOptPrintPreproc(
-    "fpopt-print-preproc", cl::init(false), cl::Hidden,
-    cl::desc("Enable Enzyme to print FPOpt preprocesing info"));
+cl::opt<bool>
+    FPOptModulePass("fpopt-module-pass", cl::init(false), cl::Hidden,
+                    cl::desc("Run the FPOpt pass on the entire module"));
+cl::opt<bool> FPOptPrint("fpopt-print", cl::init(false), cl::Hidden,
+                         cl::desc("Print FPOpt debug info"));
 cl::opt<std::string> FPOptTargetFuncRegex(
     "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
     cl::desc("Regex pattern to match target functions in the FPOpt pass"));
@@ -112,7 +109,7 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
 
   std::regex targetFuncRegex(FPOptTargetFuncRegex);
   if (!std::regex_match(demangledName, targetFuncRegex)) {
-    if (EnzymePrintFPOpt)
+    if (FPOptPrint)
       llvm::errs() << "Skipping function: " << demangledName
                    << " (demangled) since it does not match the target regex\n";
     return false;
@@ -120,7 +117,7 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
 
   if (!FPOptLogPath.empty()) {
     if (!isLogged(FPOptLogPath, functionName)) {
-      if (EnzymePrintFPOpt)
+      if (FPOptPrint)
         llvm::errs()
             << "Skipping matched function: " << demangledName
             << " (demangled) since this function is not found in the log\n";
@@ -180,7 +177,7 @@ B2:
       if (!Poseidonable(I)) {
         valueToNodeMap[&I] =
             std::make_shared<FPLLValue>(&I, "__nh", "__nh"); // Non-Poseidonable
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs()
               << "Registered FPLLValue for non-Poseidonable instruction: " << I
               << "\n";
@@ -212,7 +209,7 @@ B2:
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(Arg, "__arg", dtype);
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
                            << "\n";
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
@@ -228,7 +225,7 @@ B2:
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPConst>(value.c_str(), dtype);
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
@@ -238,7 +235,7 @@ B2:
             std::string doubleStr = std::to_string(exponent);
             valueToNodeMap[operand] =
                 std::make_shared<FPConst>(doubleStr.c_str(), dtype);
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant (casted from integer): " << doubleStr
                            << "\n";
@@ -258,7 +255,7 @@ B2:
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(GV, "__gv", dtype);
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << "\n";
           } else {
@@ -278,7 +275,7 @@ B2:
       // Not a Poseidonable instruction, doesn't make sense to create graph node
       // out of.
       if (!Poseidonable(I)) {
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "Skipping non-Poseidonable instruction: " << I
                        << "\n";
         continue;
@@ -286,7 +283,7 @@ B2:
 
       // Instruction is already in a set
       if (component_seen.contains(&I)) {
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "Skipping already seen instruction: " << I << "\n";
         continue;
       }
@@ -314,7 +311,7 @@ B2:
       //   }
       // }
 
-      if (EnzymePrintFPOpt)
+      if (FPOptPrint)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
 
       SmallVector<Value *, 8> todo;
@@ -334,7 +331,7 @@ B2:
         // Don't repeat any instructions we've already seen (to avoid loops
         // for phi nodes)
         if (operation_seen.contains(I2)) {
-          if (EnzymePrintFPOpt)
+          if (FPOptPrint)
             llvm::errs() << "Skipping already seen instruction: " << *I2
                          << "\n";
           continue;
@@ -344,7 +341,7 @@ B2:
         // component.
         assert(!component_seen.contains(cur));
 
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "Insert to operation_seen and component_seen: " << *I2
                        << "\n";
         operation_seen.insert(I2);
@@ -357,7 +354,7 @@ B2:
           auto &operand = operand_.value();
           auto i = operand_.index();
           if (!Poseidonable(*operand)) {
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Non-Poseidonable input found: " << *operand
                            << "\n";
 
@@ -395,14 +392,14 @@ B2:
               auto node = valueToNodeMap[operand];
               node->updateBounds(data.minOperands[i], data.maxOperands[i]);
 
-              if (EnzymePrintFPOpt) {
+              if (FPOptPrint) {
                 llvm::errs() << "Range of " << *operand << " is ["
                              << node->getLowerBound() << ", "
                              << node->getUpperBound() << "]\n";
               }
             }
           } else {
-            if (EnzymePrintFPOpt)
+            if (FPOptPrint)
               llvm::errs() << "Adding operand to todo list: " << *operand
                            << "\n";
             todo.push_back(operand);
@@ -412,11 +409,11 @@ B2:
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
             if (!Poseidonable(*I3)) {
-              if (EnzymePrintFPOpt)
+              if (FPOptPrint)
                 llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
             } else {
-              if (EnzymePrintFPOpt)
+              if (FPOptPrint)
                 llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
               todo.push_back(I3);
             }
@@ -426,7 +423,7 @@ B2:
 
       // Don't bother with graphs without any Poseidonable operations
       if (!operation_seen.empty()) {
-        if (EnzymePrintFPOpt) {
+        if (FPOptPrint) {
           llvm::errs() << "Found a connected component with "
                        << operation_seen.size() << " operations and "
                        << input_seen.size() << " inputs and "
@@ -451,7 +448,7 @@ B2:
 
         // TODO: Further check
         if (operation_seen.size() == 1) {
-          if (EnzymePrintFPOpt)
+          if (FPOptPrint)
             llvm::errs() << "Skipping trivial connected component\n";
           continue;
         }
@@ -507,19 +504,19 @@ B2:
                 node->maxAbs = valueInfo.maxAbs;
                 node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
 
-                if (EnzymePrintFPOpt) {
+                if (FPOptPrint) {
                   llvm::errs()
                       << "Range of " << *op << " is [" << node->getLowerBound()
                       << ", " << node->getUpperBound() << "]\n";
                 }
 
-                if (EnzymePrintFPOpt)
+                if (FPOptPrint)
                   llvm::errs() << "Grad of " << *op << " is: " << node->grad
                                << " (" << FPOptReductionProf << ")\n"
                                << "Execution count of " << *op
                                << " is: " << node->executions << "\n";
               } else { // Unknown bounds
-                if (EnzymePrintFPOpt)
+                if (FPOptPrint)
                   llvm::errs()
                       << "Grad of " << *op
                       << " are not found in the log; using 0 instead\n";
@@ -542,7 +539,7 @@ B2:
   // 2) Make the herbie FP-style expression by
   // converting llvm instructions into herbie string (FPNode ....)
   if (connected_components.empty()) {
-    if (EnzymePrintFPOpt)
+    if (FPOptPrint)
       llvm::errs() << "No Poseidonable connected components found\n";
     return false;
   }
@@ -565,7 +562,7 @@ B2:
           node->symbol = getNextSymbol();
         }
         symbolToValueMap[node->symbol] = input;
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "assigning symbol: " << node->symbol << " to "
                        << *input << "\n";
       }
@@ -699,7 +696,7 @@ B2:
         SetVector<FPLLValue *> opsToChange(operations.begin(),
                                            operations.begin() + numToChange);
 
-        if (EnzymePrintFPOpt && !opsToChange.empty()) {
+        if (FPOptPrint && !opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of Funcs (" << numToChange << ")\n";
         }
@@ -747,7 +744,7 @@ B2:
         SetVector<FPLLValue *> opsToChange(allOperations.begin(),
                                            allOperations.begin() + numToChange);
 
-        if (EnzymePrintFPOpt && !opsToChange.empty()) {
+        if (FPOptPrint && !opsToChange.empty()) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of all operations (" << numToChange << ")\n";
         }
@@ -784,7 +781,7 @@ B2:
   }
 
   // Perform rewrites
-  if (EnzymePrintFPOpt) {
+  if (FPOptPrint) {
     if (FPOptEnableHerbie) {
       for (auto &AO : AOs) {
         llvm::errs() << "\n################################\n";
@@ -860,14 +857,14 @@ B2:
   if (changed) {
     for (auto &component : connected_components) {
       if (component.outputs_rewritten != component.outputs.size()) {
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "Skip erasing a connect component: only rewrote "
                        << component.outputs_rewritten << " of "
                        << component.outputs.size() << " outputs\n";
         continue; // Intermediate operations cannot be erased safely
       }
       for (auto *I : component.operations) {
-        if (EnzymePrintFPOpt)
+        if (FPOptPrint)
           llvm::errs() << "Erasing: " << *I << "\n";
         if (!I->use_empty()) {
           I->replaceAllUsesWith(UndefValue::get(I->getType()));
@@ -879,7 +876,7 @@ B2:
     llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
   }
 
-  if (EnzymePrintFPOpt) {
+  if (FPOptPrint) {
     llvm::errs() << "FPOpt: Finished Optimization\n";
     // F.print(llvm::errs());
   }

@@ -456,7 +456,7 @@ InstructionCost computeMaxCost(
 
     auto instCost = getInstructionCompCost(&I, TTI);
 
-    // if (EnzymePrintFPOpt)
+    // if (FPOptPrint)
     // llvm::errs() << "Cost of " << I << " is: " << instCost << "\n";
 
     BBCost += instCost;
@@ -581,7 +581,7 @@ InstructionCost getCompCost(const SmallVector<Value *> &outputs,
       // TODO: unfair to ignore branches when calculating cost
       auto instCost = getInstructionCompCost(I, TTI);
 
-      // if (EnzymePrintFPOpt)
+      // if (FPOptPrint)
       //   llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
 
       // Only add the cost of the instruction if it is not an input
@@ -705,7 +705,7 @@ void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs) {
     }
   }
 
-  if (EnzymePrintFPOpt) {
+  if (FPOptPrint) {
     llvm::errs() << "Splitting the FPCC into " << newCCs.size()
                  << " components\n";
   }

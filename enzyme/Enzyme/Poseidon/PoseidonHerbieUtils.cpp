@@ -86,7 +86,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  // if (EnzymePrintFPOpt)
+  // if (FPOptPrint)
   //   llvm::errs() << "Parsing: " << expr << "\n";
   std::string trimmedExpr = expr;
   trimmedExpr.erase(0, trimmedExpr.find_first_not_of(" "));
@@ -119,7 +119,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
             "Herbie expr parser: Unexpected constant dtype: " + dtype;
         llvm_unreachable(msg.c_str());
       }
-      // if (EnzymePrintFPOpt)
+      // if (FPOptPrint)
       //   llvm::errs() << "Herbie expr parser: Found __const " << value
       //                << " with dtype " << dtype << "\n";
       return std::make_shared<FPConst>(value, dtype);
@@ -458,7 +458,7 @@ bool improveViaHerbie(
     std::string ErrMsg;
     bool ExecutionFailed = false;
 
-    if (EnzymePrintFPOpt) {
+    if (FPOptPrint) {
       llvm::errs() << "Executing Herbie with arguments: ";
       for (const auto &arg : Args) {
         llvm::errs() << arg << " ";

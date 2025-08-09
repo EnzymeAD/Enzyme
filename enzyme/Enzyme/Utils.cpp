@@ -3802,9 +3802,8 @@ std::string getLogIdentifier(llvm::Instruction &I) {
 #ifdef ENZYME_ENABLE_FPOPT
 void attachFPOptMetadata(llvm::Instruction *After,
                          const llvm::Instruction *Before) {
-  if (FPOptPrintPreproc)
-    llvm::errs() << "(FPOpt Preprocessing) Attaching metadata to associate "
-                 << *Before << " with " << *After << "\n";
+  // llvm::errs() << "(FPOpt Preprocessing) Attaching metadata to associate "
+  //              << *Before << " with " << *After << "\n";
 
   After->setMetadata("enzyme_active", MDNode::get(After->getContext(), {}));
   After->setMetadata(
