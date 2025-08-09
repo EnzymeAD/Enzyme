@@ -3679,7 +3679,7 @@ llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName) {
       return &F;
     }
   }
-  return nullptr; // Return nullptr if no matching function is found
+  return nullptr;
 }
 
 bool Poseidonable(const llvm::Value &V) {

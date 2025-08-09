@@ -3,6 +3,7 @@
 
 #include <string>
 
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Pass.h"
@@ -12,6 +13,7 @@
 using namespace llvm;
 
 extern "C" {
+extern llvm::cl::opt<std::string> EnzymeFPProfileGenerate;
 extern llvm::cl::opt<bool> EnzymeEnableFPOpt;
 extern llvm::cl::opt<bool> EnzymePrintFPOpt;
 extern llvm::cl::opt<bool> FPOptPrintPreproc;
@@ -26,6 +28,8 @@ extern llvm::cl::opt<std::string> FPOptReductionProf;
 extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
 }
+
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI);
 
 class FPOpt final : public FunctionPass {
 public:

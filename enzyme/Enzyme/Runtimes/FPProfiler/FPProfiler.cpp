@@ -271,7 +271,7 @@ static int RegisterFPProfileRuntime() {
   return 0;
 }
 
-extern "C" int ENZYME_FP_PROFILE_RUNTIME_VAR = RegisterFPProfileRuntime();
+extern "C" int ENZYME_FPPROFILE_RUNTIME_VAR = RegisterFPProfileRuntime();
 
 extern "C" {
 

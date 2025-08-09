@@ -87,6 +87,7 @@
 #include "GradientUtils.h"
 #include "InstructionBatcher.h"
 #include "LibraryFuncs.h"
+#include "Poseidon/Poseidon.h"
 #include "TraceGenerator.h"
 #include "Utils.h"
 
@@ -4230,6 +4231,30 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
     assert(augmenteddata->constant_args.size() == key.constant_args.size());
     assert(augmenteddata->constant_args == key.constant_args);
+  }
+
+  if (key.mode == DerivativeMode::ReverseModeCombined &&
+      EnzymeFPProfileGenerate.getNumOccurrences()) {
+    Module *M = key.todiff->getParent();
+    LLVMContext &Ctx = M->getContext();
+
+    Type *CharPtrTy = getInt8PtrTy(Ctx);
+
+    Type *Int32Ty = Type::getInt32Ty(Ctx);
+    M->getOrInsertGlobal("ENZYME_FPPROFILE_RUNTIME_VAR", Int32Ty);
+
+    Type *DoubleTy = Type::getDoubleTy(Ctx);
+    Type *DoublePtrTy = PointerType::getUnqual(DoubleTy);
+    Type *UIntTy = Type::getInt32Ty(Ctx);
+
+    FunctionType *LogValueFT =
+        FunctionType::get(Type::getVoidTy(Ctx),
+                          {CharPtrTy, DoubleTy, UIntTy, DoublePtrTy}, false);
+    M->getOrInsertFunction("enzymeLogValue", LogValueFT);
+
+    FunctionType *LogGradFT =
+        FunctionType::get(Type::getVoidTy(Ctx), {CharPtrTy, DoubleTy}, false);
+    M->getOrInsertFunction("enzymeLogGrad", LogGradFT);
   }
 
   ReturnType retVal =
