@@ -69,6 +69,4 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
                       SmallPtrSetImpl<Instruction *> &exprInsts,
                       SmallPtrSetImpl<Value *> &visited);
 
-void splitFPCC(FPCC &CC, SmallVector<FPCC, 1> &newCCs);
-
 #endif // ENZYME_POSEIDON_UTILS_H

@@ -73,10 +73,6 @@ cl::opt<bool> FPOptEnableSolver(
     "fpopt-enable-solver", cl::init(false), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
-// TODO: Fix this
-cl::opt<unsigned> FPOptMaxFPCCDepth(
-    "fpopt-max-fpcc-depth", cl::init(99999), cl::Hidden,
-    cl::desc("The maximum depth of a floating-point connected component"));
 cl::opt<unsigned> FPOptMaxExprDepth(
     "fpopt-max-expr-depth", cl::init(100), cl::Hidden,
     cl::desc(
@@ -404,18 +400,14 @@ B2:
         }
 
         FPCC origCC{input_seen, output_seen, operation_seen};
-        SmallVector<FPCC, 1> newCCs;
-        splitFPCC(origCC, newCCs);
 
-        for (auto &CC : newCCs) {
-          for (auto *input : CC.inputs) {
-            valueToNodeMap[input]->markAsInput();
-          }
+        // Mark inputs
+        for (auto *input : origCC.inputs) {
+          valueToNodeMap[input]->markAsInput();
         }
 
-        for (auto &CC : newCCs) {
-          // Extract grad and value info for all instructions.
-          for (auto &op : CC.operations) {
+        // Extract grad and value info for all instructions.
+        for (auto &op : origCC.operations) {
             GradInfo grad;
             auto blockIt = std::find_if(
                 op->getFunction()->begin(), op->getFunction()->end(),
@@ -469,10 +461,8 @@ B2:
                              << " are not found in the log; using 0 instead\n";
             }
           }
-        }
 
-        connected_components.insert(connected_components.end(), newCCs.begin(),
-                                    newCCs.end());
+        connected_components.push_back(origCC);
       }
     }
   }

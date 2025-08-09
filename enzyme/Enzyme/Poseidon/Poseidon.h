@@ -19,7 +19,6 @@ extern llvm::cl::opt<bool> FPOptPrint;
 extern llvm::cl::opt<bool> FPOptEnableHerbie;
 extern llvm::cl::opt<bool> FPOptEnablePT;
 extern llvm::cl::opt<bool> FPOptEnableSolver;
-extern llvm::cl::opt<unsigned> FPOptMaxFPCCDepth;
 extern llvm::cl::opt<unsigned> FPOptMaxExprDepth;
 extern llvm::cl::opt<unsigned> FPOptMaxExprLength;
 extern llvm::cl::opt<std::string> FPOptReductionProf;
