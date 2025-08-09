@@ -36,9 +36,6 @@
 using namespace llvm;
 
 extern "C" {
-cl::opt<bool>
-    EnzymePrintHerbie("enzyme-print-herbie", cl::init(false), cl::Hidden,
-                      cl::desc("Enable Enzyme to print Herbie expressions"));
 cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1), cl::Hidden,
                               cl::desc("Number of threads Herbie uses"));
 cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,

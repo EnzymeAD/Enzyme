@@ -28,7 +28,6 @@
 using namespace llvm;
 
 extern "C" {
-extern llvm::cl::opt<bool> EnzymePrintHerbie;
 extern llvm::cl::opt<int> HerbieNumThreads;
 extern llvm::cl::opt<int> HerbieTimeout;
 extern llvm::cl::opt<int> HerbieNumPoints;

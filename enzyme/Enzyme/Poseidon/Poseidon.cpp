@@ -616,7 +616,7 @@ B2:
 
         std::string herbieInput =
             "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
-        if (EnzymePrintHerbie)
+        if (FPOptPrint)
           llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
         if (herbieInput.length() > FPOptMaxExprLength) {
@@ -635,7 +635,7 @@ B2:
         if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
                               valueToNodeMap, symbolToValueMap,
                               componentCounter)) {
-          if (EnzymePrintHerbie)
+          if (FPOptPrint)
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
 
