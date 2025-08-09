@@ -206,7 +206,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
 bool improveViaHerbie(
     const std::vector<std::string> &inputExprs,
-    std::vector<CandidateOutput> &AOs, Module *M,
+    std::vector<CandidateOutput> &COs, Module *M,
     const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
@@ -284,7 +284,7 @@ bool improveViaHerbie(
     BaseArgsList.push_back(BaseArgs);
   }
 
-  std::vector<std::unordered_set<std::string>> seenExprs(AOs.size());
+  std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
   bool success = false;
 
@@ -309,12 +309,12 @@ bool improveViaHerbie(
 
       StringRef ID = test.getString("name").value();
       int index = std::stoi(ID.str());
-      if (index >= AOs.size()) {
-        llvm::errs() << "Invalid AO index: " << index << "\n";
+      if (index >= COs.size()) {
+        llvm::errs() << "Invalid CO index: " << index << "\n";
         continue;
       }
 
-      CandidateOutput &AO = AOs[index];
+      CandidateOutput &CO = COs[index];
       auto &seenExprSet = seenExprs[index];
 
       double bits = test.getNumber("bits").value();
@@ -325,8 +325,8 @@ bool improveViaHerbie(
       double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
       double initialCost = 1.0;
 
-      AO.initialHerbieCost = initialCost;
-      AO.initialHerbieAccuracy = initialAccuracy;
+      CO.initialHerbieCost = initialCost;
+      CO.initialHerbieAccuracy = initialAccuracy;
 
       if (seenExprSet.count(bestExpr.str()) == 0) {
         seenExprSet.insert(bestExpr.str());
@@ -339,9 +339,9 @@ bool improveViaHerbie(
         if (!skipEvaluation) {
           bestCandidate.CompCost = getCompCost(
               bestExpr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-              cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+              cast<Instruction>(CO.oldOutput)->getFastMathFlags());
         }
-        AO.candidates.push_back(bestCandidate);
+        CO.candidates.push_back(bestCandidate);
       }
 
       json::Array &alternatives = *costAccuracy[2].getAsArray();
@@ -363,13 +363,13 @@ bool improveViaHerbie(
         if (!skipEvaluation) {
           candidate.CompCost =
               getCompCost(expr.str(), M, TTI, valueToNodeMap, symbolToValueMap,
-                          cast<Instruction>(AO.oldOutput)->getFastMathFlags());
+                          cast<Instruction>(CO.oldOutput)->getFastMathFlags());
         }
-        AO.candidates.push_back(candidate);
+        CO.candidates.push_back(candidate);
       }
 
       if (!skipEvaluation) {
-        setUnifiedAccuracyCost(AO, valueToNodeMap, symbolToValueMap);
+        setUnifiedAccuracyCost(CO, valueToNodeMap, symbolToValueMap);
       }
     }
     return true;
@@ -603,12 +603,12 @@ std::string getPrecondition(
 }
 
 void setUnifiedAccuracyCost(
-    CandidateOutput &AO,
+    CandidateOutput &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(AO.subgraph->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(CO.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
   SmallVector<double, 4> goldVals;
@@ -619,7 +619,7 @@ void setUnifiedAccuracyCost(
     double sumLog = 0.0;
     unsigned count = 0;
     for (const auto &pair : enumerate(sampledPoints)) {
-      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      std::shared_ptr<FPNode> node = valueToNodeMap[CO.oldOutput];
       SmallVector<double, 1> results;
       getMPFRValues({node.get()}, pair.value(), results, true, 53);
       double goldVal = results[0];
@@ -647,7 +647,7 @@ void setUnifiedAccuracyCost(
     double sum = 0.0;
     unsigned count = 0;
     for (const auto &pair : enumerate(sampledPoints)) {
-      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      std::shared_ptr<FPNode> node = valueToNodeMap[CO.oldOutput];
       SmallVector<double, 1> results;
       getMPFRValues({node.get()}, pair.value(), results, true, 53);
       double goldVal = results[0];
@@ -666,7 +666,7 @@ void setUnifiedAccuracyCost(
   } else if (FPOptReductionEval == "maxabs") {
     double maxErr = 0.0;
     for (const auto &pair : enumerate(sampledPoints)) {
-      std::shared_ptr<FPNode> node = valueToNodeMap[AO.oldOutput];
+      std::shared_ptr<FPNode> node = valueToNodeMap[CO.oldOutput];
       SmallVector<double, 1> results;
       getMPFRValues({node.get()}, pair.value(), results, true, 53);
       double goldVal = results[0];
@@ -683,11 +683,11 @@ void setUnifiedAccuracyCost(
     llvm_unreachable("Unknown fpopt-reduction strategy");
   }
 
-  AO.initialAccCost = origCost * std::fabs(AO.grad);
-  assert(!std::isnan(AO.initialAccCost));
+  CO.initialAccCost = origCost * std::fabs(CO.grad);
+  assert(!std::isnan(CO.initialAccCost));
 
   SmallVector<RewriteCandidate, 4> newCandidates;
-  for (auto &candidate : AO.candidates) {
+  for (auto &candidate : CO.candidates) {
     bool discardCandidate = false;
     double candCost = 0.0;
 
@@ -774,12 +774,12 @@ void setUnifiedAccuracyCost(
     }
 
     if (!discardCandidate) {
-      candidate.accuracyCost = candCost * std::fabs(AO.grad);
+      candidate.accuracyCost = candCost * std::fabs(CO.grad);
       assert(!std::isnan(candidate.accuracyCost));
       newCandidates.push_back(std::move(candidate));
     }
   }
-  AO.candidates = std::move(newCandidates);
+  CO.candidates = std::move(newCandidates);
 }
 
 InstructionCost getCompCost(

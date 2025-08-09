@@ -762,17 +762,17 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
 
   for (auto &step : steps) {
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      const auto &AO = **ptr;
-      if (AO.subgraph == subgraph) {
-        // Eliminate erasadable instructions from the adjusted ACC
+      const auto &CO = **ptr;
+      if (CO.subgraph == subgraph) {
+        // Eliminate erasadable instructions from the adjusted CS
         newSubgraph.operations.remove_if(
-            [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
-        newSubgraph.outputs.remove(cast<Instruction>(AO.oldOutput));
+            [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
+        newSubgraph.outputs.remove(cast<Instruction>(CO.oldOutput));
       }
     }
   }
 
-  // If all outputs are rewritten, then the adjusted ACC is empty
+  // If all outputs are rewritten, then the adjusted CS is empty
   if (newSubgraph.outputs.empty()) {
     compCostDeltaCache[key] = 0;
     return 0;
@@ -823,9 +823,9 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
   SmallPtrSet<FPNode *, 8> stepNodes;
   for (const auto &step : steps) {
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      const auto &AO = **ptr;
-      if (AO.subgraph == subgraph) {
-        auto it = valueToNodeMap.find(AO.oldOutput);
+      const auto &CO = **ptr;
+      if (CO.subgraph == subgraph) {
+        auto it = valueToNodeMap.find(CO.oldOutput);
         assert(it != valueToNodeMap.end() && it->second);
         stepNodes.insert(it->second.get());
       }

@@ -303,7 +303,7 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
         I = cast<Instruction>(VMap->lookup(I));
       }
       if (!operations.contains(I)) {
-        // Already erased by `AO.apply()`.
+        // Already erased by `CO.apply()`.
         continue;
       }
       instsToChange.insert(I);
@@ -375,23 +375,23 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
 }
 
 void setUnifiedAccuracyCost(
-    CandidateSubgraph &ACC,
+    CandidateSubgraph &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(ACC.subgraph->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(CS.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
-  for (auto *output : ACC.subgraph->outputs) {
+  for (auto *output : CS.subgraph->outputs) {
     auto *node = valueToNodeMap[output].get();
     goldVals[node].resize(FPOptNumSamples);
-    ACC.perOutputInitialAccCost[node] = 0.;
+    CS.perOutputInitialAccCost[node] = 0.;
   }
 
   SmallVector<FPNode *, 4> outputs;
-  for (auto *output : ACC.subgraph->outputs)
+  for (auto *output : CS.subgraph->outputs)
     outputs.push_back(valueToNodeMap[output].get());
 
   if (FPOptReductionEval == "geomean") {
@@ -427,13 +427,13 @@ void setUnifiedAccuracyCost(
         }
       }
     }
-    ACC.initialAccCost = 0.0;
+    CS.initialAccCost = 0.0;
     for (auto *node : outputs) {
       RunningAcc &ra = runAcc[node];
       assert(ra.count != 0 && "No valid sample found for original subgraph");
       double red = std::exp(ra.sumLog / ra.count);
-      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
-      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+      CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      CS.initialAccCost += CS.perOutputInitialAccCost[node];
     }
   } else if (FPOptReductionEval == "arithmean") {
     struct RunningAccArith {
@@ -460,13 +460,13 @@ void setUnifiedAccuracyCost(
         }
       }
     }
-    ACC.initialAccCost = 0.0;
+    CS.initialAccCost = 0.0;
     for (auto *node : outputs) {
       auto &ra = runAcc[node];
       assert(ra.count != 0 && "No valid sample found for original subgraph");
       double red = ra.sum / ra.count;
-      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
-      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+      CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      CS.initialAccCost += CS.perOutputInitialAccCost[node];
     }
   } else if (FPOptReductionEval == "maxabs") {
     std::unordered_map<FPNode *, double> runAcc;
@@ -487,19 +487,19 @@ void setUnifiedAccuracyCost(
           runAcc[node] = std::max(runAcc[node], error);
       }
     }
-    ACC.initialAccCost = 0.0;
+    CS.initialAccCost = 0.0;
     for (auto *node : outputs) {
       double red = runAcc[node];
-      ACC.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
-      ACC.initialAccCost += ACC.perOutputInitialAccCost[node];
+      CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+      CS.initialAccCost += CS.perOutputInitialAccCost[node];
     }
   } else {
     llvm_unreachable("Unknown fpopt-reduction strategy");
   }
-  assert(!std::isnan(ACC.initialAccCost));
+  assert(!std::isnan(CS.initialAccCost));
 
   SmallVector<PTCandidate, 4> newCandidates;
-  for (auto &candidate : ACC.candidates) {
+  for (auto &candidate : CS.candidates) {
     bool discardCandidate = false;
     if (FPOptReductionEval == "geomean") {
       struct RunningAcc {
@@ -624,7 +624,7 @@ void setUnifiedAccuracyCost(
       llvm_unreachable("Unknown fpopt-reduction strategy");
     }
   }
-  ACC.candidates = std::move(newCandidates);
+  CS.candidates = std::move(newCandidates);
 }
 
 InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,

@@ -78,7 +78,7 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
                             PTCandidate &pt);
 
 void setUnifiedAccuracyCost(
-    CandidateSubgraph &ACC,
+    CandidateSubgraph &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 

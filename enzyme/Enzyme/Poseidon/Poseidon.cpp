@@ -475,8 +475,8 @@ B2:
     return false;
   }
 
-  SmallVector<CandidateOutput, 4> AOs;
-  SmallVector<CandidateSubgraph, 4> ACCs;
+  SmallVector<CandidateOutput, 4> COs;
+  SmallVector<CandidateSubgraph, 4> CSs;
 
   int subgraphCounter = 0;
 
@@ -499,7 +499,7 @@ B2:
       }
 
       std::vector<std::string> herbieInputs;
-      std::vector<CandidateOutput> newAOs;
+      std::vector<CandidateOutput> newCOs;
       int outputCounter = 0;
 
       assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
@@ -533,7 +533,7 @@ B2:
             getPrecondition(args, valueToNodeMap, symbolToValueMap);
         properties += " :pre " + precondition;
 
-        CandidateOutput AO(subgraph, output, expr, grad, executions, TTI);
+        CandidateOutput CO(subgraph, output, expr, grad, executions, TTI);
         properties += " :name \"" + std::to_string(outputCounter++) + "\"";
 
         std::string argStr;
@@ -557,27 +557,27 @@ B2:
         }
 
         herbieInputs.push_back(herbieInput);
-        newAOs.push_back(AO);
+        newCOs.push_back(CO);
       }
 
       if (!herbieInputs.empty()) {
-        if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
+        if (!improveViaHerbie(herbieInputs, newCOs, F.getParent(), TTI,
                               valueToNodeMap, symbolToValueMap,
                               subgraphCounter)) {
           if (FPOptPrint)
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
 
-        AOs.insert(AOs.end(), newAOs.begin(), newAOs.end());
+        COs.insert(COs.end(), newCOs.begin(), newCOs.end());
       }
     }
 
     if (FPOptEnablePT) {
       // Sort `cs.operations` by the gradient and construct
       // `PrecisionChange`s.
-      CandidateSubgraph ACC(subgraph, TTI);
+      CandidateSubgraph CS(subgraph, TTI);
       auto *o0 = subgraph.outputs[0];
-      ACC.executions = valueToNodeMap[o0]->executions;
+      CS.executions = valueToNodeMap[o0]->executions;
 
       const SmallVector<PrecisionChangeType> precTypes{
           PrecisionChangeType::FP32,
@@ -646,7 +646,7 @@ B2:
             candidate.CompCost = getCompCost(subgraph, TTI, candidate);
           }
 
-          ACC.candidates.push_back(std::move(candidate));
+          CS.candidates.push_back(std::move(candidate));
         }
       }
 
@@ -694,15 +694,15 @@ B2:
             candidate.CompCost = getCompCost(subgraph, TTI, candidate);
           }
 
-          ACC.candidates.push_back(std::move(candidate));
+          CS.candidates.push_back(std::move(candidate));
         }
       }
 
       if (!skipEvaluation) {
-        setUnifiedAccuracyCost(ACC, valueToNodeMap, symbolToValueMap);
+        setUnifiedAccuracyCost(CS, valueToNodeMap, symbolToValueMap);
       }
 
-      ACCs.push_back(std::move(ACC));
+      CSs.push_back(std::move(CS));
     }
     llvm::errs() << "##### Finished synthesizing candidates for "
                  << ++subgraphCounter << " of " << subgraphs.size()
@@ -712,24 +712,24 @@ B2:
   // Perform rewrites
   if (FPOptPrint) {
     if (FPOptEnableHerbie) {
-      for (auto &AO : AOs) {
+      for (auto &CO : COs) {
         llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << AO.initialAccCost << "\n";
-        llvm::errs() << "Initial ComputationCost: " << AO.initialCompCost
+        llvm::errs() << "Initial AccuracyCost: " << CO.initialAccCost << "\n";
+        llvm::errs() << "Initial ComputationCost: " << CO.initialCompCost
                      << "\n";
-        llvm::errs() << "Initial HerbieCost: " << AO.initialHerbieCost << "\n";
-        llvm::errs() << "Initial HerbieAccuracy: " << AO.initialHerbieAccuracy
+        llvm::errs() << "Initial HerbieCost: " << CO.initialHerbieCost << "\n";
+        llvm::errs() << "Initial HerbieAccuracy: " << CO.initialHerbieAccuracy
                      << "\n";
-        llvm::errs() << "Initial Expression: " << AO.expr << "\n";
-        llvm::errs() << "Grad: " << AO.grad << "\n\n";
+        llvm::errs() << "Initial Expression: " << CO.expr << "\n";
+        llvm::errs() << "Grad: " << CO.grad << "\n\n";
         llvm::errs() << "Candidates:\n";
         llvm::errs() << "Δ AccCost\t\tΔ "
                         "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
         llvm::errs() << "--------------------------------\n";
-        for (size_t i = 0; i < AO.candidates.size(); ++i) {
-          auto &candidate = AO.candidates[i];
-          llvm::errs() << AO.getAccCostDelta(i) << "\t\t"
-                       << AO.getCompCostDelta(i) << "\t\t"
+        for (size_t i = 0; i < CO.candidates.size(); ++i) {
+          auto &candidate = CO.candidates[i];
+          llvm::errs() << CO.getAccCostDelta(i) << "\t\t"
+                       << CO.getCompCostDelta(i) << "\t\t"
                        << candidate.herbieCost << "\t\t"
                        << candidate.herbieAccuracy << "\t\t" << candidate.expr
                        << "\n";
@@ -738,18 +738,18 @@ B2:
       }
     }
     if (FPOptEnablePT) {
-      for (auto &ACC : ACCs) {
+      for (auto &CS : CSs) {
         llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << ACC.initialAccCost << "\n";
-        llvm::errs() << "Initial ComputationCost: " << ACC.initialCompCost
+        llvm::errs() << "Initial AccuracyCost: " << CS.initialAccCost << "\n";
+        llvm::errs() << "Initial ComputationCost: " << CS.initialCompCost
                      << "\n";
         llvm::errs() << "Candidates:\n";
         llvm::errs() << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
                      << "---------------------------\n";
-        for (size_t i = 0; i < ACC.candidates.size(); ++i) {
-          auto &candidate = ACC.candidates[i];
-          llvm::errs() << ACC.getAccCostDelta(i) << "\t\t"
-                       << ACC.getCompCostDelta(i) << "\t\t" << candidate.desc
+        for (size_t i = 0; i < CS.candidates.size(); ++i) {
+          auto &candidate = CS.candidates[i];
+          llvm::errs() << CS.getAccCostDelta(i) << "\t\t"
+                       << CS.getCompCostDelta(i) << "\t\t" << candidate.desc
                        << "\n";
         }
         llvm::errs() << "################################\n\n";
@@ -759,17 +759,17 @@ B2:
 
   if (!FPOptEnableSolver) {
     if (FPOptEnableHerbie) {
-      for (auto &AO : AOs) {
-        AO.apply(0, valueToNodeMap, symbolToValueMap);
+      for (auto &CO : COs) {
+        CO.apply(0, valueToNodeMap, symbolToValueMap);
         changed = true;
       }
     }
   } else {
     if (FPOptSolverType == "greedy") {
       changed =
-          accuracyGreedySolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);
+          accuracyGreedySolver(COs, CSs, valueToNodeMap, symbolToValueMap);
     } else if (FPOptSolverType == "dp") {
-      changed = accuracyDPSolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);
+      changed = accuracyDPSolver(COs, CSs, valueToNodeMap, symbolToValueMap);
     } else {
       llvm::errs() << "FPOpt: Unknown solver type: " << FPOptSolverType << "\n";
       return false;

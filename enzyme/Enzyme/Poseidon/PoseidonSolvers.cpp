@@ -62,8 +62,8 @@ cl::opt<double> FPOptAccuracyDominanceThreshold(
 // Given the cost budget `FPOptComputationCostBudget`, we want to minimize the
 // accuracy cost of the rewritten expressions.
 bool accuracyGreedySolver(
-    SmallVector<CandidateOutput, 4> &AOs,
-    SmallVector<CandidateSubgraph, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &COs,
+    SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -72,29 +72,29 @@ bool accuracyGreedySolver(
   InstructionCost totalComputationCost = 0;
 
   SmallVector<size_t, 4> aoIndices;
-  for (size_t i = 0; i < AOs.size(); ++i) {
+  for (size_t i = 0; i < COs.size(); ++i) {
     aoIndices.push_back(i);
   }
   std::mt19937 g(FPOptRandomSeed);
   std::shuffle(aoIndices.begin(), aoIndices.end(), g);
 
   for (size_t idx : aoIndices) {
-    auto &AO = AOs[idx];
+    auto &CO = COs[idx];
     int bestCandidateIndex = -1;
     double bestAccuracyCost = std::numeric_limits<double>::infinity();
     InstructionCost bestCandidateComputationCost;
 
-    for (const auto &candidate : enumerate(AO.candidates)) {
+    for (const auto &candidate : enumerate(CO.candidates)) {
       size_t i = candidate.index();
-      auto candCompCost = AO.getCompCostDelta(i);
-      auto candAccCost = AO.getAccCostDelta(i);
-      // llvm::errs() << "AO Candidate " << i << " for " << AO.expr
+      auto candCompCost = CO.getCompCostDelta(i);
+      auto candAccCost = CO.getAccCostDelta(i);
+      // llvm::errs() << "CO Candidate " << i << " for " << CO.expr
       //              << " has accuracy cost: " << candAccCost
       //              << " and computation cost: " << candCompCost << "\n";
 
       if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
         if (candAccCost < bestAccuracyCost) {
-          // llvm::errs() << "AO Candidate " << i << " selected!\n";
+          // llvm::errs() << "CO Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
           bestAccuracyCost = candAccCost;
           bestCandidateComputationCost = candCompCost;
@@ -103,12 +103,12 @@ bool accuracyGreedySolver(
     }
 
     if (bestCandidateIndex != -1) {
-      AO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
+      CO.apply(bestCandidateIndex, valueToNodeMap, symbolToValueMap);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
       if (FPOptPrint) {
         llvm::errs() << "Greedy solver selected candidate "
-                     << bestCandidateIndex << " for " << AO.expr
+                     << bestCandidateIndex << " for " << CO.expr
                      << " with accuracy cost: " << bestAccuracyCost
                      << " and computation cost: "
                      << bestCandidateComputationCost << "\n";
@@ -117,28 +117,28 @@ bool accuracyGreedySolver(
   }
 
   SmallVector<size_t, 4> accIndices;
-  for (size_t i = 0; i < ACCs.size(); ++i) {
+  for (size_t i = 0; i < CSs.size(); ++i) {
     accIndices.push_back(i);
   }
   std::shuffle(accIndices.begin(), accIndices.end(), g);
 
   for (size_t idx : accIndices) {
-    auto &ACC = ACCs[idx];
+    auto &CS = CSs[idx];
     int bestCandidateIndex = -1;
     double bestAccuracyCost = std::numeric_limits<double>::infinity();
     InstructionCost bestCandidateComputationCost;
 
-    for (const auto &candidate : enumerate(ACC.candidates)) {
+    for (const auto &candidate : enumerate(CS.candidates)) {
       size_t i = candidate.index();
-      auto candCompCost = ACC.getCompCostDelta(i);
-      auto candAccCost = ACC.getAccCostDelta(i);
-      // llvm::errs() << "ACC Candidate " << i << " (" << candidate.value().desc
+      auto candCompCost = CS.getCompCostDelta(i);
+      auto candAccCost = CS.getAccCostDelta(i);
+      // llvm::errs() << "CS Candidate " << i << " (" << candidate.value().desc
       //              << ") has accuracy cost: " << candAccCost
       //              << " and computation cost: " << candCompCost << "\n";
 
       if (totalComputationCost + candCompCost <= FPOptComputationCostBudget) {
         if (candAccCost < bestAccuracyCost) {
-          // llvm::errs() << "ACC Candidate " << i << " selected!\n";
+          // llvm::errs() << "CS Candidate " << i << " selected!\n";
           bestCandidateIndex = i;
           bestAccuracyCost = candAccCost;
           bestCandidateComputationCost = candCompCost;
@@ -147,13 +147,13 @@ bool accuracyGreedySolver(
     }
 
     if (bestCandidateIndex != -1) {
-      ACC.apply(bestCandidateIndex);
+      CS.apply(bestCandidateIndex);
       changed = true;
       totalComputationCost += bestCandidateComputationCost;
       if (FPOptPrint) {
         llvm::errs() << "Greedy solver selected candidate "
                      << bestCandidateIndex << " for "
-                     << ACC.candidates[bestCandidateIndex].desc
+                     << CS.candidates[bestCandidateIndex].desc
                      << " with accuracy cost: " << bestAccuracyCost
                      << " and computation cost: "
                      << bestCandidateComputationCost << "\n";
@@ -169,8 +169,8 @@ bool accuracyGreedySolver(
 }
 
 bool accuracyDPSolver(
-    SmallVector<CandidateOutput, 4> &AOs,
-    SmallVector<CandidateSubgraph, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &COs,
+    SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -245,17 +245,17 @@ bool accuracyDPSolver(
           size_t candidateIndex = stepObj->getInteger("candidateIndex").value();
           size_t itemIndex = stepObj->getInteger("itemIndex").value();
 
-          if (itemType == "AO") {
-            if (itemIndex >= AOs.size()) {
+          if (itemType == "CO") {
+            if (itemIndex >= COs.size()) {
               llvm_unreachable("Invalid CandidateOutput index in cache file.");
             }
-            solutionSteps.emplace_back(&AOs[itemIndex], candidateIndex);
-          } else if (itemType == "ACC") {
-            if (itemIndex >= ACCs.size()) {
+            solutionSteps.emplace_back(&COs[itemIndex], candidateIndex);
+          } else if (itemType == "CS") {
+            if (itemIndex >= CSs.size()) {
               llvm_unreachable(
                   "Invalid CandidateSubgraph index in cache file.");
             }
-            solutionSteps.emplace_back(&ACCs[itemIndex], candidateIndex);
+            solutionSteps.emplace_back(&CSs[itemIndex], candidateIndex);
           } else {
             llvm_unreachable("Invalid itemType in cache file.");
           }
@@ -277,18 +277,18 @@ bool accuracyDPSolver(
     costToSolutionMap[0] = {};
 
     std::unordered_map<CandidateOutput *, size_t> aoPtrToIndex;
-    for (size_t i = 0; i < AOs.size(); ++i) {
-      aoPtrToIndex[&AOs[i]] = i;
+    for (size_t i = 0; i < COs.size(); ++i) {
+      aoPtrToIndex[&COs[i]] = i;
     }
     std::unordered_map<CandidateSubgraph *, size_t> accPtrToIndex;
-    for (size_t i = 0; i < ACCs.size(); ++i) {
-      accPtrToIndex[&ACCs[i]] = i;
+    for (size_t i = 0; i < CSs.size(); ++i) {
+      accPtrToIndex[&CSs[i]] = i;
     }
 
-    int AOCounter = 0;
+    int COCounter = 0;
 
-    for (auto &AO : AOs) {
-      // It is possible to apply zero candidate for an AO.
+    for (auto &CO : COs) {
+      // It is possible to apply zero candidate for an CO.
       // When no candidate is applied, the resulting accuracy cost
       // and solution steps remain the same.
       newCostToAccuracyMap = costToAccuracyMap;
@@ -298,10 +298,10 @@ bool accuracyDPSolver(
         InstructionCost currCompCost = pair.first;
         double currAccCost = pair.second;
 
-        for (const auto &candidate : enumerate(AO.candidates)) {
+        for (const auto &candidate : enumerate(CO.candidates)) {
           size_t i = candidate.index();
-          auto candCompCost = AO.getCompCostDelta(i);
-          auto candAccCost = AO.getAccCostDelta(i);
+          auto candCompCost = CO.getCompCostDelta(i);
+          auto candAccCost = CO.getAccCostDelta(i);
 
           // Don't ever try to apply a strictly useless candidate
           if (candCompCost >= 0 && candAccCost >= 0.) {
@@ -312,7 +312,7 @@ bool accuracyDPSolver(
           double newAccCost = currAccCost + candAccCost;
 
           // if (FPOptPrint)
-          //   llvm::errs() << "AO candidate " << i
+          //   llvm::errs() << "CO candidate " << i
           //                << " has accuracy cost: " << candAccCost
           //                << " and computation cost: " << candCompCost <<
           //                "\n";
@@ -322,22 +322,22 @@ bool accuracyDPSolver(
               newCostToAccuracyMap[newCompCost] > newAccCost) {
             newCostToAccuracyMap[newCompCost] = newAccCost;
             newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
-            newCostToSolutionMap[newCompCost].emplace_back(&AO, i);
+            newCostToSolutionMap[newCompCost].emplace_back(&CO, i);
             // if (FPOptPrint)
-            //   llvm::errs() << "Updating accuracy map (AO candidate " << i
+            //   llvm::errs() << "Updating accuracy map (CO candidate " << i
             //                << "): computation cost " << newCompCost
             //                << " -> accuracy cost " << newAccCost << "\n";
           }
         }
       }
 
-      // TODO: Do not prune AO parts of the DP table since AOs influence ACCs
+      // TODO: Do not prune CO parts of the DP table since COs influence CSs
       if (!FPOptEarlyPrune) {
         costToAccuracyMap = newCostToAccuracyMap;
         costToSolutionMap = newCostToSolutionMap;
 
-        llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
-                     << AOs.size() << " AOs #####\n";
+        llvm::errs() << "##### Finished processing " << ++COCounter << " of "
+                     << COs.size() << " COs #####\n";
         llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
                      << "\n";
         continue;
@@ -358,7 +358,7 @@ bool accuracyDPSolver(
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (FPOptPrint)
-            //   llvm::errs() << "AO candidate with computation cost: "
+            //   llvm::errs() << "CO candidate with computation cost: "
             //                << currCompCost
             //                << " and accuracy cost: " << currAccCost
             //                << " is dominated by candidate with computation
@@ -382,16 +382,16 @@ bool accuracyDPSolver(
       prunedCostToAccuracyMap.clear();
       prunedCostToSolutionMap.clear();
 
-      llvm::errs() << "##### Finished processing " << ++AOCounter << " of "
-                   << AOs.size() << " AOs #####\n";
+      llvm::errs() << "##### Finished processing " << ++COCounter << " of "
+                   << COs.size() << " COs #####\n";
       llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
                    << "\n";
     }
 
-    int ACCCounter = 0;
+    int CSCounter = 0;
 
-    for (auto &ACC : ACCs) {
-      // It is possible to apply zero candidate for an ACC.
+    for (auto &CS : CSs) {
+      // It is possible to apply zero candidate for an CS.
       // When no candidate is applied, the resulting accuracy cost
       // and solution steps remain the same.
       newCostToAccuracyMap = costToAccuracyMap;
@@ -401,13 +401,13 @@ bool accuracyDPSolver(
         InstructionCost currCompCost = pair.first;
         double currAccCost = pair.second;
 
-        for (const auto &candidate : enumerate(ACC.candidates)) {
+        for (const auto &candidate : enumerate(CS.candidates)) {
           size_t i = candidate.index();
           auto candCompCost =
-              ACC.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
+              CS.getAdjustedCompCostDelta(i, costToSolutionMap[currCompCost]);
           auto candAccCost =
-              ACC.getAdjustedAccCostDelta(i, costToSolutionMap[currCompCost],
-                                          valueToNodeMap, symbolToValueMap);
+              CS.getAdjustedAccCostDelta(i, costToSolutionMap[currCompCost],
+                                         valueToNodeMap, symbolToValueMap);
 
           // Don't ever try to apply a strictly useless candidate
           if (candCompCost >= 0 && candAccCost >= 0.) {
@@ -418,7 +418,7 @@ bool accuracyDPSolver(
           double newAccCost = currAccCost + candAccCost;
 
           // if (FPOptPrint)
-          //   llvm::errs() << "ACC candidate " << i << " ("
+          //   llvm::errs() << "CS candidate " << i << " ("
           //                << candidate.value().desc
           //                << ") has accuracy cost: " << candAccCost
           //                << " and computation cost: " << candCompCost <<
@@ -429,14 +429,14 @@ bool accuracyDPSolver(
               newCostToAccuracyMap[newCompCost] > newAccCost) {
             newCostToAccuracyMap[newCompCost] = newAccCost;
             newCostToSolutionMap[newCompCost] = costToSolutionMap[currCompCost];
-            newCostToSolutionMap[newCompCost].emplace_back(&ACC, i);
+            newCostToSolutionMap[newCompCost].emplace_back(&CS, i);
             // if (FPOptPrint) {
-            // llvm::errs() << "ACC candidate " << i << " ("
+            // llvm::errs() << "CS candidate " << i << " ("
             //              << candidate.value().desc
             //              << ") added; has accuracy cost: " << candAccCost
             //              << " and computation cost: " << candCompCost <<
             //              "\n";
-            // llvm::errs() << "Updating accuracy map (ACC candidate " << i
+            // llvm::errs() << "Updating accuracy map (CS candidate " << i
             //              << "): computation cost " << newCompCost
             //              << " -> accuracy cost " << newAccCost << "\n";
             // }
@@ -459,7 +459,7 @@ bool accuracyDPSolver(
               currAccCost - otherAccCost >=
                   std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
             // if (FPOptPrint)
-            //   llvm::errs() << "ACC candidate with computation cost: "
+            //   llvm::errs() << "CS candidate with computation cost: "
             //                << currCompCost
             //                << " and accuracy cost: " << currAccCost
             //                << " is dominated by candidate with computation
@@ -483,8 +483,8 @@ bool accuracyDPSolver(
       prunedCostToAccuracyMap.clear();
       prunedCostToSolutionMap.clear();
 
-      llvm::errs() << "##### Finished processing " << ++ACCCounter << " of "
-                   << ACCs.size() << " ACCs #####\n";
+      llvm::errs() << "##### Finished processing " << ++CSCounter << " of "
+                   << CSs.size() << " CSs #####\n";
       llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
                    << "\n";
     }
@@ -509,11 +509,11 @@ bool accuracyDPSolver(
             [&](auto *item) {
               using T = std::decay_t<decltype(*item)>;
               if constexpr (std::is_same_v<T, CandidateOutput>) {
-                stepObj["itemType"] = "AO";
+                stepObj["itemType"] = "CO";
                 size_t index = aoPtrToIndex[item];
                 stepObj["itemIndex"] = static_cast<int64_t>(index);
               } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-                stepObj["itemType"] = "ACC";
+                stepObj["itemType"] = "CS";
                 size_t index = accPtrToIndex[item];
                 stepObj["itemIndex"] = static_cast<int64_t>(index);
               }
@@ -566,7 +566,7 @@ bool accuracyDPSolver(
                       << ")-> " << item->candidates[step.candidateIndex].expr
                       << "\n";
                 } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-                  llvm::errs() << "\t\tACC: "
+                  llvm::errs() << "\t\tCS: "
                                << item->candidates[step.candidateIndex].desc
                                << " (#" << step.candidateIndex << ")\n";
                   if (FPOptShowPTDetails) {
@@ -623,12 +623,12 @@ bool accuracyDPSolver(
                << " entries.\n";
 
   double totalCandidateCompositions = 1.0;
-  for (const auto &AO : AOs) {
+  for (const auto &CO : COs) {
     // +1 for the "do nothing" possibility
-    totalCandidateCompositions *= AO.candidates.size() + 1;
+    totalCandidateCompositions *= CO.candidates.size() + 1;
   }
-  for (const auto &ACC : ACCs) {
-    totalCandidateCompositions *= ACC.candidates.size() + 1;
+  for (const auto &CS : CSs) {
+    totalCandidateCompositions *= CS.candidates.size() + 1;
   }
   llvm::errs() << "Total candidate compositions: " << totalCandidateCompositions
                << "\n";
@@ -676,7 +676,7 @@ bool accuracyDPSolver(
             item->apply(solution.candidateIndex, valueToNodeMap,
                         symbolToValueMap);
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-            llvm::errs() << "Applying solution for ACC: "
+            llvm::errs() << "Applying solution for CS: "
                          << item->candidates[solution.candidateIndex].desc
                          << " (#" << solution.candidateIndex << ")\n";
             item->apply(solution.candidateIndex);
