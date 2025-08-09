@@ -13,10 +13,9 @@
 using namespace llvm;
 
 extern "C" {
-extern llvm::cl::opt<std::string> EnzymeFPProfileGenerate;
-extern llvm::cl::opt<bool> FPOptModulePass;
+extern llvm::cl::opt<bool> FPProfileGenerate;
+extern llvm::cl::opt<std::string> FPProfileUse;
 extern llvm::cl::opt<bool> FPOptPrint;
-extern llvm::cl::opt<std::string> FPOptTargetFuncRegex;
 extern llvm::cl::opt<bool> FPOptEnableHerbie;
 extern llvm::cl::opt<bool> FPOptEnablePT;
 extern llvm::cl::opt<bool> FPOptEnableSolver;

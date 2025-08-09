@@ -8,8 +8,6 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
-#include "llvm/Demangle/Demangle.h"
-
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -33,7 +31,6 @@
 #include <cerrno>
 #include <cmath>
 #include <cstring>
-#include <regex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -55,14 +52,14 @@ using namespace llvm;
 #define DEBUG_TYPE "fp-opt"
 
 extern "C" {
-cl::opt<bool>
-    FPOptModulePass("fpopt-module-pass", cl::init(false), cl::Hidden,
-                    cl::desc("Run the FPOpt pass on the entire module"));
+cl::opt<bool> FPProfileGenerate(
+    "fpprofile-generate", cl::init(false), cl::Hidden,
+    cl::desc("Generate instrumented program for FP profiling"));
+cl::opt<std::string> FPProfileUse(
+    "fpprofile-use", cl::init(""), cl::Hidden,
+    cl::desc("FP profile directory to read from for FP optimization"));
 cl::opt<bool> FPOptPrint("fpopt-print", cl::init(false), cl::Hidden,
                          cl::desc("Print FPOpt debug info"));
-cl::opt<std::string> FPOptTargetFuncRegex(
-    "fpopt-target-func-regex", cl::init(".*"), cl::Hidden,
-    cl::desc("Regex pattern to match target functions in the FPOpt pass"));
 cl::opt<bool> FPOptEnableHerbie(
     "fpopt-enable-herbie", cl::init(true), cl::Hidden,
     cl::desc("Use Herbie to rewrite floating-point expressions"));
@@ -101,29 +98,8 @@ cl::opt<std::string> FPOptReductionEval(
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
   const std::string functionName = F.getName().str();
-  std::string demangledName = llvm::demangle(functionName);
-  size_t pos = demangledName.find('(');
-  if (pos != std::string::npos) {
-    demangledName = demangledName.substr(0, pos);
-  }
-
-  std::regex targetFuncRegex(FPOptTargetFuncRegex);
-  if (!std::regex_match(demangledName, targetFuncRegex)) {
-    if (FPOptPrint)
-      llvm::errs() << "Skipping function: " << demangledName
-                   << " (demangled) since it does not match the target regex\n";
-    return false;
-  }
-
-  if (!FPOptLogPath.empty()) {
-    if (!isLogged(FPOptLogPath, functionName)) {
-      if (FPOptPrint)
-        llvm::errs()
-            << "Skipping matched function: " << demangledName
-            << " (demangled) since this function is not found in the log\n";
-      return false;
-    }
-  }
+  std::string profilePath =
+      (FPProfileUse + "/" + F.getName() + ".fpprofile").str();
 
   if (!FPOptCachePath.empty()) {
     if (auto EC = llvm::sys::fs::create_directories(FPOptCachePath, true))
@@ -288,29 +264,6 @@ B2:
         continue;
       }
 
-      // if (!FPOptLogPath.empty()) {
-      //   auto node = valueToNodeMap[&I];
-      //   ValueInfo valueInfo;
-      //   auto blockIt = std::find_if(
-      //       I.getFunction()->begin(), I.getFunction()->end(),
-      //       [&](const auto &block) { return &block == I.getParent(); });
-      //   assert(blockIt != I.getFunction()->end() && "Block not found");
-      //   size_t blockIdx = std::distance(I.getFunction()->begin(), blockIt);
-      //   auto instIt =
-      //       std::find_if(I.getParent()->begin(), I.getParent()->end(),
-      //                    [&](const auto &curr) { return &curr == &I; });
-      //   assert(instIt != I.getParent()->end() && "Instruction not found");
-      //   size_t instIdx = std::distance(I.getParent()->begin(), instIt);
-
-      //   bool found = extractValueFromLog(FPOptLogPath, functionName,
-      //   blockIdx,
-      //                                    instIdx, valueInfo);
-      //   if (!found) {
-      //     llvm::errs() << "Instruction " << I << " has no execution
-      //     logged!\n"; continue;
-      //   }
-      // }
-
       if (FPOptPrint)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
 
@@ -363,40 +316,37 @@ B2:
               input_seen.insert(operand);
 
             // look up error log to get bounds of non-Poseidonable inputs
-            if (!FPOptLogPath.empty()) {
-              ValueInfo data;
-              auto blockIt = std::find_if(
-                  I2->getFunction()->begin(), I2->getFunction()->end(),
-                  [&](const auto &block) { return &block == I2->getParent(); });
-              assert(blockIt != I2->getFunction()->end() && "Block not found");
-              size_t blockIdx =
-                  std::distance(I2->getFunction()->begin(), blockIt);
-              auto instIt =
-                  std::find_if(I2->getParent()->begin(), I2->getParent()->end(),
-                               [&](const auto &curr) { return &curr == I2; });
-              assert(instIt != I2->getParent()->end() &&
-                     "Instruction not found");
-              size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
+            ValueInfo data;
+            auto blockIt = std::find_if(
+                I2->getFunction()->begin(), I2->getFunction()->end(),
+                [&](const auto &block) { return &block == I2->getParent(); });
+            assert(blockIt != I2->getFunction()->end() && "Block not found");
+            size_t blockIdx =
+                std::distance(I2->getFunction()->begin(), blockIt);
+            auto instIt =
+                std::find_if(I2->getParent()->begin(), I2->getParent()->end(),
+                             [&](const auto &curr) { return &curr == I2; });
+            assert(instIt != I2->getParent()->end() && "Instruction not found");
+            size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
-              bool res = extractValueFromLog(FPOptLogPath, functionName,
-                                             blockIdx, instIdx, data);
-              if (!res) {
-                if (FPOptLooseCoverage)
-                  continue;
-                llvm::errs() << "FP Instruction " << *I2
-                             << " has no execution logged!\n";
-                llvm_unreachable(
-                    "Unexecuted instruction found; set -fpopt-loose-coverage "
-                    "to suppress this error\n");
-              }
-              auto node = valueToNodeMap[operand];
-              node->updateBounds(data.minOperands[i], data.maxOperands[i]);
+            bool res = extractValueFromLog(profilePath, functionName, blockIdx,
+                                           instIdx, data);
+            if (!res) {
+              if (FPOptLooseCoverage)
+                continue;
+              llvm::errs() << "FP Instruction " << *I2
+                           << " has no execution logged!\n";
+              llvm_unreachable(
+                  "Unexecuted instruction found; set -fpopt-loose-coverage "
+                  "to suppress this error\n");
+            }
+            auto node = valueToNodeMap[operand];
+            node->updateBounds(data.minOperands[i], data.maxOperands[i]);
 
-              if (FPOptPrint) {
-                llvm::errs() << "Range of " << *operand << " is ["
-                             << node->getLowerBound() << ", "
-                             << node->getUpperBound() << "]\n";
-              }
+            if (FPOptPrint) {
+              llvm::errs() << "Range of " << *operand << " is ["
+                           << node->getLowerBound() << ", "
+                           << node->getUpperBound() << "]\n";
             }
           } else {
             if (FPOptPrint)
@@ -463,64 +413,60 @@ B2:
           }
         }
 
-        if (!FPOptLogPath.empty()) {
-          for (auto &CC : newCCs) {
-            // Extract grad and value info for all instructions.
-            for (auto &op : CC.operations) {
-              GradInfo grad;
-              auto blockIt = std::find_if(
-                  op->getFunction()->begin(), op->getFunction()->end(),
-                  [&](const auto &block) { return &block == op->getParent(); });
-              assert(blockIt != op->getFunction()->end() && "Block not found");
-              size_t blockIdx =
-                  std::distance(op->getFunction()->begin(), blockIt);
-              auto instIt =
-                  std::find_if(op->getParent()->begin(), op->getParent()->end(),
-                               [&](const auto &curr) { return &curr == op; });
-              assert(instIt != op->getParent()->end() &&
-                     "Instruction not found");
-              size_t instIdx = std::distance(op->getParent()->begin(), instIt);
-              bool found = extractGradFromLog(FPOptLogPath, functionName,
-                                              blockIdx, instIdx, grad);
+        for (auto &CC : newCCs) {
+          // Extract grad and value info for all instructions.
+          for (auto &op : CC.operations) {
+            GradInfo grad;
+            auto blockIt = std::find_if(
+                op->getFunction()->begin(), op->getFunction()->end(),
+                [&](const auto &block) { return &block == op->getParent(); });
+            assert(blockIt != op->getFunction()->end() && "Block not found");
+            size_t blockIdx =
+                std::distance(op->getFunction()->begin(), blockIt);
+            auto instIt =
+                std::find_if(op->getParent()->begin(), op->getParent()->end(),
+                             [&](const auto &curr) { return &curr == op; });
+            assert(instIt != op->getParent()->end() && "Instruction not found");
+            size_t instIdx = std::distance(op->getParent()->begin(), instIt);
+            bool found = extractGradFromLog(profilePath, functionName, blockIdx,
+                                            instIdx, grad);
 
-              auto node = valueToNodeMap[op];
-              if (FPOptReductionProf == "geomean") {
-                node->grad = grad.geoMean;
-              } else if (FPOptReductionProf == "arithmean") {
-                node->grad = grad.arithMean;
-              } else if (FPOptReductionProf == "maxabs") {
-                node->grad = grad.maxAbs;
-              } else {
-                llvm_unreachable("Unknown FPOpt reduction type");
+            auto node = valueToNodeMap[op];
+            if (FPOptReductionProf == "geomean") {
+              node->grad = grad.geoMean;
+            } else if (FPOptReductionProf == "arithmean") {
+              node->grad = grad.arithMean;
+            } else if (FPOptReductionProf == "maxabs") {
+              node->grad = grad.maxAbs;
+            } else {
+              llvm_unreachable("Unknown FPOpt reduction type");
+            }
+
+            if (found) {
+              ValueInfo valueInfo;
+              extractValueFromLog(profilePath, functionName, blockIdx, instIdx,
+                                  valueInfo);
+              node->executions = valueInfo.executions;
+              node->geoMean = valueInfo.geoMean;
+              node->arithMean = valueInfo.arithMean;
+              node->maxAbs = valueInfo.maxAbs;
+              node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
+
+              if (FPOptPrint) {
+                llvm::errs()
+                    << "Range of " << *op << " is [" << node->getLowerBound()
+                    << ", " << node->getUpperBound() << "]\n";
               }
 
-              if (found) {
-                ValueInfo valueInfo;
-                extractValueFromLog(FPOptLogPath, functionName, blockIdx,
-                                    instIdx, valueInfo);
-                node->executions = valueInfo.executions;
-                node->geoMean = valueInfo.geoMean;
-                node->arithMean = valueInfo.arithMean;
-                node->maxAbs = valueInfo.maxAbs;
-                node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
-
-                if (FPOptPrint) {
-                  llvm::errs()
-                      << "Range of " << *op << " is [" << node->getLowerBound()
-                      << ", " << node->getUpperBound() << "]\n";
-                }
-
-                if (FPOptPrint)
-                  llvm::errs() << "Grad of " << *op << " is: " << node->grad
-                               << " (" << FPOptReductionProf << ")\n"
-                               << "Execution count of " << *op
-                               << " is: " << node->executions << "\n";
-              } else { // Unknown bounds
-                if (FPOptPrint)
-                  llvm::errs()
-                      << "Grad of " << *op
-                      << " are not found in the log; using 0 instead\n";
-              }
+              if (FPOptPrint)
+                llvm::errs() << "Grad of " << *op << " is: " << node->grad
+                             << " (" << FPOptReductionProf << ")\n"
+                             << "Execution count of " << *op
+                             << " is: " << node->executions << "\n";
+            } else { // Unknown bounds
+              if (FPOptPrint)
+                llvm::errs() << "Grad of " << *op
+                             << " are not found in the log; using 0 instead\n";
             }
           }
         }
@@ -578,7 +524,7 @@ B2:
         unsigned executions = valueToNodeMap[output]->executions;
 
         // TODO: For now just skip if grad is 0
-        if (!FPOptLogPath.empty() && grad == 0.) {
+        if (grad == 0.) {
           llvm::errs() << "Skipping algebraic rewriting for " << *output
                        << " since gradient is 0\n";
           continue;
@@ -598,11 +544,9 @@ B2:
           llvm_unreachable("Unexpected dtype");
         }
 
-        if (!FPOptLogPath.empty()) {
-          std::string precondition =
-              getPrecondition(args, valueToNodeMap, symbolToValueMap);
-          properties += " :pre " + precondition;
-        }
+        std::string precondition =
+            getPrecondition(args, valueToNodeMap, symbolToValueMap);
+        properties += " :pre " + precondition;
 
         ApplicableOutput AO(component, output, expr, grad, executions, TTI);
         properties += " :name \"" + std::to_string(outputCounter++) + "\"";
@@ -836,10 +780,6 @@ B2:
       }
     }
   } else {
-    if (FPOptLogPath.empty()) {
-      llvm::errs() << "FPOpt: Solver enabled but no log file is provided\n";
-      return false;
-    }
     if (FPOptSolverType == "greedy") {
       changed =
           accuracyGreedySolver(AOs, ACCs, valueToNodeMap, symbolToValueMap);

@@ -20,9 +20,6 @@
 using namespace llvm;
 
 extern "C" {
-cl::opt<std::string>
-    FPOptLogPath("fpopt-log-path", cl::init(""), cl::Hidden,
-                 cl::desc("Which log to use in the FPOpt pass"));
 cl::opt<bool> FPOptLooseCoverage(
     "fpopt-loose-coverage", cl::init(false), cl::Hidden,
     cl::desc("Allow unexecuted FP instructions in subgraph indentification"));

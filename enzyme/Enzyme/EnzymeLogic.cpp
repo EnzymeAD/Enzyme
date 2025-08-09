@@ -4233,8 +4233,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
-  if (key.mode == DerivativeMode::ReverseModeCombined &&
-      EnzymeFPProfileGenerate.getNumOccurrences()) {
+  if (key.mode == DerivativeMode::ReverseModeCombined && FPProfileGenerate) {
     Module *M = key.todiff->getParent();
     LLVMContext &Ctx = M->getContext();
 
