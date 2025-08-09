@@ -35,7 +35,7 @@ extern llvm::cl::opt<unsigned> FPOptNumSamples;
 extern llvm::cl::opt<unsigned> FPOptRandomSeed;
 }
 
-struct FPCC;
+struct Subgraph;
 
 // Utility function declarations
 double getOneULP(double value);

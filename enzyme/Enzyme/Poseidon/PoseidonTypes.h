@@ -124,15 +124,15 @@ public:
   static bool classof(const FPNode *N);
 };
 
-struct FPCC {
+struct Subgraph {
   SetVector<Value *> inputs;
   SetVector<Instruction *> outputs;
   SetVector<Instruction *> operations;
   size_t outputs_rewritten = 0;
 
-  FPCC() = default;
-  explicit FPCC(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
-                SetVector<Instruction *> operations)
+  Subgraph() = default;
+  explicit Subgraph(SetVector<Value *> inputs, SetVector<Instruction *> outputs,
+                    SetVector<Instruction *> operations)
       : inputs(inputs), outputs(outputs), operations(operations) {}
 };
 
@@ -149,9 +149,9 @@ struct RewriteCandidate {
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 };
 
-class ApplicableOutput {
+class CandidateOutput {
 public:
-  FPCC *component;
+  Subgraph *subgraph;
   Value *oldOutput;
   std::string expr;
   double grad = std::numeric_limits<double>::quiet_NaN();
@@ -165,12 +165,12 @@ public:
   SmallVector<RewriteCandidate> candidates;
   SmallPtrSet<Instruction *, 8> erasableInsts;
 
-  explicit ApplicableOutput(FPCC &component, Value *oldOutput, std::string expr,
-                            double grad, unsigned executions,
-                            const TargetTransformInfo &TTI)
-      : component(&component), oldOutput(oldOutput), expr(expr), grad(grad),
+  explicit CandidateOutput(Subgraph &subgraph, Value *oldOutput,
+                           std::string expr, double grad, unsigned executions,
+                           const TargetTransformInfo &TTI)
+      : subgraph(&subgraph), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions), TTI(&TTI) {
-    initialCompCost = getCompCost({oldOutput}, component.inputs, TTI);
+    initialCompCost = getCompCost({oldOutput}, subgraph.inputs, TTI);
     findErasableInstructions();
   }
 
@@ -185,9 +185,9 @@ private:
   void findErasableInstructions();
 };
 
-class ApplicableFPCC {
+class CandidateSubgraph {
 public:
-  FPCC *component;
+  Subgraph *subgraph;
   const TargetTransformInfo &TTI;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
   InstructionCost initialCompCost =
@@ -196,10 +196,10 @@ public:
   std::unordered_map<FPNode *, double> perOutputInitialAccCost;
   SmallVector<PTCandidate, 8> candidates;
 
-  using ApplicableOutputSet = std::set<ApplicableOutput *>;
+  using CandidateOutputSet = std::set<CandidateOutput *>;
   struct CacheKey {
     size_t candidateIndex;
-    ApplicableOutputSet applicableOutputs;
+    CandidateOutputSet CandidateOutputs;
     bool operator==(const CacheKey &other) const;
   };
 
@@ -211,11 +211,11 @@ public:
       compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
-  explicit ApplicableFPCC(FPCC &fpcc, const TargetTransformInfo &TTI)
-      : component(&fpcc), TTI(TTI) {
+  explicit CandidateSubgraph(Subgraph &subgraph, const TargetTransformInfo &TTI)
+      : subgraph(&subgraph), TTI(TTI) {
     initialCompCost =
-        getCompCost({component->outputs.begin(), component->outputs.end()},
-                    component->inputs, TTI);
+        getCompCost({subgraph.outputs.begin(), subgraph.outputs.end()},
+                    subgraph.inputs, TTI);
   }
 
   void apply(size_t candidateIndex);
@@ -231,12 +231,12 @@ public:
 };
 
 struct SolutionStep {
-  std::variant<ApplicableOutput *, ApplicableFPCC *> item;
+  std::variant<CandidateOutput *, CandidateSubgraph *> item;
   size_t candidateIndex;
 
-  SolutionStep(ApplicableOutput *ao_, size_t idx)
+  SolutionStep(CandidateOutput *ao_, size_t idx)
       : item(ao_), candidateIndex(idx) {}
-  SolutionStep(ApplicableFPCC *acc_, size_t idx)
+  SolutionStep(CandidateSubgraph *acc_, size_t idx)
       : item(acc_), candidateIndex(idx) {}
 };
 

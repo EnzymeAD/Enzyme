@@ -62,7 +62,8 @@ cl::opt<double> FPOptAccuracyDominanceThreshold(
 // Given the cost budget `FPOptComputationCostBudget`, we want to minimize the
 // accuracy cost of the rewritten expressions.
 bool accuracyGreedySolver(
-    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &AOs,
+    SmallVector<CandidateSubgraph, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -168,7 +169,8 @@ bool accuracyGreedySolver(
 }
 
 bool accuracyDPSolver(
-    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &AOs,
+    SmallVector<CandidateSubgraph, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   bool changed = false;
@@ -245,12 +247,13 @@ bool accuracyDPSolver(
 
           if (itemType == "AO") {
             if (itemIndex >= AOs.size()) {
-              llvm_unreachable("Invalid ApplicableOutput index in cache file.");
+              llvm_unreachable("Invalid CandidateOutput index in cache file.");
             }
             solutionSteps.emplace_back(&AOs[itemIndex], candidateIndex);
           } else if (itemType == "ACC") {
             if (itemIndex >= ACCs.size()) {
-              llvm_unreachable("Invalid ApplicableFPCC index in cache file.");
+              llvm_unreachable(
+                  "Invalid CandidateSubgraph index in cache file.");
             }
             solutionSteps.emplace_back(&ACCs[itemIndex], candidateIndex);
           } else {
@@ -273,11 +276,11 @@ bool accuracyDPSolver(
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
 
-    std::unordered_map<ApplicableOutput *, size_t> aoPtrToIndex;
+    std::unordered_map<CandidateOutput *, size_t> aoPtrToIndex;
     for (size_t i = 0; i < AOs.size(); ++i) {
       aoPtrToIndex[&AOs[i]] = i;
     }
-    std::unordered_map<ApplicableFPCC *, size_t> accPtrToIndex;
+    std::unordered_map<CandidateSubgraph *, size_t> accPtrToIndex;
     for (size_t i = 0; i < ACCs.size(); ++i) {
       accPtrToIndex[&ACCs[i]] = i;
     }
@@ -505,11 +508,11 @@ bool accuracyDPSolver(
         std::visit(
             [&](auto *item) {
               using T = std::decay_t<decltype(*item)>;
-              if constexpr (std::is_same_v<T, ApplicableOutput>) {
+              if constexpr (std::is_same_v<T, CandidateOutput>) {
                 stepObj["itemType"] = "AO";
                 size_t index = aoPtrToIndex[item];
                 stepObj["itemIndex"] = static_cast<int64_t>(index);
-              } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+              } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
                 stepObj["itemType"] = "ACC";
                 size_t index = accPtrToIndex[item];
                 stepObj["itemIndex"] = static_cast<int64_t>(index);
@@ -557,12 +560,12 @@ bool accuracyDPSolver(
           std::visit(
               [&](auto *item) {
                 using T = std::decay_t<decltype(*item)>;
-                if constexpr (std::is_same_v<T, ApplicableOutput>) {
+                if constexpr (std::is_same_v<T, CandidateOutput>) {
                   llvm::errs()
                       << "\t\t" << item->expr << " --(" << step.candidateIndex
                       << ")-> " << item->candidates[step.candidateIndex].expr
                       << "\n";
-                } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+                } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
                   llvm::errs() << "\t\tACC: "
                                << item->candidates[step.candidateIndex].desc
                                << " (#" << step.candidateIndex << ")\n";
@@ -665,14 +668,14 @@ bool accuracyDPSolver(
     std::visit(
         [&](auto *item) {
           using T = std::decay_t<decltype(*item)>;
-          if constexpr (std::is_same_v<T, ApplicableOutput>) {
+          if constexpr (std::is_same_v<T, CandidateOutput>) {
             llvm::errs() << "Applying solution for " << item->expr << " --("
                          << solution.candidateIndex << ")-> "
                          << item->candidates[solution.candidateIndex].expr
                          << "\n";
             item->apply(solution.candidateIndex, valueToNodeMap,
                         symbolToValueMap);
-          } else if constexpr (std::is_same_v<T, ApplicableFPCC>) {
+          } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
             llvm::errs() << "Applying solution for ACC: "
                          << item->candidates[solution.candidateIndex].desc
                          << " (#" << solution.candidateIndex << ")\n";

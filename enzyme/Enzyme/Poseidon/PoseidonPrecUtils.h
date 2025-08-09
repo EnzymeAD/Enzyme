@@ -36,8 +36,8 @@ extern llvm::cl::opt<unsigned> FPOptMaxMPFRPrec;
 
 class FPNode;
 class FPLLValue;
-struct FPCC;
-class ApplicableFPCC;
+struct Subgraph;
+class CandidateSubgraph;
 
 enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
 unsigned getMPFRPrec(PrecisionChangeType type);
@@ -68,17 +68,17 @@ struct PTCandidate {
                        const std::string &desc)
       : changes(std::move(changes)), desc(desc) {}
 
-  void apply(FPCC &component, ValueToValueMapTy *VMap = nullptr);
+  void apply(Subgraph &subgraph, ValueToValueMapTy *VMap = nullptr);
 };
 
 void changePrecision(Instruction *I, PrecisionChange &change,
                      MapVector<Value *, Value *> &oldToNew);
 
-InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
+InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
                             PTCandidate &pt);
 
 void setUnifiedAccuracyCost(
-    ApplicableFPCC &ACC,
+    CandidateSubgraph &ACC,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 

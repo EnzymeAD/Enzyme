@@ -598,7 +598,7 @@ bool FPConst::classof(const FPNode *N) {
   return N->getType() == NodeType::Const;
 }
 
-void ApplicableOutput::apply(
+void CandidateOutput::apply(
     size_t candidateIndex,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
@@ -631,17 +631,17 @@ void ApplicableOutput::apply(
     if (!I->use_empty())
       I->replaceAllUsesWith(UndefValue::get(I->getType()));
     I->eraseFromParent();
-    component->operations.remove(I); // Avoid a second removal
+    subgraph->operations.remove(I); // Avoid a second removal
     cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
   }
 
   // llvm::errs() << "After: " << *F << "\n";
 
-  component->outputs_rewritten++;
+  subgraph->outputs_rewritten++;
 }
 
 // Lower is better
-InstructionCost ApplicableOutput::getCompCostDelta(size_t candidateIndex) {
+InstructionCost CandidateOutput::getCompCostDelta(size_t candidateIndex) {
   InstructionCost erasableCost = 0;
 
   for (auto *I : erasableInsts) {
@@ -651,10 +651,10 @@ InstructionCost ApplicableOutput::getCompCostDelta(size_t candidateIndex) {
   return (candidates[candidateIndex].CompCost - erasableCost) * executions;
 }
 
-void ApplicableOutput::findErasableInstructions() {
+void CandidateOutput::findErasableInstructions() {
   SmallPtrSet<Value *, 8> visited;
   SmallPtrSet<Instruction *, 8> exprInsts;
-  collectExprInsts(oldOutput, component->inputs, exprInsts, visited);
+  collectExprInsts(oldOutput, subgraph->inputs, exprInsts, visited);
   visited.clear();
 
   SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
@@ -697,22 +697,22 @@ void ApplicableOutput::findErasableInstructions() {
   // llvm::errs() << "End of erasable instructions\n";
 }
 
-bool ApplicableFPCC::CacheKey::operator==(const CacheKey &other) const {
+bool CandidateSubgraph::CacheKey::operator==(const CacheKey &other) const {
   return candidateIndex == other.candidateIndex &&
-         applicableOutputs == other.applicableOutputs;
+         CandidateOutputs == other.CandidateOutputs;
 }
 
 std::size_t
-ApplicableFPCC::CacheKeyHash::operator()(const CacheKey &key) const {
+CandidateSubgraph::CacheKeyHash::operator()(const CacheKey &key) const {
   std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
-  for (const auto *ao : key.applicableOutputs) {
-    seed ^= std::hash<const ApplicableOutput *>{}(ao) + 0x9e3779b9 +
+  for (const auto *ao : key.CandidateOutputs) {
+    seed ^= std::hash<const CandidateOutput *>{}(ao) + 0x9e3779b9 +
             (seed << 6) + (seed >> 2);
   }
   return seed;
 }
 
-void ApplicableFPCC::apply(size_t candidateIndex) {
+void CandidateSubgraph::apply(size_t candidateIndex) {
   if (candidateIndex >= candidates.size()) {
     llvm_unreachable("Invalid candidate index");
   }
@@ -721,69 +721,69 @@ void ApplicableFPCC::apply(size_t candidateIndex) {
   // topological order with respect to operand dependencies. Insert FP casts
   // between llvm::Value inputs and first level of instructions to be changed.
   // Restore precisions of the last level of instructions to be changed.
-  candidates[candidateIndex].apply(*component);
+  candidates[candidateIndex].apply(*subgraph);
 }
 
 // Lower is better
-InstructionCost ApplicableFPCC::getCompCostDelta(size_t candidateIndex) {
+InstructionCost CandidateSubgraph::getCompCostDelta(size_t candidateIndex) {
   // TODO: adjust this based on erasured instructions
   return (candidates[candidateIndex].CompCost - initialCompCost) * executions;
 }
 
 // Lower is better
-double ApplicableFPCC::getAccCostDelta(size_t candidateIndex) {
+double CandidateSubgraph::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
 // Lower is better
-double ApplicableOutput::getAccCostDelta(size_t candidateIndex) {
+double CandidateOutput::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
-InstructionCost ApplicableFPCC::getAdjustedCompCostDelta(
+InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
     size_t candidateIndex, const SmallVectorImpl<SolutionStep> &steps) {
-  ApplicableOutputSet applicableOutputs;
+  CandidateOutputSet CandidateOutputs;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-      if ((*ptr)->component == component) {
-        applicableOutputs.insert(*ptr);
+    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
+      if ((*ptr)->subgraph == subgraph) {
+        CandidateOutputs.insert(*ptr);
       }
     }
   }
 
-  CacheKey key{candidateIndex, applicableOutputs};
+  CacheKey key{candidateIndex, CandidateOutputs};
 
   auto cacheIt = compCostDeltaCache.find(key);
   if (cacheIt != compCostDeltaCache.end()) {
     return cacheIt->second;
   }
 
-  FPCC newComponent = *this->component;
+  Subgraph newSubgraph = *this->subgraph;
 
   for (auto &step : steps) {
-    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
       const auto &AO = **ptr;
-      if (AO.component == component) {
+      if (AO.subgraph == subgraph) {
         // Eliminate erasadable instructions from the adjusted ACC
-        newComponent.operations.remove_if(
+        newSubgraph.operations.remove_if(
             [&AO](Instruction *I) { return AO.erasableInsts.contains(I); });
-        newComponent.outputs.remove(cast<Instruction>(AO.oldOutput));
+        newSubgraph.outputs.remove(cast<Instruction>(AO.oldOutput));
       }
     }
   }
 
   // If all outputs are rewritten, then the adjusted ACC is empty
-  if (newComponent.outputs.empty()) {
+  if (newSubgraph.outputs.empty()) {
     compCostDeltaCache[key] = 0;
     return 0;
   }
 
   InstructionCost initialCompCost =
-      getCompCost({newComponent.outputs.begin(), newComponent.outputs.end()},
-                  newComponent.inputs, TTI);
+      getCompCost({newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
+                  newSubgraph.inputs, TTI);
 
   InstructionCost candidateCompCost =
-      getCompCost(newComponent, TTI, candidates[candidateIndex]);
+      getCompCost(newSubgraph, TTI, candidates[candidateIndex]);
 
   InstructionCost adjustedCostDelta =
       (candidateCompCost - initialCompCost) * executions;
@@ -796,20 +796,20 @@ InstructionCost ApplicableFPCC::getAdjustedCompCostDelta(
   return adjustedCostDelta;
 }
 
-double ApplicableFPCC::getAdjustedAccCostDelta(
+double CandidateSubgraph::getAdjustedAccCostDelta(
     size_t candidateIndex, SmallVectorImpl<SolutionStep> &steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  ApplicableOutputSet applicableOutputs;
+  CandidateOutputSet CandidateOutputs;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
-      if ((*ptr)->component == component) {
-        applicableOutputs.insert(*ptr);
+    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
+      if ((*ptr)->subgraph == subgraph) {
+        CandidateOutputs.insert(*ptr);
       }
     }
   }
 
-  CacheKey key{candidateIndex, applicableOutputs};
+  CacheKey key{candidateIndex, CandidateOutputs};
 
   auto cacheIt = accCostDeltaCache.find(key);
   if (cacheIt != accCostDeltaCache.end()) {
@@ -822,9 +822,9 @@ double ApplicableFPCC::getAdjustedAccCostDelta(
   // Collect erased output nodes
   SmallPtrSet<FPNode *, 8> stepNodes;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<ApplicableOutput *>(&step.item)) {
+    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
       const auto &AO = **ptr;
-      if (AO.component == component) {
+      if (AO.subgraph == subgraph) {
         auto it = valueToNodeMap.find(AO.oldOutput);
         assert(it != valueToNodeMap.end() && it->second);
         stepNodes.insert(it->second.get());

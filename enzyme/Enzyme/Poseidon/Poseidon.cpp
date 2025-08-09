@@ -240,8 +240,8 @@ B2:
     }
   }
 
-  SmallSet<Value *, 8> component_seen;
-  SmallVector<FPCC, 1> connected_components;
+  SmallSet<Value *, 8> processed;
+  SmallVector<Subgraph, 1> subgraphs;
   for (auto &BB : F) {
     for (auto &I : BB) {
       // Not a Poseidonable instruction, doesn't make sense to create graph node
@@ -254,7 +254,7 @@ B2:
       }
 
       // Instruction is already in a set
-      if (component_seen.contains(&I)) {
+      if (processed.contains(&I)) {
         if (FPOptPrint)
           llvm::errs() << "Skipping already seen instruction: " << I << "\n";
         continue;
@@ -286,15 +286,13 @@ B2:
           continue;
         }
 
-        // Assume that a Poseidonable expression can only be in one connected
-        // component.
-        assert(!component_seen.contains(cur));
+        assert(!processed.contains(cur));
 
         if (FPOptPrint)
-          llvm::errs() << "Insert to operation_seen and component_seen: " << *I2
+          llvm::errs() << "Insert to operation_seen and processed: " << *I2
                        << "\n";
         operation_seen.insert(I2);
-        component_seen.insert(cur);
+        processed.insert(cur);
 
         auto operands =
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
@@ -370,10 +368,9 @@ B2:
       // Don't bother with graphs without any Poseidonable operations
       if (!operation_seen.empty()) {
         if (FPOptPrint) {
-          llvm::errs() << "Found a connected component with "
-                       << operation_seen.size() << " operations and "
-                       << input_seen.size() << " inputs and "
-                       << output_seen.size() << " outputs\n";
+          llvm::errs() << "Found a subgraph with " << operation_seen.size()
+                       << " operations and " << input_seen.size()
+                       << " inputs and " << output_seen.size() << " outputs\n";
 
           llvm::errs() << "Inputs:\n";
 
@@ -392,14 +389,13 @@ B2:
           }
         }
 
-        // TODO: Further check
         if (operation_seen.size() == 1) {
           if (FPOptPrint)
-            llvm::errs() << "Skipping trivial connected component\n";
+            llvm::errs() << "Skipping trivial subgraph\n";
           continue;
         }
 
-        FPCC origCC{input_seen, output_seen, operation_seen};
+        Subgraph origCC{input_seen, output_seen, operation_seen};
 
         // Mark inputs
         for (auto *input : origCC.inputs) {
@@ -408,87 +404,86 @@ B2:
 
         // Extract grad and value info for all instructions.
         for (auto &op : origCC.operations) {
-            GradInfo grad;
-            auto blockIt = std::find_if(
-                op->getFunction()->begin(), op->getFunction()->end(),
-                [&](const auto &block) { return &block == op->getParent(); });
-            assert(blockIt != op->getFunction()->end() && "Block not found");
-            size_t blockIdx =
-                std::distance(op->getFunction()->begin(), blockIt);
-            auto instIt =
-                std::find_if(op->getParent()->begin(), op->getParent()->end(),
-                             [&](const auto &curr) { return &curr == op; });
-            assert(instIt != op->getParent()->end() && "Instruction not found");
-            size_t instIdx = std::distance(op->getParent()->begin(), instIt);
-            bool found = extractGradFromLog(profilePath, functionName, blockIdx,
-                                            instIdx, grad);
+          GradInfo grad;
+          auto blockIt = std::find_if(
+              op->getFunction()->begin(), op->getFunction()->end(),
+              [&](const auto &block) { return &block == op->getParent(); });
+          assert(blockIt != op->getFunction()->end() && "Block not found");
+          size_t blockIdx = std::distance(op->getFunction()->begin(), blockIt);
+          auto instIt =
+              std::find_if(op->getParent()->begin(), op->getParent()->end(),
+                           [&](const auto &curr) { return &curr == op; });
+          assert(instIt != op->getParent()->end() && "Instruction not found");
+          size_t instIdx = std::distance(op->getParent()->begin(), instIt);
+          bool found = extractGradFromLog(profilePath, functionName, blockIdx,
+                                          instIdx, grad);
 
-            auto node = valueToNodeMap[op];
-            if (FPOptReductionProf == "geomean") {
-              node->grad = grad.geoMean;
-            } else if (FPOptReductionProf == "arithmean") {
-              node->grad = grad.arithMean;
-            } else if (FPOptReductionProf == "maxabs") {
-              node->grad = grad.maxAbs;
-            } else {
-              llvm_unreachable("Unknown FPOpt reduction type");
-            }
-
-            if (found) {
-              ValueInfo valueInfo;
-              extractValueFromLog(profilePath, functionName, blockIdx, instIdx,
-                                  valueInfo);
-              node->executions = valueInfo.executions;
-              node->geoMean = valueInfo.geoMean;
-              node->arithMean = valueInfo.arithMean;
-              node->maxAbs = valueInfo.maxAbs;
-              node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
-
-              if (FPOptPrint) {
-                llvm::errs()
-                    << "Range of " << *op << " is [" << node->getLowerBound()
-                    << ", " << node->getUpperBound() << "]\n";
-              }
-
-              if (FPOptPrint)
-                llvm::errs() << "Grad of " << *op << " is: " << node->grad
-                             << " (" << FPOptReductionProf << ")\n"
-                             << "Execution count of " << *op
-                             << " is: " << node->executions << "\n";
-            } else { // Unknown bounds
-              if (FPOptPrint)
-                llvm::errs() << "Grad of " << *op
-                             << " are not found in the log; using 0 instead\n";
-            }
+          auto node = valueToNodeMap[op];
+          if (FPOptReductionProf == "geomean") {
+            node->grad = grad.geoMean;
+          } else if (FPOptReductionProf == "arithmean") {
+            node->grad = grad.arithMean;
+          } else if (FPOptReductionProf == "maxabs") {
+            node->grad = grad.maxAbs;
+          } else {
+            llvm_unreachable("Unknown FPOpt reduction type");
           }
 
-        connected_components.push_back(origCC);
+          if (found) {
+            ValueInfo valueInfo;
+            extractValueFromLog(profilePath, functionName, blockIdx, instIdx,
+                                valueInfo);
+            node->executions = valueInfo.executions;
+            node->geoMean = valueInfo.geoMean;
+            node->arithMean = valueInfo.arithMean;
+            node->maxAbs = valueInfo.maxAbs;
+            node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
+
+            if (FPOptPrint) {
+              llvm::errs() << "Range of " << *op << " is ["
+                           << node->getLowerBound() << ", "
+                           << node->getUpperBound() << "]\n";
+            }
+
+            if (FPOptPrint)
+              llvm::errs() << "Grad of " << *op << " is: " << node->grad << " ("
+                           << FPOptReductionProf << ")\n"
+                           << "Execution count of " << *op
+                           << " is: " << node->executions << "\n";
+          } else { // Unknown bounds
+            if (FPOptPrint)
+              llvm::errs() << "Grad of " << *op
+                           << " are not found in the log; using 0 instead\n";
+          }
+        }
+
+        subgraphs.push_back(origCC);
       }
     }
   }
 
-  llvm::errs() << "FPOpt: Found " << connected_components.size()
-               << " connected components in " << F.getName() << "\n";
+  llvm::errs() << "FPOpt: Found " << subgraphs.size() << " subgraphs in "
+               << F.getName() << "\n";
 
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
   // 2) Make the herbie FP-style expression by
   // converting llvm instructions into herbie string (FPNode ....)
-  if (connected_components.empty()) {
+  if (subgraphs.empty()) {
     if (FPOptPrint)
-      llvm::errs() << "No Poseidonable connected components found\n";
+      llvm::errs() << "No subgraphs found\n";
     return false;
   }
 
-  SmallVector<ApplicableOutput, 4> AOs;
-  SmallVector<ApplicableFPCC, 4> ACCs;
+  SmallVector<CandidateOutput, 4> AOs;
+  SmallVector<CandidateSubgraph, 4> ACCs;
 
-  int componentCounter = 0;
+  int subgraphCounter = 0;
 
-  for (auto &component : connected_components) {
-    assert(component.inputs.size() > 0 && "No inputs found for component");
+  for (auto &subgraph : subgraphs) {
+    assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
     if (FPOptEnableHerbie) {
-      for (const auto &input : component.inputs) {
+      for (const auto &input : subgraph.inputs) {
         auto node = valueToNodeMap[input];
         if (node->op == "__const") {
           // Constants don't need a symbol
@@ -504,11 +499,11 @@ B2:
       }
 
       std::vector<std::string> herbieInputs;
-      std::vector<ApplicableOutput> newAOs;
+      std::vector<CandidateOutput> newAOs;
       int outputCounter = 0;
 
-      assert(component.outputs.size() > 0 && "No outputs found for component");
-      for (auto &output : component.outputs) {
+      assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
+      for (auto &output : subgraph.outputs) {
         // 3) run fancy opts
         double grad = valueToNodeMap[output]->grad;
         unsigned executions = valueToNodeMap[output]->executions;
@@ -538,7 +533,7 @@ B2:
             getPrecondition(args, valueToNodeMap, symbolToValueMap);
         properties += " :pre " + precondition;
 
-        ApplicableOutput AO(component, output, expr, grad, executions, TTI);
+        CandidateOutput AO(subgraph, output, expr, grad, executions, TTI);
         properties += " :name \"" + std::to_string(outputCounter++) + "\"";
 
         std::string argStr;
@@ -568,7 +563,7 @@ B2:
       if (!herbieInputs.empty()) {
         if (!improveViaHerbie(herbieInputs, newAOs, F.getParent(), TTI,
                               valueToNodeMap, symbolToValueMap,
-                              componentCounter)) {
+                              subgraphCounter)) {
           if (FPOptPrint)
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
@@ -578,10 +573,10 @@ B2:
     }
 
     if (FPOptEnablePT) {
-      // Sort `component.operations` by the gradient and construct
+      // Sort `cs.operations` by the gradient and construct
       // `PrecisionChange`s.
-      ApplicableFPCC ACC(component, TTI);
-      auto *o0 = component.outputs[0];
+      CandidateSubgraph ACC(subgraph, TTI);
+      auto *o0 = subgraph.outputs[0];
       ACC.executions = valueToNodeMap[o0]->executions;
 
       const SmallVector<PrecisionChangeType> precTypes{
@@ -598,7 +593,7 @@ B2:
                             llvm::sys::fs::exists(cacheFilePath);
 
       SmallVector<FPLLValue *, 8> operations;
-      for (auto *I : component.operations) {
+      for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
@@ -642,13 +637,13 @@ B2:
 
           PrecisionChange change(
               opsToChange,
-              getPrecisionChangeType(component.outputs[0]->getType()), prec);
+              getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
 
           if (!skipEvaluation) {
-            candidate.CompCost = getCompCost(component, TTI, candidate);
+            candidate.CompCost = getCompCost(subgraph, TTI, candidate);
           }
 
           ACC.candidates.push_back(std::move(candidate));
@@ -657,7 +652,7 @@ B2:
 
       // Create candidates by considering all operations without filtering
       SmallVector<FPLLValue *, 8> allOperations;
-      for (auto *I : component.operations) {
+      for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
@@ -690,13 +685,13 @@ B2:
 
           PrecisionChange change(
               opsToChange,
-              getPrecisionChangeType(component.outputs[0]->getType()), prec);
+              getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
 
           if (!skipEvaluation) {
-            candidate.CompCost = getCompCost(component, TTI, candidate);
+            candidate.CompCost = getCompCost(subgraph, TTI, candidate);
           }
 
           ACC.candidates.push_back(std::move(candidate));
@@ -710,8 +705,8 @@ B2:
       ACCs.push_back(std::move(ACC));
     }
     llvm::errs() << "##### Finished synthesizing candidates for "
-                 << ++componentCounter << " of " << connected_components.size()
-                 << " connected components! #####\n";
+                 << ++subgraphCounter << " of " << subgraphs.size()
+                 << " subgraphs! #####\n";
   }
 
   // Perform rewrites
@@ -785,15 +780,15 @@ B2:
 
   // Cleanup
   if (changed) {
-    for (auto &component : connected_components) {
-      if (component.outputs_rewritten != component.outputs.size()) {
+    for (auto &subgraph : subgraphs) {
+      if (subgraph.outputs_rewritten != subgraph.outputs.size()) {
         if (FPOptPrint)
-          llvm::errs() << "Skip erasing a connect component: only rewrote "
-                       << component.outputs_rewritten << " of "
-                       << component.outputs.size() << " outputs\n";
+          llvm::errs() << "Skip erasing a subgraph: only rewrote "
+                       << subgraph.outputs_rewritten << " of "
+                       << subgraph.outputs.size() << " outputs\n";
         continue; // Intermediate operations cannot be erased safely
       }
-      for (auto *I : component.operations) {
+      for (auto *I : subgraph.operations) {
         if (FPOptPrint)
           llvm::errs() << "Erasing: " << *I << "\n";
         if (!I->use_empty()) {

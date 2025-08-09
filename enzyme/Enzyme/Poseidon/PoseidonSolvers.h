@@ -36,12 +36,14 @@ extern llvm::cl::opt<double> FPOptAccuracyDominanceThreshold;
 }
 
 bool accuracyGreedySolver(
-    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &AOs,
+    SmallVector<CandidateSubgraph, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 
 bool accuracyDPSolver(
-    SmallVector<ApplicableOutput, 4> &AOs, SmallVector<ApplicableFPCC, 4> &ACCs,
+    SmallVector<CandidateOutput, 4> &AOs,
+    SmallVector<CandidateSubgraph, 4> &ACCs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 

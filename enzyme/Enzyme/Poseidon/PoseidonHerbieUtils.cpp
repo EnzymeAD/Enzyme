@@ -206,11 +206,11 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
 bool improveViaHerbie(
     const std::vector<std::string> &inputExprs,
-    std::vector<ApplicableOutput> &AOs, Module *M,
+    std::vector<CandidateOutput> &AOs, Module *M,
     const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    int componentIndex) {
+    int subgraphIdx) {
   std::string Program = HERBIE_BINARY;
   llvm::errs() << "random seed: " << std::to_string(FPOptRandomSeed) << "\n";
 
@@ -314,7 +314,7 @@ bool improveViaHerbie(
         continue;
       }
 
-      ApplicableOutput &AO = AOs[index];
+      CandidateOutput &AO = AOs[index];
       auto &seenExprSet = seenExprs[index];
 
       double bits = test.getNumber("bits").value();
@@ -386,7 +386,7 @@ bool improveViaHerbie(
 
     if (!FPOptCachePath.empty()) {
       cacheFilePath = FPOptCachePath + "/cachedHerbieOutput_" +
-                      std::to_string(componentIndex) + "_" +
+                      std::to_string(subgraphIdx) + "_" +
                       std::to_string(baseArgsIndex) + ".txt";
       std::ifstream cacheFile(cacheFilePath);
       if (cacheFile) {
@@ -603,12 +603,12 @@ std::string getPrecondition(
 }
 
 void setUnifiedAccuracyCost(
-    ApplicableOutput &AO,
+    CandidateOutput &AO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(AO.component->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(AO.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
   SmallVector<double, 4> goldVals;

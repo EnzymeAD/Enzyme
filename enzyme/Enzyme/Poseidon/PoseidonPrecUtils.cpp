@@ -263,13 +263,13 @@ void changePrecision(Instruction *I, PrecisionChange &change,
   oldToNew[I] = newI;
 }
 
-// If `VMap` is passed, map `llvm::Value`s in `component` to their cloned
+// If `VMap` is passed, map `llvm::Value`s in `subgraph` to their cloned
 // values and change outputs in VMap to new casted outputs.
-void PTCandidate::apply(FPCC &component, ValueToValueMapTy *VMap) {
+void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
   SetVector<Instruction *> operations;
   ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
   if (VMap) {
-    for (auto *I : component.operations) {
+    for (auto *I : subgraph.operations) {
       assert(VMap->count(I));
       operations.insert(cast<Instruction>(VMap->lookup(I)));
 
@@ -283,7 +283,7 @@ void PTCandidate::apply(FPCC &component, ValueToValueMapTy *VMap) {
       //              << I->getParent()->getParent()->getName() << ")\n";
     }
   } else {
-    operations = component.operations;
+    operations = subgraph.operations;
   }
 
   for (auto &change : changes) {
@@ -367,31 +367,31 @@ void PTCandidate::apply(FPCC &component, ValueToValueMapTy *VMap) {
 
       cast<Instruction>(oldV)->eraseFromParent();
 
-      // The change is being materialized to the original component
+      // The change is being materialized to the original subgraph
       if (!VMap)
-        component.operations.remove(cast<Instruction>(oldV));
+        subgraph.operations.remove(cast<Instruction>(oldV));
     }
   }
 }
 
 void setUnifiedAccuracyCost(
-    ApplicableFPCC &ACC,
+    CandidateSubgraph &ACC,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(ACC.component->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(ACC.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints);
 
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
-  for (auto *output : ACC.component->outputs) {
+  for (auto *output : ACC.subgraph->outputs) {
     auto *node = valueToNodeMap[output].get();
     goldVals[node].resize(FPOptNumSamples);
     ACC.perOutputInitialAccCost[node] = 0.;
   }
 
   SmallVector<FPNode *, 4> outputs;
-  for (auto *output : ACC.component->outputs)
+  for (auto *output : ACC.subgraph->outputs)
     outputs.push_back(valueToNodeMap[output].get());
 
   if (FPOptReductionEval == "geomean") {
@@ -627,30 +627,30 @@ void setUnifiedAccuracyCost(
   ACC.candidates = std::move(newCandidates);
 }
 
-InstructionCost getCompCost(FPCC &component, const TargetTransformInfo &TTI,
+InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
                             PTCandidate &pt) {
-  assert(!component.outputs.empty());
+  assert(!subgraph.outputs.empty());
 
   InstructionCost cost = 0;
 
-  Function *F = cast<Instruction>(component.outputs[0])->getFunction();
+  Function *F = cast<Instruction>(subgraph.outputs[0])->getFunction();
 
   ValueToValueMapTy VMap;
   Function *FClone = CloneFunction(F, VMap);
   FClone->setName(F->getName() + "_clone");
 
-  pt.apply(component, &VMap);
+  pt.apply(subgraph, &VMap);
   // output values in VMap are changed to the new casted values
   // llvm::errs() << "\nDEBUG: " << pt.desc << "\n";
   // FClone->print(llvm::errs());
 
   SmallPtrSet<Value *, 8> clonedInputs;
-  for (auto &input : component.inputs) {
+  for (auto &input : subgraph.inputs) {
     clonedInputs.insert(VMap[input]);
   }
 
   SmallPtrSet<Value *, 8> clonedOutputs;
-  for (auto &output : component.outputs) {
+  for (auto &output : subgraph.outputs) {
     clonedOutputs.insert(VMap[output]);
   }
 

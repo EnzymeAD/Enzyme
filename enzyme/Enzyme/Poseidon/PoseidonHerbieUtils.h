@@ -50,11 +50,11 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
 bool improveViaHerbie(
     const std::vector<std::string> &inputExprs,
-    std::vector<ApplicableOutput> &AOs, Module *M,
+    std::vector<CandidateOutput> &AOs, Module *M,
     const TargetTransformInfo &TTI,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    int componentIndex);
+    int subgraphIdx);
 
 std::string getHerbieOperator(const Instruction &I);
 
@@ -64,7 +64,7 @@ std::string getPrecondition(
     const std::unordered_map<std::string, Value *> &symbolToValueMap);
 
 void setUnifiedAccuracyCost(
-    ApplicableOutput &AO,
+    CandidateOutput &AO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 
