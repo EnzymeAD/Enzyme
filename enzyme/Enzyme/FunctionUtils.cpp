@@ -114,6 +114,10 @@
 
 #include "CacheUtility.h"
 
+#ifdef ENZYME_ENABLE_FPOPT
+#include "Poseidon/Poseidon.h"
+#endif
+
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
 #define getAttribute getAttributeAtIndex
@@ -1562,6 +1566,27 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
   }
+#ifdef ENZYME_ENABLE_FPOPT
+  if (hasFPOptLogger(F->getParent())) {
+    for (const auto &pair : VMap) {
+      if (auto *before = dyn_cast<Instruction>(pair.first)) {
+        if (!before->getType()->isFloatingPointTy()) {
+          continue;
+        }
+        auto *after = cast<Instruction>(pair.second);
+        attachFPOptMetadata(after, before);
+      } else if (auto *beforeBB = dyn_cast<BasicBlock>(pair.first)) {
+        auto *afterBB = cast<BasicBlock>(pair.second);
+        for (const auto &[before, after] : zip(*beforeBB, *afterBB)) {
+          if (!before.getType()->isFloatingPointTy()) {
+            continue;
+          }
+          attachFPOptMetadata(&after, &before);
+        }
+      }
+    }
+  }
+#endif
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -1575,7 +1600,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   setFullWillReturn(NewF);
 
   if (EnzymePreopt) {
-    if (EnzymeInline) {
+#ifdef ENZYME_ENABLE_FPOPT
+    // Disable recursive inlining since no FPOpt metadata is attached
+    // to inlined instructions
+    if (!hasFPOptLogger(F->getParent()) && EnzymeInline)
+#else
+    if (EnzymeInline)
+#endif
+    {
       ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount);
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
@@ -1944,7 +1976,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -1980,7 +2013,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||

@@ -3332,6 +3332,9 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
+#ifdef ENZYME_ENABLE_FPOPT
+#include "Poseidon/Poseidon.h"
+#endif
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -3730,6 +3733,12 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(EnzymeNewPM());
           return true;
         }
+#ifdef ENZYME_ENABLE_FPOPT
+        if (Name == "fp-opt") {
+          MPM.addPass(FPOptNewPM());
+          return true;
+        }
+#endif
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
           return true;
