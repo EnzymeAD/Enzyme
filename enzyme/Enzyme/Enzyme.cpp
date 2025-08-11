@@ -68,8 +68,10 @@
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/AbstractCallSite.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -77,6 +79,7 @@
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#include "Poseidon/Poseidon.h"
 #include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "Utils.h"
@@ -929,6 +932,17 @@ public:
 
     size_t maxsize;
     maxsize = CI->arg_size();
+
+    // Pop off the max error argument in profiling pass
+    if (auto calledFn = CI->getCalledFunction()) {
+      if (calledFn->getName().contains("__enzyme_fp_optimize") &&
+          FPProfileGenerate) {
+        if (maxsize > 1) {
+          maxsize--;
+        }
+      }
+    }
+
     size_t num_args = maxsize;
     for (unsigned i = 1 + sret; i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
@@ -2206,6 +2220,80 @@ public:
     return status;
   }
 
+  bool HandlePoseidon(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
+    IRBuilder<> Builder(CI);
+    Function *F = parseFunctionParameter(CI);
+    if (!F)
+      return false;
+
+    assert(F);
+
+    Twine profilePath = FPProfileUse + "/" + F->getName() + ".fpprofile";
+    if (!sys::fs::exists(profilePath)) {
+      EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
+                  profilePath, " (FPProfileUse: ", FPProfileUse, ")");
+      return false;
+    }
+
+    auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
+
+    // __enzyme_fp_optimize(f, args..., rel_err_tol)
+    unsigned numFuncArgs = F->getFunctionType()->getNumParams();
+    unsigned numIntrArgs = CI->arg_size() - 1;
+
+    if (numIntrArgs != numFuncArgs + 1) {
+      std::string expectedTotal = std::to_string(numFuncArgs + 1);
+      std::string expectedFunc = std::to_string(numFuncArgs);
+      std::string actualArgs = std::to_string(numIntrArgs);
+      std::string funcName = F->getName().str();
+      EmitFailure(
+          "ArgumentMismatch", CI->getDebugLoc(), CI,
+          "__enzyme_fp_optimize requires exactly ", expectedTotal,
+          " arguments after the function pointer (", expectedFunc,
+          " function arguments plus 1 relative error tolerance) for function ",
+          funcName, " but got ", actualArgs);
+      return false;
+    }
+
+    Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
+    double relativeErrorTol = 0.;
+
+    if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
+      relativeErrorTol = CFP->getValueAPF().convertToDouble();
+    } else {
+      EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
+                  "Relative error tolerance must be a constant floating-point "
+                  "value, got ",
+                  relErrorArg);
+      return false;
+    }
+
+    llvm::errs() << "FPOpt: Optimizing " << F->getName()
+                 << " with relative error tolerance: " << relativeErrorTol
+                 << "\n";
+
+    bool optimized = fpOptimize(*F, TTI, relativeErrorTol);
+
+    if (!optimized) {
+      llvm::errs() << "Warning: Poseidon returned false (no change) for "
+                   << F->getName() << "\n";
+    }
+
+    SmallVector<Value *, 8> Args;
+    for (unsigned i = 1; i < CI->arg_size() - 1; ++i) {
+      Args.push_back(CI->getArgOperand(i));
+    }
+
+    CallInst *newCall = Builder.CreateCall(F->getFunctionType(), F, Args);
+    newCall->setCallingConv(CI->getCallingConv());
+    newCall->setDebugLoc(CI->getDebugLoc());
+
+    CI->replaceAllUsesWith(newCall);
+    CI->eraseFromParent();
+
+    return true;
+  }
+
   bool handleFullModuleTrunc(Function &F) {
     if (startsWith(F.getName(), EnzymeFPRTPrefix))
       return false;
@@ -2355,6 +2443,7 @@ public:
     SmallVector<CallInst *, 4> toTruncateFuncOp;
     SmallVector<CallInst *, 4> toTruncateValue;
     SmallVector<CallInst *, 4> toExpandValue;
+    SmallVector<CallInst *, 4> toFPOpt;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2672,6 +2761,7 @@ public:
         bool truncateFuncMem = false;
         bool truncateValue = false;
         bool expandValue = false;
+        bool fpOpt = false;
         bool probProg = false;
         DerivativeMode derivativeMode;
         ProbProgMode probProgMode;
@@ -2728,6 +2818,13 @@ public:
           enableEnzyme = true;
           probProgMode = ProbProgMode::Condition;
           probProg = true;
+        } else if (Fn->getName().contains("__enzyme_fp_optimize")) {
+          enableEnzyme = true;
+          if (FPProfileGenerate) {
+            derivativeMode = DerivativeMode::ReverseModeCombined;
+          } else if (FPProfileUse.getNumOccurrences()) {
+            fpOpt = true;
+          }
         }
 
         if (enableEnzyme) {
@@ -2781,9 +2878,11 @@ public:
             toTruncateValue.push_back(CI);
           else if (expandValue)
             toExpandValue.push_back(CI);
-          else if (probProg) {
+          else if (probProg)
             toProbProg[CI] = probProgMode;
-          } else
+          else if (fpOpt)
+            toFPOpt.push_back(CI);
+          else
             toLower[CI] = derivativeMode;
 
           if (auto dc = dyn_cast<Function>(fn)) {
@@ -2885,6 +2984,10 @@ public:
 
     for (auto &&[call, mode] : toProbProg) {
       HandleProbProg(call, mode, calls);
+    }
+
+    for (auto CI : toFPOpt) {
+      HandlePoseidon(CI, calls);
     }
 
     if (Logic.PostOpt) {

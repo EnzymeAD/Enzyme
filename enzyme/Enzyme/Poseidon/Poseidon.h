@@ -26,7 +26,8 @@ extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
 }
 
-bool fpOptimize(Function &F, const TargetTransformInfo &TTI);
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
+                double relErrorTol = 0.0);
 
 class FPOpt final : public FunctionPass {
 public:

@@ -92,7 +92,7 @@ cl::opt<std::string> FPOptReductionEval(
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
-bool fpOptimize(Function &F, const TargetTransformInfo &TTI) {
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI, double relErrorTol) {
   const std::string functionName = F.getName().str();
   std::string profilePath =
       (FPProfileUse + "/" + F.getName() + ".fpprofile").str();
