@@ -61,6 +61,16 @@ extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
                                          llvm::Intrinsic::ID *ID = nullptr) {
   llvm::StringRef ogstr = str;
+  if (ID) {
+    if (str == "llvm.enzyme.lifetime_start") {
+      *ID = llvm::Intrinsic::lifetime_start;
+      return false;
+    }
+    if (str == "llvm.enzyme.lifetime_end") {
+      *ID = llvm::Intrinsic::lifetime_end;
+      return false;
+    }
+  }
   if (startsWith(str, "__") && endsWith(str, "_finite")) {
     str = str.substr(2, str.size() - 2 - 7);
   } else if (startsWith(str, "__fd_") && endsWith(str, "_1")) {

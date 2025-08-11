@@ -532,7 +532,6 @@ public:
                   .getResult();
         }
       } else if (cacheType == MEMREF) {
-        bool shouldDealloc = false;
 
         if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
           auto shape = MT.getShape();
@@ -565,7 +564,6 @@ public:
               rewriter.eraseOp(user);
           }
         } else {
-          shouldDealloc = true;
           popValue = rewriter.create<memref::LoadOp>(
               info.popOp->getLoc(), popNewValue, newInductionVariable);
         }

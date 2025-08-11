@@ -382,6 +382,12 @@ enum class ProbProgMode {
   Condition = 2,
 };
 
+enum class MProbProgMode {
+  Call = 0,
+  Simulate = 1,
+  Generate = 2,
+};
+
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis
@@ -644,6 +650,10 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
 static inline bool isDebugFunction(llvm::Function *called) {
   if (!called)
     return false;
+  if (called->getName() == "llvm.enzyme.lifetime_start" ||
+      called->getName() == "llvm.enzyme.lifetime_end") {
+    return true;
+  }
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
   case llvm::Intrinsic::dbg_value:
@@ -1729,6 +1739,10 @@ static inline bool isNoAlias(const llvm::Value *val) {
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
     return true;
+  if (F->getName() == "llvm.enzyme.lifetime_start" ||
+      F->getName() == "llvm.enzyme.lifetime_end") {
+    return true;
+  }
   using namespace llvm;
   switch (F->getIntrinsicID()) {
   case Intrinsic::memset:
