@@ -933,10 +933,10 @@ public:
     size_t maxsize;
     maxsize = CI->arg_size();
 
-    // Pop off the max error argument in profiling pass
+    // Pop off the relative error tolerance argument for __enzyme_fp_optimize
+    // profiling pass
     if (auto calledFn = CI->getCalledFunction()) {
-      if (calledFn->getName().contains("__enzyme_fp_optimize") &&
-          FPProfileGenerate) {
+      if (calledFn->getName().contains("__enzyme_fp_optimize")) {
         if (maxsize > 1) {
           maxsize--;
         }
@@ -2228,55 +2228,67 @@ public:
 
     assert(F);
 
-    Twine profilePath = FPProfileUse + "/" + F->getName() + ".fpprofile";
-    if (!sys::fs::exists(profilePath)) {
-      EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
-                  profilePath, " (FPProfileUse: ", FPProfileUse, ")");
-      return false;
-    }
+    bool optimized = false;
 
-    auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
-
-    // __enzyme_fp_optimize(f, args..., rel_err_tol)
-    unsigned numFuncArgs = F->getFunctionType()->getNumParams();
-    unsigned numIntrArgs = CI->arg_size() - 1;
-
-    if (numIntrArgs != numFuncArgs + 1) {
-      std::string expectedTotal = std::to_string(numFuncArgs + 1);
-      std::string expectedFunc = std::to_string(numFuncArgs);
-      std::string actualArgs = std::to_string(numIntrArgs);
-      std::string funcName = F->getName().str();
-      EmitFailure(
-          "ArgumentMismatch", CI->getDebugLoc(), CI,
-          "__enzyme_fp_optimize requires exactly ", expectedTotal,
-          " arguments after the function pointer (", expectedFunc,
-          " function arguments plus 1 relative error tolerance) for function ",
-          funcName, " but got ", actualArgs);
-      return false;
-    }
-
-    Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
-    double relativeErrorTol = 0.;
-
-    if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
-      relativeErrorTol = CFP->getValueAPF().convertToDouble();
+    if (!FPProfileUse.getNumOccurrences() || FPProfileUse.empty()) {
+      EmitWarning("MissingProfileMode", *CI,
+                  "__enzyme_fp_optimize called without FPProfileGenerate or "
+                  "FPProfileUse. "
+                  "Emitting unoptimized function call. Use -fpprofile-generate "
+                  "to create a profile "
+                  "or -fpprofile-use=<dir> to use an existing profile.");
     } else {
-      EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
-                  "Relative error tolerance must be a constant floating-point "
-                  "value, got ",
-                  relErrorArg);
-      return false;
-    }
+      Twine profilePath = FPProfileUse + "/" + F->getName() + ".fpprofile";
+      if (!sys::fs::exists(profilePath)) {
+        EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
+                    profilePath, " (FPProfileUse: ", FPProfileUse, ")");
+        return false;
+      }
 
-    llvm::errs() << "FPOpt: Optimizing " << F->getName()
-                 << " with relative error tolerance: " << relativeErrorTol
-                 << "\n";
+      auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
 
-    bool optimized = fpOptimize(*F, TTI, relativeErrorTol);
+      // __enzyme_fp_optimize(f, args..., rel_err_tol)
+      unsigned numFuncArgs = F->getFunctionType()->getNumParams();
+      unsigned numIntrArgs = CI->arg_size() - 1;
 
-    if (!optimized) {
-      llvm::errs() << "Warning: Poseidon returned false (no change) for "
-                   << F->getName() << "\n";
+      if (numIntrArgs != numFuncArgs + 1) {
+        std::string expectedTotal = std::to_string(numFuncArgs + 1);
+        std::string expectedFunc = std::to_string(numFuncArgs);
+        std::string actualArgs = std::to_string(numIntrArgs);
+        std::string funcName = F->getName().str();
+        EmitFailure("ArgumentMismatch", CI->getDebugLoc(), CI,
+                    "__enzyme_fp_optimize requires exactly ", expectedTotal,
+                    " arguments after the function pointer (", expectedFunc,
+                    " function arguments plus 1 relative error tolerance) for "
+                    "function ",
+                    funcName, " but got ", actualArgs);
+        return false;
+      }
+
+      Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
+      double relativeErrorTol = 0.;
+
+      if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
+        relativeErrorTol = CFP->getValueAPF().convertToDouble();
+      } else {
+        EmitFailure(
+            "InvalidErrorTolerance", CI->getDebugLoc(), CI,
+            "Relative error tolerance must be a constant floating-point "
+            "value, got ",
+            relErrorArg);
+        return false;
+      }
+
+      llvm::errs() << "FPOpt: Optimizing " << F->getName()
+                   << " with relative error tolerance: " << relativeErrorTol
+                   << "\n";
+
+      optimized = fpOptimize(*F, TTI, relativeErrorTol);
+
+      if (!optimized) {
+        llvm::errs() << "Warning: Poseidon returned false (no change) for "
+                     << F->getName() << "\n";
+      }
     }
 
     SmallVector<Value *, 8> Args;
@@ -2820,11 +2832,10 @@ public:
           probProg = true;
         } else if (Fn->getName().contains("__enzyme_fp_optimize")) {
           enableEnzyme = true;
-          if (FPProfileGenerate) {
+          if (FPProfileGenerate)
             derivativeMode = DerivativeMode::ReverseModeCombined;
-          } else if (FPProfileUse.getNumOccurrences()) {
+          else
             fpOpt = true;
-          }
         }
 
         if (enableEnzyme) {
