@@ -21,7 +21,6 @@ extern llvm::cl::opt<bool> FPOptEnablePT;
 extern llvm::cl::opt<bool> FPOptEnableSolver;
 extern llvm::cl::opt<unsigned> FPOptMaxExprDepth;
 extern llvm::cl::opt<unsigned> FPOptMaxExprLength;
-extern llvm::cl::opt<std::string> FPOptReductionProf;
 extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
 }

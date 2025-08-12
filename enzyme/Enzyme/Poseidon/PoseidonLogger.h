@@ -26,39 +26,25 @@ extern llvm::cl::opt<bool> FPOptLooseCoverage;
 extern llvm::cl::opt<double> FPOptWidenRange;
 }
 
-struct GradInfo {
-  double geoMean;
-  double arithMean;
-  double maxAbs;
-
-  GradInfo() : geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
-};
-
-struct ValueInfo {
+struct ProfileInfo {
   double minRes;
   double maxRes;
-  unsigned executions;
-  double geoMean;
-  double arithMean;
-  double maxAbs;
+  double sumValue; // Sum of values (not abs)
+  double sumSens;  // Sum of sensitivity scores = |grad * value|
+  double sumGrad;  // Sum of gradients (not abs)
+  unsigned exec;
 
   SmallVector<double, 2> minOperands;
   SmallVector<double, 2> maxOperands;
 
-  ValueInfo()
+  ProfileInfo()
       : minRes(std::numeric_limits<double>::max()),
-        maxRes(std::numeric_limits<double>::lowest()), executions(0),
-        geoMean(0.0), arithMean(0.0), maxAbs(0.0) {}
+        maxRes(std::numeric_limits<double>::lowest()), sumValue(0.0),
+        sumSens(0.0), sumGrad(0.0), exec(0) {}
 };
 
-bool extractValueFromLog(const std::string &logPath,
-                         const std::string &functionName, size_t blockIdx,
-                         size_t instIdx, ValueInfo &data);
-
-bool extractGradFromLog(const std::string &logPath,
+bool extractFromProfile(const std::string &logPath,
                         const std::string &functionName, size_t blockIdx,
-                        size_t instIdx, GradInfo &data);
-
-bool isLogged(const std::string &logPath, const std::string &functionName);
+                        size_t instIdx, ProfileInfo &data);
 
 #endif // ENZYME_POSEIDON_LOGGER_H

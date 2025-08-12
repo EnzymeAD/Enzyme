@@ -433,7 +433,7 @@ bool improveViaHerbie(
       if (auto EC = llvm::sys::fs::remove(tmpin))
         llvm::errs() << "Warning: Failed to remove temporary input file: "
                      << EC.message() << "\n";
-      if (auto EC = llvm::sys::fs::remove(tmpout))
+      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
         llvm::errs() << "Warning: Failed to remove temporary output directory: "
                      << EC.message() << "\n";
       continue;
@@ -471,7 +471,7 @@ bool improveViaHerbie(
     std::remove(tmpin.c_str());
     if (ExecutionFailed) {
       llvm::errs() << "Execution failed: " << ErrMsg << "\n";
-      if (auto EC = llvm::sys::fs::remove(tmpout))
+      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
         llvm::errs() << "Warning: Failed to remove temporary output directory: "
                      << EC.message() << "\n";
       continue;
@@ -480,7 +480,7 @@ bool improveViaHerbie(
     std::ifstream output((tmpout + "/results.json").str());
     if (!output) {
       llvm::errs() << "Failed to open output file.\n";
-      if (auto EC = llvm::sys::fs::remove(tmpout))
+      if (auto EC = llvm::sys::fs::remove_directories(tmpout))
         llvm::errs() << "Warning: Failed to remove temporary output directory: "
                      << EC.message() << "\n";
       continue;
@@ -488,7 +488,7 @@ bool improveViaHerbie(
     content.assign((std::istreambuf_iterator<char>(output)),
                    std::istreambuf_iterator<char>());
     output.close();
-    if (auto EC = llvm::sys::fs::remove(tmpout))
+    if (auto EC = llvm::sys::fs::remove_directories(tmpout))
       llvm::errs() << "Warning: Failed to remove temporary output directory: "
                    << EC.message() << "\n";
 

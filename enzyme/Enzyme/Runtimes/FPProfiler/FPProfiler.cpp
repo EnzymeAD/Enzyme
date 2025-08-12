@@ -15,23 +15,19 @@
 #include <utility>
 #include <vector>
 
-double EPS = 0.0;
-
-class ValueInfo {
+class ProfileInfo {
 public:
   double minRes = std::numeric_limits<double>::max();
   double maxRes = std::numeric_limits<double>::lowest();
   std::vector<double> minOperands;
   std::vector<double> maxOperands;
-  unsigned executions = 0;
+  double sumValue = 0.0;
+  double sumSens = 0.0;
+  double sumGrad = 0.0;
+  unsigned exec = 0;
 
-  double runningSumLog = 0.0;
-  unsigned runningCountNonZero = 0;
-  double runningSumArith = 0.0;
-  unsigned validCount = 0;
-
-  void update(double res, const double *operands, unsigned numOperands) {
-    ++executions;
+  void updateValue(double value, const double *operands, unsigned numOperands) {
+    ++exec;
 
     if (minOperands.empty()) {
       minOperands.resize(numOperands, std::numeric_limits<double>::max());
@@ -44,111 +40,25 @@ public:
       }
     }
 
-    if (!std::isnan(res)) {
-      minRes = std::min(minRes, res);
-      maxRes = std::max(maxRes, res);
-
-      double absRes = std::fabs(res);
-      runningSumArith += absRes;
-      ++validCount;
-
-      if (EPS != 0.0) {
-        runningSumLog += std::log(absRes + EPS);
-      } else {
-        if (absRes != 0.0) {
-          runningSumLog += std::log(absRes);
-          ++runningCountNonZero;
-        }
-      }
+    if (!std::isnan(value)) {
+      minRes = std::min(minRes, value);
+      maxRes = std::max(maxRes, value);
+      sumValue += value;
     }
   }
 
-  double getGeoMean() const {
-    if (validCount == 0)
-      return 0.0;
-
-    if (EPS != 0.0) {
-      return std::exp(runningSumLog / validCount) - EPS;
-    } else {
-      if (runningCountNonZero == 0) {
-        return 0.0;
-      }
-      return std::exp(runningSumLog / runningCountNonZero);
+  void updateGradient(double value, double grad) {
+    if (!std::isnan(grad) && !std::isnan(value)) {
+      sumGrad += grad;
+      sumSens += std::fabs(grad * value);
     }
-  }
-
-  double getArithMean() const {
-    if (validCount == 0)
-      return 0.0;
-    return runningSumArith / validCount;
-  }
-
-  double getMaxAbs() const {
-    return std::max(std::abs(minRes), std::abs(maxRes));
-  }
-};
-
-class GradInfo {
-public:
-  double runningSumLog = 0.0;
-  unsigned runningCountNonZero = 0;
-  double runningSumArith = 0.0;
-  unsigned validCount = 0;
-
-  double minGrad = std::numeric_limits<double>::max();
-  double maxGrad = std::numeric_limits<double>::lowest();
-
-  void update(double grad) {
-    if (!std::isnan(grad)) {
-      minGrad = std::min(minGrad, grad);
-      maxGrad = std::max(maxGrad, grad);
-
-      double absGrad = std::fabs(grad);
-
-      runningSumArith += absGrad;
-      ++validCount;
-
-      if (EPS != 0.0) {
-        runningSumLog += std::log(absGrad + EPS);
-      } else {
-        if (absGrad != 0.0) {
-          runningSumLog += std::log(absGrad);
-          ++runningCountNonZero;
-        }
-      }
-    }
-  }
-
-  double getGeoMean() const {
-    if (validCount == 0)
-      return 0.0;
-
-    if (EPS != 0.0) {
-      return std::exp(runningSumLog / validCount) - EPS;
-    } else {
-      if (runningCountNonZero == 0) {
-        return 0.0;
-      }
-      return std::exp(runningSumLog / runningCountNonZero);
-    }
-  }
-
-  double getArithMean() const {
-    if (validCount == 0)
-      return 0.0;
-    return runningSumArith / validCount;
-  }
-
-  double getMaxAbs() const {
-    return std::max(std::abs(minGrad), std::abs(maxGrad));
   }
 };
 
 class FPProfiler {
 private:
   std::string functionName;
-  std::unordered_map<std::string, ValueInfo> valueInfo;
-  std::unordered_map<std::string, GradInfo> gradInfo;
+  std::unordered_map<std::string, ProfileInfo> profileInfo;
   static std::string profileOutputDir;
 
 public:
@@ -164,13 +74,13 @@ public:
 
   void updateValue(const std::string &id, double res, unsigned numOperands,
                    const double *operands) {
-    auto &info = valueInfo.emplace(id, ValueInfo()).first->second;
-    info.update(res, operands, numOperands);
+    auto it = profileInfo.try_emplace(id).first;
+    it->second.updateValue(res, operands, numOperands);
   }
 
-  void updateGrad(const std::string &id, double grad) {
-    auto &info = gradInfo.emplace(id, GradInfo()).first->second;
-    info.update(grad);
+  void updateGradient(const std::string &id, double value, double grad) {
+    auto it = profileInfo.try_emplace(id).first;
+    it->second.updateGradient(value, grad);
   }
 
   void write() const {
@@ -193,29 +103,20 @@ public:
     out << std::scientific
         << std::setprecision(std::numeric_limits<double>::max_digits10);
 
-    for (const auto &pair : valueInfo) {
+    for (const auto &pair : profileInfo) {
       const auto &id = pair.first;
       const auto &info = pair.second;
-      out << "Value:" << id << "\n";
+      out << id << "\n";
       out << "\tMinRes = " << info.minRes << "\n";
       out << "\tMaxRes = " << info.maxRes << "\n";
-      out << "\tExecutions = " << info.executions << "\n";
-      out << "\tGeoMeanAbs = " << info.getGeoMean() << "\n";
-      out << "\tArithMeanAbs = " << info.getArithMean() << "\n";
-      out << "\tMaxAbs = " << info.getMaxAbs() << "\n";
+      out << "\tSumValue = " << info.sumValue << "\n";
+      out << "\tSumSens = " << info.sumSens << "\n";
+      out << "\tSumGrad = " << info.sumGrad << "\n";
+      out << "\tExec = " << info.exec << "\n";
       for (unsigned i = 0; i < info.minOperands.size(); ++i) {
         out << "\tOperand[" << i << "] = [" << info.minOperands[i] << ", "
             << info.maxOperands[i] << "]\n";
       }
-    }
-
-    for (const auto &pair : gradInfo) {
-      const auto &id = pair.first;
-      const auto &info = pair.second;
-      out << "Grad:" << id << "\n";
-      out << "\tGeoMeanAbs = " << info.getGeoMean() << "\n";
-      out << "\tArithMeanAbs = " << info.getArithMean() << "\n";
-      out << "\tMaxAbs = " << info.getMaxAbs() << "\n";
     }
 
     out << "\n";
@@ -254,18 +155,6 @@ static int RegisterFPProfileRuntime() {
     FPProfiler::setOutputDir("./fpprofile");
   }
 
-  const char *envEps = getenv("ENZYME_FPPROFILE_EPS");
-  if (envEps) {
-    char *endptr;
-    double epsValue = std::strtod(envEps, &endptr);
-    if (*endptr == '\0' && epsValue >= 0.0) {
-      EPS = epsValue;
-    } else {
-      std::cerr << "Warning: Invalid ENZYME_FPPROFILE_EPS value: " << envEps
-                << ". Using default: " << EPS << std::endl;
-    }
-  }
-
   std::atexit(writeAllProfilesAtExit);
 
   return 0;
@@ -282,7 +171,7 @@ void ProfilerWrite() {
   }
 }
 
-void enzymeLogGrad(const char *id, double grad) {
+void enzymeLogGrad(const char *id, double value, double grad) {
   if (!id)
     return;
 
@@ -295,7 +184,7 @@ void enzymeLogGrad(const char *id, double grad) {
     it = profilerRegistry.find(funcName);
   }
 
-  it->second->updateGrad(id, grad);
+  it->second->updateGradient(id, value, grad);
 }
 
 void enzymeLogValue(const char *id, double res, unsigned numOperands,

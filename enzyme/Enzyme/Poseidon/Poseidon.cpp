@@ -80,10 +80,6 @@ cl::opt<unsigned> FPOptMaxExprDepth(
 cl::opt<unsigned> FPOptMaxExprLength(
     "fpopt-max-expr-length", cl::init(10000), cl::Hidden,
     cl::desc("The maximum length of an expression; abort if exceeded"));
-cl::opt<std::string> FPOptReductionProf(
-    "fpopt-reduction-prof", cl::init("geomean"), cl::Hidden,
-    cl::desc("Which reduction result to extract from profiles. "
-             "Options are 'geomean', 'arithmean', and 'maxabs'"));
 cl::opt<std::string> FPOptReductionEval(
     "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
@@ -92,7 +88,8 @@ cl::opt<std::string> FPOptReductionEval(
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
-bool fpOptimize(Function &F, const TargetTransformInfo &TTI, double relErrorTol) {
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
+                double relErrorTol) {
   const std::string functionName = F.getName().str();
   std::string profilePath =
       (FPProfileUse + "/" + F.getName() + ".fpprofile").str();
@@ -310,7 +307,7 @@ B2:
               input_seen.insert(operand);
 
             // look up error log to get bounds of non-Poseidonable inputs
-            ValueInfo data;
+            ProfileInfo data;
             auto blockIt = std::find_if(
                 I2->getFunction()->begin(), I2->getFunction()->end(),
                 [&](const auto &block) { return &block == I2->getParent(); });
@@ -323,8 +320,8 @@ B2:
             assert(instIt != I2->getParent()->end() && "Instruction not found");
             size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
-            bool res = extractValueFromLog(profilePath, functionName, blockIdx,
-                                           instIdx, data);
+            bool res = extractFromProfile(profilePath, functionName, blockIdx,
+                                          instIdx, data);
             if (!res) {
               if (FPOptLooseCoverage)
                 continue;
@@ -395,16 +392,16 @@ B2:
           continue;
         }
 
-        Subgraph origCC{input_seen, output_seen, operation_seen};
+        Subgraph sungraph{input_seen, output_seen, operation_seen};
 
-        // Mark inputs
-        for (auto *input : origCC.inputs) {
+        // Mark leaf nodes as input values
+        for (auto *input : sungraph.inputs) {
           valueToNodeMap[input]->markAsInput();
         }
 
-        // Extract grad and value info for all instructions.
-        for (auto &op : origCC.operations) {
-          GradInfo grad;
+        // Extract profile info for all instructions.
+        for (auto &op : sungraph.operations) {
+          ProfileInfo profileInfo;
           auto blockIt = std::find_if(
               op->getFunction()->begin(), op->getFunction()->end(),
               [&](const auto &block) { return &block == op->getParent(); });
@@ -415,29 +412,16 @@ B2:
                            [&](const auto &curr) { return &curr == op; });
           assert(instIt != op->getParent()->end() && "Instruction not found");
           size_t instIdx = std::distance(op->getParent()->begin(), instIt);
-          bool found = extractGradFromLog(profilePath, functionName, blockIdx,
-                                          instIdx, grad);
+          bool found = extractFromProfile(profilePath, functionName, blockIdx,
+                                          instIdx, profileInfo);
 
           auto node = valueToNodeMap[op];
-          if (FPOptReductionProf == "geomean") {
-            node->grad = grad.geoMean;
-          } else if (FPOptReductionProf == "arithmean") {
-            node->grad = grad.arithMean;
-          } else if (FPOptReductionProf == "maxabs") {
-            node->grad = grad.maxAbs;
-          } else {
-            llvm_unreachable("Unknown FPOpt reduction type");
-          }
 
           if (found) {
-            ValueInfo valueInfo;
-            extractValueFromLog(profilePath, functionName, blockIdx, instIdx,
-                                valueInfo);
-            node->executions = valueInfo.executions;
-            node->geoMean = valueInfo.geoMean;
-            node->arithMean = valueInfo.arithMean;
-            node->maxAbs = valueInfo.maxAbs;
-            node->updateBounds(valueInfo.minRes, valueInfo.maxRes);
+            node->sens = profileInfo.sumSens;
+            node->grad = profileInfo.sumGrad;
+            node->executions = profileInfo.exec;
+            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 
             if (FPOptPrint) {
               llvm::errs() << "Range of " << *op << " is ["
@@ -446,18 +430,20 @@ B2:
             }
 
             if (FPOptPrint)
-              llvm::errs() << "Grad of " << *op << " is: " << node->grad << " ("
-                           << FPOptReductionProf << ")\n"
+              llvm::errs() << "Sensitivity score of " << *op
+                           << " is: " << node->sens << "\n"
+                           << "Gradient sum of " << *op << " is: " << node->grad
+                           << "\n"
                            << "Execution count of " << *op
                            << " is: " << node->executions << "\n";
           } else { // Unknown bounds
             if (FPOptPrint)
-              llvm::errs() << "Grad of " << *op
-                           << " are not found in the log; using 0 instead\n";
+              llvm::errs() << "Sensitivity of " << *op
+                           << " not found in the log; using 0 instead\n";
           }
         }
 
-        subgraphs.push_back(origCC);
+        subgraphs.push_back(sungraph);
       }
     }
   }
@@ -592,42 +578,33 @@ B2:
                             !FPOptCachePath.empty() &&
                             llvm::sys::fs::exists(cacheFilePath);
 
-      SmallVector<FPLLValue *, 8> operations;
+      SetVector<FPLLValue *> operations;
       for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
         if (PTFuncs.count(node->op) != 0) {
-          operations.push_back(node);
+          operations.insert(node);
         }
       }
 
-      // Sort operations by the gradient
-      llvm::sort(operations, [](const auto &a, const auto &b) {
-        if (FPOptReductionEval == "geomean") {
-          return std::fabs(a->grad * a->geoMean) >
-                 std::fabs(b->grad * b->geoMean);
-        } else if (FPOptReductionEval == "arithmean") {
-          return std::fabs(a->grad * a->arithMean) >
-                 std::fabs(b->grad * b->arithMean);
-        } else if (FPOptReductionEval == "maxabs") {
-          return std::fabs(a->grad * a->maxAbs) >
-                 std::fabs(b->grad * b->maxAbs);
-        } else {
-          llvm_unreachable("Unknown FPOpt reduction type");
-        }
+      // Prioritize operations with low sensitivity scores
+      SmallVector<FPLLValue *> sortedOps(operations.begin(), operations.end());
+      llvm::sort(sortedOps, [](const auto &a, const auto &b) {
+        return a->sens < b->sens;
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
       for (int percent = 10; percent <= 100; percent += 10) {
-        size_t numToChange = operations.size() * percent / 100;
+        size_t numToChange = sortedOps.size() * percent / 100;
 
-        SetVector<FPLLValue *> opsToChange(operations.begin(),
-                                           operations.begin() + numToChange);
-
-        if (FPOptPrint && !opsToChange.empty()) {
+        if (FPOptPrint && numToChange > 0) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of Funcs (" << numToChange << ")\n";
+          double minSens = sortedOps[0]->sens;
+          double maxSens = sortedOps[numToChange - 1]->sens;
+          llvm::errs() << "Sensitivity score range: [" << minSens << ", "
+                       << maxSens << "]\n";
         }
 
         for (auto prec : precTypes) {
@@ -635,8 +612,10 @@ B2:
           std::string desc =
               "Funcs 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
+          SetVector<FPLLValue *> nodesToChange(sortedOps.begin(),
+                                                sortedOps.begin() + numToChange);
           PrecisionChange change(
-              opsToChange,
+              nodesToChange,
               getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
@@ -650,32 +629,32 @@ B2:
         }
       }
 
-      // Create candidates by considering all operations without filtering
-      SmallVector<FPLLValue *, 8> allOperations;
+      SetVector<FPLLValue *> allOperations;
       for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
-        allOperations.push_back(node);
+        allOperations.insert(node);
       }
 
-      // Sort all operations by their sensitivity estimation (gradient-value
-      // product)
-      llvm::sort(allOperations, [](const auto &a, const auto &b) {
-        return std::fabs(a->grad * a->geoMean) <
-               std::fabs(b->grad * b->geoMean);
+      // Prioritize operations with low sensitivity scores
+      SmallVector<FPLLValue *> sortedAllOps(allOperations.begin(),
+                                            allOperations.end());
+      llvm::sort(sortedAllOps, [](const auto &a, const auto &b) {
+        return a->sens < b->sens;
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
       for (int percent = 10; percent <= 100; percent += 10) {
-        size_t numToChange = allOperations.size() * percent / 100;
+        size_t numToChange = sortedAllOps.size() * percent / 100;
 
-        SetVector<FPLLValue *> opsToChange(allOperations.begin(),
-                                           allOperations.begin() + numToChange);
-
-        if (FPOptPrint && !opsToChange.empty()) {
+        if (FPOptPrint && numToChange > 0) {
           llvm::errs() << "Created PrecisionChange for " << percent
                        << "% of all operations (" << numToChange << ")\n";
+          double minSens = sortedAllOps[0]->sens;
+          double maxSens = sortedAllOps[numToChange - 1]->sens;
+          llvm::errs() << "Sensitivity score range: [" << minSens << ", "
+                       << maxSens << "]\n";
         }
 
         for (auto prec : precTypes) {
@@ -683,8 +662,10 @@ B2:
           std::string desc =
               "All 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
+          SetVector<FPLLValue *> nodesToChange(sortedAllOps.begin(),
+                                                sortedAllOps.begin() + numToChange);
           PrecisionChange change(
-              opsToChange,
+              nodesToChange,
               getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
