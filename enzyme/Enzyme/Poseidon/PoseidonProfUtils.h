@@ -1,4 +1,5 @@
-//=- PoseidonLogger.h - Logging utilities for Poseidon --------------------=//
+//=- PoseidonProfUtils.h - Profiling utilities for Poseidon
+//--------------------=//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,13 +7,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares logging-related utilities for the Poseidon optimization
+// This file declares profiling-related utilities for the Poseidon optimization
 // pass.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_POSEIDON_LOGGER_H
-#define ENZYME_POSEIDON_LOGGER_H
+#ifndef ENZYME_POSEIDON_PROF_UTILS_H
+#define ENZYME_POSEIDON_PROF_UTILS_H
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
@@ -47,4 +48,4 @@ bool extractFromProfile(const std::string &logPath,
                         const std::string &functionName, size_t blockIdx,
                         size_t instIdx, ProfileInfo &data);
 
-#endif // ENZYME_POSEIDON_LOGGER_H
+#endif // ENZYME_POSEIDON_PROF_UTILS_H

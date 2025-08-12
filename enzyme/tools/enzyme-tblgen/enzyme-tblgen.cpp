@@ -2388,8 +2388,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     }
     os << "      }\n";
 
-    // forward error TODO: `ForwardFromSummedReverse` behavior
-    // also for custom derivatives.
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ForwardModeError: {\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
@@ -2503,14 +2501,12 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       }
 
       // Perform the max with 1 ulp
-      // error TODO
       os << "        res = Builder2.CreateMaxNum(get1ULP(Builder2, "
             "gutils->getNewFromOriginal(&"
          << origName << ")), res);\n";
 
       os << "        assert(res);\n";
 
-      // Insert logging function call (optional)
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (Poseidonable(" << origName << ")) {\n"
          << "          Type *PtrTy = PointerType::getUnqual(" << origName << ".getContext());\n"

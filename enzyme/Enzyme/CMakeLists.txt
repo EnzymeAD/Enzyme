@@ -68,7 +68,7 @@ if(ENZYME_ENABLE_FPOPT)
         Poseidon/Poseidon.cpp
         Poseidon/PoseidonEvaluators.cpp
         Poseidon/PoseidonHerbieUtils.cpp
-        Poseidon/PoseidonLogger.cpp
+        Poseidon/PoseidonProfUtils.cpp
         Poseidon/PoseidonPrecUtils.cpp
         Poseidon/PoseidonSolvers.cpp
         Poseidon/PoseidonTypes.cpp

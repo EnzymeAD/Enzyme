@@ -39,8 +39,8 @@
 #include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonHerbieUtils.h"
-#include "PoseidonLogger.h"
 #include "PoseidonPrecUtils.h"
+#include "PoseidonProfUtils.h"
 #include "PoseidonSolvers.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
@@ -613,7 +613,7 @@ B2:
               "Funcs 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
           SetVector<FPLLValue *> nodesToChange(sortedOps.begin(),
-                                                sortedOps.begin() + numToChange);
+                                               sortedOps.begin() + numToChange);
           PrecisionChange change(
               nodesToChange,
               getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
@@ -662,8 +662,8 @@ B2:
           std::string desc =
               "All 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
-          SetVector<FPLLValue *> nodesToChange(sortedAllOps.begin(),
-                                                sortedAllOps.begin() + numToChange);
+          SetVector<FPLLValue *> nodesToChange(
+              sortedAllOps.begin(), sortedAllOps.begin() + numToChange);
           PrecisionChange change(
               nodesToChange,
               getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);

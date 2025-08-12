@@ -1,4 +1,5 @@
-//=- PoseidonLogger.cpp - Logging utilities for Poseidon ------------------=//
+//=- PoseidonProfUtils.cpp - Profiling utilities for Poseidon
+//------------------=//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,15 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements logging-related utilities for the Poseidon optimization
-// pass.
+// This file implements profiling-related utilities for the Poseidon
+// optimization pass.
 //
 //===----------------------------------------------------------------------===//
 
 #include <fstream>
 #include <regex>
 
-#include "PoseidonLogger.h"
+#include "PoseidonProfUtils.h"
 #include "PoseidonUtils.h"
 
 using namespace llvm;
