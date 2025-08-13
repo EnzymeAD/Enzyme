@@ -2365,8 +2365,6 @@ public:
 
     assert(F);
 
-    bool changed = false;
-
     if (!FPProfileUse.getNumOccurrences() || FPProfileUse.empty()) {
       EmitWarning("MissingProfileMode", *CI,
                   "__enzyme_fp_optimize called without FPProfileGenerate or "
@@ -2379,7 +2377,7 @@ public:
       if (!sys::fs::exists(profilePath)) {
         EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
                     profilePath, " (FPProfileUse: ", FPProfileUse, ")");
-        return changed;
+        return false;
       }
 
       auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
@@ -2399,7 +2397,7 @@ public:
                     " function arguments plus 1 relative error tolerance) for "
                     "function ",
                     funcName, " but got ", actualArgs);
-        return changed;
+        return false;
       }
 
       Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
@@ -2413,16 +2411,16 @@ public:
             "Relative error tolerance must be a constant floating-point "
             "value, got ",
             relErrorArg);
-        return changed;
+        return false;
       }
 
       llvm::errs() << "FPOpt: Optimizing " << F->getName()
                    << " with relative error tolerance: " << relativeErrorTol
                    << "\n";
 
-      changed = fpOptimize(*F, TTI, relativeErrorTol);
+      bool optimized = fpOptimize(*F, TTI, relativeErrorTol);
 
-      if (!changed) {
+      if (!optimized) {
         llvm::errs() << "Warning: Poseidon returned false (no change) for "
                      << F->getName() << "\n";
       }
@@ -2440,7 +2438,7 @@ public:
     CI->replaceAllUsesWith(newCall);
     CI->eraseFromParent();
 
-    return changed;
+    return true;
   }
 
   bool handleFullModuleTrunc(Function &F) {
