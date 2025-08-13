@@ -3763,12 +3763,6 @@ bool Poseidonable(const llvm::Value &V) {
   }
 }
 
-bool hasFPOptLogger(llvm::Module *M) {
-  return getFPOptLogger(M, "enzymeLogError") ||
-         getFPOptLogger(M, "enzymeLogGrad") ||
-         getFPOptLogger(M, "enzymeLogValue");
-}
-
 std::string getLogIdentifier(llvm::Instruction &I) {
   if (!I.hasMetadata("enzyme_preprocess_origin")) {
     llvm::errs() << "FP Instruction without preprocess origin metadata: " << I

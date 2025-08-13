@@ -1567,7 +1567,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         Returns, "", nullptr);
   }
 #ifdef ENZYME_ENABLE_FPOPT
-  if (hasFPOptLogger(F->getParent())) {
+  if (FPProfileGenerate) {
     for (const auto &pair : VMap) {
       if (auto *before = dyn_cast<Instruction>(pair.first)) {
         if (!before->getType()->isFloatingPointTy()) {
@@ -1603,7 +1603,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 #ifdef ENZYME_ENABLE_FPOPT
     // Disable recursive inlining since no FPOpt metadata is attached
     // to inlined instructions
-    if (!hasFPOptLogger(F->getParent()) && EnzymeInline)
+    if (!FPProfileGenerate && EnzymeInline)
 #else
     if (EnzymeInline)
 #endif

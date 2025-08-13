@@ -307,7 +307,7 @@ B2:
               input_seen.insert(operand);
 
             // look up error log to get bounds of non-Poseidonable inputs
-            ProfileInfo data;
+            ProfileInfo profileInfo;
             auto blockIt = std::find_if(
                 I2->getFunction()->begin(), I2->getFunction()->end(),
                 [&](const auto &block) { return &block == I2->getParent(); });
@@ -321,7 +321,7 @@ B2:
             size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
 
             bool res = extractFromProfile(profilePath, functionName, blockIdx,
-                                          instIdx, data);
+                                          instIdx, profileInfo);
             if (!res) {
               if (FPOptLooseCoverage)
                 continue;
@@ -332,7 +332,8 @@ B2:
                   "to suppress this error\n");
             }
             auto node = valueToNodeMap[operand];
-            node->updateBounds(data.minOperands[i], data.maxOperands[i]);
+            node->updateBounds(profileInfo.minOperands[i],
+                               profileInfo.maxOperands[i]);
 
             if (FPOptPrint) {
               llvm::errs() << "Range of " << *operand << " is ["

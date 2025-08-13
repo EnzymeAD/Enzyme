@@ -592,7 +592,6 @@ llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
 #ifdef ENZYME_ENABLE_FPOPT
 bool Poseidonable(const llvm::Value &V);
 llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName);
-bool hasFPOptLogger(llvm::Module *M);
 std::string getLogIdentifier(llvm::Instruction &I);
 void attachFPOptMetadata(llvm::Instruction *After,
                          const llvm::Instruction *Before);

@@ -43,6 +43,7 @@
 #include "DiffeGradientUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "Poseidon/Poseidon.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
@@ -124,13 +125,13 @@ inline bool is_value_needed_in_reverse(
       }
     }
 #ifdef ENZYME_ENABLE_FPOPT
-    if ((hasFPOptLogger(gutils->oldFunc->getParent()) ||
+    if ((FPProfileGenerate ||
          gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (EnzymePrintDiffUse)
-        llvm::errs()
-            << " Need: " << to_string(VT) << " of " << *inst
-            << " in reverse as forward mode error always needs result\n";
+        llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                     << " in reverse as FPOpt profiler mode or forward mode "
+                        "error always needs result\n";
       return seen[idx] = true;
     }
 #endif
