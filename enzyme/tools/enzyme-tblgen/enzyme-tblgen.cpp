@@ -2147,30 +2147,37 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic != MLIRDerivatives) {
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "    if (!" << origName << ".use_empty() && Poseidonable(" << origName << ")) {\n"
-         << "      Type *PtrTy = PointerType::getUnqual(" << origName << ".getContext());\n"
-         << "      Type *DoubleTy = Type::getDoubleTy(" << origName << ".getContext());\n"
-         << "      Type *Int32Ty = Type::getInt32Ty(" << origName << ".getContext());\n"
-         << "      FunctionType *LogValueFT = FunctionType::get(Type::getVoidTy(" << origName << ".getContext()),\n"
+      os << "    if (FPProfileGenerate && Poseidonable(" << origName << ")) {\n"
+         << "      Type *PtrTy = PointerType::getUnqual(" << origName
+         << ".getContext());\n"
+         << "      Type *DoubleTy = Type::getDoubleTy(" << origName
+         << ".getContext());\n"
+         << "      Type *Int32Ty = Type::getInt32Ty(" << origName
+         << ".getContext());\n"
+         << "      FunctionType *LogValueFT = "
+            "FunctionType::get(Type::getVoidTy("
+         << origName << ".getContext()),\n"
          << "          {PtrTy, DoubleTy, Int32Ty, PtrTy}, false);\n"
-         << "      FunctionCallee logFunc = " << origName << ".getModule()->getOrInsertFunction(\"enzymeLogValue\", LogValueFT);\n"
+         << "      FunctionCallee logFunc = " << origName
+         << ".getModule()->getOrInsertFunction(\"enzymeLogValue\", "
+            "LogValueFT);\n"
          << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
          << "      getForwardBuilder(BuilderZ);\n"
-         << "      std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
+         << "      std::string idStr = getLogIdentifier(" << origName << ");\n"
          << "      Value *idValue = BuilderZ.CreateGlobalStringPtr(idStr);\n"
-         << "      Value *origValue = BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&" << origName << "),\n"
+         << "      Value *origValue = "
+            "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
+         << origName << "),\n"
          << "        Type::getDoubleTy(" << origName << ".getContext()));\n"
-         << "      unsigned numOperands = isa<CallInst>(" << origName
-         << ") ?\n"
+         << "      unsigned numOperands = isa<CallInst>(" << origName << ") ?\n"
          << "        cast<CallInst>(" << origName
          << ").arg_size() : " << origName << ".getNumOperands();\n"
          << "      Value *numOperandsValue = ConstantInt::get(\n"
          << "        Type::getInt32Ty(" << origName
          << ".getContext()), numOperands);\n"
          << "      auto operands = isa<CallInst>(" << origName << ") ?\n"
-         << "        cast<CallInst>(" << origName
-         << ").args() : " << origName << ".operands();\n"
+         << "        cast<CallInst>(" << origName << ").args() : " << origName
+         << ".operands();\n"
          << "      ArrayType *operandArrayType = ArrayType::get(\n"
          << "        Type::getDoubleTy(" << origName
          << ".getContext()), numOperands);\n"
@@ -2509,11 +2516,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
       os << "        if (Poseidonable(" << origName << ")) {\n"
-         << "          Type *PtrTy = PointerType::getUnqual(" << origName << ".getContext());\n"
-         << "          Type *DoubleTy = Type::getDoubleTy(" << origName << ".getContext());\n"
-         << "          FunctionType *LogErrorFT = FunctionType::get(Type::getVoidTy(" << origName << ".getContext()),\n"
+         << "          Type *PtrTy = PointerType::getUnqual(" << origName
+         << ".getContext());\n"
+         << "          Type *DoubleTy = Type::getDoubleTy(" << origName
+         << ".getContext());\n"
+         << "          FunctionType *LogErrorFT = "
+            "FunctionType::get(Type::getVoidTy("
+         << origName << ".getContext()),\n"
          << "              {PtrTy, DoubleTy}, false);\n"
-         << "          FunctionCallee logFunc = " << origName << ".getModule()->getOrInsertFunction(\"enzymeLogError\", LogErrorFT);\n"
+         << "          FunctionCallee logFunc = " << origName
+         << ".getModule()->getOrInsertFunction(\"enzymeLogError\", "
+            "LogErrorFT);\n"
          << "          std::string idStr = getLogIdentifier(" << origName
          << ");\n"
          << "          Value *idValue = "
@@ -2539,6 +2552,44 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";
       os << "        Value *dif = nullptr;\n";
+
+      // Set `dif` immediately for profiled instructions
+      os << "#ifdef ENZYME_ENABLE_FPOPT\n"
+         << "        if (FPProfileGenerate && Poseidonable(" << origName
+         << ")) {\n"
+         << "          dif = diffe(&" << origName << ", Builder2);\n"
+         << "          setDiffe(&" << origName
+         << ", Constant::getNullValue(gutils->getShadowType(" << origName
+         << ".getType())), Builder2);\n"
+         << "          Type *PtrTy = PointerType::getUnqual(" << origName
+         << ".getContext());\n"
+         << "          Type *DoubleTy = Type::getDoubleTy(" << origName
+         << ".getContext());\n"
+         << "          FunctionType *LogGradFT = "
+            "FunctionType::get(Type::getVoidTy("
+         << origName << ".getContext()),\n"
+         << "            {PtrTy, DoubleTy, DoubleTy}, false);\n"
+         << "          FunctionCallee logFunc = " << origName
+         << ".getModule()->getOrInsertFunction(\"enzymeLogGrad\", LogGradFT);\n"
+         << "          std::string idStr = getLogIdentifier(" << origName
+         << ");\n"
+         << "          Value *idValue = "
+            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
+         << "          Value *primalInst = "
+            "gutils->lookupM(gutils->getNewFromOriginal(&"
+         << origName << "), Builder2);\n"
+         << "          Value *primalDouble = Builder2.CreateFPExt(primalInst, "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "          Value *gradDouble = Builder2.CreateFPExt(dif, "
+            "Type::getDoubleTy("
+         << origName << ".getContext()));\n"
+         << "          CallInst *logCallInst = Builder2.CreateCall(logFunc, "
+            "{idValue, primalDouble, gradDouble});\n"
+         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << origName << ".getDebugLoc()));\n"
+         << "        }\n"
+         << "#endif\n";
     } else {
       os << "};\n";
       emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
@@ -2547,29 +2598,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
-      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "        if (Poseidonable(" << origName << ")) {\n"
-         << "          Type *PtrTy = PointerType::getUnqual(" << origName << ".getContext());\n"
-         << "          Type *DoubleTy = Type::getDoubleTy(" << origName << ".getContext());\n"
-         << "          FunctionType *LogGradFT = FunctionType::get(Type::getVoidTy(" << origName << ".getContext()),\n"
-         << "            {PtrTy, DoubleTy, DoubleTy}, false);\n"
-         << "          FunctionCallee logFunc = " << origName << ".getModule()->getOrInsertFunction(\"enzymeLogGrad\", LogGradFT);\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
-         << "          Value *idValue = "
-            "BuilderZ.CreateGlobalStringPtr(idStr);\n"
-         << "          Value *primalInst = gutils->lookupM(gutils->getNewFromOriginal(&" 
-         << origName << "), Builder2);\n"
-         << "          Value *primalDouble = Builder2.CreateFPExt(primalInst, "
-            "Type::getDoubleTy(" << origName << ".getContext()));\n"
-         << "          Value *gradDouble = Builder2.CreateFPExt(dif, "
-            "Type::getDoubleTy(" << origName << ".getContext()));\n"
-         << "          CallInst *logCallInst = Builder2.CreateCall(logFunc, "
-            "{idValue, primalDouble, gradDouble});\n"
-         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
-         << origName << ".getDebugLoc()));\n"
-         << "        }\n";
-      os << "#endif\n";
 
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
