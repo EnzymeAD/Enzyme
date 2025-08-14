@@ -967,11 +967,9 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       }
       IRBuilder<> B(CB);
       if (CB->getCalledFunction() == start_lifetime) {
-        B.CreateLifetimeStart(CB->getArgOperand(1),
-                              cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeStart(cast<ConstantInt>(CB->getArgOperand(0)));
       } else {
-        B.CreateLifetimeEnd(CB->getArgOperand(1),
-                            cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeEnd(cast<ConstantInt>(CB->getArgOperand(0)));
       }
       CB->eraseFromParent();
     }
