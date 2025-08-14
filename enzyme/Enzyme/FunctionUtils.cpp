@@ -1569,19 +1569,19 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 #ifdef ENZYME_ENABLE_FPOPT
   if (FPProfileGenerate) {
     for (const auto &pair : VMap) {
-      if (auto *before = dyn_cast<Instruction>(pair.first)) {
-        if (!before->getType()->isFloatingPointTy()) {
+      if (auto before = dyn_cast<Instruction>(pair.first)) {
+        if (!Poseidonable(*before))
           continue;
-        }
-        auto *after = cast<Instruction>(pair.second);
-        attachFPOptMetadata(after, before);
-      } else if (auto *beforeBB = dyn_cast<BasicBlock>(pair.first)) {
-        auto *afterBB = cast<BasicBlock>(pair.second);
+
+        auto after = cast<Instruction>(pair.second);
+        setFPOptMetadata(after, before);
+      } else if (auto beforeBB = dyn_cast<BasicBlock>(pair.first)) {
+        auto afterBB = cast<BasicBlock>(pair.second);
         for (const auto &[before, after] : zip(*beforeBB, *afterBB)) {
-          if (!before.getType()->isFloatingPointTy()) {
+          if (!Poseidonable(before))
             continue;
-          }
-          attachFPOptMetadata(&after, &before);
+
+          setFPOptMetadata(&after, &before);
         }
       }
     }
