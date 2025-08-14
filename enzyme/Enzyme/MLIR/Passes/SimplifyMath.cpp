@@ -22,7 +22,16 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 using namespace mlir;
-using namespace enzyme;
+using namespace mlir::enzyme;
+
+namespace mlir {
+namespace enzyme {
+using namespace mlir::enzyme;
+#define GEN_PASS_DEF_MATHEMATICSIMPLIFICATIONPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using llvm::errs;
 namespace {
 
@@ -38,7 +47,7 @@ struct ApplySimplificationPattern
 };
 
 struct MathematicSimplification
-    : public enzyme::MathematicSimplificationPassBase<
+    : public enzyme::impl::MathematicSimplificationPassBase<
           MathematicSimplification> {
   void runOnOperation() override {
 
@@ -51,11 +60,3 @@ struct MathematicSimplification
   };
 };
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createMathematicSimplificationPass() {
-  return std::make_unique<MathematicSimplification>();
-}
-} // namespace enzyme
-} // namespace mlir

@@ -30,6 +30,13 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_REMOVEUNUSEDENZYMEOPSPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 namespace {
@@ -498,7 +505,8 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
 }
 
 struct RemoveUnusedEnzymeOpsPass
-    : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
+    : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<
+          RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
     auto op = getOperation();
 
@@ -521,11 +529,3 @@ struct RemoveUnusedEnzymeOpsPass
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass() {
-  return std::make_unique<RemoveUnusedEnzymeOpsPass>();
-}
-} // namespace enzyme
-} // namespace mlir

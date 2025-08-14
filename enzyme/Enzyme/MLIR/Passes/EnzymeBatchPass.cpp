@@ -29,6 +29,13 @@ using namespace enzyme;
 
 namespace mlir {
 namespace enzyme {
+#define GEN_PASS_DEF_BATCHPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
+namespace mlir {
+namespace enzyme {
 namespace batchutils {
 
 mlir::TensorType applyBatchSizes(mlir::Type Ty,
@@ -257,7 +264,7 @@ LogicalResult batchOperation(
 
 namespace {
 
-struct BatchPass : public BatchPassBase<BatchPass> {
+struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function
@@ -294,14 +301,6 @@ struct BatchPass : public BatchPassBase<BatchPass> {
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createBatchPass() {
-  return std::make_unique<BatchPass>();
-}
-} // namespace enzyme
-} // namespace mlir
 
 void BatchPass::runOnOperation() {
   SymbolTableCollection symbolTable;

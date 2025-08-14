@@ -15,13 +15,21 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_SIMPLIFYMEMREFCACHEPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
 namespace {
 
 struct SimplifyMemrefCachePass
-    : public enzyme::SimplifyMemrefCachePassBase<SimplifyMemrefCachePass> {
+    : public enzyme::impl::SimplifyMemrefCachePassBase<
+          SimplifyMemrefCachePass> {
 
   void handlePushOp(enzyme::PushOp pushOp, Type newType, enzyme::CacheType c2) {
     auto v = pushOp.getValue();
@@ -172,11 +180,3 @@ struct SimplifyMemrefCachePass
   };
 };
 } // namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createSimplifyMemrefCachePass() {
-  return std::make_unique<SimplifyMemrefCachePass>();
-}
-} // namespace enzyme
-} // namespace mlir

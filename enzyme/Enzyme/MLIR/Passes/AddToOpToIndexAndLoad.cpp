@@ -25,6 +25,13 @@
 
 #include "Utils.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ADDTOOPTOINDEXANDLOADPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -43,7 +50,8 @@ SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
 }
 
 struct AddToOpToIndexAndLoadPass
-    : public enzyme::AddToOpToIndexAndLoadPassBase<AddToOpToIndexAndLoadPass> {
+    : public enzyme::impl::AddToOpToIndexAndLoadPassBase<
+          AddToOpToIndexAndLoadPass> {
   void runOnOperation() override {
     getOperation()->walk([&](Operation *op) {
       auto loc = op->getLoc();
@@ -109,11 +117,3 @@ struct AddToOpToIndexAndLoadPass
   };
 };
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass() {
-  return std::make_unique<AddToOpToIndexAndLoadPass>();
-}
-} // namespace enzyme
-} // namespace mlir
