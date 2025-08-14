@@ -56,7 +56,8 @@ enzyme::Activity getDefaultActivity(Type argType) {
 }
 
 struct PrintActivityAnalysisPass
-    : public enzyme::impl::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
+    : public enzyme::impl::PrintActivityAnalysisPassBase<
+          PrintActivityAnalysisPass> {
   using PrintActivityAnalysisPassBase::PrintActivityAnalysisPassBase;
 
   /// Do the simplest possible inference of argument and result activities, or
@@ -296,4 +297,3 @@ struct PrintActivityAnalysisPass
   }
 };
 } // namespace
-

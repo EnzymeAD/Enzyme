@@ -505,7 +505,8 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
 }
 
 struct RemoveUnusedEnzymeOpsPass
-    : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
+    : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<
+          RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
     auto op = getOperation();
 

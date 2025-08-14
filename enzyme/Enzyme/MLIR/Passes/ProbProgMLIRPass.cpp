@@ -37,9 +37,9 @@ namespace enzyme {
 
 namespace {
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
-   using ProbProgPassBase::ProbProgPassBase;
+  using ProbProgPassBase::ProbProgPassBase;
 
-   MEnzymeLogic Logic;
+  MEnzymeLogic Logic;
 
   void runOnOperation() override;
 

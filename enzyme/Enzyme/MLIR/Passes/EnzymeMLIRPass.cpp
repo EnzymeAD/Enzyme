@@ -34,7 +34,8 @@ namespace enzyme {
 } // namespace mlir
 
 namespace {
-struct DifferentiatePass : public enzyme::impl::DifferentiatePassBase<DifferentiatePass> {
+struct DifferentiatePass
+    : public enzyme::impl::DifferentiatePassBase<DifferentiatePass> {
   using DifferentiatePassBase::DifferentiatePassBase;
 
   MEnzymeLogic Logic;

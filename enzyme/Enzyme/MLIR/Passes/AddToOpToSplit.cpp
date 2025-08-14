@@ -145,4 +145,3 @@ struct AddToOpToSplitPass
   };
 };
 } // end anonymous namespace
-

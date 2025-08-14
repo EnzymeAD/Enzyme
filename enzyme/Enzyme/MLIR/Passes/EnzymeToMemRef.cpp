@@ -420,4 +420,3 @@ struct EnzymeToMemRefPass
   };
 };
 } // end anonymous namespace
-

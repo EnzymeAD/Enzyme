@@ -28,7 +28,8 @@ using llvm::errs;
 namespace {
 
 struct SimplifyMemrefCachePass
-    : public enzyme::impl::SimplifyMemrefCachePassBase<SimplifyMemrefCachePass> {
+    : public enzyme::impl::SimplifyMemrefCachePassBase<
+          SimplifyMemrefCachePass> {
 
   void handlePushOp(enzyme::PushOp pushOp, Type newType, enzyme::CacheType c2) {
     auto v = pushOp.getValue();
@@ -179,4 +180,3 @@ struct SimplifyMemrefCachePass
   };
 };
 } // namespace
-

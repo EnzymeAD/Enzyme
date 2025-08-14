@@ -60,7 +60,8 @@ std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
 
 namespace {
 struct DifferentiateWrapperPass
-    : public enzyme::impl::DifferentiateWrapperPassBase<DifferentiateWrapperPass> {
+    : public enzyme::impl::DifferentiateWrapperPassBase<
+          DifferentiateWrapperPass> {
   using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
@@ -159,4 +160,3 @@ struct DifferentiateWrapperPass
 };
 
 } // end anonymous namespace
-

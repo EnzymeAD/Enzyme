@@ -77,7 +77,7 @@ namespace enzyme {
 
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
-}
+} // namespace enzyme
 
 } // end namespace mlir
 
