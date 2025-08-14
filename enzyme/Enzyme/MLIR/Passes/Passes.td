@@ -36,7 +36,6 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*description=*/"Whether or not to run verifier for the postpasses pass manager."
     >,
   ];
-  let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
 def ProbProgPass : Pass<"probprog"> {
@@ -57,14 +56,12 @@ def ProbProgPass : Pass<"probprog"> {
       /*description=*/"Optimization passes to apply to generated probabilistic programs"
     >,
   ];
-  let constructor = "mlir::enzyme::createProbProgPass()";
 }
 
 def BatchPass : Pass<"enzyme-batch"> {
   let summary = "Batch Passes";
   let dependentDialects = [
   ];
-  let constructor = "mlir::enzyme::createBatchPass()";
 }
 
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
@@ -75,7 +72,6 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
     "cf::ControlFlowDialect",
     "enzyme::EnzymeDialect"
   ];
-  let constructor = "mlir::enzyme::createDifferentiateWrapperPass()";
   let options = [
     Option<
       /*C++ variable name=*/"infn",
@@ -123,7 +119,6 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
 
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
-  let constructor = "mlir::enzyme::createPrintActivityAnalysisPass()";
   let dependentDialects = [
     "enzyme::EnzymeDialect"
   ];
@@ -188,7 +183,6 @@ def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
 
 def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
-  let constructor = "mlir::enzyme::createPrintAliasAnalysisPass()";
 }
 
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
@@ -199,22 +193,18 @@ def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
     "scf::SCFDialect",
     "cf::ControlFlowDialect",
   ];
-  let constructor = "mlir::enzyme::createEnzymeToMemRefPass()";
 }
 
 def MathematicSimplificationPass : Pass<"enzyme-simplify-math"> {
   let summary = "Simplify basic mathematical operations";
-  let constructor = "mlir::enzyme::createMathematicSimplificationPass()";
 }
 
 def AddToOpToIndexAndLoadPass : Pass<"add-to-op-to-index-and-load"> {
   let summary = "Convert AddTo op inside linalg generic to index and memref load/store DEPRECATED";
-  let constructor = "mlir::enzyme::createAddToOpToIndexAndLoadPass()";
 }
 
 def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
   let summary = "Duplicate linalg.generic once for each output to remove enzyme.addTo op";
-  let constructor = "mlir::enzyme::createAddToOpToSplitPass()";
 }
 
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
@@ -223,12 +213,10 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
     "tensor::TensorDialect",
     "memref::MemRefDialect"
   ];
-  let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
 }
 
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
-  let constructor = "mlir::enzyme::createSimplifyMemrefCachePass()";
 }
 
 #endif // ENZYME_PASSES

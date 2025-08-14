@@ -26,6 +26,13 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_DIFFERENTIATEPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 namespace {
 struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   MEnzymeLogic Logic;
@@ -387,14 +394,6 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createDifferentiatePass() {
-  return std::make_unique<DifferentiatePass>();
-}
-} // namespace enzyme
-} // namespace mlir
 
 void DifferentiatePass::runOnOperation() {
   SymbolTableCollection symbolTable;

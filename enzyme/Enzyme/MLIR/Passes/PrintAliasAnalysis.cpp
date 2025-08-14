@@ -22,6 +22,13 @@
 
 using namespace mlir;
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_PRINTALIASANALYSISPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 namespace {
 
 struct PrintAliasAnalysisPass
@@ -139,10 +146,4 @@ struct PrintAliasAnalysisPass
 };
 } // namespace
 
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createPrintAliasAnalysisPass() {
-  return std::make_unique<PrintAliasAnalysisPass>();
-}
-} // namespace enzyme
 } // namespace mlir

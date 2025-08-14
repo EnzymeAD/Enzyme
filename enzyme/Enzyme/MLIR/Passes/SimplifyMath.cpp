@@ -21,6 +21,13 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_MATHEMATICSIMPLIFICATIONPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;

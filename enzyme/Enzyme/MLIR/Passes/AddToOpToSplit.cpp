@@ -31,6 +31,13 @@
 
 #include "Utils.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ADDTOOPTOSPLITPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -139,10 +146,4 @@ struct AddToOpToSplitPass
 };
 } // end anonymous namespace
 
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createAddToOpToSplitPass() {
-  return std::make_unique<AddToOpToSplitPass>();
-}
-} // namespace enzyme
 } // namespace mlir

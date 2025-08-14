@@ -22,6 +22,13 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ENZYMEOPSTOMEMREFPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using llvm::errs;
 namespace {
@@ -414,10 +421,4 @@ struct EnzymeToMemRefPass
 };
 } // end anonymous namespace
 
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createEnzymeToMemRefPass() {
-  return std::make_unique<EnzymeToMemRefPass>();
-}
-} // namespace enzyme
 } // namespace mlir

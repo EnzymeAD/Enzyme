@@ -25,6 +25,15 @@
 
 #include "Utils.h"
 
+
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ADDTOOPTOINDEXANDLOADPASS
+#include "Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -110,10 +119,4 @@ struct AddToOpToIndexAndLoadPass
 };
 } // end anonymous namespace
 
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass() {
-  return std::make_unique<AddToOpToIndexAndLoadPass>();
-}
-} // namespace enzyme
 } // namespace mlir
