@@ -18,7 +18,7 @@
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_SIMPLIFYMEMREFCACHEPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -28,7 +28,7 @@ using llvm::errs;
 namespace {
 
 struct SimplifyMemrefCachePass
-    : public enzyme::SimplifyMemrefCachePassBase<SimplifyMemrefCachePass> {
+    : public enzyme::impl::SimplifyMemrefCachePassBase<SimplifyMemrefCachePass> {
 
   void handlePushOp(enzyme::PushOp pushOp, Type newType, enzyme::CacheType c2) {
     auto v = pushOp.getValue();

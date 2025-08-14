@@ -33,7 +33,7 @@
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_REMOVEUNUSEDENZYMEOPSPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -505,7 +505,7 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
 }
 
 struct RemoveUnusedEnzymeOpsPass
-    : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
+    : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
     auto op = getOperation();
 

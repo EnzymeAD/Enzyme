@@ -70,8 +70,14 @@ namespace tensor {
 class TensorDialect;
 } // end namespace tensor
 
+namespace enzyme {
+
+#define GEN_PASS_DECL
+#include "Passes/Passes.h.inc"
+
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
+}
 
 } // end namespace mlir
 

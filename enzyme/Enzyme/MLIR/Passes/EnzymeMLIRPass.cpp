@@ -29,12 +29,14 @@ using namespace enzyme;
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_DIFFERENTIATEPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
 namespace {
-struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
+struct DifferentiatePass : public enzyme::impl::DifferentiatePassBase<DifferentiatePass> {
+  using DifferentiatePassBase::DifferentiatePassBase;
+
   MEnzymeLogic Logic;
 
   void runOnOperation() override;

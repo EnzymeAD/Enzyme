@@ -29,7 +29,7 @@
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_ADDTOOPTOINDEXANDLOADPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -52,7 +52,7 @@ SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
 }
 
 struct AddToOpToIndexAndLoadPass
-    : public enzyme::AddToOpToIndexAndLoadPassBase<AddToOpToIndexAndLoadPass> {
+    : public enzyme::impl::AddToOpToIndexAndLoadPassBase<AddToOpToIndexAndLoadPass> {
   void runOnOperation() override {
     getOperation()->walk([&](Operation *op) {
       auto loc = op->getLoc();
@@ -119,4 +119,3 @@ struct AddToOpToIndexAndLoadPass
 };
 } // end anonymous namespace
 
-} // namespace mlir

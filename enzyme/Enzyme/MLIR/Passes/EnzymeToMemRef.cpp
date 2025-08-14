@@ -25,7 +25,7 @@
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_ENZYMEOPSTOMEMREFPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -371,7 +371,7 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
 };
 
 struct EnzymeToMemRefPass
-    : public enzyme::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
+    : public enzyme::impl::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
@@ -421,4 +421,3 @@ struct EnzymeToMemRefPass
 };
 } // end anonymous namespace
 
-} // namespace mlir

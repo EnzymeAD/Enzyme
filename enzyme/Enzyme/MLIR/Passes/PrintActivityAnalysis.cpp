@@ -33,7 +33,7 @@ using namespace mlir;
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_PRINTACTIVITYANALYSISPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -56,7 +56,8 @@ enzyme::Activity getDefaultActivity(Type argType) {
 }
 
 struct PrintActivityAnalysisPass
-    : public enzyme::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
+    : public enzyme::impl::PrintActivityAnalysisPassBase<PrintActivityAnalysisPass> {
+  using PrintActivityAnalysisPassBase::PrintActivityAnalysisPassBase;
 
   /// Do the simplest possible inference of argument and result activities, or
   /// take the user's explicit override if provided
@@ -296,4 +297,3 @@ struct PrintActivityAnalysisPass
 };
 } // namespace
 
-} // namespace mlir

@@ -31,13 +31,15 @@ using namespace enzyme;
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_PROBPROGPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
 namespace {
-struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
-  MEnzymeLogic Logic;
+struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
+   using ProbProgPassBase::ProbProgPassBase;
+
+   MEnzymeLogic Logic;
 
   void runOnOperation() override;
 

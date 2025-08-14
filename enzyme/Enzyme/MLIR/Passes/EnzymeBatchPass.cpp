@@ -30,7 +30,7 @@ using namespace enzyme;
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_BATCHPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -264,7 +264,7 @@ LogicalResult batchOperation(
 
 namespace {
 
-struct BatchPass : public BatchPassBase<BatchPass> {
+struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function

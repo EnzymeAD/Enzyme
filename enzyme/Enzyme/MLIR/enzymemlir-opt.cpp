@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
 
-  mlir::registerenzymePasses();
+  mlir::enzyme::registerenzymePasses();
 
   mlir::func::registerInlinerExtension(registry);
 

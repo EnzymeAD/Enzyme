@@ -27,7 +27,7 @@
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_DIFFERENTIATEWRAPPERPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
@@ -60,7 +60,8 @@ std::vector<DIFFE_TYPE> parseActivityString(StringRef inp) {
 
 namespace {
 struct DifferentiateWrapperPass
-    : public DifferentiateWrapperPassBase<DifferentiateWrapperPass> {
+    : public enzyme::impl::DifferentiateWrapperPassBase<DifferentiateWrapperPass> {
+  using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
     MEnzymeLogic Logic;
@@ -159,4 +160,3 @@ struct DifferentiateWrapperPass
 
 } // end anonymous namespace
 
-} // namespace mlir

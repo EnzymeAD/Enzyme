@@ -21,18 +21,19 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 using namespace mlir;
+using namespace mlir::enzyme;
 
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_PRINTALIASANALYSISPASS
-#include "Passes.h.inc"
+#include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
 
 namespace {
 
 struct PrintAliasAnalysisPass
-    : public enzyme::PrintAliasAnalysisPassBase<PrintAliasAnalysisPass> {
+    : public enzyme::impl::PrintAliasAnalysisPassBase<PrintAliasAnalysisPass> {
 
   void runOnOperation() override {
     DataFlowSolver solver;
@@ -146,4 +147,3 @@ struct PrintAliasAnalysisPass
 };
 } // namespace
 
-} // namespace mlir
