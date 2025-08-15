@@ -531,7 +531,9 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         // TODO use is_value_needed_in_reverse (requiring GradientUtils)
         if (OnlyUsedInOMP(AI))
           continue;
-        if (!UsableEverywhere || mode != DerivativeMode::ReverseModeCombined) {
+        if (!UsableEverywhere ||
+            (mode != DerivativeMode::ReverseModeCombined &&
+             mode != DerivativeMode::ReverseModeProfiled)) {
           ToConvert.push_back(AI);
         }
       }
@@ -2019,7 +2021,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||
-      mode == DerivativeMode::ReverseModeCombined) {
+      mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeProfiled) {
     // For subfunction calls upgrade stack allocations to mallocs
     // to ensure availability in the reverse pass
     auto unreachable = getGuaranteedUnreachable(NewF);
@@ -2525,6 +2528,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   }
 
   if (hasPtrInput && (mode == DerivativeMode::ReverseModeCombined ||
+                      mode == DerivativeMode::ReverseModeProfiled ||
                       mode == DerivativeMode::ReverseModeGradient)) {
     if (NewF->hasFnAttribute(Attribute::ReadOnly)) {
       NewF->removeFnAttr(Attribute::ReadOnly);

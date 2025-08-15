@@ -497,7 +497,8 @@ public:
           switch (Mode) {
 
           case DerivativeMode::ReverseModePrimal:
-          case DerivativeMode::ReverseModeCombined: {
+          case DerivativeMode::ReverseModeCombined:
+          case DerivativeMode::ReverseModeProfiled: {
             if (!needShadow) {
               gutils->erase(placeholder);
             } else {
@@ -631,7 +632,8 @@ public:
         return;
       }
       case DerivativeMode::ReverseModeGradient:
-      case DerivativeMode::ReverseModeCombined: {
+      case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeProfiled: {
 
         IRBuilder<> Builder2(&I);
         getReverseBuilder(Builder2);
@@ -791,6 +793,7 @@ public:
         return;
       }
       if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeProfiled ||
            Mode == DerivativeMode::ReverseModeGradient) &&
           gutils->isConstantValue(&I)) {
         if (!gutils->isConstantValue(I.getValOperand())) {
@@ -1092,7 +1095,8 @@ public:
         case DerivativeMode::ReverseModePrimal:
           break;
         case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined: {
+        case DerivativeMode::ReverseModeCombined:
+        case DerivativeMode::ReverseModeProfiled: {
           IRBuilder<> Builder2(&I);
           getReverseBuilder(Builder2);
 
@@ -1229,7 +1233,8 @@ public:
         if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
             (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
-            (Mode == DerivativeMode::ReverseModeCombined &&
+            ((Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeProfiled) &&
              (forwardsShadow || backwardsShadow)) ||
             Mode == DerivativeMode::ForwardMode ||
             Mode == DerivativeMode::ForwardModeError) {
@@ -1300,7 +1305,8 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       return;
     }
     case DerivativeMode::ForwardModeSplit:
@@ -1322,7 +1328,8 @@ public:
       return;
     }
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       if (gutils->isConstantInstruction(&I))
         return;
 
@@ -1431,6 +1438,7 @@ public:
     case DerivativeMode::ReverseModePrimal:
       return;
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
     case DerivativeMode::ReverseModeGradient: {
       if (gutils->isConstantInstruction(&SI))
         return;
@@ -1567,7 +1575,8 @@ public:
       return;
     }
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       if (gutils->isConstantInstruction(&EEI))
         return;
       IRBuilder<> Builder2(&EEI);
@@ -1625,7 +1634,8 @@ public:
       return;
     }
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       if (gutils->isConstantInstruction(&IEI))
         return;
       IRBuilder<> Builder2(&IEI);
@@ -1718,7 +1728,8 @@ public:
       return;
     }
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       if (gutils->isConstantInstruction(&SVI))
         return;
       IRBuilder<> Builder2(&SVI);
@@ -1795,7 +1806,8 @@ public:
       return;
     }
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       if (gutils->isConstantInstruction(&EVI))
         return;
       if (EVI.getType()->isPointerTy())
@@ -1958,6 +1970,7 @@ public:
       assert(0 && "should be handled above");
       return;
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
     case DerivativeMode::ReverseModeGradient: {
       IRBuilder<> Builder2(&IVI);
       getReverseBuilder(Builder2);
@@ -2175,6 +2188,7 @@ public:
 
   bool shouldFree() {
     assert(Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeProfiled ||
            Mode == DerivativeMode::ReverseModeGradient ||
            Mode == DerivativeMode::ForwardModeSplit);
     return ((DiffeGradientUtils *)gutils)->FreeMemory;
@@ -2196,7 +2210,8 @@ public:
 
     if (BO.getOpcode() == llvm::Instruction::FDiv &&
         (Mode == DerivativeMode::ReverseModeGradient ||
-         Mode == DerivativeMode::ReverseModeCombined) &&
+         Mode == DerivativeMode::ReverseModeCombined ||
+         Mode == DerivativeMode::ReverseModeProfiled) &&
         !gutils->isConstantValue(&BO)) {
       using namespace llvm;
       // Required loopy phi = [in, BO, BO, ..., BO]
@@ -2311,6 +2326,7 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
       if (gutils->isConstantInstruction(&BO))
         return;
       createBinaryOperatorAdjoint(BO);
@@ -2839,7 +2855,8 @@ public:
 
     IRBuilder<> Builder2(&MS);
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined)
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled)
       getReverseBuilder(Builder2);
 
     bool forceErase = false;
@@ -3214,7 +3231,9 @@ public:
       // TODO ponder forward split mode
       if (!secretty &&
           ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-           (Mode == DerivativeMode::ReverseModeCombined && forwardsShadow) ||
+           ((Mode == DerivativeMode::ReverseModeCombined ||
+             Mode == DerivativeMode::ReverseModeProfiled) &&
+            forwardsShadow) ||
            (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
            (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow))) {
         auto Defs =
@@ -3247,7 +3266,8 @@ public:
         applyChainRule(BuilderZ, rule, shadow_dst);
       }
       if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
-                       Mode == DerivativeMode::ReverseModeCombined)) {
+                       Mode == DerivativeMode::ReverseModeCombined ||
+                       Mode == DerivativeMode::ReverseModeProfiled)) {
 
         auto Defs =
             gutils->getInvertedBundles(&MS,
@@ -3681,7 +3701,8 @@ public:
     default:
       break;
     case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined: {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled: {
       bool emitReverse = true;
       if (EnzymeJuliaAddrLoad) {
         if (auto prev = dyn_cast_or_null<CallBase>(FI.getPrevNode())) {
@@ -3871,6 +3892,7 @@ public:
     }
 
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
     case DerivativeMode::ReverseModeGradient: {
 
       IRBuilder<> Builder2(&I);
@@ -4253,7 +4275,8 @@ public:
     }
 
     if (Mode == DerivativeMode::ReverseModePrimal ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             RequestContext(&call, &BuilderZ), cast<Function>(called),
@@ -4426,7 +4449,8 @@ public:
     }
 
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
@@ -5112,7 +5136,9 @@ public:
 
     bool replaceFunction = false;
 
-    if (Mode == DerivativeMode::ReverseModeCombined && !foreignFunction) {
+    if ((Mode == DerivativeMode::ReverseModeCombined ||
+         Mode == DerivativeMode::ReverseModeProfiled) &&
+        !foreignFunction) {
       replaceFunction = legalCombinedForwardReverse(
           &call, *replacedReturns, postCreate, userReplace, gutils,
           unnecessaryInstructions, oldUnreachable, subretused);
@@ -5371,7 +5397,8 @@ public:
         }
       } else {
         if (Mode == DerivativeMode::ReverseModePrimal ||
-            Mode == DerivativeMode::ReverseModeCombined) {
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeProfiled) {
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               RequestContext(&call, &BuilderZ), cast<Function>(called),
               subretType, argsInverted, TR.analyzer->interprocedural,
@@ -5431,6 +5458,7 @@ public:
       // llvm::errs() << "seeing sub_index_map of " << sub_index_map->size()
       // << " in ap " << cast<Function>(called)->getName() << "\n";
       if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled ||
           Mode == DerivativeMode::ReverseModePrimal) {
 
         assert(newcalled);
@@ -5630,7 +5658,8 @@ public:
                               ss.str());
                 }
               } else {
-                if (Mode == DerivativeMode::ReverseModeCombined)
+                if (Mode == DerivativeMode::ReverseModeCombined ||
+                    Mode == DerivativeMode::ReverseModeProfiled)
                   cachereplace = newCall;
                 else
                   cachereplace = BuilderZ.CreatePHI(
@@ -5679,6 +5708,7 @@ public:
 
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeProfiled ||
               Mode == DerivativeMode::ReverseModePrimal) {
 
             if (!differetIdx) {
@@ -5736,6 +5766,7 @@ public:
 
       if (fnandtapetype && fnandtapetype->tapeType &&
           (Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeProfiled ||
            Mode == DerivativeMode::ReverseModeGradient ||
            Mode == DerivativeMode::ForwardModeSplit) &&
           shouldFree()) {
@@ -5760,7 +5791,8 @@ public:
         gutils->erase(placeholder);
       }
       if (/*!topLevel*/ Mode != DerivativeMode::ReverseModeCombined &&
-          subretused && !call.doesNotAccessMemory()) {
+          Mode != DerivativeMode::ReverseModeProfiled && subretused &&
+          !call.doesNotAccessMemory()) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(gutils, &call, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(&call)) {
@@ -5842,7 +5874,8 @@ public:
       FT = cast<Function>(newcalled)->getFunctionType();
     } else {
 
-      assert(subMode != DerivativeMode::ReverseModeCombined);
+      assert(subMode != DerivativeMode::ReverseModeCombined &&
+             subMode != DerivativeMode::ReverseModeProfiled);
 
       auto callval = call.getCalledOperand();
 
@@ -6207,12 +6240,14 @@ public:
 
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ReverseModeGradient) {
       auto found = customCallHandlers.find(funcName);
       if (found != customCallHandlers.end()) {
         IRBuilder<> Builder2(&call);
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModeCombined)
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeProfiled)
           getReverseBuilder(Builder2);
 
         Value *invertedReturn = nullptr;
@@ -6231,7 +6266,8 @@ public:
         Type *tapeType = nullptr;
 
         if (Mode == DerivativeMode::ReverseModePrimal ||
-            Mode == DerivativeMode::ReverseModeCombined) {
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeProfiled) {
           bool noMod = found->second.first(BuilderZ, &call, *gutils,
                                            normalReturn, invertedReturn, tape);
           if (noMod) {
@@ -6255,7 +6291,8 @@ public:
         }
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModeCombined) {
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeProfiled) {
           if (Mode == DerivativeMode::ReverseModeGradient &&
               augmentedReturn->tapeIndices.find(
                   std::make_pair(&call, CacheType::Tape)) !=
@@ -6515,6 +6552,7 @@ public:
       // may load overwritten data)
       //    Store and reload it
       if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeProfiled &&
           Mode != DerivativeMode::ForwardMode &&
           Mode != DerivativeMode::ForwardModeError && subretused &&
           (call.mayWriteToMemory() ||

@@ -374,8 +374,9 @@ enum class DerivativeMode {
   ReverseModePrimal = 1,
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
-  ForwardModeSplit = 4,
-  ForwardModeError = 5,
+  ReverseModeProfiled = 4,
+  ForwardModeSplit = 5,
+  ForwardModeError = 6,
 };
 
 enum class ProbProgMode {
@@ -434,6 +435,8 @@ static inline std::string to_string(DerivativeMode mode) {
     return "ReverseModeGradient";
   case DerivativeMode::ReverseModeCombined:
     return "ReverseModeCombined";
+  case DerivativeMode::ReverseModeProfiled:
+    return "ReverseModeProfiled";
   }
   llvm_unreachable("illegal derivative mode");
 }

@@ -93,6 +93,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModeProfiled ||
          mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit ||
          mode == DerivativeMode::ForwardModeError);
@@ -118,6 +119,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
     prefix = "diffe";
+    break;
+  case DerivativeMode::ReverseModeProfiled:
+    prefix = "instr";
     break;
   case DerivativeMode::ReverseModePrimal:
     llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
@@ -359,7 +363,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, ArrayRef<Value *> idxs,
                                Value *mask) {
   assert(mode == DerivativeMode::ReverseModeGradient ||
-         mode == DerivativeMode::ReverseModeCombined);
+         mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModeProfiled);
 
 #ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
@@ -816,6 +821,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     break;
   case DerivativeMode::ReverseModeGradient:
   case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeProfiled:
     ptr = lookupM(invertPointerM(origptr, BuilderM), BuilderM);
     break;
   }

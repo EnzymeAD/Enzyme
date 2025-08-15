@@ -786,7 +786,8 @@ public:
     bool subsequent_calls_may_write =
         mode != DerivativeMode::ForwardMode &&
         mode != DerivativeMode::ForwardModeError &&
-        mode != DerivativeMode::ReverseModeCombined;
+        mode != DerivativeMode::ReverseModeCombined &&
+        mode != DerivativeMode::ReverseModeProfiled;
     StringSet<> ActiveRandomVariables;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
@@ -807,7 +808,8 @@ public:
 
     std::vector<bool> overwritten_args(
         fn->getFunctionType()->getNumParams(),
-        !(mode == DerivativeMode::ReverseModeCombined));
+        !(mode == DerivativeMode::ReverseModeCombined ||
+          mode == DerivativeMode::ReverseModeProfiled));
 
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
@@ -833,6 +835,7 @@ public:
       }
     }
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
+                               mode == DerivativeMode::ReverseModeProfiled ||
                                mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
 
@@ -911,6 +914,7 @@ public:
       }
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeProfiled:
       case DerivativeMode::ReverseModeGradient: {
         if (retType != DIFFE_TYPE::CONSTANT)
           shadow = CI->getArgOperand(1);
@@ -970,7 +974,8 @@ public:
       Optional<DIFFE_TYPE> opt_ty;
 #endif
 
-      bool overwritten = !(mode == DerivativeMode::ReverseModeCombined);
+      bool overwritten = !(mode == DerivativeMode::ReverseModeCombined ||
+                           mode == DerivativeMode::ReverseModeProfiled);
 
       bool skipArg = false;
 
@@ -1797,6 +1802,7 @@ public:
       break;
     }
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
           context,
@@ -2282,7 +2288,7 @@ public:
     std::map<int, Type *> byVal;
     std::vector<DIFFE_TYPE> constants;
     SmallVector<Value *, 8> args;
-    auto mode = DerivativeMode::ReverseModeCombined;
+    auto mode = DerivativeMode::ReverseModeProfiled;
 
     // Extract primal arguments
     auto options =

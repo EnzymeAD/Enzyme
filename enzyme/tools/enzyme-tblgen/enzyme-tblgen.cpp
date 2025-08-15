@@ -2548,6 +2548,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
+      os << "      case DerivativeMode::ReverseModeProfiled:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";

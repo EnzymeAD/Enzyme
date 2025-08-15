@@ -48,7 +48,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
     if (!gutils->isConstantInstruction(&call)) {
       if (Mode == DerivativeMode::ReverseModePrimal ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled) {
         assert(!gutils->isConstantValue(call.getOperand(0)));
         assert(!gutils->isConstantValue(call.getOperand(6)));
         Value *d_req = gutils->invertPointerM(call.getOperand(6), BuilderZ);
@@ -144,7 +145,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         // TODO old
       }
       if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
@@ -347,7 +349,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     Value *d_reqp = nullptr;
     auto impi = getMPIHelper(call.getContext());
     if (Mode == DerivativeMode::ReverseModePrimal ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       Value *req = gutils->getNewFromOriginal(call.getOperand(0));
       Value *d_req = gutils->invertPointerM(call.getOperand(0), BuilderZ);
 
@@ -384,7 +387,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
@@ -392,7 +396,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *req =
           lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
 
-      if (Mode != DerivativeMode::ReverseModeCombined) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeProfiled) {
         d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(impi), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
@@ -488,7 +493,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     auto impi = getMPIHelper(call.getContext());
     PointerType *reqType = PointerType::getUnqual(impi);
     if (Mode == DerivativeMode::ReverseModePrimal ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       Value *count = gutils->getNewFromOriginal(call.getOperand(0));
       Value *req = gutils->getNewFromOriginal(call.getOperand(1));
       Value *d_req = gutils->invertPointerM(call.getOperand(1), BuilderZ);
@@ -515,7 +521,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
@@ -525,7 +532,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *req_orig =
           lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
 
-      if (Mode != DerivativeMode::ReverseModeCombined) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeProfiled) {
         d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(reqType), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
@@ -660,6 +668,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       funcName == "PMPI_Send" || funcName == "PMPI_Ssend") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -800,7 +809,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
   if (funcName == "MPI_Recv" || funcName == "PMPI_Recv") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
                          Mode == DerivativeMode::ForwardModeError;
 
@@ -907,6 +917,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Bcast") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -1109,6 +1120,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Reduce" || funcName == "PMPI_Reduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       // TODO insert a check for sum
@@ -1351,6 +1363,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Allreduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       // TODO insert a check for sum
@@ -1530,6 +1543,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Gather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -1734,6 +1748,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Scatter") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -1973,6 +1988,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Allgather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled ||
         Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
@@ -2154,7 +2170,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // location in the reverse.
   if (funcName == "MPI_Barrier") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
       auto callval = call.getCalledOperand();
@@ -2180,7 +2197,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   auto commFound = MPIInactiveCommAllocators.find(funcName);
   if (commFound != MPIInactiveCommAllocators.end()) {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
@@ -2294,7 +2312,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // location in the reverse.
     if (funcName == "__kmpc_barrier") {
       if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
         auto callval = call.getCalledOperand();
@@ -2352,7 +2371,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     if (funcName == "llvm.julia.gc_preserve_end") {
       if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled) {
 
         auto begin_call = cast<CallInst>(call.getOperand(0));
 
@@ -2423,7 +2443,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       gutils->erase(oldp);
 
       if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
 
@@ -2457,6 +2478,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         return true;
       }
       if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled ||
           Mode == DerivativeMode::ReverseModeGradient) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
@@ -2651,6 +2673,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *shadow = placeholder;
           if (lrc || Mode == DerivativeMode::ReverseModePrimal ||
               Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeProfiled ||
               Mode == DerivativeMode::ForwardMode ||
               Mode == DerivativeMode::ForwardModeError) {
             if (gutils->isConstantValue(call.getArgOperand(0)))
@@ -2746,7 +2769,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         if (Mode == DerivativeMode::ForwardMode ||
             Mode == DerivativeMode::ForwardModeError ||
-            (Mode == DerivativeMode::ReverseModeCombined &&
+            ((Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeProfiled) &&
              (forwardsShadow || backwardsShadow)) ||
             (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
             (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
@@ -2945,6 +2969,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 
       if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled ||
           Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ForwardModeSplit) {
@@ -2998,6 +3023,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             bb.SetInsertPoint(placeholder);
 
             if (Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ReverseModeProfiled ||
                 (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
                 (Mode == DerivativeMode::ReverseModeGradient &&
                  backwardsShadow)) {
@@ -3080,6 +3106,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 }
               }
               if (Mode == DerivativeMode::ReverseModeCombined ||
+                  Mode == DerivativeMode::ReverseModeProfiled ||
                   (Mode == DerivativeMode::ReverseModePrimal &&
                    forwardsShadow) ||
                   (Mode == DerivativeMode::ReverseModeGradient &&
@@ -3200,6 +3227,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             }
 
             if (Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ReverseModeProfiled ||
                 (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
                 (Mode == DerivativeMode::ReverseModeGradient &&
                  backwardsShadow) ||
@@ -3213,7 +3241,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               std::make_pair(&call, InvertedPointerVH(gutils, anti)));
         }
       endAnti:;
-        if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
+        if ((((Mode == DerivativeMode::ReverseModeCombined ||
+               Mode == DerivativeMode::ReverseModeProfiled) &&
+              shouldFree()) ||
              (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
              (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
             !isAlloca) {
@@ -3435,6 +3465,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           // Otherwise if in reverse pass, free the newly created allocation.
           if (Mode == DerivativeMode::ReverseModeGradient ||
               Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeProfiled ||
               Mode == DerivativeMode::ForwardModeSplit) {
             IRBuilder<> Builder2(&call);
             getReverseBuilder(Builder2);
@@ -3505,7 +3536,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           gutils->replaceAWithB(newCall, pn);
           gutils->erase(newCall);
         }
-      } else if (Mode != DerivativeMode::ReverseModeCombined) {
+      } else if (Mode != DerivativeMode::ReverseModeCombined &&
+                 Mode != DerivativeMode::ReverseModeProfiled) {
         gutils->cacheForReverse(BuilderZ, newCall,
                                 getIndex(&call, CacheType::Self, BuilderZ));
       }
@@ -3526,6 +3558,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (hasPDFree &&
           ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
            Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeProfiled ||
            (Mode == DerivativeMode::ForwardModeSplit && shouldFree()))) {
         IRBuilder<> Builder2(&call);
         getReverseBuilder(Builder2);
@@ -3535,6 +3568,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
     } else if (Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ReverseModeCombined ||
+               Mode == DerivativeMode::ReverseModeProfiled ||
                Mode == DerivativeMode::ForwardModeSplit) {
       // Note that here we cannot simply replace with null as users who
       // try to find the shadow pointer will use the shadow of null rather
@@ -3730,7 +3764,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 #endif
     if (Mode == DerivativeMode::ReverseModePrimal ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       val = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(val->getType()))
         val = BuilderZ.CreateIntToPtr(val, PointerType::getUnqual(PT));
@@ -3745,7 +3780,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                                     getIndex(&call, CacheType::Tape, BuilderZ));
     }
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
       val = gutils->lookupM(val, Builder2);
@@ -3760,13 +3796,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   }
   if (funcName == "cuStreamDestroy") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined)
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
   }
   if (funcName == "cuStreamSynchronize") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
       Value *nargs[] = {gutils->lookupM(
@@ -3805,6 +3843,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled ||
           Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
         Value *ptrshadow =
@@ -3898,6 +3937,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 
       if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeProfiled ||
           Mode == DerivativeMode::ReverseModeGradient) {
         if (shouldFree()) {
           IRBuilder<> Builder2(&call);
@@ -3972,7 +4012,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       // to find the shadow pointer will use the shadow of null rather than
       // the true shadow of this
       //}
-    } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
+    } else if ((Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ReverseModeProfiled) &&
+               shouldFree()) {
       IRBuilder<> Builder2(newCall->getNextNode());
       auto ptrv = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(ptrv->getType()))
@@ -4113,7 +4155,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
           return true;
         } else {
-          assert(Mode == DerivativeMode::ReverseModeCombined);
+          assert(Mode == DerivativeMode::ReverseModeCombined ||
+                 Mode == DerivativeMode::ReverseModeProfiled);
           std::map<UsageKey, bool> Seen;
           for (auto pair : gutils->knownRecomputeHeuristic)
             if (!pair.second)
@@ -4168,6 +4211,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   if (call.hasFnAttr("enzyme_sample")) {
     if (Mode != DerivativeMode::ReverseModeCombined &&
+        Mode != DerivativeMode::ReverseModeProfiled &&
         Mode != DerivativeMode::ReverseModeGradient)
       return true;
 
