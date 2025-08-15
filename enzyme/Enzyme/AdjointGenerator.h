@@ -47,6 +47,9 @@
 #include "LibraryFuncs.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
+#ifdef ENZYME_ENABLE_FPOPT
+#include "Poseidon/Poseidon.h"
+#endif
 
 #define DEBUG_TYPE "enzyme"
 

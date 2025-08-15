@@ -72,6 +72,7 @@
 #include "llvm/IR/AbstractCallSite.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -932,6 +933,17 @@ public:
 
     size_t maxsize;
     maxsize = CI->arg_size();
+
+    // Pop off the relative error tolerance argument for __enzyme_fp_optimize
+    // profiling pass
+    if (auto calledFn = CI->getCalledFunction()) {
+      if (calledFn->getName().contains("__enzyme_fp_optimize")) {
+        if (maxsize > 1) {
+          maxsize--;
+        }
+      }
+    }
+
     size_t num_args = maxsize;
     for (unsigned i = 1 + sret; i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
@@ -2210,6 +2222,8 @@ public:
   }
 
   bool HandlePoseidonProf(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
+    assert(FPProfileGenerate);
+
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
     if (!F)
@@ -2222,119 +2236,14 @@ public:
     SmallVector<Value *, 2> args;
 
     auto mode = DerivativeMode::ReverseModeCombined;
-    FunctionType *FT = F->getFunctionType();
 
-    bool returnUsed =
-        !F->getReturnType()->isVoidTy() && !F->getReturnType()->isEmptyTy();
-
-    bool sret =
-        CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
-    unsigned truei = 0;
-
-    if (F->hasParamAttribute(0, Attribute::StructRet)) {
-      Value *primal = CI->getArgOperand(0);
-      args.push_back(primal);
-      constants.push_back(DIFFE_TYPE::CONSTANT);
-      truei = 1;
-    }
-
-    // Skip `rel_err_tol` (last arg)
-    for (unsigned i = 1 + sret; i < CI->arg_size() - 1; ++i) {
-      Value *res = CI->getArgOperand(i);
-
-      if (truei >= FT->getNumParams()) {
-        EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
-                    "Too many arguments to __enzyme_fp_optimize", *CI,
-                    " - extra arg - ", *res);
-        return false;
-      }
-
-      assert(truei < FT->getNumParams());
-
-      auto PTy = FT->getParamType(truei);
-
-      if (PTy != res->getType()) {
-        if (auto ptr = dyn_cast<PointerType>(res->getType())) {
-          if (auto PT = dyn_cast<PointerType>(PTy)) {
-            if (ptr->getAddressSpace() != PT->getAddressSpace()) {
-#if LLVM_VERSION_MAJOR < 17
-              if (CI->getContext().supportsTypedPointers()) {
-                res = Builder.CreateAddrSpaceCast(
-                    res, PointerType::get(ptr->getPointerElementType(),
-                                          PT->getAddressSpace()));
-              } else {
-                res = Builder.CreateAddrSpaceCast(res, PT);
-              }
-#else
-              res = Builder.CreateAddrSpaceCast(res, PT);
-#endif
-              assert(res);
-              assert(PTy);
-              assert(FT);
-              llvm::errs() << "Warning cast(1) __enzyme_fp_optimize argument "
-                           << i << " " << *res << "|" << *res->getType()
-                           << " to argument " << truei << " " << *PTy << "\n"
-                           << "orig: " << *FT << "\n";
-            }
-          }
-        }
-        if (res->getType()->canLosslesslyBitCastTo(PTy)) {
-          res = Builder.CreateBitCast(res, PTy);
-        }
-        if (res->getType() != PTy && res->getType()->isIntegerTy() &&
-            PTy->isIntegerTy(1)) {
-          res = Builder.CreateTrunc(res, PTy);
-        }
-        if (res->getType() != PTy) {
-          auto loc = CI->getDebugLoc();
-          if (auto arg = dyn_cast<Instruction>(res)) {
-            loc = arg->getDebugLoc();
-          }
-          auto S = simplifyLoad(res);
-          if (!S)
-            S = res;
-          EmitFailure("IllegalArgCast", loc, CI,
-                      "Cannot cast __enzyme_fp_optimize argument ", i,
-                      ", found ", *res, ", type ", *res->getType(),
-                      " (simplified to ", *S, " ) ", " - to arg ", truei, ", ",
-                      *PTy);
-          return false;
-        }
-      }
-
-      if (CI->isByValArgument(i)) {
-        byVal[args.size()] = CI->getParamByValType(i);
-      }
-
-      args.push_back(res);
-
-      DIFFE_TYPE ty = DIFFE_TYPE::CONSTANT;
-      if (PTy->isFloatingPointTy()) {
-        ty = DIFFE_TYPE::DUP_ARG;
-        args.push_back(ConstantFP::get(PTy, 0.0));
-      }
-      constants.push_back(ty);
-
-      ++truei;
-    }
-
-    if (truei < FT->getNumParams()) {
-      auto numParams = FT->getNumParams();
-      EmitFailure("EnzymeInsufficientArgs", CI->getDebugLoc(), CI,
-                  "Insufficient number of args passed to __enzyme_fp_optimize; "
-                  "required ",
-                  numParams, " args, found ", truei);
+    // `handleArguments` automatically skips the last arg for
+    // __enzyme_fp_optimize
+    auto options =
+        handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
+    if (!options) {
       return false;
     }
-
-    std::vector<bool> overwritten_args(FT->getNumParams(), false);
-    Options opt({nullptr,    nullptr,    nullptr,
-                 nullptr,    nullptr,    nullptr,
-                 nullptr,    1,          0,
-                 true,       returnUsed, false,
-                 false,      false,      DIFFE_TYPE::CONSTANT,
-                 returnUsed, {},         overwritten_args,
-                 true,       false,      false});
 
     Value *ret = CI;
     Type *retElemType = nullptr;
@@ -2345,16 +2254,8 @@ public:
               .getValueAsType();
     }
 
-    bool status =
-        HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args, byVal,
-                       constants, F, mode, opt, false, calls);
-    if (!status) {
-      EmitFailure("FPOptProfilingFailed", CI->getDebugLoc(), CI,
-                  "Failed to instrument function");
-      return false;
-    }
-
-    return status;
+    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
+                          byVal, constants, F, mode, *options, false, calls);
   }
 
   bool HandlePoseidonOpt(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
@@ -2365,16 +2266,66 @@ public:
 
     assert(F);
 
+    // Extract relative error tolerance (last argument)
+    Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
+    double relativeErrorTol = 0.0;
+    if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
+      relativeErrorTol = CFP->getValueAPF().convertToDouble();
+    } else {
+      EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
+                  "Relative error tolerance must be a constant floating-point "
+                  "value, got ",
+                  relErrorArg);
+      return false;
+    }
+
+    std::map<int, Type *> byVal;
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<Value *, 8> args;
+    auto mode = DerivativeMode::ReverseModeCombined;
+
+    // Extract primal arguments
+    auto options =
+        handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
+    if (!options) {
+      return false;
+    }
+
+    SmallVector<Value *, 8> primalArgs;
+    size_t argIdx = 0;
+    for (size_t i = 0; i < constants.size(); ++i) {
+      if (argIdx >= args.size())
+        break;
+
+      if (i == 0 && F->hasParamAttribute(0, Attribute::StructRet)) {
+        argIdx++;
+        if (constants[i] == DIFFE_TYPE::DUP_ARG ||
+            constants[i] == DIFFE_TYPE::DUP_NONEED) {
+          argIdx++;
+        }
+        continue;
+      }
+
+      primalArgs.push_back(args[argIdx]);
+      argIdx++;
+
+      if (constants[i] == DIFFE_TYPE::DUP_ARG ||
+          constants[i] == DIFFE_TYPE::DUP_NONEED) {
+        argIdx++;
+      }
+    }
+
     if (!FPProfileUse.getNumOccurrences() || FPProfileUse.empty()) {
       EmitWarning("MissingProfileMode", *CI,
-                  "__enzyme_fp_optimize called without FPProfileGenerate or "
-                  "FPProfileUse. "
+                  "__enzyme_fp_optimize called without -fpprofile-generate or "
+                  "-fpprofile-use=<dir>. "
                   "Emitting unoptimized function call. Use -fpprofile-generate "
-                  "to create a profile "
-                  "or -fpprofile-use=<dir> to use an existing profile.");
+                  "to create a profile or -fpprofile-use=<dir> to use an "
+                  "existing profile.");
     } else {
-      Twine profilePath = FPProfileUse + "/" + F->getName() + ".fpprofile";
-      if (!sys::fs::exists(profilePath)) {
+      SmallString<128> profilePath(FPProfileUse);
+      llvm::sys::path::append(profilePath, F->getName() + ".fpprofile");
+      if (!llvm::sys::fs::exists(profilePath.str())) {
         EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
                     profilePath, " (FPProfileUse: ", FPProfileUse, ")");
         return false;
@@ -2382,60 +2333,25 @@ public:
 
       auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
 
-      // __enzyme_fp_optimize(f, args..., rel_err_tol)
-      unsigned numFuncArgs = F->getFunctionType()->getNumParams();
-      unsigned numIntrArgs = CI->arg_size() - 1;
-
-      if (numIntrArgs != numFuncArgs + 1) {
-        std::string expectedTotal = std::to_string(numFuncArgs + 1);
-        std::string expectedFunc = std::to_string(numFuncArgs);
-        std::string actualArgs = std::to_string(numIntrArgs);
-        std::string funcName = F->getName().str();
-        EmitFailure("ArgumentMismatch", CI->getDebugLoc(), CI,
-                    "__enzyme_fp_optimize requires exactly ", expectedTotal,
-                    " arguments after the function pointer (", expectedFunc,
-                    " function arguments plus 1 relative error tolerance) for "
-                    "function ",
-                    funcName, " but got ", actualArgs);
-        return false;
+      if (FPOptPrint) {
+        llvm::errs() << "FPOpt: Optimizing " << F->getName()
+                     << " with relative error tolerance: " << relativeErrorTol
+                     << "\n";
       }
-
-      Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
-      double relativeErrorTol = 0.;
-
-      if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
-        relativeErrorTol = CFP->getValueAPF().convertToDouble();
-      } else {
-        EmitFailure(
-            "InvalidErrorTolerance", CI->getDebugLoc(), CI,
-            "Relative error tolerance must be a constant floating-point "
-            "value, got ",
-            relErrorArg);
-        return false;
-      }
-
-      llvm::errs() << "FPOpt: Optimizing " << F->getName()
-                   << " with relative error tolerance: " << relativeErrorTol
-                   << "\n";
 
       bool optimized = fpOptimize(*F, TTI, relativeErrorTol);
 
       if (!optimized) {
-        llvm::errs() << "Warning: Poseidon returned false (no change) for "
-                     << F->getName() << "\n";
+        EmitWarning("NoChange", *CI, "Poseidon returned false (no change) for ",
+                    F->getName());
       }
     }
 
-    SmallVector<Value *, 8> Args;
-    for (unsigned i = 1; i < CI->arg_size() - 1; ++i) {
-      Args.push_back(CI->getArgOperand(i));
-    }
+    CallInst *optCall = Builder.CreateCall(F->getFunctionType(), F, primalArgs);
+    optCall->setCallingConv(CI->getCallingConv());
+    optCall->setDebugLoc(CI->getDebugLoc());
 
-    CallInst *newCall = Builder.CreateCall(F->getFunctionType(), F, Args);
-    newCall->setCallingConv(CI->getCallingConv());
-    newCall->setDebugLoc(CI->getDebugLoc());
-
-    CI->replaceAllUsesWith(newCall);
+    CI->replaceAllUsesWith(optCall);
     CI->eraseFromParent();
 
     return true;
