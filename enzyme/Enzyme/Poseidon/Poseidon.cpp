@@ -20,6 +20,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InstructionCost.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
@@ -56,7 +57,7 @@ cl::opt<bool> FPProfileGenerate(
     "fpprofile-generate", cl::init(false), cl::Hidden,
     cl::desc("Generate instrumented program for FP profiling"));
 cl::opt<std::string> FPProfileUse(
-    "fpprofile-use", cl::init(""), cl::Hidden,
+    "fpprofile-use", cl::Hidden, cl::value_desc("directory"), cl::ValueOptional,
     cl::desc("FP profile directory to read from for FP optimization"));
 cl::opt<bool> FPOptPrint("fpopt-print", cl::init(false), cl::Hidden,
                          cl::desc("Print FPOpt debug info"));
@@ -91,8 +92,10 @@ cl::opt<std::string> FPOptReductionEval(
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                 double relErrorTol) {
   const std::string functionName = F.getName().str();
-  std::string profilePath =
-      (FPProfileUse + "/" + F.getName() + ".fpprofile").str();
+  assert(!FPProfileUse.empty());
+  SmallString<128> profilePathBuf(FPProfileUse);
+  llvm::sys::path::append(profilePathBuf, F.getName() + ".fpprofile");
+  const std::string profilePath = profilePathBuf.str().str();
 
   if (!FPOptCachePath.empty()) {
     if (auto EC = llvm::sys::fs::create_directories(FPOptCachePath, true))
