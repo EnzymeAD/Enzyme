@@ -6,6 +6,7 @@ add_subdirectory(ForwardMode)
 add_subdirectory(ForwardModeSplit)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(BatchMode)
+add_subdirectory(Poseidon)
 add_subdirectory(ProbProg)
 add_subdirectory(JLSimplify)
 
