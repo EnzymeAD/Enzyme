@@ -936,18 +936,8 @@ public:
     ssize_t interleaved = -1;
 
     size_t maxsize;
-    maxsize = CI->arg_size();
-
-    // Pop off the relative error tolerance argument for __enzyme_fp_optimize
-    // profiling pass
-    if (auto calledFn = CI->getCalledFunction()) {
-      if (calledFn->getName().contains("__enzyme_fp_optimize")) {
-        if (maxsize > 1) {
-          maxsize--;
-        }
-      }
-    }
-
+    maxsize = mode == DerivativeMode::ReverseModeProfiled ? CI->arg_size() - 1
+                                                          : CI->arg_size();
     size_t num_args = maxsize;
     for (unsigned i = 1 + sret; i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
@@ -2241,7 +2231,7 @@ public:
     std::vector<DIFFE_TYPE> constants;
     SmallVector<Value *, 2> args;
 
-    auto mode = DerivativeMode::ReverseModeCombined;
+    auto mode = DerivativeMode::ReverseModeProfiled;
 
     // `handleArguments` automatically skips the last arg for
     // __enzyme_fp_optimize

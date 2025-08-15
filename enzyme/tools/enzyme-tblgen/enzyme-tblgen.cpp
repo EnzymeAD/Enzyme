@@ -2147,7 +2147,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
     if (intrinsic != MLIRDerivatives) {
       os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "    if (FPProfileGenerate && Poseidonable(" << origName << ")) {\n"
+      os << "    if (Mode == DerivativeMode::ReverseModeProfiled && Poseidonable(" << origName << ")) {\n"
          << "      Type *PtrTy = PointerType::getUnqual(" << origName
          << ".getContext());\n"
          << "      Type *DoubleTy = Type::getDoubleTy(" << origName
@@ -2556,7 +2556,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
 
       // Set `dif` immediately for profiled instructions
       os << "#ifdef ENZYME_ENABLE_FPOPT\n"
-         << "        if (FPProfileGenerate && Poseidonable(" << origName
+         << "        if (Mode == DerivativeMode::ReverseModeProfiled && Poseidonable(" << origName
          << ")) {\n"
          << "          dif = diffe(&" << origName << ", Builder2);\n"
          << "          setDiffe(&" << origName

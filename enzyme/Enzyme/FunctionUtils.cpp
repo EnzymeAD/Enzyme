@@ -28,6 +28,7 @@
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -1569,7 +1570,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         Returns, "", nullptr);
   }
 #ifdef ENZYME_ENABLE_FPOPT
-  if (FPProfileGenerate) {
+  if (mode == DerivativeMode::ReverseModeProfiled) {
     for (const auto &pair : VMap) {
       if (auto before = dyn_cast<Instruction>(pair.first)) {
         if (!Poseidonable(*before))
@@ -1604,8 +1605,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   if (EnzymePreopt) {
 #ifdef ENZYME_ENABLE_FPOPT
     // Disable recursive inlining since no FPOpt metadata is attached
-    // to inlined instructions
-    if (!FPProfileGenerate && EnzymeInline)
+    // to inlined instructions for now
+    if (mode != DerivativeMode::ReverseModeProfiled && EnzymeInline)
 #else
     if (EnzymeInline)
 #endif
