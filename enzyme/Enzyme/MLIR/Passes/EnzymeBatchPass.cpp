@@ -72,9 +72,9 @@ LogicalResult handleCallOp(
   if (it != batchedFunctionCache.end()) {
     batchedFunc = it->second;
   } else {
-    batchedFunc =
-        batchCloneFunction(calledFunc, "batched_" + calledFunc.getName(),
-                           batchSizes, batchedFunctionCache);
+    std::string fnName = "batched_" + calledFunc.getName().str();
+    batchedFunc = batchCloneFunction(calledFunc, fnName, batchSizes,
+                                     batchedFunctionCache);
     if (!batchedFunc)
       return failure();
     batchedFunctionCache[key] = batchedFunc;
@@ -243,8 +243,9 @@ LogicalResult batchOperation(
     newFunc = it->second;
   } else {
     // Create new batched function and store in cache
-    newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
-                                 CI.getBatchShape(), batchedFunctionCache);
+    std::string newFnName = "batched_" + fn.getName().str();
+    newFunc = batchCloneFunction(fn, newFnName, CI.getBatchShape(),
+                                 batchedFunctionCache);
     if (!newFunc) {
       return failure();
     }
