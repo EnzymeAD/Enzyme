@@ -47,8 +47,8 @@ public:
   std::string dtype;
   std::string symbol;
   SmallVector<std::shared_ptr<FPNode>, 2> operands;
-  double sens;  // Sensitivity score, sum of |grad * value|
-  double grad;  // Sum of gradients (not abs)
+  double sens; // Sensitivity score, sum of |grad * value|
+  double grad; // Sum of gradients (not abs)
   unsigned executions;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
