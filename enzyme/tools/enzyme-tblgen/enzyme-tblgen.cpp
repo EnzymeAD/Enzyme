@@ -2150,80 +2150,94 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    if (Mode == DerivativeMode::ReverseModeProfiled && "
             "Poseidonable("
          << origName << ")) {\n"
-         << "      Type *PtrTy = PointerType::getUnqual(" << origName
+         << "      if (auto md = " << origName
+         << ".getMetadata(\"enzyme_fpprofile_idx\")) {\n"
+         << "        size_t instIdx = "
+            "cast<ConstantInt>(cast<ConstantAsMetadata>(md->getOperand(0))->"
+            "getValue())->getZExtValue();\n"
+         << "        Type *PtrTy = PointerType::getUnqual(" << origName
          << ".getContext());\n"
-         << "      Type *DoubleTy = Type::getDoubleTy(" << origName
+         << "        Type *DoubleTy = Type::getDoubleTy(" << origName
          << ".getContext());\n"
-         << "      Type *Int32Ty = Type::getInt32Ty(" << origName
+         << "        Type *SizeTy = Type::getInt64Ty(" << origName
          << ".getContext());\n"
-         << "      FunctionType *LogValueFT = "
+         << "        Type *Int32Ty = Type::getInt32Ty(" << origName
+         << ".getContext());\n"
+         << "        FunctionType *LogValueFT = "
             "FunctionType::get(Type::getVoidTy("
          << origName << ".getContext()),\n"
-         << "          {PtrTy, DoubleTy, Int32Ty, PtrTy}, false);\n"
-         << "      FunctionCallee logFunc = " << origName
+         << "            {PtrTy, SizeTy, DoubleTy, Int32Ty, PtrTy}, false);\n"
+         << "        FunctionCallee logFunc = " << origName
          << ".getModule()->getOrInsertFunction(\"enzymeLogValue\", "
             "LogValueFT);\n"
-         << "      IRBuilder<> BuilderZ(&" << origName << ");\n"
-         << "      getForwardBuilder(BuilderZ);\n"
-         << "      std::string idStr = getLogIdentifier(" << origName << ");\n"
-         << "      GlobalVariable *idGlobal = "
-            "BuilderZ.CreateGlobalString(idStr);\n"
-         << "      Value *idValue = "
-            "BuilderZ.CreateInBoundsGEP(idGlobal->getValueType(), idGlobal, "
+         << "        IRBuilder<> BuilderZ(&" << origName << ");\n"
+         << "        getForwardBuilder(BuilderZ);\n"
+         << "        std::string funcName = gutils->oldFunc->getName().str();\n"
+         << "        GlobalVariable *gv = "
+            "gutils->oldFunc->getParent()->getNamedGlobal(\"fpprofiled_\" + "
+            "funcName);\n"
+         << "        if (!gv)\n"
+         << "          gv = BuilderZ.CreateGlobalString(funcName, "
+            "\"fpprofiled_\" + funcName);\n"
+         << "        Value *funcNamePtr = "
+            "BuilderZ.CreateInBoundsGEP(gv->getValueType(), gv, "
             "{BuilderZ.getInt32(0), BuilderZ.getInt32(0)});\n"
-         << "      Value *origValue = "
+         << "        Value *origValue = "
             "BuilderZ.CreateFPExt(gutils->getNewFromOriginal(&"
          << origName << "),\n"
          << "        Type::getDoubleTy(" << origName << ".getContext()));\n"
-         << "      unsigned numOperands = isa<CallInst>(" << origName << ") ?\n"
-         << "        cast<CallInst>(" << origName
+         << "        unsigned numOperands = isa<CallInst>(" << origName
+         << ") ?\n"
+         << "          cast<CallInst>(" << origName
          << ").arg_size() : " << origName << ".getNumOperands();\n"
-         << "      Value *numOperandsValue = ConstantInt::get(\n"
-         << "        Type::getInt32Ty(" << origName
+         << "        Value *numOperandsValue = ConstantInt::get(\n"
+         << "          Type::getInt32Ty(" << origName
          << ".getContext()), numOperands);\n"
-         << "      auto operands = isa<CallInst>(" << origName << ") ?\n"
-         << "        cast<CallInst>(" << origName << ").args() : " << origName
+         << "        auto operands = isa<CallInst>(" << origName << ") ?\n"
+         << "          cast<CallInst>(" << origName << ").args() : " << origName
          << ".operands();\n"
-         << "      ArrayType *operandArrayType = ArrayType::get(\n"
-         << "        Type::getDoubleTy(" << origName
+         << "        ArrayType *operandArrayType = ArrayType::get(\n"
+         << "         Type::getDoubleTy(" << origName
          << ".getContext()), numOperands);\n"
-         << "      Value *operandArrayValue = "
+         << "        Value *operandArrayValue = "
             "IRBuilder<>(gutils->inversionAllocs).\n"
          << "        CreateAlloca(operandArrayType);\n"
-         << "      for (auto operand : enumerate(operands)) {\n"
-         << "        Value *origOp = "
+         << "        for (auto operand : enumerate(operands)) {\n"
+         << "          Value *origOp = "
             "gutils->getNewFromOriginal(operand.value());\n"
-         << "        Value *operandValue = nullptr;\n"
-         << "        if (origOp->getType()->isFloatingPointTy()) {\n"
-         << "          operandValue = BuilderZ.CreateFPExt(\n"
+         << "          Value *operandValue = nullptr;\n"
+         << "          if (origOp->getType()->isFloatingPointTy()) {\n"
+         << "            operandValue = BuilderZ.CreateFPExt(\n"
          << "            origOp, Type::getDoubleTy(" << origName
          << ".getContext()));\n"
-         << "        } else if (origOp->getType()->isIntegerTy()) {\n"
-         << "          operandValue = BuilderZ.CreateSIToFP(\n"
-         << "            origOp, Type::getDoubleTy(" << origName
+         << "          } else if (origOp->getType()->isIntegerTy()) {\n"
+         << "            operandValue = BuilderZ.CreateSIToFP(\n"
+         << "              origOp, Type::getDoubleTy(" << origName
          << ".getContext()));\n"
-         << "        } else {\n"
-         << "          llvm_unreachable(\"Unsupported operand type\");\n"
+         << "          } else {\n"
+         << "            llvm_unreachable(\"Unsupported operand type\");\n"
+         << "          }\n"
+         << "          Value *ptr = BuilderZ.CreateGEP(\n"
+         << "            operandArrayType, operandArrayValue,\n"
+         << "            {ConstantInt::get(Type::getInt32Ty(" << origName
+         << ".getContext()), 0),\n"
+         << "             ConstantInt::get(Type::getInt32Ty(" << origName
+         << ".getContext()), operand.index())});\n"
+         << "          BuilderZ.CreateStore(operandValue, ptr);\n"
          << "        }\n"
-         << "        Value *ptr = BuilderZ.CreateGEP(\n"
+         << "        Value *operandPtrValue = BuilderZ.CreateGEP(\n"
          << "          operandArrayType, operandArrayValue,\n"
          << "          {ConstantInt::get(Type::getInt32Ty(" << origName
          << ".getContext()), 0),\n"
          << "           ConstantInt::get(Type::getInt32Ty(" << origName
-         << ".getContext()), operand.index())});\n"
-         << "        BuilderZ.CreateStore(operandValue, ptr);\n"
-         << "      }\n"
-         << "      Value *operandPtrValue = BuilderZ.CreateGEP(\n"
-         << "        operandArrayType, operandArrayValue,\n"
-         << "        {ConstantInt::get(Type::getInt32Ty(" << origName
-         << ".getContext()), 0),\n"
-         << "         ConstantInt::get(Type::getInt32Ty(" << origName
          << ".getContext()), 0)});\n"
-         << "      CallInst *logCallInst = BuilderZ.CreateCall(\n"
-         << "        logFunc, {idValue, origValue, numOperandsValue, "
-            "operandPtrValue});\n"
-         << "      logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << "        CallInst *logCallInst = BuilderZ.CreateCall(\n"
+         << "          logFunc, {funcNamePtr, ConstantInt::get(SizeTy, "
+            "instIdx), "
+            "origValue, numOperandsValue, operandPtrValue});\n"
+         << "        logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
+         << "      }\n"
          << "    }\n";
       os << "#endif\n";
     }
@@ -2568,40 +2582,54 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
          << "        if (Mode == DerivativeMode::ReverseModeProfiled && "
             "Poseidonable("
          << origName << ")) {\n"
-         << "          dif = diffe(&" << origName << ", Builder2);\n"
-         << "          setDiffe(&" << origName
+         << "          if (auto md = " << origName
+         << ".getMetadata(\"enzyme_fpprofile_idx\")) {\n"
+         << "            size_t instIdx = "
+            "cast<ConstantInt>(cast<ConstantAsMetadata>(md->getOperand(0))->"
+            "getValue())->getZExtValue();\n"
+         << "            dif = diffe(&" << origName << ", Builder2);\n"
+         << "            setDiffe(&" << origName
          << ", Constant::getNullValue(gutils->getShadowType(" << origName
          << ".getType())), Builder2);\n"
-         << "          Type *PtrTy = PointerType::getUnqual(" << origName
+         << "            Type *PtrTy = PointerType::getUnqual(" << origName
          << ".getContext());\n"
-         << "          Type *DoubleTy = Type::getDoubleTy(" << origName
+         << "            Type *SizeTy = Type::getInt64Ty(" << origName
          << ".getContext());\n"
-         << "          FunctionType *LogGradFT = "
+         << "            Type *DoubleTy = Type::getDoubleTy(" << origName
+         << ".getContext());\n"
+         << "            FunctionType *LogGradFT = "
             "FunctionType::get(Type::getVoidTy("
          << origName << ".getContext()),\n"
-         << "            {PtrTy, DoubleTy, DoubleTy}, false);\n"
-         << "          FunctionCallee logFunc = " << origName
+         << "              {PtrTy, SizeTy, DoubleTy, DoubleTy}, false);\n"
+         << "            FunctionCallee logFunc = " << origName
          << ".getModule()->getOrInsertFunction(\"enzymeLogGrad\", LogGradFT);\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
-         << "          GlobalVariable *idGlobal = "
-            "Builder2.CreateGlobalString(idStr);\n"
-         << "          Value *idValue = "
-            "Builder2.CreateInBoundsGEP(idGlobal->getValueType(), idGlobal, "
+         << "            std::string funcName = "
+            "gutils->oldFunc->getName().str();\n"
+         << "            GlobalVariable *gv = "
+            "gutils->oldFunc->getParent()->getNamedGlobal(\"fpprofiled_\" + "
+            "funcName);\n"
+         << "            if (!gv)\n"
+         << "              gv = Builder2.CreateGlobalString(funcName, "
+            "\"fpprofiled_\" + funcName);\n"
+         << "            Value *funcNamePtr = "
+            "Builder2.CreateInBoundsGEP(gv->getValueType(), gv, "
             "{Builder2.getInt32(0), Builder2.getInt32(0)});\n"
-         << "          Value *primalInst = "
+         << "            Value *primalInst = "
             "gutils->lookupM(gutils->getNewFromOriginal(&"
          << origName << "), Builder2);\n"
-         << "          Value *primalDouble = Builder2.CreateFPExt(primalInst, "
+         << "            Value *primalDouble = "
+            "Builder2.CreateFPExt(primalInst, "
             "Type::getDoubleTy("
          << origName << ".getContext()));\n"
-         << "          Value *gradDouble = Builder2.CreateFPExt(dif, "
+         << "            Value *gradDouble = Builder2.CreateFPExt(dif, "
             "Type::getDoubleTy("
          << origName << ".getContext()));\n"
-         << "          CallInst *logCallInst = Builder2.CreateCall(logFunc, "
-            "{idValue, primalDouble, gradDouble});\n"
-         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
+         << "            CallInst *logCallInst = Builder2.CreateCall(logFunc, "
+            "{funcNamePtr, ConstantInt::get(SizeTy, instIdx), primalDouble, "
+            "gradDouble});\n"
+         << "            logCallInst->setDebugLoc(gutils->getNewFromOriginal("
          << origName << ".getDebugLoc()));\n"
+         << "          }\n"
          << "        }\n"
          << "#endif\n";
     } else {

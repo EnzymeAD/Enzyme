@@ -4245,22 +4245,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     Module *M = key.todiff->getParent();
     LLVMContext &Ctx = M->getContext();
 
-    Type *CharPtrTy = getInt8PtrTy(Ctx);
-
+    Type *DoubleTy = Type::getDoubleTy(Ctx);
+    Type *PtrTy = PointerType::getUnqual(Ctx);
     Type *Int32Ty = Type::getInt32Ty(Ctx);
+    Type *SizeTy = Type::getInt64Ty(Ctx);
+
     M->getOrInsertGlobal("ENZYME_FPPROFILE_RUNTIME_VAR", Int32Ty);
 
-    Type *DoubleTy = Type::getDoubleTy(Ctx);
-    Type *DoublePtrTy = PointerType::getUnqual(DoubleTy);
-    Type *UIntTy = Type::getInt32Ty(Ctx);
-
-    FunctionType *LogValueFT =
-        FunctionType::get(Type::getVoidTy(Ctx),
-                          {CharPtrTy, DoubleTy, UIntTy, DoublePtrTy}, false);
+    FunctionType *LogValueFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, Int32Ty, PtrTy}, false);
     M->getOrInsertFunction("enzymeLogValue", LogValueFT);
 
-    FunctionType *LogGradFT =
-        FunctionType::get(Type::getVoidTy(Ctx), {CharPtrTy, DoubleTy}, false);
+    FunctionType *LogGradFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, DoubleTy}, false);
     M->getOrInsertFunction("enzymeLogGrad", LogGradFT);
   }
 

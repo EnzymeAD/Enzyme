@@ -2275,10 +2275,12 @@ public:
       return false;
     }
 
+    auto mode = DerivativeMode::ReverseModeProfiled;
+    F = Logic.PPC.preprocessForClone(F, mode);
+
     std::map<int, Type *> byVal;
     std::vector<DIFFE_TYPE> constants;
     SmallVector<Value *, 8> args;
-    auto mode = DerivativeMode::ReverseModeProfiled;
 
     // Extract primal arguments
     auto options =
@@ -3394,8 +3396,12 @@ public:
       call->eraseFromParent();
     }
 
-    for (const auto &pair : Logic.PPC.cache)
-      pair.second->eraseFromParent();
+    for (const auto &pair : Logic.PPC.cache) {
+      if (pair.second->use_empty()) {
+        pair.second->eraseFromParent();
+      }
+    }
+
     Logic.clear();
 
     if (changed && Logic.PostOpt) {

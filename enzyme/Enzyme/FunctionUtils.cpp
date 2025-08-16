@@ -36,6 +36,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
@@ -1569,27 +1570,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
         Returns, "", nullptr);
   }
-#ifdef ENZYME_ENABLE_FPOPT
-  if (mode == DerivativeMode::ReverseModeProfiled) {
-    for (const auto &pair : VMap) {
-      if (auto before = dyn_cast<Instruction>(pair.first)) {
-        if (!Poseidonable(*before))
-          continue;
-
-        auto after = cast<Instruction>(pair.second);
-        setFPOptMetadata(after, before);
-      } else if (auto beforeBB = dyn_cast<BasicBlock>(pair.first)) {
-        auto afterBB = cast<BasicBlock>(pair.second);
-        for (const auto &[before, after] : zip(*beforeBB, *afterBB)) {
-          if (!Poseidonable(before))
-            continue;
-
-          setFPOptMetadata(&after, &before);
-        }
-      }
-    }
-  }
-#endif
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
@@ -1603,14 +1583,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   setFullWillReturn(NewF);
 
   if (EnzymePreopt) {
-#ifdef ENZYME_ENABLE_FPOPT
-    // Disable recursive inlining since no FPOpt metadata is attached
-    // to inlined instructions for now
-    if (mode != DerivativeMode::ReverseModeProfiled && EnzymeInline)
-#else
-    if (EnzymeInline)
-#endif
-    {
+    if (EnzymeInline) {
       ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount);
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
@@ -2311,6 +2284,20 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())
     F = preprocessForClone(F, mode);
+#ifdef ENZYME_ENABLE_FPOPT
+  if (mode == DerivativeMode::ReverseModeProfiled) {
+    for (auto [idx, I] : enumerate(instructions(F))) {
+      if (Poseidonable(I)) {
+        I.setMetadata("enzyme_active", MDNode::get(I.getContext(), {}));
+        I.setMetadata(
+            "enzyme_fpprofile_idx",
+            MDNode::get(I.getContext(),
+                        {ConstantAsMetadata::get(ConstantInt::get(
+                            Type::getInt64Ty(I.getContext()), idx))}));
+      }
+    }
+  }
+#endif
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,

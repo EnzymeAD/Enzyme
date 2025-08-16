@@ -26,14 +26,14 @@ public:
   double sumGrad = 0.0;
   unsigned exec = 0;
 
-  void updateValue(double value, const double *operands, unsigned numOperands) {
+  void updateValue(double value, const double *operands, size_t numOperands) {
     ++exec;
 
     if (minOperands.empty()) {
       minOperands.resize(numOperands, std::numeric_limits<double>::max());
       maxOperands.resize(numOperands, std::numeric_limits<double>::lowest());
     }
-    for (unsigned i = 0; i < numOperands; ++i) {
+    for (size_t i = 0; i < numOperands; ++i) {
       if (!std::isnan(operands[i])) {
         minOperands[i] = std::min(minOperands[i], operands[i]);
         maxOperands[i] = std::max(maxOperands[i], operands[i]);
@@ -58,36 +58,32 @@ public:
 class FPProfiler {
 private:
   std::string functionName;
-  std::unordered_map<std::string, ProfileInfo> profileInfo;
-  static std::string profileOutputDir;
+  std::unordered_map<size_t, ProfileInfo> profileInfo;
+  static std::string dir;
 
 public:
   FPProfiler(const std::string &funcName) : functionName(funcName) {}
 
-  static void setOutputDir(const std::string &dir) { profileOutputDir = dir; }
+  static void setOutputDir(const std::string &dir_) { dir = dir_; }
 
   std::string getOutputPath() const {
-    std::string dir =
-        profileOutputDir.empty() ? "./fpprofile" : profileOutputDir;
     return dir + "/" + functionName + ".fpprofile";
   }
 
-  void updateValue(const std::string &id, double res, unsigned numOperands,
+  void updateValue(size_t idx, double res, size_t numOperands,
                    const double *operands) {
-    auto it = profileInfo.try_emplace(id).first;
+    auto it = profileInfo.try_emplace(idx).first;
     it->second.updateValue(res, operands, numOperands);
   }
 
-  void updateGradient(const std::string &id, double value, double grad) {
-    auto it = profileInfo.try_emplace(id).first;
+  void updateGradient(size_t idx, double value, double grad) {
+    auto it = profileInfo.try_emplace(idx).first;
     it->second.updateGradient(value, grad);
   }
 
   void write() const {
     std::string outputPath = getOutputPath();
 
-    std::string dir =
-        profileOutputDir.empty() ? "./fpprofile" : profileOutputDir;
     struct stat st = {0};
     if (stat(dir.c_str(), &st) == -1) {
       mkdir(dir.c_str(), 0755);
@@ -104,16 +100,16 @@ public:
         << std::setprecision(std::numeric_limits<double>::max_digits10);
 
     for (const auto &pair : profileInfo) {
-      const auto &id = pair.first;
+      const auto i = pair.first;
       const auto &info = pair.second;
-      out << id << "\n";
+      out << i << "\n";
       out << "\tMinRes = " << info.minRes << "\n";
       out << "\tMaxRes = " << info.maxRes << "\n";
       out << "\tSumValue = " << info.sumValue << "\n";
       out << "\tSumSens = " << info.sumSens << "\n";
       out << "\tSumGrad = " << info.sumGrad << "\n";
       out << "\tExec = " << info.exec << "\n";
-      for (unsigned i = 0; i < info.minOperands.size(); ++i) {
+      for (size_t i = 0; i < info.minOperands.size(); ++i) {
         out << "\tOperand[" << i << "] = [" << info.minOperands[i] << ", "
             << info.maxOperands[i] << "]\n";
       }
@@ -124,20 +120,11 @@ public:
   }
 };
 
-std::string FPProfiler::profileOutputDir;
+std::string FPProfiler::dir = "./fpprofile";
 
 static std::unordered_map<std::string, std::unique_ptr<FPProfiler>>
     profilerRegistry;
 static std::mutex registryMutex;
-
-static std::string getFunctionNameFromId(const char *id) {
-  std::string idStr(id);
-  size_t colonPos = idStr.find(':');
-  if (colonPos != std::string::npos) {
-    return idStr.substr(0, colonPos);
-  }
-  return idStr;
-}
 
 static void writeAllProfilesAtExit() {
   std::lock_guard<std::mutex> lock(registryMutex);
@@ -171,11 +158,11 @@ void ProfilerWrite() {
   }
 }
 
-void enzymeLogGrad(const char *id, double value, double grad) {
-  if (!id)
+void enzymeLogGrad(const char *funcName, size_t idx, double value,
+                   double grad) {
+  if (!funcName)
     return;
 
-  std::string funcName = getFunctionNameFromId(id);
   std::lock_guard<std::mutex> lock(registryMutex);
 
   auto it = profilerRegistry.find(funcName);
@@ -184,15 +171,14 @@ void enzymeLogGrad(const char *id, double value, double grad) {
     it = profilerRegistry.find(funcName);
   }
 
-  it->second->updateGradient(id, value, grad);
+  it->second->updateGradient(idx, value, grad);
 }
 
-void enzymeLogValue(const char *id, double res, unsigned numOperands,
-                    double *operands) {
-  if (!id)
+void enzymeLogValue(const char *funcName, size_t idx, double res,
+                    size_t numOperands, double *operands) {
+  if (!funcName)
     return;
 
-  std::string funcName = getFunctionNameFromId(id);
   std::lock_guard<std::mutex> lock(registryMutex);
 
   auto it = profilerRegistry.find(funcName);
@@ -201,7 +187,7 @@ void enzymeLogValue(const char *id, double res, unsigned numOperands,
     it = profilerRegistry.find(funcName);
   }
 
-  it->second->updateValue(id, res, numOperands, operands);
+  it->second->updateValue(idx, res, numOperands, operands);
 }
 
 } // extern "C"
