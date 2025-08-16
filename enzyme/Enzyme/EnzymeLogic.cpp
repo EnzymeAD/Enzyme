@@ -1594,11 +1594,11 @@ bool legalCombinedForwardReverse(
     if (!inst->mayReadFromMemory())
       continue;
     allFollowersOf(inst, [&](Instruction *post) {
-      if (unnecessaryInstructions.count(post))
+      if (unnecessaryInstructions.count(post)) {
         return false;
+      }
       if (!post->mayWriteToMemory())
         return false;
-
       if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
@@ -1666,7 +1666,7 @@ bool legalCombinedForwardReverse(
       }
     }
 
-    if (usetree.count(inst) == 0)
+    if (usetree.count(inst) == 0 || unnecessaryInstructions.count(inst))
       return false;
     if (inst->getParent() != origop->getParent()) {
       // Don't move a writing instruction (may change speculatable/etc things)

@@ -6018,8 +6018,19 @@ public:
         eraseIfUnused(call, /*erase*/ false, /*check*/ false);
       }
 
+      SmallPtrSet<Value *, 2> postCreateSet(postCreate.begin(),
+                                            postCreate.end());
       for (auto a : postCreate) {
         a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
+        for (size_t i = 0; i < a->getNumOperands(); i++) {
+          auto op = dyn_cast<Instruction>(a->getOperand(i));
+          if (!op || postCreateSet.count(op))
+            continue;
+          if (gutils->isOriginal(op->getParent())) {
+            Builder2.SetInsertPoint(a);
+            a->setOperand(i, gutils->lookupM(op, Builder2));
+          }
+        }
       }
 
       gutils->originalToNewFn[&call] = retval ? retval : diffes;
