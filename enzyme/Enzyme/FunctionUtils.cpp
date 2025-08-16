@@ -28,6 +28,7 @@
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -35,6 +36,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
@@ -113,6 +115,10 @@
 #include <optional>
 
 #include "CacheUtility.h"
+
+#ifdef ENZYME_ENABLE_FPOPT
+#include "Poseidon/Poseidon.h"
+#endif
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
@@ -527,7 +533,9 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         // TODO use is_value_needed_in_reverse (requiring GradientUtils)
         if (OnlyUsedInOMP(AI))
           continue;
-        if (!UsableEverywhere || mode != DerivativeMode::ReverseModeCombined) {
+        if (!UsableEverywhere ||
+            (mode != DerivativeMode::ReverseModeCombined &&
+             mode != DerivativeMode::ReverseModeProfiled)) {
           ToConvert.push_back(AI);
         }
       }
@@ -1942,7 +1950,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -1978,12 +1987,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||
-      mode == DerivativeMode::ReverseModeCombined) {
+      mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeProfiled) {
     // For subfunction calls upgrade stack allocations to mallocs
     // to ensure availability in the reverse pass
     auto unreachable = getGuaranteedUnreachable(NewF);
@@ -2271,6 +2282,20 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())
     F = preprocessForClone(F, mode);
+#ifdef ENZYME_ENABLE_FPOPT
+  if (mode == DerivativeMode::ReverseModeProfiled) {
+    for (auto [idx, I] : enumerate(instructions(F))) {
+      if (Poseidonable(I)) {
+        I.setMetadata("enzyme_active", MDNode::get(I.getContext(), {}));
+        I.setMetadata(
+            "enzyme_fpprofile_idx",
+            MDNode::get(I.getContext(),
+                        {ConstantAsMetadata::get(ConstantInt::get(
+                            Type::getInt64Ty(I.getContext()), idx))}));
+      }
+    }
+  }
+#endif
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
@@ -2489,6 +2514,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   }
 
   if (hasPtrInput && (mode == DerivativeMode::ReverseModeCombined ||
+                      mode == DerivativeMode::ReverseModeProfiled ||
                       mode == DerivativeMode::ReverseModeGradient)) {
     if (NewF->hasFnAttribute(Attribute::ReadOnly)) {
       NewF->removeFnAttr(Attribute::ReadOnly);

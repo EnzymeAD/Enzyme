@@ -763,11 +763,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (this->mode == DerivativeMode::ReverseModeGradient ||
       this->mode == DerivativeMode::ForwardModeSplit ||
-      this->mode == DerivativeMode::ReverseModeCombined)
+      this->mode == DerivativeMode::ReverseModeCombined ||
+      this->mode == DerivativeMode::ReverseModeProfiled)
     if (auto inst = dyn_cast<Instruction>(val)) {
       if (inst->getParent()->getParent() == newFunc) {
         if (unwrapMode == UnwrapMode::LegalFullUnwrap &&
-            this->mode != DerivativeMode::ReverseModeCombined) {
+            this->mode != DerivativeMode::ReverseModeCombined &&
+            this->mode != DerivativeMode::ReverseModeProfiled) {
           // TODO this isOriginal is a bottleneck, the new mapping of
           // knownRecompute should be precomputed and maintained to lookup
           // instead
@@ -816,7 +818,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             auto found = knownRecomputeHeuristic.find(orig);
             if (found != knownRecomputeHeuristic.end()) {
               if (!found->second) {
-                if (mode == DerivativeMode::ReverseModeCombined) {
+                if (mode == DerivativeMode::ReverseModeCombined ||
+                    mode == DerivativeMode::ReverseModeProfiled) {
                   // Don't unnecessarily cache a value if the caching
                   // heuristic says we should preserve this precise (and not
                   // an lcssa wrapped) value
@@ -864,7 +867,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             }
           }
         } else if (unwrapMode != UnwrapMode::LegalFullUnwrapNoTapeReplace &&
-                   mode != DerivativeMode::ReverseModeCombined) {
+                   mode != DerivativeMode::ReverseModeCombined &&
+                   mode != DerivativeMode::ReverseModeProfiled) {
           // TODO this isOriginal is a bottleneck, the new mapping of
           // knownRecompute should be precomputed and maintained to lookup
           // instead
@@ -2583,7 +2587,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
   assert(isOriginalBlock(*BuilderQ.GetInsertBlock()));
   assert(!hasNoCache(malloc));
-  if (mode == DerivativeMode::ReverseModeCombined) {
+  if (mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeProfiled) {
     assert(!tape);
     return malloc;
   }
@@ -4028,7 +4033,9 @@ bool GradientUtils::legalRecompute(const Value *val,
             fwdBlockIfReverse =
                 cast_or_null<BasicBlock>(isOriginal(fwdBlockIfReverse));
         }
-        if (mode == DerivativeMode::ReverseModeCombined && fwdBlockIfReverse) {
+        if ((mode == DerivativeMode::ReverseModeCombined ||
+             mode == DerivativeMode::ReverseModeProfiled) &&
+            fwdBlockIfReverse) {
           if (reverse) {
             bool failed = false;
             allFollowersOf(
@@ -4797,6 +4804,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
   case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeProfiled:
   case DerivativeMode::ReverseModeGradient:
   case DerivativeMode::ReverseModePrimal: {
     // TODO re atomic add consider forcing it to be atomic always as fallback if
@@ -5430,6 +5438,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
       if ((mode == DerivativeMode::ReverseModeCombined ||
+           mode == DerivativeMode::ReverseModeProfiled ||
            mode == DerivativeMode::ForwardMode ||
            mode == DerivativeMode::ForwardModeError) &&
           arg->getType()->getPointerAddressSpace() == 0) {
@@ -5691,6 +5700,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Type *shadowTy = arg->getType();
 
     if (mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ReverseModeProfiled ||
         mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeGradient) {
       if (TR.query(arg)[{-1}].isFloat()) {
@@ -6021,6 +6031,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     switch (mode) {
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
     case DerivativeMode::ReverseModeGradient:
       if (TR.query(arg)[{-1}].isFloat()) {
         return Constant::getNullValue(getShadowType(arg->getType()));
@@ -6396,6 +6407,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       switch (mode) {
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeProfiled:
       case DerivativeMode::ReverseModeGradient:
         if (TR.query(FPMO)[{-1}].isFloat()) {
           return Constant::getNullValue(getShadowType(FPMO->getType()));
@@ -6447,7 +6459,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   assert(mode == DerivativeMode::ReverseModePrimal ||
          mode == DerivativeMode::ReverseModeGradient ||
-         mode == DerivativeMode::ReverseModeCombined);
+         mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModeProfiled);
 
   assert(val->getName() != "<badref>");
   {
@@ -6915,7 +6928,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                             },
                             [&]() {
                               // if gone past entry
-                              if (mode != DerivativeMode::ReverseModeCombined) {
+                              if (mode != DerivativeMode::ReverseModeCombined &&
+                                  mode != DerivativeMode::ReverseModeProfiled) {
                                 lastStore = false;
                               }
                             });
@@ -7074,7 +7088,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       8;
 
       // this is guarded because havent told cacheForReverse how to move
-      if (mode == DerivativeMode::ReverseModeCombined)
+      if (mode == DerivativeMode::ReverseModeCombined ||
+          mode == DerivativeMode::ReverseModeProfiled)
         if (!li->isVolatile() && EnzymeLoopInvariantCache) {
           if (auto AI = dyn_cast<AllocaInst>(liobj)) {
             assert(isa<AllocaInst>(orig_liobj));
@@ -8617,7 +8632,8 @@ void GradientUtils::forceAugmentedReturns() {
       Function *called = op->getCalledFunction();
 
       if ((mode == DerivativeMode::ReverseModeGradient ||
-           mode == DerivativeMode::ReverseModeCombined) &&
+           mode == DerivativeMode::ReverseModeCombined ||
+           mode == DerivativeMode::ReverseModeProfiled) &&
           called && called->getName() == "llvm.julia.gc_preserve_begin") {
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
@@ -8704,6 +8720,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
     // no change to forward pass if represents floats
     if (mode == DerivativeMode::ReverseModeGradient ||
         mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ReverseModeProfiled ||
         mode == DerivativeMode::ForwardModeSplit) {
       IRBuilder<> Builder2(MTI);
       if (mode == DerivativeMode::ForwardModeSplit)
@@ -8818,7 +8835,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
     // if represents pointer or integer type then only need to modify forward
     // pass with the copy
     if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
-                          mode == DerivativeMode::ReverseModeCombined)) ||
+                          mode == DerivativeMode::ReverseModeCombined ||
+                          mode == DerivativeMode::ReverseModeProfiled)) ||
         (backwardsShadow && (mode == DerivativeMode::ReverseModeGradient ||
                              mode == DerivativeMode::ForwardModeSplit))) {
       assert(!shadowsLookedUp);

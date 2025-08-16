@@ -55,6 +55,8 @@
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 #include <map>
 #include <set>
 
@@ -372,8 +374,9 @@ enum class DerivativeMode {
   ReverseModePrimal = 1,
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
-  ForwardModeSplit = 4,
-  ForwardModeError = 5,
+  ReverseModeProfiled = 4,
+  ForwardModeSplit = 5,
+  ForwardModeError = 6,
 };
 
 enum class ProbProgMode {
@@ -432,6 +435,8 @@ static inline std::string to_string(DerivativeMode mode) {
     return "ReverseModeGradient";
   case DerivativeMode::ReverseModeCombined:
     return "ReverseModeCombined";
+  case DerivativeMode::ReverseModeProfiled:
+    return "ReverseModeProfiled";
   }
   llvm_unreachable("illegal derivative mode");
 }
@@ -587,6 +592,13 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
 }
 
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
+#ifdef ENZYME_ENABLE_FPOPT
+bool Poseidonable(const llvm::Value &V);
+llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName);
+std::string getLogIdentifier(llvm::Instruction &I);
+void setFPOptMetadata(llvm::Instruction *After,
+                      const llvm::Instruction *Before);
+#endif
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;

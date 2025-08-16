@@ -50,6 +50,47 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
+set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable Poseidon")
+
+if(ENZYME_ENABLE_FPOPT)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/sbrantq/herbie
+        GIT_TAG 9a81e9ecd01515ed88fb4efb77e4c0ae7be9cba5
+        UPDATE_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+    )
+    list(APPEND ENZYME_SRC 
+        Poseidon/Poseidon.cpp
+        Poseidon/PoseidonEvaluators.cpp
+        Poseidon/PoseidonHerbieUtils.cpp
+        Poseidon/PoseidonProfUtils.cpp
+        Poseidon/PoseidonPrecUtils.cpp
+        Poseidon/PoseidonSolvers.cpp
+        Poseidon/PoseidonTypes.cpp
+        Poseidon/PoseidonUtils.cpp
+    )
+    add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
+    set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+    
+    add_library(EnzymeFPProfile STATIC
+        Runtimes/FPProfiler/FPProfiler.cpp
+    )
+    target_compile_features(EnzymeFPProfile PRIVATE cxx_std_17)
+    target_include_directories(EnzymeFPProfile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Runtimes/FPProfiler)
+    
+    install(TARGETS EnzymeFPProfile
+        EXPORT EnzymeTargets
+        ARCHIVE DESTINATION lib
+        COMPONENT dev
+    )
+endif()
+
+
 if (ENZYME_ENABLE_PLUGINS)
         # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
         if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
