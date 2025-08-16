@@ -231,9 +231,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
   auto parentOp = origTerminator->getParentOp();
 
   llvm::SmallDenseSet<unsigned> operandsToShadow;
-  auto termIface =
-          dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  if (termIface && isa<RegionBranchOpInterface>(origTerminator->getParentOp())) {
+  auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
+  if (termIface &&
+      isa<RegionBranchOpInterface>(origTerminator->getParentOp())) {
 
     SmallVector<RegionSuccessor> successors;
     termIface.getSuccessorRegions(
