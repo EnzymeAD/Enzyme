@@ -443,6 +443,18 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "linalg-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [(
+        ["-gen-mlir-derivatives"],
+        "Enzyme/MLIR/Implementations/LinalgDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LinalgDerivatives.td",
+    deps = [":ImplementationsCommonTdFiles"],
+)
+
+gentbl_cc_library(
     name = "arith-derivatives",
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
@@ -595,6 +607,7 @@ cc_library(
         ":EnzymeTypeInterfacesIncGen",
         ":EnzymeTypesIncGen",
         ":affine-derivatives",
+        ":linalg-derivatives",
         ":arith-derivatives",
         ":cf-derivatives",
         ":complex-derivatives",
