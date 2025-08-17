@@ -25,6 +25,8 @@ extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
 }
 
+bool Poseidonable(const Value &V);
+void setPoseidonMetadata(Function &F);
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                 double relErrorTol = 0.0);
 

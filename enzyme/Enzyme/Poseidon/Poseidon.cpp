@@ -11,6 +11,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
@@ -85,6 +86,99 @@ cl::opt<std::string> FPOptReductionEval(
     "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
+}
+
+bool Poseidonable(const llvm::Value &V) {
+  const Instruction *I = dyn_cast<Instruction>(&V);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+  case Instruction::FRem:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (CI && CI->getCalledFunction() &&
+        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
+      StringRef funcName = CI->getCalledFunction()->getName();
+      return
+          // LLVM intrinsics
+          startsWith(funcName, "llvm.sin.") ||
+          startsWith(funcName, "llvm.cos.") ||
+          startsWith(funcName, "llvm.tan.") ||
+          startsWith(funcName, "llvm.exp.") ||
+          startsWith(funcName, "llvm.log.") ||
+          startsWith(funcName, "llvm.sqrt.") ||
+          startsWith(funcName, "llvm.pow.") ||
+          startsWith(funcName, "llvm.powi.") ||
+          startsWith(funcName, "llvm.fabs.") ||
+          startsWith(funcName, "llvm.fma.") ||
+          startsWith(funcName, "llvm.fmuladd.") ||
+          startsWith(funcName, "llvm.maxnum.") ||
+          startsWith(funcName, "llvm.minnum.") ||
+          startsWith(funcName, "llvm.ceil.") ||
+          startsWith(funcName, "llvm.floor.") ||
+          startsWith(funcName, "llvm.exp2.") ||
+          startsWith(funcName, "llvm.log10.") ||
+          startsWith(funcName, "llvm.log2.") ||
+          startsWith(funcName, "llvm.rint.") ||
+          startsWith(funcName, "llvm.round.") ||
+          startsWith(funcName, "llvm.trunc.") ||
+          startsWith(funcName, "llvm.copysign.") ||
+          startsWith(funcName, "llvm.fdim.") ||
+          startsWith(funcName, "llvm.fmod.") ||
+
+          // libm functions
+          funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
+          funcName == "cosf" || funcName == "tan" || funcName == "tanf" ||
+          funcName == "asin" || funcName == "asinf" || funcName == "acos" ||
+          funcName == "acosf" || funcName == "atan" || funcName == "atanf" ||
+          funcName == "atan2" || funcName == "atan2f" || funcName == "sinh" ||
+          funcName == "sinhf" || funcName == "cosh" || funcName == "coshf" ||
+          funcName == "tanh" || funcName == "tanhf" || funcName == "asinh" ||
+          funcName == "asinhf" || funcName == "acosh" || funcName == "acoshf" ||
+          funcName == "atanh" || funcName == "atanhf" || funcName == "sqrt" ||
+          funcName == "sqrtf" || funcName == "cbrt" || funcName == "cbrtf" ||
+          funcName == "pow" || funcName == "powf" || funcName == "exp" ||
+          funcName == "expf" || funcName == "log" || funcName == "logf" ||
+          funcName == "fabs" || funcName == "fabsf" || funcName == "fma" ||
+          funcName == "fmaf" || funcName == "hypot" || funcName == "hypotf" ||
+          funcName == "expm1" || funcName == "expm1f" || funcName == "log1p" ||
+          funcName == "log1pf" || funcName == "ceil" || funcName == "ceilf" ||
+          funcName == "floor" || funcName == "floorf" || funcName == "erf" ||
+          funcName == "erff" || funcName == "exp2" || funcName == "exp2f" ||
+          funcName == "lgamma" || funcName == "lgammaf" ||
+          funcName == "log10" || funcName == "log10f" || funcName == "log2" ||
+          funcName == "log2f" || funcName == "rint" || funcName == "rintf" ||
+          funcName == "round" || funcName == "roundf" || funcName == "tgamma" ||
+          funcName == "tgammaf" || funcName == "trunc" ||
+          funcName == "truncf" || funcName == "copysign" ||
+          funcName == "copysignf" || funcName == "fdim" ||
+          funcName == "fdimf" || funcName == "fmod" || funcName == "fmodf" ||
+          funcName == "remainder" || funcName == "remainderf";
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+void setPoseidonMetadata(Function &F) {
+  for (auto [idx, I] : enumerate(instructions(F))) {
+    if (Poseidonable(I)) {
+      I.setMetadata("enzyme_active", MDNode::get(I.getContext(), {}));
+      I.setMetadata("enzyme_fpprofile_idx",
+                    MDNode::get(I.getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::get(
+                                    Type::getInt64Ty(I.getContext()), idx))}));
+    }
+  }
 }
 
 // Run (our choice of) floating point optimizations on function `F`.
