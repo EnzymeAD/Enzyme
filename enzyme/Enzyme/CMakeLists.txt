@@ -60,7 +60,7 @@ if(ENABLE_POSEIDON)
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make clean 
-            && raco pkg update --auto rival 
+            && raco pkg install --auto --update-deps rival 
             && cargo build --release --manifest-path=egg-herbie/Cargo.toml 
             && raco pkg install ./egg-herbie 
             && mkdir -p herbie-compiled/ 
