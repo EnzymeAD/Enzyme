@@ -59,7 +59,7 @@ if(ENABLE_POSEIDON)
         GIT_TAG 92a9ab3ca0a2eb1cf8a3e24c3d39be09dd87f384
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt && mkdir -p herbie-compiled && raco distribute herbie-compiled herbie
+        BUILD_COMMAND make clean && cargo build --release --manifest-path=egg-herbie/Cargo.toml && raco pkg install ./egg-herbie && mkdir -p herbie-compiled/ && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt && raco distribute herbie-compiled herbie
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
