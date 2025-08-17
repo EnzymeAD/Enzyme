@@ -1522,61 +1522,66 @@ void SplitPHIs(llvm::Function &F) {
 }
 
 // returns if newly legal, subject to the pending calls
-bool DetectReadonlyOrThrowFn(llvm::Function &F, SmallPtrSetImpl<Function*> &calls_todo, llvm::TargetLibraryInfo &TLI) {
-    if (isReadOnlyOrThrow(&F)) return false;
-    if (F.empty()) return false;
-    const auto unreachable = getGuaranteedUnreachable(&F);
-    for (auto &BB : F) {
-      if (unreachable.find(&BB) != unreachable.end()) {
+bool DetectReadonlyOrThrowFn(llvm::Function &F,
+                             SmallPtrSetImpl<Function *> &calls_todo,
+                             llvm::TargetLibraryInfo &TLI) {
+  if (isReadOnlyOrThrow(&F))
+    return false;
+  if (F.empty())
+    return false;
+  const auto unreachable = getGuaranteedUnreachable(&F);
+  for (auto &BB : F) {
+    if (unreachable.find(&BB) != unreachable.end()) {
+      continue;
+    }
+    for (auto &I : BB) {
+      if (!I.mayWriteToMemory())
         continue;
-      }
-      for (auto &I : BB) {
-          if (!I.mayWriteToMemory())
-            continue;
-          if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
-            continue;
-          if (auto CI = dyn_cast<CallBase>(&I)) {
-            if (isReadOnlyOrThrow(CI)) {
+      if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
+        continue;
+      if (auto CI = dyn_cast<CallBase>(&I)) {
+        if (isReadOnlyOrThrow(CI)) {
+          continue;
+        }
+        if (isAllocationCall(CI, TLI)) {
+          continue;
+        }
+        if (auto F2 = CI->getCalledFunction()) {
+          if (F2->getCallingConv() == CI->getCallingConv()) {
+            if (F2 == &F)
+              continue;
+            if (isReadOnlyOrThrow(F2))
+              continue;
+            if (!F2->empty()) {
+              calls_todo.insert(F2);
               continue;
             }
-            if (isAllocationCall(CI, TLI)) {
-              continue;
-            }
-            if (auto F2 = CI->getCalledFunction()) {
-              if (F2->getCallingConv() == CI->getCallingConv()) {
-                if (F2 == &F)
-                  continue;
-                if (isReadOnlyOrThrow(F2))
-                  continue;
-                if (!F2->empty()) {
-                  calls_todo.insert(F2);
-                  continue;
-                }
-              }
-            }
           }
-          if (EnzymeJuliaAddrLoad && isa<FenceInst>(&I)) {
-            if (auto prev = dyn_cast_or_null<CallBase>(I.getPrevNode())) {
-              if (auto F = prev->getCalledFunction())
-                if (F->getName() == "julia.safepoint")
-                  continue;
-            }
-            if (auto prev = dyn_cast_or_null<CallBase>(I.getNextNode())) {
-              if (auto F = prev->getCalledFunction())
-                if (F->getName() == "julia.safepoint")
-                  continue;
-            }
-          }
-
-          EmitWarning("WritingInstruction", I, "Instruction could write forcing ", F.getName(), " to not be marked readonly_or_throw", I);
-          return false;
+        }
       }
-    }
+      if (EnzymeJuliaAddrLoad && isa<FenceInst>(&I)) {
+        if (auto prev = dyn_cast_or_null<CallBase>(I.getPrevNode())) {
+          if (auto F = prev->getCalledFunction())
+            if (F->getName() == "julia.safepoint")
+              continue;
+        }
+        if (auto prev = dyn_cast_or_null<CallBase>(I.getNextNode())) {
+          if (auto F = prev->getCalledFunction())
+            if (F->getName() == "julia.safepoint")
+              continue;
+        }
+      }
 
-    if (calls_todo.size() == 0) {
-      F.addFnAttr("enzyme_ReadOnlyOrThrow");
+      EmitWarning("WritingInstruction", I, "Instruction could write forcing ",
+                  F.getName(), " to not be marked readonly_or_throw", I);
+      return false;
     }
-    return true;
+  }
+
+  if (calls_todo.size() == 0) {
+    F.addFnAttr("enzyme_ReadOnlyOrThrow");
+  }
+  return true;
 }
 
 bool DetectReadonlyOrThrow(Module &M) {
@@ -1584,14 +1589,15 @@ bool DetectReadonlyOrThrow(Module &M) {
   bool changed = false;
 
   // Set of functions newly deduced readonlyorthrow by this pass
-  SmallVector<llvm::Function*> todo;
+  SmallVector<llvm::Function *> todo;
 
-  // Map of functions which could be readonly if all functions in the set are marked readonly
-  DenseMap<llvm::Function*, SmallPtrSet<Function*, 1>> todo_map;
+  // Map of functions which could be readonly if all functions in the set are
+  // marked readonly
+  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
 
-  // Map from a function `f` to all the functions that have `f` as a prerequisite for being readonly.
-  // Inverse of `todo_map`
-  DenseMap<llvm::Function*, SmallPtrSet<Function*, 1>> inverse_todo_map;
+  // Map from a function `f` to all the functions that have `f` as a
+  // prerequisite for being readonly. Inverse of `todo_map`
+  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
   PassBuilder PB;
   LoopAnalysisManager LAM;
@@ -1605,7 +1611,7 @@ bool DetectReadonlyOrThrow(Module &M) {
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   for (Function &F : M) {
-    SmallPtrSet<Function*, 1> calls_todo;
+    SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI)) {
       if (calls_todo.size() == 0) {
@@ -1619,7 +1625,7 @@ bool DetectReadonlyOrThrow(Module &M) {
     }
   }
 
-  while(todo.size()) {
+  while (todo.size()) {
     auto cur = todo.pop_back_val();
     auto found = inverse_todo_map.find(cur);
 
@@ -1628,15 +1634,15 @@ bool DetectReadonlyOrThrow(Module &M) {
       continue;
     }
     for (auto F2 : found->second) {
-        auto found2 = todo_map.find(F2);
-        assert(found2 != todo_map.end());
-        auto &fwd_set = found2->second;
-        fwd_set.erase(cur);
-        if (fwd_set.size() == 0) {
-          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
-          todo.push_back(F2);
-          todo_map.erase(F2);
-        }
+      auto found2 = todo_map.find(F2);
+      assert(found2 != todo_map.end());
+      auto &fwd_set = found2->second;
+      fwd_set.erase(cur);
+      if (fwd_set.size() == 0) {
+        F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        todo.push_back(F2);
+        todo_map.erase(F2);
+      }
     }
 
     inverse_todo_map.erase(found);
@@ -2291,8 +2297,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   {
-    SmallPtrSet<Function*, 1> calls_todo;
-    DetectReadonlyOrThrowFn(*NewF, calls_todo, FAM.getResult<TargetLibraryAnalysis>(*NewF));
+    SmallPtrSet<Function *, 1> calls_todo;
+    DetectReadonlyOrThrowFn(*NewF, calls_todo,
+                            FAM.getResult<TargetLibraryAnalysis>(*NewF));
   }
 
   if (EnzymePrint)
