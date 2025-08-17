@@ -52,7 +52,7 @@ entry:
 ; CHECK-NEXT:   %v_augmented = call { i64, double* } @augmented_pb(double* %vec, double* %"vec'")
 ; CHECK-NEXT:   %subcache = extractvalue { i64, double* } %v_augmented, 0
 ; CHECK-NEXT:   %v = extractvalue { i64, double* } %v_augmented, 1
-; CHECK-NEXT:   call void @diffenoop(double* %v)
+; CHECK-NEXT:   call void @nofree_noop(double* %v)
 ; CHECK-NEXT:   call void @diffepb(double* %vec, double* %"vec'", i64 %subcache)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
