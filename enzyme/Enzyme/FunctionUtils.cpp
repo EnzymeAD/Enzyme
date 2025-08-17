@@ -1572,8 +1572,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         }
       }
 
-      EmitWarning("WritingInstruction", I, "Instruction could write forcing ",
-                  F.getName(), " to not be marked readonly_or_throw", I);
+      if (EnzymePrintPerf) {
+        EmitWarning("WritingInstruction", I, "Instruction could write forcing ",
+                    F.getName(), " to not be marked readonly_or_throw", I);
+      }
       return false;
     }
   }
