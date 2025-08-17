@@ -112,6 +112,9 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
 
+llvm::cl::opt<bool> EnzymeDetectReadThrow("enzyme-detect-readthrow", cl::init(true), cl::Hidden,
+                           cl::desc("Run preprocessing detect readonly or throw optimization"));
+
 llvm::cl::opt<std::string> EnzymeTruncateAll(
     "enzyme-truncate-all", cl::init(""), cl::Hidden,
     cl::desc(
@@ -3053,7 +3056,7 @@ public:
       changed = true;
     }
 
-    if (DetectReadonlyOrThrow(M)) {
+    if (EnzymeDetectReadThrow && DetectReadonlyOrThrow(M)) {
       changed = true;
     }
 

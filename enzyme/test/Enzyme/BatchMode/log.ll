@@ -20,7 +20,7 @@ entry:
   ret [4 x double] %0
 }
 
-; CHECK: define internal [4 x double] @batch_tester([4 x double] %x) {
+; CHECK: define internal [4 x double] @batch_tester([4 x double] %x)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %x, 0
 ; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %x, 1
