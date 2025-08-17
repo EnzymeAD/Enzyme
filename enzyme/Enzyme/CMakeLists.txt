@@ -160,6 +160,14 @@ if (ENZYME_ENABLE_PLUGINS)
                  )
              target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
         endif()
+        
+        if(ENABLE_POSEIDON)
+            target_link_libraries(LLVMEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+            if (${Clang_FOUND})
+                target_link_libraries(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+            endif()
+            target_link_libraries(LLDEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+        endif()
 endif()
 
 if (${ENZYME_STATIC_LIB})
@@ -170,6 +178,9 @@ if (${ENZYME_STATIC_LIB})
         DEPENDS
         intrinsics_gen
     )
+    if(ENABLE_POSEIDON)
+        target_link_libraries(EnzymeStatic-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+    endif()
 endif()
 
 if (${ENZYME_EXTERNAL_SHARED_LIB})
@@ -187,6 +198,9 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+    if(ENABLE_POSEIDON)
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+    endif()
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
         LIBRARY DESTINATION lib COMPONENT shlib
