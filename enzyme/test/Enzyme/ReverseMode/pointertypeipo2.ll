@@ -150,7 +150,7 @@ attributes #4 = { nounwind }
 ; CHECK-DAG:    %[[sadd2:.+]] = load double, double* %2
 ; CHECK-NEXT:   %5 = fadd fast double %[[sadd2]], %[[sadd1]]
 ; CHECK-NEXT:   store double %5, double* %2
-; CHECK-NEXT:   call void @diffecast(i64* %arr, i64* %"arr'ipc")
+; CHECK-NEXT:   call void @diffecast(i64* %arr, i64* {{(undef|poison)}})
 ; CHECK-NEXT:   %[[a7:.+]] = load i64, i64* %"arr'ipc"
 ; CHECK-NEXT:   store i64 0, i64* %"arr'ipc"
 ; CHECK-NEXT:   call void @free(i8* nonnull %"malloccall'mi")

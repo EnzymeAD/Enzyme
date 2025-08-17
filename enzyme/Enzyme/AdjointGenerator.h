@@ -5255,8 +5255,10 @@ public:
 
           Value *darg = nullptr;
 
-          if (writeOnlyNoCapture && !replaceFunction &&
-              TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
+          if (((writeOnlyNoCapture && TR.query(call.getArgOperand(
+                                          i))[{-1, -1}] == BaseType::Pointer) ||
+               gutils->isConstantInstruction(&call)) &&
+              !replaceFunction) {
             darg = getUndefinedValueForType(M, argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);

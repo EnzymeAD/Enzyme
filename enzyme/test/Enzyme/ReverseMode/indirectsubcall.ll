@@ -74,7 +74,7 @@ entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %[[loadc:.+]] = load double, double* %[[unpack]], align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[unpack]], align 8
-; CHECK-NEXT:   call void @diffebad(double* %dxdt, double* %"dxdt'")
+; CHECK-NEXT:   call void @diffebad(double* %dxdt, double* {{(undef|poison)}})
 ; CHECK-NEXT:   %[[xpl:.+]] = load double, double* %"x'", align 8
 ; CHECK-NEXT:   %[[fadd:.+]] = fadd fast double %[[xpl]], %[[loadc]]
 ; CHECK-NEXT:   store double %[[fadd]], double* %"x'", align 8
