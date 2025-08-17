@@ -87,7 +87,6 @@
 #include "GradientUtils.h"
 #include "InstructionBatcher.h"
 #include "LibraryFuncs.h"
-#include "Poseidon/Poseidon.h"
 #include "TraceGenerator.h"
 #include "Utils.h"
 

@@ -48,6 +48,10 @@
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
 
+#ifdef ENABLE_POSEIDON
+#include "Poseidon/Poseidon.h"
+#endif
+
 #define DEBUG_TYPE "enzyme"
 
 // Helper instruction visitor that generates adjoints
