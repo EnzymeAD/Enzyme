@@ -6027,8 +6027,8 @@ public:
           if (!op || postCreateSet.count(op))
             continue;
           if (gutils->isOriginal(op->getParent())) {
-            Builder2.SetInsertPoint(a);
-            a->setOperand(i, gutils->lookupM(op, Builder2));
+            IRBuilder<> BuilderA(a);
+            a->setOperand(i, gutils->lookupM(op, BuilderA));
           }
         }
       }
