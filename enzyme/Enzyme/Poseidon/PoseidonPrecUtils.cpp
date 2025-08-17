@@ -19,6 +19,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonEvaluators.h"
 #include "PoseidonPrecUtils.h"
@@ -204,20 +205,12 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           SmallVector<Type *, 2> overloadedTypes;
           overloadedTypes.push_back(newType);
           overloadedTypes.push_back(CI->getArgOperand(1)->getType());
-#if LLVM_VERSION_MAJOR >= 21
-          Function *newFunc = Intrinsic::getOrInsertDeclaration(
-#else
           Function *newFunc = getIntrinsicDeclaration(
-#endif
               CI->getModule(), intrinsicID, overloadedTypes);
           newI = Builder.CreateCall(newFunc, newArgs);
         } else {
-#if LLVM_VERSION_MAJOR >= 21
-          Function *newFunc = Intrinsic::getOrInsertDeclaration(
-#else
-          Function *newFunc = getIntrinsicDeclaration(
-#endif
-              CI->getModule(), intrinsicID, newType);
+          Function *newFunc =
+              getIntrinsicDeclaration(CI->getModule(), intrinsicID, newType);
           newI = Builder.CreateCall(newFunc, newArgs);
         }
       } else {
