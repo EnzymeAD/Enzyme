@@ -1559,6 +1559,33 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           }
         }
       }
+      if (auto SI = dyn_cast<StoreInst>(&I)) {
+        auto Obj = getBaseObject(SI->getPointerOperand());
+        // Storing into local memory is fine since it definitionally will not be seen
+        // outside the function. Note, even if one stored into x = malloc(..), and stored x
+        // into a global/arg pointer, that second store would trigger not readonly. 
+        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+          continue;
+      }
+      if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
+        auto Obj = getBaseObject(MTI->getOperand(0));
+        // Storing into local memory is fine since it definitionally will not be seen
+        // outside the function. Note, even if one stored into x = malloc(..), and stored x
+        // into a global/arg pointer, that second store would trigger not readonly. 
+        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+          continue;
+      }
+      if (auto MSI = dyn_cast<MemSetInst>(&I)) {
+        auto Obj = getBaseObject(MSI->getOperand(0));
+        // Storing into local memory is fine since it definitionally will not be seen
+        // outside the function. Note, even if one stored into x = malloc(..), and stored x
+        // into a global/arg pointer, that second store would trigger not readonly. 
+        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+          continue;
+      }
+      // ignore atomic load impacts
+      if (isa<LoadInst>(&I))
+        continue;
       if (EnzymeJuliaAddrLoad && isa<FenceInst>(&I)) {
         if (auto prev = dyn_cast_or_null<CallBase>(I.getPrevNode())) {
           if (auto F = prev->getCalledFunction())
