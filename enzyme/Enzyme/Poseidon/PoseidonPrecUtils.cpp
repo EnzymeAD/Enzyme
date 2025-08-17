@@ -145,16 +145,9 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           OpBuilder.setFastMathFlags(I->getFastMathFlags());
           newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
         } else if (Constant *constOp = dyn_cast<Constant>(operand)) {
-          auto srcBits =
-              constOp->getType()->getPrimitiveSizeInBits().getFixedValue();
-          auto dstBits = newType->getPrimitiveSizeInBits().getFixedValue();
-
-          Instruction::CastOps opcode = (srcBits < dstBits) ? Instruction::FPExt
-                                        : (srcBits > dstBits)
-                                            ? Instruction::FPTrunc
-                                            : Instruction::BitCast;
-
-          newOp = ConstantExpr::getCast(opcode, constOp, newType);
+          IRBuilder<> ConstBuilder(I);
+          ConstBuilder.setFastMathFlags(I->getFastMathFlags());
+          newOp = ConstBuilder.CreateFPCast(constOp, newType, "fpopt.const.fpcast");
         } else {
           llvm_unreachable("Unsupported operand type");
         }
