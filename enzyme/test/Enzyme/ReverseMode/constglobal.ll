@@ -98,7 +98,7 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 !4 = !{i32 7, !"frame-pointer", i32 2}
 !5 = !{!"clang version 16.0.6 (https://github.com/llvm/llvm-project.git 7cbf1a2591520c2491aa35339f227775f4d3adf6)"}
 
-; CHECK: define internal void @diffe_Z8simulatev(double %differeturn) #7 {
+; CHECK: define internal void @diffe_Z8simulatev(double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"sys'ipa" = alloca %class.Test, align 8
 ; CHECK-NEXT:   store %class.Test zeroinitializer, ptr %"sys'ipa", align 8
