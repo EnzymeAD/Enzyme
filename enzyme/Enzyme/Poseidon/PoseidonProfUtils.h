@@ -46,6 +46,6 @@ struct ProfileInfo {
 };
 
 void parseProfileFile(const std::string &profilePath,
-                     std::unordered_map<size_t, ProfileInfo> &profileMap);
+                      std::unordered_map<size_t, ProfileInfo> &profileMap);
 
 #endif // ENZYME_POSEIDON_PROF_UTILS_H

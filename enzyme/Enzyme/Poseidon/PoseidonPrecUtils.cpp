@@ -19,7 +19,6 @@
 #include <string>
 #include <unordered_map>
 
-#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonEvaluators.h"
 #include "PoseidonPrecUtils.h"
@@ -147,7 +146,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
         } else if (Constant *constOp = dyn_cast<Constant>(operand)) {
           IRBuilder<> ConstBuilder(I);
           ConstBuilder.setFastMathFlags(I->getFastMathFlags());
-          newOp = ConstBuilder.CreateFPCast(constOp, newType, "fpopt.const.fpcast");
+          newOp =
+              ConstBuilder.CreateFPCast(constOp, newType, "fpopt.const.fpcast");
         } else {
           llvm_unreachable("Unsupported operand type");
         }

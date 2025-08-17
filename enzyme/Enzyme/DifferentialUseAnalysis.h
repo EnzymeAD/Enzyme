@@ -459,7 +459,7 @@ static inline bool is_value_needed_in_reverse(
 struct Node {
   llvm::Value *V;
   bool outgoing;
-  Node(llvm::Value *V, bool outgoing) : V(V), outgoing(outgoing) {};
+  Node(llvm::Value *V, bool outgoing) : V(V), outgoing(outgoing){};
   bool operator<(const Node N) const {
     if (V < N.V)
       return true;

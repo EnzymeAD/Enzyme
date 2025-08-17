@@ -47,8 +47,11 @@ public:
   std::string dtype;
   std::string symbol;
   SmallVector<std::shared_ptr<FPNode>, 2> operands;
-  double sens = std::numeric_limits<double>::quiet_NaN(); // Sensitivity score, sum of |grad * value|
-  double grad = std::numeric_limits<double>::quiet_NaN(); // Sum of gradients (not abs)
+  double sens =
+      std::numeric_limits<double>::quiet_NaN(); // Sensitivity score, sum of
+                                                // |grad * value|
+  double grad =
+      std::numeric_limits<double>::quiet_NaN(); // Sum of gradients (not abs)
   unsigned executions = 0;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
