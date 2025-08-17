@@ -115,7 +115,7 @@
 
 #include "CacheUtility.h"
 
-#ifdef ENZYME_ENABLE_FPOPT
+#ifdef ENABLE_POSEIDON
 #include "Poseidon/Poseidon.h"
 #endif
 
@@ -2283,7 +2283,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())
     F = preprocessForClone(F, mode);
-#ifdef ENZYME_ENABLE_FPOPT
+#ifdef ENABLE_POSEIDON
   if (mode == DerivativeMode::ReverseModeProfiled) {
     setPoseidonMetadata(*F);
   }

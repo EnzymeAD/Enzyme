@@ -2146,7 +2146,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "    gutils->eraseIfUnused(" << origName << ");\n";
 
     if (intrinsic != MLIRDerivatives) {
-      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
+      os << "#ifdef ENABLE_POSEIDON\n";
       os << "    if (Mode == DerivativeMode::ReverseModeProfiled && "
             "Poseidonable("
          << origName << ")) {\n"
@@ -2546,7 +2546,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        Value *dif = nullptr;\n";
 
       // Set `dif` immediately for profiled instructions
-      os << "#ifdef ENZYME_ENABLE_FPOPT\n"
+      os << "#ifdef ENABLE_POSEIDON\n"
          << "        if (Mode == DerivativeMode::ReverseModeProfiled && "
             "Poseidonable("
          << origName << ")) {\n"

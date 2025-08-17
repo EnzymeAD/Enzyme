@@ -6,9 +6,12 @@ add_subdirectory(ForwardMode)
 add_subdirectory(ForwardModeSplit)
 add_subdirectory(ForwardModeVector)
 add_subdirectory(BatchMode)
-add_subdirectory(Poseidon)
 add_subdirectory(ProbProg)
 add_subdirectory(JLSimplify)
+
+if(ENABLE_POSEIDON)
+  add_subdirectory(Poseidon)
+endif()
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme "Running enzyme regression tests"

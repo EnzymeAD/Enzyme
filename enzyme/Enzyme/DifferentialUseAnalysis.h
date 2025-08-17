@@ -43,7 +43,6 @@
 #include "DiffeGradientUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
-#include "Poseidon/Poseidon.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintDiffUse;
@@ -124,7 +123,6 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
-#ifdef ENZYME_ENABLE_FPOPT
     if ((gutils->mode == DerivativeMode::ReverseModeProfiled ||
          gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
@@ -134,7 +132,6 @@ inline bool is_value_needed_in_reverse(
                         "error always needs result\n";
       return seen[idx] = true;
     }
-#endif
   }
 
   if (auto CI = dyn_cast<CallInst>(inst)) {
@@ -462,7 +459,7 @@ static inline bool is_value_needed_in_reverse(
 struct Node {
   llvm::Value *V;
   bool outgoing;
-  Node(llvm::Value *V, bool outgoing) : V(V), outgoing(outgoing){};
+  Node(llvm::Value *V, bool outgoing) : V(V), outgoing(outgoing) {};
   bool operator<(const Node N) const {
     if (V < N.V)
       return true;

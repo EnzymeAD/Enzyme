@@ -50,9 +50,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
-set(ENZYME_ENABLE_FPOPT 0 CACHE BOOL "Enable Poseidon")
+set(ENABLE_POSEIDON 0 CACHE BOOL "Enable Poseidon")
 
-if(ENZYME_ENABLE_FPOPT)
+if(ENABLE_POSEIDON)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/sbrantq/herbie
@@ -74,7 +74,7 @@ if(ENZYME_ENABLE_FPOPT)
         Poseidon/PoseidonTypes.cpp
         Poseidon/PoseidonUtils.cpp
     )
-    add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
+    add_compile_definitions(ENABLE_POSEIDON=1)
     set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie/bin/herbie")
     
     add_library(EnzymeFPProfile STATIC

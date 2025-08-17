@@ -80,7 +80,9 @@
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#ifdef ENABLE_POSEIDON
 #include "Poseidon/Poseidon.h"
+#endif
 #include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "Utils.h"
@@ -2217,6 +2219,7 @@ public:
     return status;
   }
 
+#ifdef ENABLE_POSEIDON
   bool HandlePoseidonProf(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
     assert(FPProfileGenerate);
 
@@ -2355,6 +2358,7 @@ public:
 
     return true;
   }
+#endif
 
   bool handleFullModuleTrunc(Function &F) {
     if (startsWith(F.getName(), EnzymeFPRTPrefix))
@@ -3044,13 +3048,17 @@ public:
       HandleProbProg(call, mode, calls);
     }
 
+#ifdef ENABLE_POSEIDON
     for (auto CI : toFPOpt) {
-      if (FPProfileGenerate) {
-        Changed |= HandlePoseidonProf(CI, calls);
-      } else {
-        Changed |= HandlePoseidonOpt(CI, calls);
-      }
+      Changed |= FPProfileGenerate ? HandlePoseidonProf(CI, calls)
+                                   : HandlePoseidonOpt(CI, calls);
     }
+#else
+    if (!toFPOpt.empty()) {
+      llvm_unreachable("Poseidon is not enabled. Please specify "
+                       "-DENABLE_POSEIDON=1 when building Enzyme.");
+    }
+#endif
 
     if (Logic.PostOpt) {
       auto Params = llvm::getInlineParams();
@@ -3501,9 +3509,6 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
-#ifdef ENZYME_ENABLE_FPOPT
-#include "Poseidon/Poseidon.h"
-#endif
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -3902,7 +3907,7 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(EnzymeNewPM());
           return true;
         }
-#ifdef ENZYME_ENABLE_FPOPT
+#ifdef ENABLE_POSEIDON
         if (Name == "fp-opt") {
           MPM.addPass(FPOptNewPM());
           return true;

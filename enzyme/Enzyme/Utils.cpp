@@ -55,10 +55,6 @@
 
 #include "LibraryFuncs.h"
 
-#ifdef ENZYME_ENABLE_FPOPT
-#include "Poseidon/Poseidon.h"
-#endif
-
 using namespace llvm;
 
 extern "C" {
