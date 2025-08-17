@@ -1,4 +1,4 @@
-name: Enzyme Poseidon CI
+name: Poseidon CI
 
 on: 
   push:
