@@ -2277,6 +2277,7 @@ public:
 
     auto mode = DerivativeMode::ReverseModeProfiled;
     F = Logic.PPC.preprocessForClone(F, mode);
+    setPoseidonMetadata(*F);
 
     std::map<int, Type *> byVal;
     std::vector<DIFFE_TYPE> constants;
