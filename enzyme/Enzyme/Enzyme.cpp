@@ -3053,6 +3053,10 @@ public:
       changed = true;
     }
 
+    if (DetectReadonlyOrThrow(M)) {
+      changed = true;
+    }
+
     std::set<Function *> done;
     for (Function &F : M) {
       if (F.empty())

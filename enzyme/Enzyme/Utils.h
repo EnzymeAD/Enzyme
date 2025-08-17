@@ -1646,31 +1646,21 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   return false;
 }
 
-static inline bool isReadOnlyOrThrow(const llvm::Function *F, ssize_t arg = -1) {
-  if (isReadOnly(F, arg))
+static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
+  if (isReadOnly(F, -1))
     return true;
 
   if (F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
     return true;
 
-  if (arg != -1) {
-    if (F->hasParamAttribute(arg, "enzyme_ReadOnlyOrThrow"))
-      return true;
-    // if (F->getAttributes().hasParamAttribute(arg, "enzyme_ReadOnly") ||
-    //     F->getAttributes().hasParamAttribute(arg, "enzyme_ReadNone"))
-    //   return true;
-  }
   return false;
 }
 
-static inline bool isReadOnlyOrThrow(const llvm::CallBase *call, ssize_t arg = -1) {
-  if (isReadOnlyOrThrow(call, arg))
+static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
+  if (isReadOnlyOrThrow(call))
     return true;
 
-  if (call->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
-    return true;
-
-  if (arg != -1 && call->hasParamAttribute(arg, "enzyme_ReadOnlyOrThrow"))
+  if (call->hasFnAttr("enzyme_ReadOnlyOrThrow"))
     return true;
 
   if (auto F = getFunctionFromCall(call)) {
@@ -1679,7 +1669,7 @@ static inline bool isReadOnlyOrThrow(const llvm::CallBase *call, ssize_t arg = -
     // may be nocapure/readonly, but the actual arg (which will be put in the
     // array) may not be.
     if (F->getCallingConv() == call->getCallingConv())
-      if (isReadOnlyOrThrow(F, arg))
+      if (isReadOnlyOrThrow(F))
         return true;
   }
   return false;

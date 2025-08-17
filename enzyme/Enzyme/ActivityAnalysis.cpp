@@ -3008,7 +3008,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         mayCapture |= !NoCapture;
 
-        bool ReadOnly = isReadOnlyOrThrow(call, idx);
+        bool ReadOnly = isReadOnlyOrThrow(call) || isReadOnly(call, idx);
 
         mayWrite |= !ReadOnly;
 
