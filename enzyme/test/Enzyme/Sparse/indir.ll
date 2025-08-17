@@ -31,7 +31,7 @@ loop:                                                ; preds = %0, %3
 
 declare dso_local double* @_Z16__enzyme_todensePvS_(i8*, i8*) 
 
-; CHECK: define dso_local double @_Z4testv() {
+; CHECK: define dso_local double @_Z4testv()
 ; CHECK:   %a4 = phi i64 [ 0, %entry ], [ %a13, %loop ]
 ; CHECK-NEXT:   %a5 = phi double [ 0.000000e+00, %entry ], [ %a12, %loop ]
 ; CHECK-NEXT:   %a6 = mul nuw nsw i64 %a4, 1000

@@ -49,11 +49,10 @@ entry:
 
 ; CHECK: define internal void @diffe_Z10reduce_maxPdi(double* %vec, double* %"vec'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %v_augmented = call { i64, double*, double* } @augmented_pb(double* %vec, double* %"vec'")
-; CHECK-NEXT:   %subcache = extractvalue { i64, double*, double* } %v_augmented, 0
-; CHECK-NEXT:   %v = extractvalue { i64, double*, double* } %v_augmented, 1
-; CHECK-NEXT:   %"v'ac" = extractvalue { i64, double*, double* } %v_augmented, 2
-; CHECK-NEXT:   call void @diffenoop(double* %v, double* %"v'ac")
+; CHECK-NEXT:   %v_augmented = call { i64, double* } @augmented_pb(double* %vec, double* %"vec'")
+; CHECK-NEXT:   %subcache = extractvalue { i64, double* } %v_augmented, 0
+; CHECK-NEXT:   %v = extractvalue { i64, double* } %v_augmented, 1
+; CHECK-NEXT:   call void @nofree_noop(double* %v)
 ; CHECK-NEXT:   call void @diffepb(double* %vec, double* %"vec'", i64 %subcache)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
@@ -66,25 +65,24 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal i64 @augmented_out(double* %mid, double* %"mid'")
+; CHECK: define internal i64 @nofree_out(double* %mid)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %int = ptrtoint double* %mid to i64
 ; CHECK-NEXT:   ret i64 %int
 ; CHECK-NEXT: }
 
-; CHECK: define internal { i64, double*, double* } @augmented_pb(double* %__x, double* %"__x'")
+; CHECK: define internal { i64, double* } @augmented_pb(double* %__x, double* %"__x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %a11 = call i64 @augmented_out(double* %__x, double* %"__x'")
-; CHECK-NEXT:   %a13 = call i64 @augmented_out(double* %__x, double* %"__x'")
+; CHECK-NEXT:   %a11 = call i64 @nofree_out(double* nonnull %__x)
+; CHECK-NEXT:   %a13 = call i64 @nofree_out(double* nonnull %__x)
 ; CHECK-NEXT:   %sub = sub i64 %a11, %a13
 ; CHECK-NEXT:   %s2 = add i64 %sub, 2
 ; CHECK-NEXT:   %"add.ptr.i'ipg" = getelementptr inbounds double, double* %"__x'", i64 %s2
 ; CHECK-NEXT:   %add.ptr.i = getelementptr inbounds double, double* %__x, i64 %s2
 ; CHECK-NEXT:   call void @augmented_mid(double* %add.ptr.i, double* %"add.ptr.i'ipg")
-; CHECK-NEXT:   %.fca.0.insert = insertvalue { i64, double*, double* } {{(undef|poison)}}, i64 %s2, 0
-; CHECK-NEXT:   %.fca.1.insert = insertvalue { i64, double*, double* } %.fca.0.insert, double* %__x, 1
-; CHECK-NEXT:   %.fca.2.insert = insertvalue { i64, double*, double* } %.fca.1.insert, double* %"__x'", 2
-; CHECK-NEXT:   ret { i64, double*, double* } %.fca.2.insert
+; CHECK-NEXT:   %.fca.0.insert = insertvalue { i64, double* } {{(undef|poison)}}, i64 %s2, 0
+; CHECK-NEXT:   %.fca.1.insert = insertvalue { i64, double* } %.fca.0.insert, double* %__x, 1
+; CHECK-NEXT:   ret { i64, double* } %.fca.1.insert
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffepb(double* %__x, double* %"__x'", i64 %s2)
@@ -92,8 +90,6 @@ entry:
 ; CHECK-NEXT:   %"add.ptr.i'ipg" = getelementptr inbounds double, double* %"__x'", i64 %s2
 ; CHECK-NEXT:   %add.ptr.i = getelementptr inbounds double, double* %__x, i64 %s2
 ; CHECK-NEXT:   call void @diffemid(double* %add.ptr.i, double* %"add.ptr.i'ipg")
-; CHECK-NEXT:   call void @diffeout(double* %__x, double* %"__x'")
-; CHECK-NEXT:   call void @diffeout(double* %__x, double* %"__x'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -101,10 +97,5 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %"mid'", align 8
 ; CHECK-NEXT:   store double %0, double* %"mid'", align 8
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
-
-; CHECK: define internal void @diffeout(double* %mid, double* %"mid'")
-; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

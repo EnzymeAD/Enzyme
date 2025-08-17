@@ -27,7 +27,7 @@ entry:
   ret i8* %0
 }
 
-; CHECK: define internal fastcc { float } @diffed({ float*, float }* noalias nocapture nofree writeonly "enzyme_sret" %a0, { float*, float }* nocapture nofree "enzyme_sret" %"a0'", float "enzyme_type"="{[-1]:Float@float}" %arrayref, float* "enzyme_type"="{[-1]:Pointer}" %a3, float* "enzyme_type"="{[-1]:Pointer}" %"a3'") #1 {
+; CHECK: define internal fastcc { float } @diffed({ float*, float }* noalias nocapture nofree writeonly "enzyme_sret" %a0, { float*, float }* nocapture nofree "enzyme_sret" %"a0'", float "enzyme_type"="{[-1]:Float@float}" %arrayref, float* "enzyme_type"="{[-1]:Pointer}" %a3, float* "enzyme_type"="{[-1]:Pointer}" %"a3'")
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   %0 = alloca { float*, float }, align 8
 ; CHECK-NEXT:   %"a10'de" = alloca { float*, float }, align 8

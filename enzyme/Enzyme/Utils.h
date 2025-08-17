@@ -1646,6 +1646,35 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   return false;
 }
 
+static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
+  if (isReadOnly(F))
+    return true;
+
+  if (F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
+    return true;
+
+  return false;
+}
+
+static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
+  if (isReadOnly(call))
+    return true;
+
+  if (call->hasFnAttr("enzyme_ReadOnlyOrThrow"))
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isReadOnlyOrThrow(F))
+        return true;
+  }
+  return false;
+}
+
 static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 14
   if (F->onlyWritesMemory())
