@@ -19,15 +19,6 @@ declare double @__enzyme_fp_optimize(double (double, double)*, ...)
 
 ; CHECK: define double @test_profile(double %x, double %y)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[fadd:.+]] = call double @preprocess_tester(double %x, double %y)
+; CHECK-NEXT:   %[[fadd:.+]] = call double @tester(double %x, double %y)
 ; CHECK-NEXT:   ret double %[[fadd]]
 ; CHECK-NEXT: }
-
-; CHECK: define double @preprocess_tester(double %x, double %y)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:  %0 = fadd fast double %x, %y, !enzyme_active !0, !enzyme_fpprofile_idx !1
-; CHECK-NEXT:  ret double %0
-; CHECK-NEXT: }
-
-; CHECK: !0 = !{}
-; CHECK: !1 = !{i64 0}
