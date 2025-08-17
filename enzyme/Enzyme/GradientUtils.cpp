@@ -9301,7 +9301,9 @@ void GradientUtils::erase(Instruction *I) {
 
 void GradientUtils::eraseWithPlaceholder(Instruction *I, Instruction *orig,
                                          const Twine &suffix, bool erase) {
-  if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
+  if (I->getType()->isTokenTy()) {
+    replaceAWithB(I, UndefValue::get(I->getType()));
+  } else if (!I->getType()->isVoidTy() && !I->getType()->isTokenTy()) {
     auto inspos = I->getIterator();
 #if LLVM_VERSION_MAJOR >= 18
 #if LLVM_VERSION_MAJOR >= 21
