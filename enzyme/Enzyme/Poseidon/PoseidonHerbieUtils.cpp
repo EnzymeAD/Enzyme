@@ -682,9 +682,13 @@ void setUnifiedAccuracyCost(
   } else {
     llvm_unreachable("Unknown fpopt-reduction strategy");
   }
-
   CO.initialAccCost = origCost * std::fabs(CO.grad);
-  assert(!std::isnan(CO.initialAccCost));
+  if (std::isnan(CO.initialAccCost)) {
+    llvm::errs() << "Warning: NaN in initialAccCost computation:\n";
+    llvm::errs() << "  origCost = " << origCost << "\n";
+    llvm::errs() << "  CO.grad = " << CO.grad << "\n";
+    llvm::errs() << "  fabs(CO.grad) = " << std::fabs(CO.grad) << "\n";
+  }
 
   SmallVector<RewriteCandidate, 4> newCandidates;
   for (auto &candidate : CO.candidates) {

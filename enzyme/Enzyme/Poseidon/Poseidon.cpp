@@ -83,7 +83,7 @@ cl::opt<unsigned> FPOptMaxExprLength(
     "fpopt-max-expr-length", cl::init(10000), cl::Hidden,
     cl::desc("The maximum length of an expression; abort if exceeded"));
 cl::opt<std::string> FPOptReductionEval(
-    "fpopt-reduction-eval", cl::init("geomean"), cl::Hidden,
+    "fpopt-reduction-eval", cl::init("arithmean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
 }
