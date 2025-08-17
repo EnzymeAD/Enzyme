@@ -56,13 +56,13 @@ if(ENZYME_ENABLE_FPOPT)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/sbrantq/herbie
-        GIT_TAG 9a81e9ecd01515ed88fb4efb77e4c0ae7be9cba5
+        GIT_TAG 92a9ab3ca0a2eb1cf8a3e24c3d39be09dd87f384
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
-        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt
+        BUILD_COMMAND make egg-herbie && make update && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt && mkdir -p herbie-compiled && raco distribute herbie-compiled herbie
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
     )
     list(APPEND ENZYME_SRC 
         Poseidon/Poseidon.cpp
@@ -75,7 +75,7 @@ if(ENZYME_ENABLE_FPOPT)
         Poseidon/PoseidonUtils.cpp
     )
     add_compile_definitions(ENZYME_ENABLE_FPOPT=1)
-    set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie")
+    set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie/bin/herbie")
     
     add_library(EnzymeFPProfile STATIC
         Runtimes/FPProfiler/FPProfiler.cpp
