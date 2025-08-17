@@ -1663,7 +1663,7 @@ bool DetectReadonlyOrThrow(Module &M) {
           inverse_todo_map[F2].insert(&F);
         }
       }
-        todo_map[&F] = std::move(calls_todo);
+      todo_map[&F] = std::move(calls_todo);
     }
   }
 
@@ -1673,7 +1673,7 @@ bool DetectReadonlyOrThrow(Module &M) {
 
     // Nobody needs cur as a prerequisite
     if (found == inverse_todo_map.end()) {
-	     continue;
+      continue;
     }
     for (auto F2 : found->second) {
       auto found2 = todo_map.find(F2);
