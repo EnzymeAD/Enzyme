@@ -1547,7 +1547,8 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto F2 = CI->getCalledFunction()) {
-          if (isDebugFunction(F2)) continue;
+          if (isDebugFunction(F2))
+            continue;
           if (F2->getCallingConv() == CI->getCallingConv()) {
             if (F2 == &F)
               continue;
