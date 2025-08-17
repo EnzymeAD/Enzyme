@@ -28,8 +28,17 @@ using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_PROBPROGPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 namespace {
-struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
+struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
+  using ProbProgPassBase::ProbProgPassBase;
+
   MEnzymeLogic Logic;
 
   void runOnOperation() override;
@@ -613,14 +622,6 @@ struct ProbProgPass : public ProbProgPassBase<ProbProgPass> {
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createProbProgPass() {
-  return std::make_unique<ProbProgPass>();
-}
-} // namespace enzyme
-} // namespace mlir
 
 void ProbProgPass::runOnOperation() {
   // Old direct lowering disabled; pattern-based lowering is now used.

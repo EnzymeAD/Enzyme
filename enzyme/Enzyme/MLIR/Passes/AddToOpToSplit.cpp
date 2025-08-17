@@ -31,6 +31,13 @@
 
 #include "Utils.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ADDTOOPTOSPLITPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
@@ -103,7 +110,7 @@ void processGenericDuplication(Operation *op, OpBuilder &builder, Location loc,
 }
 
 struct AddToOpToSplitPass
-    : public enzyme::AddToOpToSplitPassBase<AddToOpToSplitPass> {
+    : public enzyme::impl::AddToOpToSplitPassBase<AddToOpToSplitPass> {
   void runOnOperation() override {
     getOperation()->walk([&](Operation *op) {
       auto enzymeAdjoint = dyn_cast<enzyme::GenericAdjointOp>(op);
@@ -138,11 +145,3 @@ struct AddToOpToSplitPass
   };
 };
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createAddToOpToSplitPass() {
-  return std::make_unique<AddToOpToSplitPass>();
-}
-} // namespace enzyme
-} // namespace mlir

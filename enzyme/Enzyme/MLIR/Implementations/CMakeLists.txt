@@ -10,6 +10,10 @@ set(LLVM_TARGET_DEFINITIONS LLVMDerivatives.td)
 enzyme_tablegen(LLVMDerivatives.inc -gen-mlir-derivatives)
 add_public_tablegen_target(LLVMDerivativesIncGen)
 
+set(LLVM_TARGET_DEFINITIONS LinalgDerivatives.td)
+enzyme_tablegen(LinalgDerivatives.inc -gen-mlir-derivatives)
+add_public_tablegen_target(LinalgDerivativesIncGen)
+
 set(LLVM_TARGET_DEFINITIONS NVVMDerivatives.td)
 enzyme_tablegen(NVVMDerivatives.inc -gen-mlir-derivatives)
 add_public_tablegen_target(NVVMDerivativesIncGen)
@@ -64,6 +68,7 @@ add_mlir_library(MLIREnzymeImplementations
   ArithDerivativesIncGen
   ComplexDerivativesIncGen
   LLVMDerivativesIncGen
+  LinalgDerivativesIncGen
   FuncDerivativesIncGen
   NVVMDerivativesIncGen
   SCFDerivativesIncGen

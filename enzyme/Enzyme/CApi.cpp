@@ -1002,6 +1002,10 @@ void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
 }
 
+void EnzymeDetectReadonlyOrThrow(LLVMModuleRef M) {
+  DetectReadonlyOrThrow(*unwrap(M));
+}
+
 void EnzymeDumpModuleRef(LLVMModuleRef M) {
   llvm::errs() << *unwrap(M) << "\n";
 }

@@ -23,7 +23,7 @@ declare i8** @__enzyme_virtualreverse(...)
 ; CHECK: @g = constant i8* bitcast (void (i8***)* @impl to i8*), align 8, !enzyme_shadow !0
 ; CHECK: @"_enzyme_reverse_impl'" = internal constant { i8* (i8***, i8***)*, void (i8***, i8***, i8*)* } { i8* (i8***, i8***)* @augmented_impl, void (i8***, i8***, i8*)* @diffeimpl }
 
-; CHECK: define i8** @caller() {
+; CHECK: define i8** @caller()
 ; CHECK-NEXT:   ret i8** @g_shadow
 ; CHECK-NEXT: }
 

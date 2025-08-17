@@ -29,6 +29,13 @@ using namespace enzyme;
 
 namespace mlir {
 namespace enzyme {
+#define GEN_PASS_DEF_BATCHPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
+namespace mlir {
+namespace enzyme {
 namespace batchutils {
 
 mlir::TensorType applyBatchSizes(mlir::Type Ty,
@@ -65,9 +72,9 @@ LogicalResult handleCallOp(
   if (it != batchedFunctionCache.end()) {
     batchedFunc = it->second;
   } else {
-    batchedFunc =
-        batchCloneFunction(calledFunc, "batched_" + calledFunc.getName(),
-                           batchSizes, batchedFunctionCache);
+    std::string fnName = "batched_" + calledFunc.getName().str();
+    batchedFunc = batchCloneFunction(calledFunc, fnName, batchSizes,
+                                     batchedFunctionCache);
     if (!batchedFunc)
       return failure();
     batchedFunctionCache[key] = batchedFunc;
@@ -236,8 +243,9 @@ LogicalResult batchOperation(
     newFunc = it->second;
   } else {
     // Create new batched function and store in cache
-    newFunc = batchCloneFunction(fn, "batched_" + fn.getName(),
-                                 CI.getBatchShape(), batchedFunctionCache);
+    std::string newFnName = "batched_" + fn.getName().str();
+    newFunc = batchCloneFunction(fn, newFnName, CI.getBatchShape(),
+                                 batchedFunctionCache);
     if (!newFunc) {
       return failure();
     }
@@ -257,7 +265,7 @@ LogicalResult batchOperation(
 
 namespace {
 
-struct BatchPass : public BatchPassBase<BatchPass> {
+struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
   void runOnOperation() override;
 
   // Cache mapping original function and batch sizes to batched function
@@ -294,14 +302,6 @@ struct BatchPass : public BatchPassBase<BatchPass> {
 };
 
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createBatchPass() {
-  return std::make_unique<BatchPass>();
-}
-} // namespace enzyme
-} // namespace mlir
 
 void BatchPass::runOnOperation() {
   SymbolTableCollection symbolTable;

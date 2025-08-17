@@ -22,6 +22,13 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_ENZYMEOPSTOMEMREFPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
 using namespace mlir;
 using llvm::errs;
 namespace {
@@ -364,7 +371,7 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
 };
 
 struct EnzymeToMemRefPass
-    : public enzyme::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
+    : public enzyme::impl::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
@@ -413,11 +420,3 @@ struct EnzymeToMemRefPass
   };
 };
 } // end anonymous namespace
-
-namespace mlir {
-namespace enzyme {
-std::unique_ptr<Pass> createEnzymeToMemRefPass() {
-  return std::make_unique<EnzymeToMemRefPass>();
-}
-} // namespace enzyme
-} // namespace mlir

@@ -23,31 +23,6 @@ namespace mlir {
 class PatternRewriter;
 class RewritePatternSet;
 class DominanceInfo;
-namespace enzyme {
-std::unique_ptr<Pass> createDifferentiatePass();
-
-std::unique_ptr<Pass> createProbProgPass();
-
-std::unique_ptr<Pass> createBatchPass();
-
-std::unique_ptr<Pass> createDifferentiateWrapperPass();
-
-std::unique_ptr<Pass> createPrintActivityAnalysisPass();
-
-std::unique_ptr<Pass> createPrintAliasAnalysisPass();
-
-std::unique_ptr<Pass> createEnzymeToMemRefPass();
-
-std::unique_ptr<Pass> createMathematicSimplificationPass();
-
-std::unique_ptr<Pass> createAddToOpToIndexAndLoadPass();
-
-std::unique_ptr<Pass> createAddToOpToSplitPass();
-
-std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass();
-
-std::unique_ptr<Pass> createSimplifyMemrefCachePass();
-} // namespace enzyme
 } // namespace mlir
 
 namespace mlir {
@@ -95,8 +70,14 @@ namespace tensor {
 class TensorDialect;
 } // end namespace tensor
 
+namespace enzyme {
+
+#define GEN_PASS_DECL
+#include "Passes/Passes.h.inc"
+
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
+} // namespace enzyme
 
 } // end namespace mlir
 
