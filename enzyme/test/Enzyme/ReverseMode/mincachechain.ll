@@ -73,8 +73,8 @@ entry:
 
 ; CHECK: define internal { i64, double* } @augmented_pb(double* %__x, double* %"__x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %a11 = call i64 @nofree_out(double* %__x)
-; CHECK-NEXT:   %a13 = call i64 @nofree_out(double* %__x)
+; CHECK-NEXT:   %a11 = call i64 @nofree_out(double* nonnull %__x)
+; CHECK-NEXT:   %a13 = call i64 @nofree_out(double* nonnull %__x)
 ; CHECK-NEXT:   %sub = sub i64 %a11, %a13
 ; CHECK-NEXT:   %s2 = add i64 %sub, 2
 ; CHECK-NEXT:   %"add.ptr.i'ipg" = getelementptr inbounds double, double* %"__x'", i64 %s2
