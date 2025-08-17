@@ -2531,39 +2531,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        res = Builder2.CreateMaxNum(get1ULP(Builder2, "
             "gutils->getNewFromOriginal(&"
          << origName << ")), res);\n";
-
       os << "        assert(res);\n";
-
-      os << "#ifdef ENZYME_ENABLE_FPOPT\n";
-      os << "        if (Poseidonable(" << origName << ")) {\n"
-         << "          Type *PtrTy = PointerType::getUnqual(" << origName
-         << ".getContext());\n"
-         << "          Type *DoubleTy = Type::getDoubleTy(" << origName
-         << ".getContext());\n"
-         << "          FunctionType *LogErrorFT = "
-            "FunctionType::get(Type::getVoidTy("
-         << origName << ".getContext()),\n"
-         << "              {PtrTy, DoubleTy}, false);\n"
-         << "          FunctionCallee logFunc = " << origName
-         << ".getModule()->getOrInsertFunction(\"enzymeLogError\", "
-            "LogErrorFT);\n"
-         << "          std::string idStr = getLogIdentifier(" << origName
-         << ");\n"
-         << "          GlobalVariable *idGlobal = "
-            "Builder2.CreateGlobalString(idStr);\n"
-         << "          Value *idValue = "
-            "Builder2.CreateInBoundsGEP(idGlobal->getValueType(), idGlobal, "
-            "{Builder2.getInt32(0), Builder2.getInt32(0)});\n"
-         << "          Value *errValue = Builder2.CreateFPExt(res, "
-            "Type::getDoubleTy("
-         << origName << ".getContext()));\n"
-         << "          CallInst *logCallInst = Builder2.CreateCall(logFunc, "
-            "{idValue, errValue});\n"
-         << "          logCallInst->setDebugLoc(gutils->getNewFromOriginal("
-         << origName << ".getDebugLoc()));\n"
-         << "        }\n";
-      os << "#endif\n";
-
       os << "        setDiffe(&" << origName << ", res, Builder2);\n";
       os << "        break;\n";
       os << "      }\n";

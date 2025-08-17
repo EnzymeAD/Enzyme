@@ -592,13 +592,6 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
 }
 
 llvm::Value *get1ULP(llvm::IRBuilder<> &builder, llvm::Value *res);
-#ifdef ENZYME_ENABLE_FPOPT
-bool Poseidonable(const llvm::Value &V);
-llvm::Function *getFPOptLogger(llvm::Module *M, llvm::StringRef demangledName);
-std::string getLogIdentifier(llvm::Instruction &I);
-void setFPOptMetadata(llvm::Instruction *After,
-                      const llvm::Instruction *Before);
-#endif
 
 static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
   std::set<llvm::Type *> seen;
