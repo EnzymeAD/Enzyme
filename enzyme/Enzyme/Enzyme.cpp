@@ -2283,14 +2283,11 @@ public:
     }
 
     auto mode = DerivativeMode::ReverseModeProfiled;
-    F = Logic.PPC.preprocessForClone(F, mode);
-    setPoseidonMetadata(*F);
 
     std::map<int, Type *> byVal;
     std::vector<DIFFE_TYPE> constants;
     SmallVector<Value *, 8> args;
 
-    // Extract primal arguments
     auto options =
         handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
     if (!options) {
@@ -2329,6 +2326,9 @@ public:
                   "to create a profile or -fpprofile-use=<dir> to use an "
                   "existing profile.");
     } else {
+      F = Logic.PPC.preprocessForClone(F, mode);
+      setPoseidonMetadata(*F);
+
       SmallString<128> profilePath(FPProfileUse);
       llvm::sys::path::append(profilePath, F->getName() + ".fpprofile");
       if (!llvm::sys::fs::exists(profilePath.str())) {
