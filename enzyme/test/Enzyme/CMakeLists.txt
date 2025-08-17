@@ -23,7 +23,7 @@ add_lit_testsuite(check-enzyme "Running enzyme regression tests"
 add_lit_testsuite(check-enzyme-bench "Benchmarking enzyme regression tests"
     ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${ENZYME_TEST_DEPS}
-    ARGS -v --time-tests -o results.json
+    ARGS -v --time-tests -o results.json --filter-out=Poseidon
 )
 
 
