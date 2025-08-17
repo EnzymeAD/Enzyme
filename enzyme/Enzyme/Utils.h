@@ -1647,7 +1647,7 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 }
 
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
-  if (isReadOnly(F, -1))
+  if (isReadOnly(F))
     return true;
 
   if (F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
@@ -1657,7 +1657,7 @@ static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
 }
 
 static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
-  if (isReadOnlyOrThrow(call))
+  if (isReadOnly(call))
     return true;
 
   if (call->hasFnAttr("enzyme_ReadOnlyOrThrow"))

@@ -1526,7 +1526,6 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F, SmallPtrSetImpl<Function*> &call
     if (isReadOnlyOrThrow(&F)) return false;
     if (F.empty()) return false;
     const auto unreachable = getGuaranteedUnreachable(&F);
-
     for (auto &BB : F) {
       if (unreachable.find(&BB) != unreachable.end()) {
         continue;
@@ -1549,8 +1548,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F, SmallPtrSetImpl<Function*> &call
                   continue;
                 if (isReadOnlyOrThrow(F2))
                   continue;
-                calls_todo.insert(F2);
-                continue;
+                if (!F2->empty()) {
+                  calls_todo.insert(F2);
+                  continue;
+                }
               }
             }
           }
@@ -1571,6 +1572,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F, SmallPtrSetImpl<Function*> &call
           return false;
       }
     }
+
     if (calls_todo.size() == 0) {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
