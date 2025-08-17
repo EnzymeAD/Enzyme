@@ -19,6 +19,7 @@
 #include "llvm/Support/CommandLine.h"
 
 #include <limits>
+#include <unordered_map>
 
 using namespace llvm;
 
@@ -44,8 +45,7 @@ struct ProfileInfo {
         sumSens(0.0), sumGrad(0.0), exec(0) {}
 };
 
-bool extractFromProfile(const std::string &logPath,
-                        const std::string &functionName, size_t blockIdx,
-                        size_t instIdx, ProfileInfo &data);
+void parseProfileFile(const std::string &profilePath,
+                     std::unordered_map<size_t, ProfileInfo> &profileMap);
 
 #endif // ENZYME_POSEIDON_PROF_UTILS_H

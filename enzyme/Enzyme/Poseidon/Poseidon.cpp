@@ -197,7 +197,14 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                    << EC.message() << "\n";
   }
 
-  // F.print(llvm::errs());
+  std::unordered_map<size_t, ProfileInfo> profileMap;
+  if (!profilePath.empty()) {
+    parseProfileFile(profilePath, profileMap);
+    if (profileMap.empty()) {
+      llvm::errs() << "Warning: No profile data found in " << profilePath
+                   << "\n";
+    }
+  }
 
   bool changed = false;
 
@@ -403,39 +410,32 @@ B2:
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
 
-            // look up error log to get bounds of non-Poseidonable inputs
-            ProfileInfo profileInfo;
-            auto blockIt = std::find_if(
-                I2->getFunction()->begin(), I2->getFunction()->end(),
-                [&](const auto &block) { return &block == I2->getParent(); });
-            assert(blockIt != I2->getFunction()->end() && "Block not found");
-            size_t blockIdx =
-                std::distance(I2->getFunction()->begin(), blockIt);
-            auto instIt =
-                std::find_if(I2->getParent()->begin(), I2->getParent()->end(),
-                             [&](const auto &curr) { return &curr == I2; });
-            assert(instIt != I2->getParent()->end() && "Instruction not found");
-            size_t instIdx = std::distance(I2->getParent()->begin(), instIt);
-
-            bool res = extractFromProfile(profilePath, functionName, blockIdx,
-                                          instIdx, profileInfo);
-            if (!res) {
-              if (FPOptLooseCoverage)
-                continue;
-              llvm::errs() << "FP Instruction " << *I2
-                           << " has no execution logged!\n";
-              llvm_unreachable(
-                  "Unexecuted instruction found; set -fpopt-loose-coverage "
-                  "to suppress this error\n");
-            }
-            auto node = valueToNodeMap[operand];
-            node->updateBounds(profileInfo.minOperands[i],
-                               profileInfo.maxOperands[i]);
-
-            if (FPOptPrint) {
-              llvm::errs() << "Range of " << *operand << " is ["
-                           << node->getLowerBound() << ", "
-                           << node->getUpperBound() << "]\n";
+            if (auto MD = I2->getMetadata("enzyme_fpprofile_idx")) {
+              if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
+                size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
+                auto it = profileMap.find(idx);
+                if (it != profileMap.end()) {
+                  auto node = valueToNodeMap[operand];
+                  if (i < it->second.minOperands.size()) {
+                    node->updateBounds(it->second.minOperands[i],
+                                       it->second.maxOperands[i]);
+                    if (FPOptPrint) {
+                      llvm::errs() << "Range of " << *operand << " is ["
+                                   << node->getLowerBound() << ", "
+                                   << node->getUpperBound() << "]\n";
+                    }
+                  }
+                } else {
+                  if (!FPOptLooseCoverage) {
+                    llvm::errs()
+                        << "FP Instruction " << *I2
+                        << " has no execution logged (idx=" << idx << ")!\n";
+                    llvm_unreachable("Unexecuted instruction found; set "
+                                     "-fpopt-loose-coverage "
+                                     "to suppress this error\n");
+                  }
+                }
+              }
             }
           } else {
             if (FPOptPrint)
@@ -499,45 +499,36 @@ B2:
 
         // Extract profile info for all instructions.
         for (auto &op : sungraph.operations) {
-          ProfileInfo profileInfo;
-          auto blockIt = std::find_if(
-              op->getFunction()->begin(), op->getFunction()->end(),
-              [&](const auto &block) { return &block == op->getParent(); });
-          assert(blockIt != op->getFunction()->end() && "Block not found");
-          size_t blockIdx = std::distance(op->getFunction()->begin(), blockIt);
-          auto instIt =
-              std::find_if(op->getParent()->begin(), op->getParent()->end(),
-                           [&](const auto &curr) { return &curr == op; });
-          assert(instIt != op->getParent()->end() && "Instruction not found");
-          size_t instIdx = std::distance(op->getParent()->begin(), instIt);
-          bool found = extractFromProfile(profilePath, functionName, blockIdx,
-                                          instIdx, profileInfo);
+          if (auto MD = op->getMetadata("enzyme_fpprofile_idx")) {
+            if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
+              size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
+              auto it = profileMap.find(idx);
 
-          auto node = valueToNodeMap[op];
+              auto node = valueToNodeMap[op];
+              if (it != profileMap.end()) {
+                const auto &profileInfo = it->second;
+                node->sens = profileInfo.sumSens;
+                node->grad = profileInfo.sumGrad;
+                node->executions = profileInfo.exec;
+                node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 
-          if (found) {
-            node->sens = profileInfo.sumSens;
-            node->grad = profileInfo.sumGrad;
-            node->executions = profileInfo.exec;
-            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
-
-            if (FPOptPrint) {
-              llvm::errs() << "Range of " << *op << " is ["
-                           << node->getLowerBound() << ", "
-                           << node->getUpperBound() << "]\n";
+                if (FPOptPrint) {
+                  llvm::errs()
+                      << "Range of " << *op << " is [" << node->getLowerBound()
+                      << ", " << node->getUpperBound() << "]\n";
+                  llvm::errs() << "Sensitivity score of " << *op
+                               << " is: " << node->sens << "\n"
+                               << "Gradient sum of " << *op
+                               << " is: " << node->grad << "\n"
+                               << "Execution count of " << *op
+                               << " is: " << node->executions << "\n";
+                }
+              } else {
+                if (FPOptPrint)
+                  llvm::errs() << "Sensitivity of " << *op
+                               << " not found in the log; using 0 instead\n";
+              }
             }
-
-            if (FPOptPrint)
-              llvm::errs() << "Sensitivity score of " << *op
-                           << " is: " << node->sens << "\n"
-                           << "Gradient sum of " << *op << " is: " << node->grad
-                           << "\n"
-                           << "Execution count of " << *op
-                           << " is: " << node->executions << "\n";
-          } else { // Unknown bounds
-            if (FPOptPrint)
-              llvm::errs() << "Sensitivity of " << *op
-                           << " not found in the log; using 0 instead\n";
           }
         }
 

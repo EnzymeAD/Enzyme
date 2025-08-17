@@ -109,6 +109,7 @@ public:
       out << "\tSumSens = " << info.sumSens << "\n";
       out << "\tSumGrad = " << info.sumGrad << "\n";
       out << "\tExec = " << info.exec << "\n";
+      out << "\tNumOperands = " << info.minOperands.size() << "\n";
       for (size_t i = 0; i < info.minOperands.size(); ++i) {
         out << "\tOperand[" << i << "] = [" << info.minOperands[i] << ", "
             << info.maxOperands[i] << "]\n";
