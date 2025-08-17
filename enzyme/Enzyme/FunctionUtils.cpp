@@ -1555,6 +1555,13 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
             if (isReadOnlyOrThrow(F2))
               continue;
             if (!F2->empty()) {
+              if (EnzymePrintPerf) {
+                EmitWarning(
+                    "WritingInstruction", I, "Instruction could write forcing ",
+                    F.getName(),
+                    " to not be marked readonly_or_throw per sub-call of ",
+                    F2->getName());
+              }
               calls_todo.insert(F2);
               continue;
             }
@@ -1650,12 +1657,13 @@ bool DetectReadonlyOrThrow(Module &M) {
     if (DetectReadonlyOrThrowFn(F, calls_todo, TLI)) {
       if (calls_todo.size() == 0) {
         changed = true;
+        todo.push_back(&F);
       } else {
-        todo_map[&F] = std::move(calls_todo);
         for (auto F2 : calls_todo) {
           inverse_todo_map[F2].insert(&F);
         }
       }
+      todo_map[&F] = std::move(calls_todo);
     }
   }
 

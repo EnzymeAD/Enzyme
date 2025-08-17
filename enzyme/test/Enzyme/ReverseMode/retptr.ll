@@ -30,7 +30,7 @@ declare float @__enzyme_autodiff(float (float**)*, ...)
 ; CHECK-NEXT:   %[[loadsub:.+]] = load float, float* %[[augsub]]
 ; CHECK-NEXT:   %[[fadd:.+]] = fadd fast float %[[loadsub]], %differeturn
 ; CHECK-NEXT:   store float %[[fadd]], float* %[[augsub]]
-; CHECK-NEXT:   call void @diffesub(float** %this, float** %"this'")
+; CHECK-NEXT:   call void @diffesub(float** %this, float** {{(undef|poison)}})
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
