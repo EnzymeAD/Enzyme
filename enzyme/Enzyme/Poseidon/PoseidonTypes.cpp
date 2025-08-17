@@ -25,6 +25,7 @@
 #include <cmath>
 #include <functional>
 
+#include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonHerbieUtils.h"
 #include "PoseidonPrecUtils.h"
@@ -263,14 +264,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                  int exp = static_cast<int>(value);
                  SmallVector<Type *, 1> overloadedTypes = {
                      ops[0]->getType(), Type::getInt32Ty(M->getContext())};
-#if LLVM_VERSION_MAJOR >= 21
-                 Function *powiFunc = Intrinsic::getOrInsertDeclaration(
-                     M, Intrinsic::powi, overloadedTypes);
-#else
                  Function *powiFunc = getIntrinsicDeclaration(
                      M, Intrinsic::powi, overloadedTypes);
-#endif
-
                  Value *exponent =
                      ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
                  return b.CreateCall(powiFunc, {ops[0], exponent},
