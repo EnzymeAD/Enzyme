@@ -6027,7 +6027,7 @@ public:
           if (!op || postCreateSet.count(op))
             continue;
           if (gutils->isOriginal(op->getParent())) {
-            IRBuilder <>BuilderA(a);
+            IRBuilder<> BuilderA(a);
             a->setOperand(i, gutils->lookupM(op, BuilderA));
           }
         }
