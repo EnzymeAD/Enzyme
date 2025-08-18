@@ -279,9 +279,9 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"fma",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
+             return b.CreateIntrinsic(Intrinsic::fmuladd, {ops[0]->getType()},
                                       {ops[0], ops[1], ops[2]}, nullptr,
-                                      "herbie.fma");
+                                      "herbie.fmuladd");
            }},
           {"fabs",
            [](IRBuilder<> &b, Module *M,
@@ -304,6 +304,10 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"asin",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::asin, ops[0], nullptr,
+                                           "herbie.asin");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "asin" : "asinf";
              Function *f = M->getFunction(funcName);
@@ -312,10 +316,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.asin");
+#endif
            }},
           {"acos",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::acos, ops[0], nullptr,
+                                           "herbie.acos");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "acos" : "acosf";
              Function *f = M->getFunction(funcName);
@@ -324,10 +333,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.acos");
+#endif
            }},
           {"atan",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::atan, ops[0], nullptr,
+                                           "herbie.atan");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "atan" : "atanf";
              Function *f = M->getFunction(funcName);
@@ -336,10 +350,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.atan");
+#endif
            }},
           {"atan2",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateBinaryIntrinsic(Intrinsic::atan2, ops[0], ops[1],
+                                            nullptr, "herbie.atan2");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "atan2" : "atan2f";
              Function *f = M->getFunction(funcName);
@@ -348,10 +367,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0], ops[1]}, "herbie.atan2");
+#endif
            }},
           {"sinh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::sinh, ops[0], nullptr,
+                                           "herbie.sinh");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "sinh" : "sinhf";
              Function *f = M->getFunction(funcName);
@@ -360,10 +384,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.sinh");
+#endif
            }},
           {"cosh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::cosh, ops[0], nullptr,
+                                           "herbie.cosh");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "cosh" : "coshf";
              Function *f = M->getFunction(funcName);
@@ -372,10 +401,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.cosh");
+#endif
            }},
           {"tanh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
+#if LLVM_VERSION_MAJOR > 16
+             return b.CreateUnaryIntrinsic(Intrinsic::tanh, ops[0], nullptr,
+                                           "herbie.tanh");
+#else
              Type *Ty = ops[0]->getType();
              std::string funcName = Ty->isDoubleTy() ? "tanh" : "tanhf";
              Function *f = M->getFunction(funcName);
@@ -384,6 +418,175 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
              }
              return b.CreateCall(f, {ops[0]}, "herbie.tanh");
+#endif
+           }},
+          {"copysign",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateBinaryIntrinsic(Intrinsic::copysign, ops[0], ops[1],
+                                            nullptr, "herbie.copysign");
+           }},
+          {"rem",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateFRem(ops[0], ops[1], "herbie.rem");
+           }},
+          {"ceil",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::ceil, ops[0], nullptr,
+                                           "herbie.ceil");
+           }},
+          {"floor",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::floor, ops[0], nullptr,
+                                           "herbie.floor");
+           }},
+          {"exp2",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::exp2, ops[0], nullptr,
+                                           "herbie.exp2");
+           }},
+          {"log10",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::log10, ops[0], nullptr,
+                                           "herbie.log10");
+           }},
+          {"log2",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::log2, ops[0], nullptr,
+                                           "herbie.log2");
+           }},
+          {"rint",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::rint, ops[0], nullptr,
+                                           "herbie.rint");
+           }},
+          {"round",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::round, ops[0], nullptr,
+                                           "herbie.round");
+           }},
+          {"trunc",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             return b.CreateUnaryIntrinsic(Intrinsic::trunc, ops[0], nullptr,
+                                           "herbie.trunc");
+           }},
+          {"fdim",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "fdim" : "fdimf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.fdim");
+           }},
+          {"fmod",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "fmod" : "fmodf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.fmod");
+           }},
+          {"remainder",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName =
+                 Ty->isDoubleTy() ? "remainder" : "remainderf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.remainder");
+           }},
+          {"erf",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "erf" : "erff";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.erf");
+           }},
+          {"lgamma",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "lgamma" : "lgammaf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.lgamma");
+           }},
+          {"tgamma",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "tgamma" : "tgammaf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.tgamma");
+           }},
+          {"asinh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "asinh" : "asinhf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.asinh");
+           }},
+          {"acosh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "acosh" : "acoshf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.acosh");
+           }},
+          {"atanh",
+           [](IRBuilder<> &b, Module *M,
+              const SmallVectorImpl<Value *> &ops) -> Value * {
+             Type *Ty = ops[0]->getType();
+             std::string funcName = Ty->isDoubleTy() ? "atanh" : "atanhf";
+             Function *f = M->getFunction(funcName);
+             if (!f) {
+               FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
+               f = Function::Create(FT, Function::ExternalLinkage, funcName, M);
+             }
+             return b.CreateCall(f, {ops[0]}, "herbie.atanh");
            }},
           {"==",
            [](IRBuilder<> &b, Module *M,
