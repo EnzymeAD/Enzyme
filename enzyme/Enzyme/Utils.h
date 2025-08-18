@@ -1652,10 +1652,10 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
 //.  1) Throw [in which case any operation guaranteed to throw is valid]
 //.  2) Read from any memory
 //.  3) Write to memory which did not exist did not exist prior to the function
-//call. This means that one can write .     to memory whose allocation happened
-//within the call to F (including a local alloca, a malloc call, even if .
-//returned). This is also legal to write to an sret and/or returnroots parameter
-//(which must be an alloca).
+// call. This means that one can write .     to memory whose allocation happened
+// within the call to F (including a local alloca, a malloc call, even if .
+// returned). This is also legal to write to an sret and/or returnroots
+// parameter (which must be an alloca).
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -1693,9 +1693,9 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
 //.  1) Throw [in which case any operation guaranteed to throw is valid]
 //.  2) Read from any memory
 //.  3) Write to memory which did not exist did not exist prior to the function
-//call. This means that one can write .     to memory whose lifetime is entirely
-//contained within F (including a local alloca, a malloc call locally freed, but
-//not .     a returned malloc call).
+// call. This means that one can write .     to memory whose lifetime is
+// entirely contained within F (including a local alloca, a malloc call locally
+// freed, but not .     a returned malloc call).
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
