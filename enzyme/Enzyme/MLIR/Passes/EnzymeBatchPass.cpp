@@ -17,6 +17,7 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "absl/status/statusor.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -219,7 +220,7 @@ FunctionOpInterface batchCloneFunction(
 }
 
 template <typename T>
-LogicalResult batchOperation(
+absl::StatusOr<func::CallOp> batchOperation(
     SymbolTableCollection &symbolTable, T CI,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
@@ -228,7 +229,7 @@ LogicalResult batchOperation(
 }
 
 template <typename T>
-LogicalResult batchOperation(
+absl::StatusOr<func::CallOp> batchOperation(
     T CI, FunctionOpInterface fn,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   enzyme::batchutils::BatchCacheKey key{
@@ -247,7 +248,7 @@ LogicalResult batchOperation(
     newFunc = batchCloneFunction(fn, newFnName, CI.getBatchShape(),
                                  batchedFunctionCache);
     if (!newFunc) {
-      return failure();
+      return absl::InternalError("Failed to batch function.");
     }
   }
 
@@ -256,7 +257,7 @@ LogicalResult batchOperation(
       CI.getLoc(), newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
   CI.replaceAllUsesWith(dCI);
   CI->erase();
-  return success();
+  return dCI;
 }
 
 } // namespace batchutils
@@ -289,7 +290,7 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
           auto res = enzyme::batchutils::batchOperation(symbolTable, F,
                                                         batchedFunctionCache);
-          if (!res.succeeded()) {
+          if (!res.ok()) {
             signalPassFailure();
             return;
           }

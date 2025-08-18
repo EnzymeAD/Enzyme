@@ -1,6 +1,7 @@
 #ifndef ENZYME_BATCH_PASS_H
 #define ENZYME_BATCH_PASS_H
 
+#include "absl/status/statusor.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -41,12 +42,12 @@ LogicalResult handleCallOp(
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 template <typename T>
-LogicalResult batchOperation(
+absl::StatusOr<func::CallOp> batchOperation(
     SymbolTableCollection &symbolTable, T CI,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 template <typename T>
-LogicalResult batchOperation(
+absl::StatusOr<func::CallOp> batchOperation(
     T CI, FunctionOpInterface fn,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
