@@ -192,7 +192,8 @@ void preprocessForPoseidon(Function *F) {
       Value *X, *Y, *Z;
 
       if (auto *FAdd = dyn_cast<BinaryOperator>(&I)) {
-        if (!FAdd->isFast())
+        if (!isa<FPMathOperator>(FAdd) || !FAdd->hasAllowReassoc() ||
+            !FAdd->hasAllowContract())
           continue;
 
         // fadd (fmul X, Y), Z
@@ -228,7 +229,8 @@ void preprocessForPoseidon(Function *F) {
       Value *X, *Y, *Z;
 
       if (auto *FSub = dyn_cast<BinaryOperator>(&I)) {
-        if (!FSub->isFast())
+        if (!isa<FPMathOperator>(FSub) || !FSub->hasAllowReassoc() ||
+            !FSub->hasAllowContract())
           continue;
 
         // Pattern: fsub (fmul X, Y), Z -> fmuladd(X, Y, -Z)
@@ -276,11 +278,6 @@ void preprocessForPoseidon(Function *F) {
 
         if (match(Cond, m_FCmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS)))) {
           IRBuilder<> B(Select);
-          FastMathFlags FMF;
-          FMF.setNoNaNs();
-          FMF.setNoSignedZeros();
-          B.setFastMathFlags(FMF);
-
           Value *Result = nullptr;
 
           // select (fcmp ogt X, 0.0), X, 0.0 -> maxnum(X, 0.0)
