@@ -2766,9 +2766,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           } else {
             DebugLoc loc;
             if (auto I = dyn_cast<Instruction>(malloc))
-                EmitFailure("LoopCache", I->getDebugLoc(), I, ss.str());
-            else    
-                EmitFailure("LoopCache", DebugLoc(), newFunc, ss.str());
+              EmitFailure("LoopCache", I->getDebugLoc(), I, ss.str());
+            else
+              EmitFailure("LoopCache", DebugLoc(), newFunc, ss.str());
           }
           return UndefValue::get(malloc->getType());
         }
