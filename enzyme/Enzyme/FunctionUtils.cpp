@@ -2172,12 +2172,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     UpgradeAllocasToMallocs(NewF, mode, unreachable);
   }
 
+#ifdef ENABLE_POSEIDON
   if (mode == DerivativeMode::ReverseModeProfiled) {
     preprocessForPoseidon(NewF);
 
     auto PA = InstCombinePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
   }
+#endif
 
   CanonicalizeLoops(NewF, FAM);
   RemoveRedundantPHI(NewF, FAM);
