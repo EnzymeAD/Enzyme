@@ -2750,14 +2750,22 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         assert(innerType == Type::getInt8Ty(malloc->getContext()));
       } else {
         if (innerType != malloc->getType()) {
-          llvm::errs() << *oldFunc << "\n";
-          llvm::errs() << *newFunc << "\n";
-          llvm::errs() << "innerType: " << *innerType << "\n";
-          llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
-          llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
-          llvm::errs() << "malloc: " << *malloc << "\n";
-          assert(0 && "illegal loop cache type");
-          llvm_unreachable("illegal loop cache type");
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Illegal loop cache type:\n";
+          ss << *oldFunc << "\n";
+          ss << *newFunc << "\n";
+          ss << "innerType: " << *innerType << "\n";
+          ss << "malloc->getType(): " << *malloc->getType() << "\n";
+          ss << "ret: " << *ret << " - " << *ret->getType() << "\n";
+          ss << "malloc: " << *malloc << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap(malloc), ErrorType::InternalError,
+                               nullptr, nullptr, nullptr);
+          } else {
+            EmitFailure("LoopCache", malloc->getDebugLoc(), malloc, ss.str());
+          }
+          return UndefValue::get(malloc->getType());
         }
       }
 
