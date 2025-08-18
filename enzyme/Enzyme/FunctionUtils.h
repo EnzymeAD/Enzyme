@@ -64,8 +64,13 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // Perform an analysis to detect functions which only write to visible memory
 // outside the function if an error is not throw. Such a function can touch
 // inaccessible memory [e.g. the insides of malloc/etc], and the only violation
-// is whether existing memory before the call is written to. In other words,
-// malloc, calloc, copy_array, and friends, are all considered
+// is whether existing memory before the call is written to.
+// If non-local, returning memory written to is a violation (since it writes to
+// externally visible memory).
+// If local, returning memory written to is fine (since existing memory before
+// the call remains unchanged).
+// In other words, malloc [local and non-local], calloc [local and non-local],
+// copy_array [local only], and friends, are all considered
 // readonly_or_throw, as they only either read externally visible state, throw
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
