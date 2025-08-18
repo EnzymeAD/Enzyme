@@ -8,11 +8,13 @@
 
 #include "llvm/Analysis/TargetTransformInfo.h"
 
+#include "llvm/IR/CmpPredicate.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Verifier.h"
 
 #include "llvm/Passes/PassBuilder.h"
@@ -177,6 +179,149 @@ void setPoseidonMetadata(Function &F) {
                     MDNode::get(I.getContext(),
                                 {ConstantAsMetadata::get(ConstantInt::get(
                                     Type::getInt64Ty(I.getContext()), idx))}));
+    }
+  }
+}
+
+void preprocessForPoseidon(Function *F) {
+  using namespace llvm::PatternMatch;
+
+  // fmul + fadd -> fmuladd
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      Value *X, *Y, *Z;
+
+      if (auto *FAdd = dyn_cast<BinaryOperator>(&I)) {
+        if (!FAdd->isFast())
+          continue;
+
+        // fadd (fmul X, Y), Z
+        if (match(FAdd, m_FAdd(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                               m_Value(Z)))) {
+          IRBuilder<> B(FAdd);
+          B.setFastMathFlags(FAdd->getFastMathFlags());
+
+          Value *FMulAdd =
+              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
+          FAdd->replaceAllUsesWith(FMulAdd);
+          FAdd->eraseFromParent();
+        }
+        // fadd Z, (fmul X, Y)
+        else if (match(FAdd,
+                       m_FAdd(m_Value(Z),
+                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
+          IRBuilder<> B(FAdd);
+          B.setFastMathFlags(FAdd->getFastMathFlags());
+
+          Value *FMulAdd =
+              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
+          FAdd->replaceAllUsesWith(FMulAdd);
+
+          FAdd->eraseFromParent();
+        }
+      }
+    }
+  }
+
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      Value *X, *Y, *Z;
+
+      if (auto *FSub = dyn_cast<BinaryOperator>(&I)) {
+        if (!FSub->isFast())
+          continue;
+
+        // Pattern: fsub (fmul X, Y), Z -> fmuladd(X, Y, -Z)
+        if (match(FSub, m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                               m_Value(Z)))) {
+          IRBuilder<> B(FSub);
+          B.setFastMathFlags(FSub->getFastMathFlags());
+
+          Value *NegZ = B.CreateFNeg(Z);
+          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
+                                             FSub->getType(), {X, Y, NegZ});
+          FSub->replaceAllUsesWith(FMulAdd);
+          FSub->eraseFromParent();
+        }
+        // Pattern: fsub Z, (fmul X, Y) -> fmuladd(-X, Y, Z)
+        else if (match(FSub,
+                       m_FSub(m_Value(Z),
+                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
+          IRBuilder<> B(FSub);
+          B.setFastMathFlags(FSub->getFastMathFlags());
+
+          Value *NegX = B.CreateFNeg(X);
+          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
+                                             FSub->getType(), {NegX, Y, Z});
+          FSub->replaceAllUsesWith(FMulAdd);
+          FSub->eraseFromParent();
+        }
+      }
+    }
+  }
+
+  // fcmp + select -> fmax/fmin
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      if (auto *Select = dyn_cast<SelectInst>(&I)) {
+        Value *Cond = Select->getCondition();
+        Value *TrueVal = Select->getTrueValue();
+        Value *FalseVal = Select->getFalseValue();
+
+        if (!Select->getType()->isFloatingPointTy())
+          continue;
+
+        CmpPredicate Pred;
+        Value *CmpLHS, *CmpRHS;
+
+        if (match(Cond, m_FCmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS)))) {
+          IRBuilder<> B(Select);
+          FastMathFlags FMF;
+          FMF.setNoNaNs();
+          FMF.setNoSignedZeros();
+          B.setFastMathFlags(FMF);
+
+          Value *Result = nullptr;
+
+          // select (fcmp ogt X, 0.0), X, 0.0 -> maxnum(X, 0.0)
+          if (Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
+              CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) {
+            Result = B.CreateIntrinsic(
+                Intrinsic::maxnum, CmpLHS->getType(),
+                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+          }
+          // select (fcmp olt X, 0.0), 0.0, X -> maxnum(X, 0.0)
+          else if (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
+                   CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP())) {
+            Result = B.CreateIntrinsic(
+                Intrinsic::maxnum, CmpLHS->getType(),
+                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+          }
+          // select (fcmp ogt X, Y), X, Y -> maxnum(X, Y)
+          else if (Pred == FCmpInst::FCMP_OGT && CmpLHS == TrueVal &&
+                   CmpRHS == FalseVal) {
+            Result = B.CreateIntrinsic(Intrinsic::maxnum, CmpLHS->getType(),
+                                       {CmpLHS, CmpRHS});
+          }
+          // select (fcmp olt X, Y), X, Y -> minnum(X, Y)
+          else if (Pred == FCmpInst::FCMP_OLT && CmpLHS == TrueVal &&
+                   CmpRHS == FalseVal) {
+            Result = B.CreateIntrinsic(Intrinsic::minnum, CmpLHS->getType(),
+                                       {CmpLHS, CmpRHS});
+          }
+
+          if (Result) {
+            Select->replaceAllUsesWith(Result);
+            Select->eraseFromParent();
+
+            if (auto *FCmp = dyn_cast<FCmpInst>(Cond)) {
+              if (FCmp->use_empty()) {
+                FCmp->eraseFromParent();
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
