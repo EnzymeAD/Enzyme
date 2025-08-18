@@ -1962,7 +1962,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = ModRefInfo::NoModRef;
 
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
-        if (CB->hasStructRetAttr() && CB->getArgOperand(0) == Val)
+        if (CB->hasStructRetAttr() &&
+            getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
           ReadOnly = false;
 
         bool WriteOnly = isWriteOnly(CB);
