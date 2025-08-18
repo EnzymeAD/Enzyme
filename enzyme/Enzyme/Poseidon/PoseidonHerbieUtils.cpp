@@ -308,7 +308,7 @@ bool improveViaHerbie(
       }
 
       StringRef ID = test.getString("name").value();
-      int index = std::stoi(ID.str());
+      size_t index = std::stoul(ID.str());
       if (index >= COs.size()) {
         llvm::errs() << "Invalid CO index: " << index << "\n";
         continue;

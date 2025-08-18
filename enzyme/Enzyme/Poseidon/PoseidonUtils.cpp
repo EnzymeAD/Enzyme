@@ -514,7 +514,7 @@ void getSampledPoints(
   // `sampledPoints`.
   sampledPoints.clear();
   sampledPoints.resize(FPOptNumSamples);
-  for (int i = 0; i < FPOptNumSamples; ++i) {
+  for (size_t i = 0; i < FPOptNumSamples; ++i) {
     MapVector<Value *, double> point;
     for (const auto &entry : hypercube) {
       Value *val = entry.first;
