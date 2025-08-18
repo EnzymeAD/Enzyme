@@ -3867,7 +3867,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   else
     VI = VI->getNextNode();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
-  {
+  if (inst) {
     SmallVector<BasicBlock *, 1> todo;
     todo.push_back(VI->getParent());
     while (todo.size()) {
@@ -3893,15 +3893,17 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     auto UI = std::get<0>(pair);
     auto level = std::get<1>(pair);
     auto prev = std::get<2>(pair);
-    if (!regionBetween.count(UI->getParent()))
-      continue;
-    if (UI->getParent() == VI->getParent()) {
-      if (UI->comesBefore(VI))
+    if (inst) {
+      if (!regionBetween.count(UI->getParent()))
         continue;
+      if (UI->getParent() == VI->getParent()) {
+        if (UI->comesBefore(VI))
+          continue;
+      }
+      if (UI->getParent() == inst->getParent())
+        if (inst->comesBefore(UI))
+          continue;
     }
-    if (UI->getParent() == inst->getParent())
-      if (inst->comesBefore(UI))
-        continue;
 
     if (isPointerArithmeticInst(UI, /*includephi*/ true,
                                 /*includebin*/ true)) {
@@ -3960,6 +3962,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   }
   return true;
 }
+
+bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].

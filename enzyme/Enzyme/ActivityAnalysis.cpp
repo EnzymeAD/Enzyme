@@ -1961,7 +1961,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (CB->onlyAccessesInaccessibleMemory())
           AARes = ModRefInfo::NoModRef;
 
-        bool ReadOnly = isReadOnlyOrThrow(CB);
+        bool ReadOnly = isLocalReadOnlyOrThrow(CB);
+        if (CB->hasStructRetAttr() &&
+            getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
+          ReadOnly = false;
 
         bool WriteOnly = isWriteOnly(CB);
 
@@ -3008,7 +3011,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         mayCapture |= !NoCapture;
 
-        bool ReadOnly = isReadOnlyOrThrow(call) || isReadOnly(call, idx);
+        bool ReadOnly = isReadOnly(call, idx);
+        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && idx != 0 &&
+            call->hasStructRetAttr())
+          ReadOnly = true;
 
         mayWrite |= !ReadOnly;
 
@@ -3392,8 +3398,9 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
 
     if (auto inst = dyn_cast<Instruction>(a)) {
       if (!inst->mayWriteToMemory() ||
-          (isa<CallInst>(inst) && (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
-                                   isReadOnlyOrThrow(cast<CallInst>(inst))))) {
+          (isa<CallInst>(inst) &&
+           (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
+            isLocalReadOnlyOrThrow(cast<CallInst>(inst))))) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
         if (inst->getParent()->getParent() == TR.getFunction() &&

@@ -1524,7 +1524,7 @@ void SplitPHIs(llvm::Function &F) {
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
-                             llvm::TargetLibraryInfo &TLI) {
+                             llvm::TargetLibraryInfo &TLI, bool &local) {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
@@ -1539,8 +1539,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         continue;
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
+      if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
+        continue;
       if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (isReadOnlyOrThrow(CI)) {
+        if (isLocalReadOnlyOrThrow(CI)) {
           continue;
         }
         if (isAllocationCall(CI, TLI)) {
@@ -1574,8 +1576,26 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
         // would trigger not readonly.
-        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+        if (isa<AllocaInst>(Obj))
           continue;
+        if (isAllocationCall(Obj, TLI)) {
+          if (local)
+            continue;
+          if (notCaptured(Obj))
+            continue;
+          local = true;
+          continue;
+        }
+        if (auto arg = dyn_cast<Argument>(Obj)) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
+            local = true;
+            continue;
+          }
+        }
       }
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
@@ -1583,8 +1603,26 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
         // would trigger not readonly.
-        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+        if (isa<AllocaInst>(Obj))
           continue;
+        if (isAllocationCall(Obj, TLI)) {
+          if (local)
+            continue;
+          if (notCaptured(Obj))
+            continue;
+          local = true;
+          continue;
+        }
+        if (auto arg = dyn_cast<Argument>(Obj)) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
+            local = true;
+            continue;
+          }
+        }
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
         auto Obj = getBaseObject(MSI->getOperand(0));
@@ -1592,8 +1630,26 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
         // would trigger not readonly.
-        if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI))
+        if (isa<AllocaInst>(Obj))
           continue;
+        if (isAllocationCall(Obj, TLI)) {
+          if (local)
+            continue;
+          if (notCaptured(Obj))
+            continue;
+          local = true;
+          continue;
+        }
+        if (auto arg = dyn_cast<Argument>(Obj)) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
+            local = true;
+            continue;
+          }
+        }
       }
       // ignore atomic load impacts
       if (isa<LoadInst>(&I))
@@ -1620,7 +1676,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
   }
 
   if (calls_todo.size() == 0) {
-    F.addFnAttr("enzyme_ReadOnlyOrThrow");
+    if (local)
+      F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
+    else
+      F.addFnAttr("enzyme_ReadOnlyOrThrow");
   }
   return true;
 }
@@ -1628,17 +1687,6 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 bool DetectReadonlyOrThrow(Module &M) {
 
   bool changed = false;
-
-  // Set of functions newly deduced readonlyorthrow by this pass
-  SmallVector<llvm::Function *> todo;
-
-  // Map of functions which could be readonly if all functions in the set are
-  // marked readonly
-  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
-
-  // Map from a function `f` to all the functions that have `f` as a
-  // prerequisite for being readonly. Inverse of `todo_map`
-  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
   PassBuilder PB;
   LoopAnalysisManager LAM;
@@ -1651,10 +1699,26 @@ bool DetectReadonlyOrThrow(Module &M) {
   PB.registerCGSCCAnalyses(CGAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
+  // Set of functions newly deduced readonlyorthrow by this pass
+  SmallVector<llvm::Function *> todo;
+
+  // Map of functions which could be readonly if all functions in the set are
+  // marked readonly
+  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
+
+  // Map from a function `f` to all the functions that have `f` as a
+  // prerequisite for being readonly. Inverse of `todo_map`
+  DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
+
+  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
+
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
     auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
-    if (DetectReadonlyOrThrowFn(F, calls_todo, TLI)) {
+    bool local = false;
+    if (DetectReadonlyOrThrowFn(F, calls_todo, TLI, local)) {
+      if (local)
+        LocalReadOnlyFunctions.insert(&F);
       if (calls_todo.size() == 0) {
         changed = true;
         todo.push_back(&F);
@@ -1681,7 +1745,10 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        if (LocalReadOnlyFunctions.contains(F2))
+          F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
+        else
+          F2->addFnAttr("enzyme_ReadOnlyOrThrow");
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -2340,8 +2407,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   {
     SmallPtrSet<Function *, 1> calls_todo;
+    bool local = false;
     DetectReadonlyOrThrowFn(*NewF, calls_todo,
-                            FAM.getResult<TargetLibraryAnalysis>(*NewF));
+                            FAM.getResult<TargetLibraryAnalysis>(*NewF), local);
   }
 
   if (EnzymePrint)
