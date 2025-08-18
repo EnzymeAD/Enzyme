@@ -178,16 +178,10 @@ void changePrecision(Instruction *I, PrecisionChange &change,
           ArgBuilder.setFastMathFlags(I->getFastMathFlags());
           newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
         } else if (Constant *constArg = dyn_cast<Constant>(arg)) {
-          auto srcBits =
-              constArg->getType()->getPrimitiveSizeInBits().getFixedValue();
-          auto dstBits = newType->getPrimitiveSizeInBits().getFixedValue();
-
-          Instruction::CastOps opcode = (srcBits < dstBits) ? Instruction::FPExt
-                                        : (srcBits > dstBits)
-                                            ? Instruction::FPTrunc
-                                            : Instruction::BitCast;
-
-          newArg = ConstantExpr::getCast(opcode, constArg, newType);
+          IRBuilder<> ConstBuilder(I);
+          ConstBuilder.setFastMathFlags(I->getFastMathFlags());
+          newArg =
+              ConstBuilder.CreateFPCast(constArg, newType, "fpopt.const.fpcast");
         } else {
           llvm_unreachable("Unsupported argument type");
         }
