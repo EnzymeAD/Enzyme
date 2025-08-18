@@ -14,7 +14,7 @@ entry:
 
 define dso_local %struct.Gradients @test_profile(double %x, double %y) {
 entry:
-  %call = call %struct.Gradients (i8*, ...) @__enzyme_fp_optimize(i8* bitcast (double (double, double)* @muldd to i8*), double %x, double %y, double 1.0e-6)
+  %call = call %struct.Gradients (i8*, ...) @__enzyme_fp_optimize(i8* bitcast (double (double, double)* @muldd to i8*), double %x, double %y)
   ret %struct.Gradients %call
 }
 

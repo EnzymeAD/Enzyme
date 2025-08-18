@@ -754,6 +754,7 @@ public:
     bool runtimeActivity;
     bool strongZero;
     bool subsequent_calls_may_write;
+    double errTol;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -795,6 +796,7 @@ public:
         mode != DerivativeMode::ReverseModeCombined &&
         mode != DerivativeMode::ReverseModeProfiled;
     StringSet<> ActiveRandomVariables;
+    double errTol = 0.0;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
@@ -941,9 +943,7 @@ public:
 
     ssize_t interleaved = -1;
 
-    size_t maxsize;
-    maxsize = mode == DerivativeMode::ReverseModeProfiled ? CI->arg_size() - 1
-                                                          : CI->arg_size();
+    size_t maxsize = CI->arg_size();
     size_t num_args = maxsize;
     for (unsigned i = 1 + sret; i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
@@ -1119,6 +1119,20 @@ public:
                 "IllegalStringType", CI->getDebugLoc(), CI,
                 "active variable address must be a compile-time constant", *CI,
                 *metaString);
+          }
+          skipArg = true;
+          break;
+        } else if (*metaString == "enzyme_err_tol") {
+          ++i;
+          Value *relErrorArg = CI->getArgOperand(i);
+          if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
+            errTol = CFP->getValueAPF().convertToDouble();
+          } else {
+            EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
+                        "Relative error tolerance must be a constant floating-point "
+                        "value, got ",
+                        *relErrorArg);
+            return {};
           }
           skipArg = true;
           break;
@@ -1403,7 +1417,8 @@ public:
                     overwritten_args,
                     runtimeActivity,
                     strongZero,
-                    subsequent_calls_may_write});
+                    subsequent_calls_may_write,
+                    errTol});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -2240,8 +2255,6 @@ public:
 
     auto mode = DerivativeMode::ReverseModeProfiled;
 
-    // `handleArguments` automatically skips the last arg for
-    // __enzyme_fp_optimize
     auto options =
         handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
     if (!options) {
@@ -2268,19 +2281,6 @@ public:
       return false;
 
     assert(F);
-
-    // Extract relative error tolerance (last argument)
-    Value *relErrorArg = CI->getArgOperand(CI->arg_size() - 1);
-    double relativeErrorTol = 0.0;
-    if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
-      relativeErrorTol = CFP->getValueAPF().convertToDouble();
-    } else {
-      EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
-                  "Relative error tolerance must be a constant floating-point "
-                  "value, got ",
-                  relErrorArg);
-      return false;
-    }
 
     auto mode = DerivativeMode::ReverseModeProfiled;
 
@@ -2341,11 +2341,11 @@ public:
 
       if (FPOptPrint) {
         llvm::errs() << "FPOpt: Optimizing " << F->getName()
-                     << " with relative error tolerance: " << relativeErrorTol
+                     << " with relative error tolerance: " << options->errTol
                      << "\n";
       }
 
-      bool optimized = fpOptimize(*F, TTI, relativeErrorTol);
+      bool optimized = fpOptimize(*F, TTI, options->errTol);
 
       if (!optimized) {
         EmitWarning("NoChange", *CI, "Poseidon returned false (no change) for ",

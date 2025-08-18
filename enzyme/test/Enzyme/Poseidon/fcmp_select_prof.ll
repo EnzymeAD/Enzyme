@@ -149,32 +149,32 @@ entry:
 
 define double @test_profile_maxnum_zero(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fp_optimize(double (double)* nonnull @test_maxnum_zero, double %x, double 1.0e-6)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fp_optimize(double (double)* nonnull @test_maxnum_zero, double %x)
   ret double %0
 }
 
 define double @test_profile_maxnum_zero_reversed(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fp_optimize(double (double)* nonnull @test_maxnum_zero_reversed, double %x, double 1.0e-6)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fp_optimize(double (double)* nonnull @test_maxnum_zero_reversed, double %x)
   ret double %0
 }
 
 define double @test_profile_maxnum(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__enzyme_fp_optimize(double (double, double)* nonnull @test_maxnum_general, double %x, double %y, double 1.0e-6)
+  %0 = tail call double (double (double, double)*, ...) @__enzyme_fp_optimize(double (double, double)* nonnull @test_maxnum_general, double %x, double %y)
   ret double %0
 }
 
 
 define double @test_profile_minnum(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__enzyme_fp_optimize(double (double, double)* nonnull @test_minnum_general, double %x, double %y, double 1.0e-6)
+  %0 = tail call double (double (double, double)*, ...) @__enzyme_fp_optimize(double (double, double)* nonnull @test_minnum_general, double %x, double %y)
   ret double %0
 }
 
 define double @test_profile_combined(double %x, double %y, double %z) {
 entry:
-  %0 = tail call double (double (double, double, double)*, ...) @__enzyme_fp_optimize(double (double, double, double)* nonnull @test_combined, double %x, double %y, double %z, double 1.0e-6)
+  %0 = tail call double (double (double, double, double)*, ...) @__enzyme_fp_optimize(double (double, double, double)* nonnull @test_combined, double %x, double %y, double %z)
   ret double %0
 }
 

@@ -11,7 +11,7 @@ entry:
 
 define double @test_profile(double %x, double %y, double %z) {
 entry:
-  %0 = tail call double (double (double, double, double)*, ...) @__enzyme_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z, double 1.0e-6)
+  %0 = tail call double (double (double, double, double)*, ...) @__enzyme_fp_optimize(double (double, double, double)* nonnull @tester, double %x, double %y, double %z)
   ret double %0
 }
 
