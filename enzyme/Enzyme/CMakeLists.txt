@@ -60,6 +60,7 @@ if(ENABLE_POSEIDON)
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make clean 
+            COMMAND raco pkg install --auto --update-deps fpbench || true 
             COMMAND raco pkg install --auto --update-deps rival || true 
             COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml 
             COMMAND raco pkg install ./egg-herbie 
