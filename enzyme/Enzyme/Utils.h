@@ -1646,18 +1646,22 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   return false;
 }
 
-// Whether the function does not write to memory visible before the function in all cases that it doesn't error.
-// In other words, the legal operations here are:
+// Whether the function does not write to memory visible before the function in
+// all cases that it doesn't error. In other words, the legal operations here
+// are:
 //.  1) Throw [in which case any operation guaranteed to throw is valid]
 //.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function call. This means that one can write
-//.     to memory whose allocation happened within the call to F (including a local alloca, a malloc call, even if
-//.     returned). This is also legal to write to an sret and/or returnroots parameter (which must be an alloca).
+//.  3) Write to memory which did not exist did not exist prior to the function
+//call. This means that one can write .     to memory whose allocation happened
+//within the call to F (including a local alloca, a malloc call, even if .
+//returned). This is also legal to write to an sret and/or returnroots parameter
+//(which must be an alloca).
 static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
 
-  if (F->hasFnAttribute("enzyme_LocalReadOnlyOrThrow") || F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
+  if (F->hasFnAttribute("enzyme_LocalReadOnlyOrThrow") ||
+      F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
     return true;
 
   return false;
@@ -1667,7 +1671,8 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
   if (isReadOnly(call))
     return true;
 
-  if (call->hasFnAttr("enzyme_LocalReadOnlyOrThrow") || call->hasFnAttr("enzyme_ReadOnlyOrThrow"))
+  if (call->hasFnAttr("enzyme_LocalReadOnlyOrThrow") ||
+      call->hasFnAttr("enzyme_ReadOnlyOrThrow"))
     return true;
 
   if (auto F = getFunctionFromCall(call)) {
@@ -1682,13 +1687,15 @@ static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
   return false;
 }
 
-// Whether the function does not write to memory visible outside the function in all cases that it doesn't error.
-// In other words, the legal operations here are:
+// Whether the function does not write to memory visible outside the function in
+// all cases that it doesn't error. In other words, the legal operations here
+// are:
 //.  1) Throw [in which case any operation guaranteed to throw is valid]
 //.  2) Read from any memory
-//.  3) Write to memory which did not exist did not exist prior to the function call. This means that one can write
-//.     to memory whose lifetime is entirely contained within F (including a local alloca, a malloc call locally freed, but not
-//.     a returned malloc call).
+//.  3) Write to memory which did not exist did not exist prior to the function
+//call. This means that one can write .     to memory whose lifetime is entirely
+//contained within F (including a local alloca, a malloc call locally freed, but
+//not .     a returned malloc call).
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;

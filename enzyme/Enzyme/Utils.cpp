@@ -3963,10 +3963,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
-
-bool notCaptured(llvm::Value *V) {
-  return notCapturedBefore(V, nullptr, 0);
-}
+bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
 
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].

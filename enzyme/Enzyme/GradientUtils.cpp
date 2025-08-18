@@ -2760,8 +2760,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           ss << "ret: " << *ret << " - " << *ret->getType() << "\n";
           ss << "malloc: " << *malloc << "\n";
           if (CustomErrorHandler) {
-            CustomErrorHandler(str.c_str(), wrap(malloc), ErrorType::InternalError,
-                               nullptr, nullptr, nullptr);
+            CustomErrorHandler(str.c_str(), wrap(malloc),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
           } else {
             EmitFailure("LoopCache", malloc->getDebugLoc(), malloc, ss.str());
           }

@@ -1524,8 +1524,7 @@ void SplitPHIs(llvm::Function &F) {
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
-                             llvm::TargetLibraryInfo &TLI,
-                             bool &local) {
+                             llvm::TargetLibraryInfo &TLI, bool &local) {
   if (isReadOnlyOrThrow(&F))
     return false;
   if (F.empty())
@@ -1588,7 +1587,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() || arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid()) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
             local = true;
             continue;
           }
@@ -1611,7 +1614,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() || arg->getParent()->getAttribute(arg->getArgNo()+ AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid()) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
             local = true;
             continue;
           }
@@ -1634,7 +1641,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() || arg->getParent()->getAttribute(arg->getArgNo()+ AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid()) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
             local = true;
             continue;
           }
@@ -1677,7 +1688,6 @@ bool DetectReadonlyOrThrow(Module &M) {
 
   bool changed = false;
 
-
   PassBuilder PB;
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
@@ -1688,7 +1698,6 @@ bool DetectReadonlyOrThrow(Module &M) {
   PB.registerLoopAnalyses(LAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-
 
   // Set of functions newly deduced readonlyorthrow by this pass
   SmallVector<llvm::Function *> todo;
@@ -1701,7 +1710,7 @@ bool DetectReadonlyOrThrow(Module &M) {
   // prerequisite for being readonly. Inverse of `todo_map`
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
-  SmallPtrSet<Function*, 1> LocalReadOnlyFunctions;
+  SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
 
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;
