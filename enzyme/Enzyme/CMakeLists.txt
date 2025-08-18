@@ -60,12 +60,12 @@ if(ENABLE_POSEIDON)
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make clean 
-            && (raco pkg install --auto --update-deps rival || true) 
-            && cargo build --release --manifest-path=egg-herbie/Cargo.toml 
-            && raco pkg install ./egg-herbie 
-            && mkdir -p herbie-compiled/ 
-            && raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt 
-            && raco distribute herbie-compiled herbie
+            COMMAND raco pkg install --auto --update-deps rival || true 
+            COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml 
+            COMMAND raco pkg install ./egg-herbie 
+            COMMAND mkdir -p herbie-compiled/ 
+            COMMAND raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt 
+            COMMAND raco distribute herbie-compiled herbie
         BUILD_IN_SOURCE true
         INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
             COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
