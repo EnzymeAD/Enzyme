@@ -24,8 +24,12 @@
 #include "llvm/Support/InstructionCost.h"
 
 #include <map>
+#include <memory>
+#include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 using namespace llvm;
 
@@ -33,9 +37,12 @@ extern "C" {
 extern llvm::cl::opt<std::string> FPOptCostModelPath;
 extern llvm::cl::opt<unsigned> FPOptNumSamples;
 extern llvm::cl::opt<unsigned> FPOptRandomSeed;
+extern llvm::cl::opt<unsigned> FPOptMinOpsForSplit;
+extern llvm::cl::opt<unsigned> FPOptMinUsesForSplit;
 }
 
 struct Subgraph;
+class FPNode;
 
 // Utility function declarations
 double getOneULP(double value);

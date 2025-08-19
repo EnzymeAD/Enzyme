@@ -23,6 +23,7 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Verifier.h"
 
 #include "llvm/Passes/PassBuilder.h"
@@ -39,6 +40,7 @@
 
 #include <mpfr.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -52,13 +54,13 @@
 #include <unordered_set>
 #include <utility>
 
-#include "Poseidon.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
 
 using namespace llvm;
 
 extern "C" {
+extern cl::opt<bool> FPOptPrint;
 cl::opt<std::string>
     FPOptCostModelPath("fpopt-cost-model-path", cl::init(""), cl::Hidden,
                        cl::desc("Use a custom cost model in the FPOpt pass"));

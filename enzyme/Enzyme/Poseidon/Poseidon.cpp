@@ -88,6 +88,13 @@ cl::opt<std::string> FPOptReductionEval(
     "fpopt-reduction-eval", cl::init("arithmean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
+cl::opt<unsigned> FPOptMinOpsForSplit(
+    "fpopt-min-ops-split", cl::init(5), cl::Hidden,
+    cl::desc(
+        "Minimum number of operations before articulation point to split"));
+cl::opt<unsigned> FPOptMinUsesForSplit(
+    "fpopt-min-uses-split", cl::init(3), cl::Hidden,
+    cl::desc("Minimum number of uses of articulation point to trigger split"));
 }
 
 bool Poseidonable(const llvm::Value &V) {
@@ -632,15 +639,10 @@ B2:
           continue;
         }
 
-        Subgraph sungraph{input_seen, output_seen, operation_seen};
-
-        // Mark leaf nodes as input values
-        for (auto *input : sungraph.inputs) {
-          valueToNodeMap[input]->markAsInput();
-        }
+        Subgraph subgraph{input_seen, output_seen, operation_seen};
 
         // Extract profile info for all instructions.
-        for (auto &op : sungraph.operations) {
+        for (auto &op : subgraph.operations) {
           if (auto MD = op->getMetadata("enzyme_fpprofile_idx")) {
             if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
               size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
@@ -674,7 +676,7 @@ B2:
           }
         }
 
-        subgraphs.push_back(sungraph);
+        subgraphs.push_back(subgraph);
       }
     }
   }
@@ -706,6 +708,8 @@ B2:
           // Constants don't need a symbol
           continue;
         }
+
+        node->markAsInput();
         if (!node->hasSymbol()) {
           node->symbol = getNextSymbol();
         }
