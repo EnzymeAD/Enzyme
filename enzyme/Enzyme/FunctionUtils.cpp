@@ -2178,6 +2178,10 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
     auto PA = InstCombinePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
+    PA = EarlyCSEPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+    PA = GVNPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
   }
 #endif
 
