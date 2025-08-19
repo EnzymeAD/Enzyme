@@ -252,11 +252,15 @@ LogicalResult batchOperation(
     }
   }
 
-  builder.setInsertionPoint(CI);
-  auto dCI = builder.create<func::CallOp>(
-      CI.getLoc(), newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
-  CI.replaceAllUsesWith(dCI);
-  CI->erase();
+  {
+    IRRewriter::InsertionGuard insertGuard(builder);
+    builder.setInsertionPoint(CI);
+    auto dCI =
+        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
+                                     newFunc.getResultTypes(), CI.getInputs());
+    CI.replaceAllUsesWith(dCI);
+    CI->erase();
+  }
   return success();
 }
 
