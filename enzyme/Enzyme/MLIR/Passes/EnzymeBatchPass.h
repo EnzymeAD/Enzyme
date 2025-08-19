@@ -27,11 +27,12 @@ mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                  llvm::ArrayRef<int64_t> batchSizes);
 
 FunctionOpInterface batchCloneFunction(
-    FunctionOpInterface F, Twine name, llvm::ArrayRef<int64_t> batchSizes,
+    OpBuilder &builder, FunctionOpInterface F, Twine name,
+    llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 void batchCloneRegion(
-    Region *src, Region *dest, IRMapping &mapper,
+    OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
@@ -42,12 +43,12 @@ LogicalResult handleCallOp(
 
 template <typename T>
 LogicalResult batchOperation(
-    SymbolTableCollection &symbolTable, T CI,
+    SymbolTableCollection &symbolTable, OpBuilder &builder, T CI,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 template <typename T>
 LogicalResult batchOperation(
-    T CI, FunctionOpInterface fn,
+    OpBuilder &builder, T CI, FunctionOpInterface fn,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 } // namespace batchutils
