@@ -200,18 +200,10 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     llvm::errs() << val << "\n";
   }
   assert(!isConstantValue(val));
+
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
-    assert(getShadowType(val.getType()) == toset.getType());
-    auto found = invertedPointers.lookupOrNull(val);
-    assert(found != nullptr);
-    auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
-    invertedPointers.erase(val);
-    // replaceAWithB(placeholder, toset);
-    placeholder.replaceAllUsesWith(toset);
-    erase(placeholder);
-    invertedPointers.map(val, toset);
-    return;
+    setInvertedPointer(val, toset);
   }
   /*
   Value *tostore = getDifferential(val);
@@ -222,6 +214,16 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   assert(toset->getType() == tostore->getType()->getPointerElementType());
   BuilderM.CreateStore(toset, tostore);
   */
+}
+
+void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
+  assert(getShadowType(val.getType()) == toset.getType());
+  auto found = invertedPointers.lookupOrNull(val);
+  assert(found != nullptr);
+  auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
+  placeholder.replaceAllUsesWith(toset);
+  erase(placeholder);
+  invertedPointers.map(val, toset);
 }
 
 void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {

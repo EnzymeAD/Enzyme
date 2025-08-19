@@ -14,18 +14,28 @@ Type getShadowType(Type type, unsigned width) {
   exit(1);
 }
 
+template <typename T>
 mlir::FunctionType
-getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
-                        unsigned width, mlir::Type additionalArg,
+getFunctionTypeForClone(T FTy, DerivativeMode mode, unsigned width,
+                        mlir::Type additionalArg,
                         const std::vector<bool> &returnPrimals,
                         const std::vector<bool> &returnShadows,
                         llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
                         llvm::ArrayRef<DIFFE_TYPE> ArgActivity) {
-
+  static_assert(llvm::is_one_of<T, FunctionType, LLVM::LLVMFunctionType>::value,
+                "Expected FunctionType or LLVMFunctionType");
   SmallVector<mlir::Type, 4> RetTypes;
+  ArrayRef<Type> origInputTypes, origResultTypes;
+  if constexpr (std::is_same<T, LLVM::LLVMFunctionType>::value) {
+    origInputTypes = FTy.getParams();
+    origResultTypes = FTy.getReturnTypes();
+  } else {
+    origInputTypes = FTy.getInputs();
+    origResultTypes = FTy.getResults();
+  }
 
   for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
-           FTy.getResults(), returnPrimals, returnShadows, ReturnActivity)) {
+           origResultTypes, returnPrimals, returnShadows, ReturnActivity)) {
     if (returnPrimal) {
       RetTypes.push_back(Ty);
     }
@@ -38,7 +48,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
 
   SmallVector<mlir::Type, 4> ArgTypes;
 
-  for (auto &&[ITy, act] : llvm::zip(FTy.getInputs(), ArgActivity)) {
+  for (auto &&[ITy, act] : llvm::zip(origInputTypes, ArgActivity)) {
     ArgTypes.push_back(ITy);
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(getShadowType(ITy, width));
@@ -47,7 +57,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
     }
   }
 
-  for (auto &&[Ty, activity] : llvm::zip(FTy.getResults(), ReturnActivity)) {
+  for (auto &&[Ty, activity] : llvm::zip(origResultTypes, ReturnActivity)) {
     if (activity == DIFFE_TYPE::OUT_DIFF) {
       ArgTypes.push_back(getShadowType(Ty, width));
     }
@@ -203,9 +213,16 @@ FunctionOpInterface CloneFunctionWithReturns(
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
-  auto FTy = getFunctionTypeForClone(
-      cast<mlir::FunctionType>(F.getFunctionType()), mode, width, additionalArg,
-      returnPrimals, returnShadows, RetActivity, ArgActivity);
+  FunctionType FTy;
+  if (auto llFTy = dyn_cast<LLVM::LLVMFunctionType>(F.getFunctionType())) {
+    FTy = getFunctionTypeForClone(llFTy, mode, width, additionalArg,
+                                  returnPrimals, returnShadows, RetActivity,
+                                  ArgActivity);
+  } else {
+    FTy = getFunctionTypeForClone(cast<mlir::FunctionType>(F.getFunctionType()),
+                                  mode, width, additionalArg, returnPrimals,
+                                  returnShadows, RetActivity, ArgActivity);
+  }
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -221,7 +238,20 @@ FunctionOpInterface CloneFunctionWithReturns(
   // instead of a concrete builder for genericity.
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, name.str());
-  NewF.setType(FTy);
+  SmallVector<Type> resultTypes(FTy.getResults());
+  if (isa<LLVM::LLVMFuncOp>(F)) {
+    if (resultTypes.empty()) {
+      // llvm.func ops that return no results need to explicitly return
+      // LLVMVoidType
+      resultTypes.push_back(LLVM::LLVMVoidType::get(FTy.getContext()));
+    } else if (resultTypes.size() > 1) {
+      auto structType =
+          LLVM::LLVMStructType::getLiteral(FTy.getContext(), resultTypes);
+      resultTypes.clear();
+      resultTypes.push_back(structType);
+    }
+  }
+  NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
 
   Operation *parent = F->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);
@@ -255,9 +285,13 @@ FunctionOpInterface CloneFunctionWithReturns(
       }
     }
     auto retloc = blk.getTerminator()->getLoc();
-    for (auto &&[Ty, activity] :
-         llvm::zip(cast<mlir::FunctionType>(F.getFunctionType()).getResults(),
-                   RetActivity)) {
+    ArrayRef<Type> resultTypes;
+    if (auto llFTy = dyn_cast<LLVM::LLVMFunctionType>(F.getFunctionType()))
+      resultTypes = llFTy.getReturnTypes();
+    else
+      resultTypes = cast<mlir::FunctionType>(F.getFunctionType()).getResults();
+
+    for (auto &&[Ty, activity] : llvm::zip(resultTypes, RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
         blk.addArgument(getShadowType(Ty, width), retloc);
       }

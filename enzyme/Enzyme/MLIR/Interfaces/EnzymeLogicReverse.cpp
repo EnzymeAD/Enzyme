@@ -37,19 +37,41 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
   }
 }
 
+// Returns true iff the operation:
+//    1. Produces no active data nor active pointers
+//    2. Does not propagate active data nor pointers (via side effects)
+static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
+  return llvm::all_of(
+             op->getResults(),
+             [gutils](Value v) { return gutils->isConstantValue(v); }) &&
+         gutils->isConstantInstruction(op);
+}
+
+static Value packIntoStruct(ValueRange values, OpBuilder &builder,
+                            Location loc) {
+  SmallVector<Type> resultTypes =
+      llvm::map_to_vector(values, [](Value v) { return v.getType(); });
+  auto structType =
+      LLVM::LLVMStructType::getLiteral(builder.getContext(), resultTypes);
+  Value result = LLVM::PoisonOp::create(builder, loc, structType);
+  for (auto &&[i, v] : llvm::enumerate(values))
+    result = LLVM::InsertValueOp::create(builder, loc, result, v, i);
+
+  return result;
+}
+
 /*
 Create reverse mode adjoint for an operation.
 */
 LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
                                        MGradientUtilsReverse *gutils) {
-  if ((op->getBlock()->getTerminator() != op) &&
-      llvm::all_of(op->getResults(),
-                   [gutils](Value v) { return gutils->isConstantValue(v); }) &&
-      gutils->isConstantInstruction(op)) {
+  if ((op->getBlock()->getTerminator() != op) && isFullyInactive(op, gutils)) {
     return success();
   }
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
     SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
+    OpBuilder augmentBuilder(gutils->getNewFromOriginal(op));
+    ifaceOp.createShadowValues(augmentBuilder, gutils);
     return ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
   }
   op->emitError() << "could not compute the adjoint for this operation " << *op;
@@ -239,7 +261,18 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
         retargs.push_back(gutils->diffe(arg, builder));
       }
     }
-    builder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
+
+    Location loc = oBB->rbegin()->getLoc();
+    if (isa<LLVM::LLVMFuncOp>(fn)) {
+      if (retargs.size() > 1) {
+        Value packedReturns = packIntoStruct(retargs, builder, loc);
+        builder.create<LLVM::ReturnOp>(loc, packedReturns);
+      } else {
+        builder.create<LLVM::ReturnOp>(loc, retargs);
+      }
+    } else {
+      builder.create<func::ReturnOp>(loc, retargs);
+    }
     return;
   };
 
@@ -249,10 +282,6 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
       differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
 
   auto nf = gutils->newFunc;
-
-  // llvm::errs() << "nf\n";
-  // nf.dump();
-  // llvm::errs() << "nf end\n";
 
   delete gutils;
 
