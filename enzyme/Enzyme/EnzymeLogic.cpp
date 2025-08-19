@@ -174,6 +174,8 @@ struct CacheAnalysis {
       return false;
     } else if (isa<UndefValue>(obj) || isa<ConstantPointerNull>(obj)) {
       return false;
+    } else if (AA.pointsToConstantMemory(obj)) {
+      return seen[obj] = false;
     } else if (auto arg = dyn_cast<Argument>(obj)) {
       if (arg->getArgNo() >= overwritten_args.size()) {
         llvm::errs() << "overwritten_args:\n";
