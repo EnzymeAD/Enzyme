@@ -327,6 +327,8 @@ void preprocessForPoseidon(Function *F) {
 // Return whether or not we change the function.
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                 double relErrorTol) {
+  bool changed = false;
+
   const std::string functionName = F.getName().str();
   assert(!FPProfileUse.empty());
   SmallString<128> profilePathBuf(FPProfileUse);
@@ -347,8 +349,6 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                    << "\n";
     }
   }
-
-  bool changed = false;
 
   int symbolCounter = 0;
   auto getNextSymbol = [&symbolCounter]() -> std::string {
