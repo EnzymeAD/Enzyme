@@ -48,7 +48,17 @@ LogicalResult batchOperation(
 
 template <typename T>
 LogicalResult batchOperation(
+    SymbolTableCollection &symbolTable, PatternRewriter &rewriter, T CI,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
+template <typename T>
+LogicalResult batchOperation(
     OpBuilder &builder, T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
+template <typename T>
+LogicalResult batchOperation(
+    PatternRewriter &rewriter, T CI, FunctionOpInterface fn,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 } // namespace batchutils

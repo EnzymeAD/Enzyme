@@ -230,6 +230,15 @@ LogicalResult batchOperation(
 
 template <typename T>
 LogicalResult batchOperation(
+    SymbolTableCollection &symbolTable, PatternRewriter &rewriter, T CI,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+  return batchOperation(rewriter, CI, cast<FunctionOpInterface>(symbolOp),
+                        batchedFunctionCache);
+}
+
+template <typename T>
+FunctionOpInterface batchOperationWithoutInsertingCallOp(
     OpBuilder &builder, T CI, FunctionOpInterface fn,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
   enzyme::batchutils::BatchCacheKey key{
@@ -241,16 +250,25 @@ LogicalResult batchOperation(
   FunctionOpInterface newFunc;
 
   if (it != batchedFunctionCache.end()) {
-    newFunc = it->second;
+    return it->second;
   } else {
     // Create new batched function and store in cache
     std::string newFnName = "batched_" + fn.getName().str();
     newFunc = batchCloneFunction(builder, fn, newFnName, CI.getBatchShape(),
                                  batchedFunctionCache);
-    if (!newFunc) {
-      return failure();
-    }
+    return newFunc;
   }
+}
+
+template <typename T>
+LogicalResult batchOperation(
+    OpBuilder &builder, T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  auto newFunc = batchOperationWithoutInsertingCallOp(builder, CI, fn,
+                                                      batchedFunctionCache);
+
+  if (!newFunc)
+    return failure();
 
   {
     IRRewriter::InsertionGuard insertGuard(builder);
@@ -260,6 +278,25 @@ LogicalResult batchOperation(
                                      newFunc.getResultTypes(), CI.getInputs());
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+  }
+  return success();
+}
+
+template <typename T>
+LogicalResult batchOperation(
+    PatternRewriter &rewriter, T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  auto newFunc = batchOperationWithoutInsertingCallOp(rewriter, CI, fn,
+                                                      batchedFunctionCache);
+
+  if (!newFunc)
+    return failure();
+
+  {
+    IRRewriter::InsertionGuard insertGuard(rewriter);
+    rewriter.setInsertionPoint(CI);
+    rewriter.replaceOpWithNewOp<func::CallOp>(
+        CI, newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
   }
   return success();
 }
