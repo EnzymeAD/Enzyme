@@ -38,7 +38,7 @@ using namespace llvm;
 extern "C" {
 cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1), cl::Hidden,
                               cl::desc("Number of threads Herbie uses"));
-cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(120), cl::Hidden,
+cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(9999), cl::Hidden,
                            cl::desc("Herbie's timeout to use for each "
                                     "candidate expressions."));
 cl::opt<int>
@@ -270,19 +270,13 @@ bool improveViaHerbie(
     BaseArgs.push_back("reduce:avg-error");
   }
 
-  SmallVector<SmallVector<std::string>> BaseArgsList;
-
   if (!HerbieDisableTaylor) {
-    SmallVector<std::string> Args1 = BaseArgs;
-    BaseArgsList.push_back(Args1);
-
-    SmallVector<std::string> Args2 = BaseArgs;
-    Args2.push_back("--disable");
-    Args2.push_back("generate:taylor");
-    BaseArgsList.push_back(Args2);
-  } else {
-    BaseArgsList.push_back(BaseArgs);
+    BaseArgs.push_back("--disable");
+    BaseArgs.push_back("generate:taylor");
   }
+
+  SmallVector<SmallVector<std::string>> BaseArgsList;
+  BaseArgsList.push_back(BaseArgs);
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
