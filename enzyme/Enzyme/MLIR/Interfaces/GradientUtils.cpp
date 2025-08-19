@@ -200,19 +200,16 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     llvm::errs() << val << "\n";
   }
   assert(!isConstantValue(val));
-  if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
-    assert(getShadowType(val.getType()) == toset.getType());
-    auto found = invertedPointers.lookupOrNull(val);
-    assert(found != nullptr);
-    auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
-    invertedPointers.erase(val);
-    // replaceAWithB(placeholder, toset);
-    placeholder.replaceAllUsesWith(toset);
-    erase(placeholder);
-    invertedPointers.map(val, toset);
-    return;
-  }
+
+  assert(getShadowType(val.getType()) == toset.getType());
+  auto found = invertedPointers.lookupOrNull(val);
+  assert(found != nullptr);
+  auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
+  invertedPointers.erase(val);
+  // replaceAWithB(placeholder, toset);
+  placeholder.replaceAllUsesWith(toset);
+  erase(placeholder);
+  invertedPointers.map(val, toset);
   /*
   Value *tostore = getDifferential(val);
   if (toset->getType() != tostore->getType()->getPointerElementType()) {
