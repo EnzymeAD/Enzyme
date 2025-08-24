@@ -132,7 +132,11 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
       }
       toReplace.push_back(name.str());
     }
-    BC->setTargetTriple(llvm::Triple(""));
+#if LLVM_VERSION_MAJOR >= 21
+  BC->setTargetTriple(llvm::Triple(""));
+#else
+  BC->setTargetTriple("");
+#endif
     Linker L(M);
     L.linkInModule(std::move(BC));
     for (auto name : toReplace) {
