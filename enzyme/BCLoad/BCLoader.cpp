@@ -132,7 +132,7 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions,
       }
       toReplace.push_back(name.str());
     }
-    BC->setTargetTriple("");
+    BC->setTargetTriple(llvm::Triple(""));
     Linker L(M);
     L.linkInModule(std::move(BC));
     for (auto name : toReplace) {
