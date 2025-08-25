@@ -24,12 +24,9 @@
 #include "llvm/Support/InstructionCost.h"
 
 #include <map>
-#include <memory>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 using namespace llvm;
 
@@ -50,6 +47,8 @@ std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType);
 double stringToDouble(const std::string &str);
 void topoSort(const SetVector<Instruction *> &insts,
               SmallVectorImpl<Instruction *> &instsSorted);
+void reverseTopoSort(const SetVector<Instruction *> &insts,
+                     SmallVectorImpl<Instruction *> &instsSorted);
 
 void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args);
 

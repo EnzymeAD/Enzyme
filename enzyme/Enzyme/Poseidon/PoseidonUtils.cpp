@@ -167,7 +167,11 @@ void topoSort(const SetVector<Instruction *> &insts,
       dfsVisit(I);
     }
   }
+}
 
+void reverseTopoSort(const SetVector<Instruction *> &insts,
+                     SmallVectorImpl<Instruction *> &instsSorted) {
+  topoSort(insts, instsSorted);
   std::reverse(instsSorted.begin(), instsSorted.end());
 }
 

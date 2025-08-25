@@ -794,7 +794,7 @@ void CandidateOutput::findErasableInstructions() {
   SetVector<Instruction *> instsToProcess(exprInsts.begin(), exprInsts.end());
 
   SmallVector<Instruction *, 8> instsToProcessSorted;
-  topoSort(instsToProcess, instsToProcessSorted);
+  reverseTopoSort(instsToProcess, instsToProcessSorted);
 
   // `oldOutput` is trivially erasable
   erasableInsts.clear();

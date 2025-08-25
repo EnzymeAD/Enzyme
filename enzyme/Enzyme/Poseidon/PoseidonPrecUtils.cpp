@@ -290,7 +290,7 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
     }
 
     SmallVector<Instruction *, 8> instsToChangeSorted;
-    topoSort(instsToChange, instsToChangeSorted);
+    reverseTopoSort(instsToChange, instsToChangeSorted);
 
     for (auto *I : instsToChangeSorted) {
       changePrecision(I, change, oldToNew);
