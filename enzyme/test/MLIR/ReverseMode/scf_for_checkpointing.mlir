@@ -11,7 +11,7 @@ module {
       %sum_next = arith.mulf %sum_iter, %sum_iter : f32
       %cos_next = math.cos %sum_next : f32
       scf.yield %cos_next : f32
-    } {enzyme.enable_checkpointing = true}
+    } {enzyme.enable_checkpointing = true, enzyme.cache_use_tensor}
 
     return %sum : f32
   }
