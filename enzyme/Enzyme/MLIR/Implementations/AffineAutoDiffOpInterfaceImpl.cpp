@@ -13,6 +13,7 @@
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/IntegerSet.h"
 
@@ -53,6 +54,154 @@ affine::AffineIfOp createAffineIfWithShadows(Operation *op, OpBuilder &builder,
       adaptor.getOperands(), !original.getElseRegion().empty());
 }
 
+struct AffineForOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineForOpInterfaceReverse, affine::AffineForOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+
+    affine::AffineBound lb = forOp.getLowerBound();
+    affine::AffineBound ub = forOp.getUpperBound();
+
+    if (lb.getMap().getNumResults() != 1 || ub.getMap().getNumResults() != 1) {
+      op->emitError() << "cannot differentiate loop with minmax bounds yet";
+      return failure();
+    }
+
+    SmallVector<bool> operandsActive;
+    for (auto [operand, result] :
+         llvm::zip_equal(op->getOperands().slice(forOp.getNumControlOperands(),
+                                                 forOp->getNumOperands()),
+                         op->getResults())) {
+      operandsActive.push_back(!gutils->isConstantValue(operand) ||
+                               !gutils->isConstantValue(result));
+    }
+
+    SmallVector<Value> revLBOperands, revUBOperands, incomingGradients;
+
+    for (int i = 0, e = lb.getNumOperands(); i < e; ++i) {
+      revLBOperands.push_back(gutils->popCache(caches[i], builder));
+    }
+
+    for (int i = lb.getNumOperands(), e = forOp.getNumControlOperands(); i < e;
+         ++i) {
+      revUBOperands.push_back(gutils->popCache(caches[i], builder));
+    }
+
+    for (auto &&[active, res] :
+         llvm::zip_equal(operandsActive, op->getResults())) {
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(res, builder));
+        if (!gutils->isConstantValue(res))
+          gutils->zeroDiffe(res, builder);
+      }
+    }
+
+    auto revFor = builder.create<affine::AffineForOp>(
+        op->getLoc(), revLBOperands, lb.getMap(), revUBOperands, ub.getMap(),
+        forOp.getStepAsInt(), incomingGradients);
+
+    bool valid = true;
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(op->getRegions(), revFor->getRegions())) {
+      for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
+        OpBuilder bodyBuilder(&revBB, revBB.end());
+
+        // Create implicit terminator if not present (when num results > 0)
+        if (revBB.empty()) {
+          bodyBuilder.create<affine::AffineYieldOp>(revFor->getLoc());
+        }
+        bodyBuilder.setInsertionPoint(revBB.getTerminator());
+
+        // All values defined in the body should have no use outside this block
+        // therefore we can set their diffe to zero upon entering the reverse
+        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
+        for (auto operand : oBB.getArguments().slice(1)) {
+          if (!gutils->isConstantValue(operand)) {
+            gutils->zeroDiffe(operand, bodyBuilder);
+          }
+        }
+
+        for (auto &it : oBB.getOperations()) {
+          for (auto res : it.getResults()) {
+            if (!gutils->isConstantValue(res)) {
+              gutils->zeroDiffe(res, bodyBuilder);
+            }
+          }
+        }
+
+        auto term = oBB.getTerminator();
+
+        for (auto &&[active, arg, operand] :
+             llvm::zip_equal(operandsActive, revBB.getArguments().slice(1),
+                             term->getOperands())) {
+          if (active) {
+            // Set diffe here, not add because it should not accumulate across
+            // iterations. Instead the new gradient for this operand is passed
+            // in the return of the reverse for body.
+            gutils->setDiffe(operand, arg, bodyBuilder);
+          }
+        }
+
+        auto first = oBB.rbegin();
+        first++; // skip terminator
+
+        auto last = oBB.rend();
+
+        for (auto it = first; it != last; ++it) {
+          Operation *op = &*it;
+          valid &=
+              gutils->Logic.visitChild(op, bodyBuilder, gutils).succeeded();
+        }
+
+        SmallVector<Value> newResults;
+        newResults.reserve(incomingGradients.size());
+
+        for (auto &&[active, arg] :
+             llvm::zip_equal(operandsActive, oBB.getArguments().slice(1))) {
+          if (active) {
+            newResults.push_back(gutils->diffe(arg, bodyBuilder));
+            if (!gutils->isConstantValue(arg))
+              gutils->zeroDiffe(arg, bodyBuilder);
+          }
+        }
+
+        // yield new gradient values
+        revBB.getTerminator()->setOperands(newResults);
+      }
+    }
+
+    for (auto &&[active, res, arg] : llvm::zip_equal(
+             operandsActive, revFor->getResults(), forOp.getInits())) {
+      if (active) {
+        if (!gutils->isConstantValue(arg))
+          gutils->addToDiffe(arg, res, builder);
+      }
+    }
+
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+
+    SmallVector<Value> caches;
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    for (auto operand : forOp.getControlOperands()) {
+      caches.push_back(gutils->initAndPushCache(
+          gutils->getNewFromOriginal(operand), cacheBuilder));
+    }
+
+    return caches;
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 #include "Implementations/AffineDerivatives.inc"
 } // namespace
 
@@ -60,5 +209,6 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, affine::AffineDialect *) {
     registerInterfaces(context);
+    affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
   });
 }
