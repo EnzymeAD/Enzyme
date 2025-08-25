@@ -235,7 +235,7 @@ static void nrm2Tests() {
 
     double dres = cblas_ddot(N, A, incA, dA, incA);
     double nres = my_dnrm2(N, A, incA);
-    double trueRes = sqrt(dres) / nres;
+    double trueRes = dres / nres;
     my_dnrm2(N, A, incA);
 
     checkTest(Test);
@@ -248,6 +248,8 @@ static void nrm2Tests() {
     checkMemoryTrace(inputs, "Found " + Test, foundCalls);
 
     APPROX_EQ(ADres, trueRes, 1e-10);
+
+    // TODO: Check for nres == 0.0
   }
   {
     std::string Test = "NRM2 const";
