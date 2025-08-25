@@ -120,6 +120,13 @@ bool Poseidonable(const llvm::Value &V) {
           startsWith(funcName, "llvm.sin.") ||
           startsWith(funcName, "llvm.cos.") ||
           startsWith(funcName, "llvm.tan.") ||
+          startsWith(funcName, "llvm.asin.") ||
+          startsWith(funcName, "llvm.acos.") ||
+          startsWith(funcName, "llvm.atan.") ||
+          startsWith(funcName, "llvm.atan2.") ||
+          startsWith(funcName, "llvm.sinh.") ||
+          startsWith(funcName, "llvm.cosh.") ||
+          startsWith(funcName, "llvm.tanh.") ||
           startsWith(funcName, "llvm.exp.") ||
           startsWith(funcName, "llvm.log.") ||
           startsWith(funcName, "llvm.sqrt.") ||
