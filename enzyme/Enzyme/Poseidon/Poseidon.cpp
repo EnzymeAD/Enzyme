@@ -554,9 +554,7 @@ B2:
         auto operands =
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
-        for (const auto &operand_ : enumerate(operands)) {
-          auto &operand = operand_.value();
-          auto i = operand_.index();
+        for (const auto &operand : operands) {
           if (!Poseidonable(*operand)) {
             if (FPOptPrint)
               llvm::errs() << "Non-Poseidonable input found: " << *operand
@@ -565,34 +563,6 @@ B2:
             // Don't mark constants as input `llvm::Value`s
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
-
-            if (auto MD = I2->getMetadata("enzyme_fpprofile_idx")) {
-              if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
-                size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
-                auto it = profileMap.find(idx);
-                if (it != profileMap.end()) {
-                  auto node = valueToNodeMap[operand];
-                  if (i < it->second.minOperands.size()) {
-                    node->updateBounds(it->second.minOperands[i],
-                                       it->second.maxOperands[i]);
-                    if (FPOptPrint) {
-                      llvm::errs() << "Range of " << *operand << " is ["
-                                   << node->getLowerBound() << ", "
-                                   << node->getUpperBound() << "]\n";
-                    }
-                  }
-                } else {
-                  if (!FPOptLooseCoverage) {
-                    llvm::errs()
-                        << "FP Instruction " << *I2
-                        << " has no execution logged (idx=" << idx << ")!\n";
-                    llvm_unreachable("Unexecuted instruction found; set "
-                                     "-fpopt-loose-coverage "
-                                     "to suppress this error\n");
-                  }
-                }
-              }
-            }
           } else {
             if (FPOptPrint)
               llvm::errs() << "Adding operand to todo list: " << *operand
@@ -646,50 +616,74 @@ B2:
           continue;
         }
 
-        Subgraph subgraph{input_seen, output_seen, operation_seen};
-
-        // Extract profile info for all instructions.
-        for (auto &op : subgraph.operations) {
-          if (auto MD = op->getMetadata("enzyme_fpprofile_idx")) {
-            if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
-              size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
-              auto it = profileMap.find(idx);
-
-              auto node = valueToNodeMap[op];
-              if (it != profileMap.end()) {
-                const auto &profileInfo = it->second;
-                node->sens = profileInfo.sumSens;
-                node->grad = profileInfo.sumGrad;
-                node->executions = profileInfo.exec;
-                node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
-
-                if (FPOptPrint) {
-                  llvm::errs()
-                      << "Range of " << *op << " is [" << node->getLowerBound()
-                      << ", " << node->getUpperBound() << "]\n";
-                  llvm::errs() << "Sensitivity score of " << *op
-                               << " is: " << node->sens << "\n"
-                               << "Gradient sum of " << *op
-                               << " is: " << node->grad << "\n"
-                               << "Execution count of " << *op
-                               << " is: " << node->executions << "\n";
-                }
-              } else {
-                if (FPOptPrint)
-                  llvm::errs() << "Sensitivity of " << *op
-                               << " not found in the log; using 0 instead\n";
-              }
-            }
-          }
-        }
-
-        subgraphs.push_back(subgraph);
+        subgraphs.emplace_back(input_seen, output_seen, operation_seen);
       }
     }
   }
 
-  llvm::errs() << "FPOpt: Found " << subgraphs.size() << " subgraphs in "
-               << F.getName() << "\n";
+
+  for (auto &subgraph : subgraphs) {
+    for (auto op : subgraph.operations) {
+      if (auto MD = op->getMetadata("enzyme_fpprofile_idx")) {
+        if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
+          size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
+          auto it = profileMap.find(idx);
+
+          if (it != profileMap.end()) {
+            const auto &profileInfo = it->second;
+
+            auto node = valueToNodeMap[op];
+            node->sens = profileInfo.sumSens;
+            node->grad = profileInfo.sumGrad;
+            node->executions = profileInfo.exec;
+            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
+
+            if (FPOptPrint) {
+              llvm::errs() << "Range of " << *op << " is ["
+                           << node->getLowerBound() << ", "
+                           << node->getUpperBound() << "]\n";
+              llvm::errs() << "Sensitivity score of " << *op
+                           << " is: " << node->sens << "\n"
+                           << "Gradient sum of " << *op << " is: " << node->grad
+                           << "\n"
+                           << "Execution count of " << *op
+                           << " is: " << node->executions << "\n";
+            }
+
+            auto operands =
+                isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
+
+            for (const auto &operand_ : enumerate(operands)) {
+              auto &operand = operand_.value();
+              auto i = operand_.index();
+
+              if (i < profileInfo.minOperands.size()) {
+                auto operandNode = valueToNodeMap[operand];
+                operandNode->updateBounds(profileInfo.minOperands[i],
+                                          profileInfo.maxOperands[i]);
+                if (FPOptPrint) {
+                  llvm::errs() << "Range of " << *operand << " is ["
+                               << operandNode->getLowerBound() << ", "
+                               << operandNode->getUpperBound() << "]\n";
+                }
+              }
+            }
+          } else {
+            if (!FPOptLooseCoverage) {
+              llvm::errs() << "FP Instruction " << *op
+                           << " has no execution logged (idx=" << idx << ")!\n";
+              llvm_unreachable("Unexecuted instruction found; set "
+                               "-fpopt-loose-coverage "
+                               "to suppress this error\n");
+            }
+            if (FPOptPrint)
+              llvm::errs() << "Sensitivity of " << *op
+                           << " not found in the log; using 0 instead\n";
+          }
+        }
+      }
+    }
+  }
 
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
