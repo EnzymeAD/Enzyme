@@ -644,3 +644,292 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
     }
   }
 }
+
+bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
+  // It makes no sense to split at outputs
+  if (subgraph.outputs.contains(I)) {
+    return false;
+  }
+
+  // Criteria 1: Number of internal uses
+  unsigned internalUses = 0;
+  for (auto *U : I->users()) {
+    if (auto *UI = dyn_cast<Instruction>(U)) {
+      if (subgraph.operations.contains(UI)) {
+        ++internalUses;
+      }
+    }
+  }
+
+  if (internalUses < FPOptMinUsesForSplit) {
+    return false;
+  }
+
+  // Criteria 2: Number of upstream internal operations (complexity)
+  SetVector<Instruction *> treeOps;
+  SmallVector<Instruction *, 16> worklist;
+  worklist.push_back(I);
+  treeOps.insert(I);
+
+  while (!worklist.empty()) {
+    Instruction *current = worklist.pop_back_val();
+    auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
+                                           : current->operands();
+    for (auto &op : operands) {
+      if (subgraph.inputs.contains(op)) {
+        continue;
+      }
+      if (auto *OpI = dyn_cast<Instruction>(op)) {
+        if (subgraph.operations.contains(OpI) && !treeOps.contains(OpI)) {
+          worklist.push_back(OpI);
+          treeOps.insert(OpI);
+        }
+      }
+    }
+  }
+
+  return treeOps.size() >= FPOptMinOpsForSplit;
+}
+
+SetVector<Value *>
+findReachedInputs(const SetVector<Instruction *> &operations) {
+  SetVector<Value *> reachedInputs;
+
+  for (auto *I : operations) {
+    auto operands =
+        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
+    for (auto &op : operands) {
+      Value *V = op.get();
+
+      if (auto *OpI = dyn_cast<Instruction>(V)) {
+        if (operations.contains(OpI)) {
+          continue;
+        }
+      }
+
+      reachedInputs.insert(V);
+    }
+  }
+
+  return reachedInputs;
+}
+
+void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
+                               Instruction *bottleneck, Subgraph &newSubgraph,
+                               Subgraph &remainingSubgraph) {
+
+  // 1. Get all upstream ops from bottleneck (relevant tree)
+  SetVector<Instruction *> relevantTree;
+  SmallVector<Instruction *, 16> worklist;
+  worklist.push_back(bottleneck);
+  relevantTree.insert(bottleneck);
+
+  while (!worklist.empty()) {
+    auto current = worklist.pop_back_val();
+    auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
+                                           : current->operands();
+    for (auto &op : operands) {
+      if (currentSubgraph.inputs.contains(op)) {
+        continue;
+      }
+      if (auto *OpI = dyn_cast<Instruction>(op)) {
+        if (currentSubgraph.operations.contains(OpI) &&
+            !relevantTree.contains(OpI)) {
+          worklist.push_back(OpI);
+          relevantTree.insert(OpI);
+        }
+      }
+    }
+  }
+
+  // 2. Move ops that have external uses to the new subgraph
+  SetVector<Instruction *> movedOps;
+  SetVector<Instruction *> keptSubtreeRoots;
+
+  for (auto op : relevantTree) {
+    // The bottleneck is always moved to the new subgraph
+    if (op == bottleneck) {
+      movedOps.insert(op);
+      continue;
+    }
+
+    bool hasExternalUse = false;
+    for (auto U : op->users()) {
+      if (auto UI = dyn_cast<Instruction>(U)) {
+        if (currentSubgraph.operations.contains(UI) &&
+            !relevantTree.contains(UI)) {
+          hasExternalUse = true;
+          break;
+        }
+      }
+    }
+
+    if (hasExternalUse) {
+      keptSubtreeRoots.insert(op);
+    } else {
+      movedOps.insert(op);
+    }
+  }
+
+  // 3. Remove upstream ops of kept subtree roots from movedOps
+  for (auto keptRoot : keptSubtreeRoots) {
+    SetVector<Instruction *> keptUpstream;
+    SmallVector<Instruction *, 16> keptWorklist;
+    keptWorklist.push_back(keptRoot);
+    keptUpstream.insert(keptRoot);
+
+    while (!keptWorklist.empty()) {
+      Instruction *current = keptWorklist.pop_back_val();
+      auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
+                                             : current->operands();
+      for (auto &op : operands) {
+        if (currentSubgraph.inputs.contains(op)) {
+          continue;
+        }
+        if (auto *OpI = dyn_cast<Instruction>(op)) {
+          if (relevantTree.contains(OpI) && !keptUpstream.contains(OpI)) {
+            keptWorklist.push_back(OpI);
+            keptUpstream.insert(OpI);
+            movedOps.remove(OpI);
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Build new subgraph.
+  // `operations`: dependencies of `movedOps`
+  // `inputs`: reached inputs of `operations`
+  // `outputs`: the bottleneck instruction
+  newSubgraph.operations = movedOps;
+  newSubgraph.outputs.insert(bottleneck);
+  newSubgraph.inputs = findReachedInputs(newSubgraph.operations);
+
+  // 5. Build remaining subgraph.
+  // `operations`: unmoved ops of `currentSubgraph.operations`
+  // `inputs`: reached inputs of `operations`
+  // `outputs`: the outputs of the original subgraph (bottleneck is guaranteed
+  // to NOT be an output)
+  for (auto I : currentSubgraph.operations) {
+    if (!movedOps.contains(I)) {
+      remainingSubgraph.operations.insert(I);
+    }
+  }
+  remainingSubgraph.outputs = currentSubgraph.outputs;
+  remainingSubgraph.inputs = findReachedInputs(remainingSubgraph.operations);
+  assert(remainingSubgraph.inputs.contains(bottleneck));
+}
+
+void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
+
+  SmallVector<Subgraph, 8> resultSubgraphs;
+  SmallVector<Subgraph, 8> workQueue;
+
+  for (const auto &subgraph : subgraphs) {
+    workQueue.push_back(subgraph);
+  }
+
+  while (!workQueue.empty()) {
+    Subgraph currentSubgraph = workQueue.pop_back_val();
+
+    if (currentSubgraph.operations.size() <= FPOptMinOpsForSplit) {
+      resultSubgraphs.push_back(currentSubgraph);
+      continue;
+    }
+
+    // Sort all operations in topological order (inputs to outputs)
+    SmallVector<Instruction *, 8> sortedOps;
+    topoSort(currentSubgraph.operations, sortedOps);
+
+    bool madeSplit = false;
+    for (auto *I : sortedOps) {
+      assert(currentSubgraph.operations.contains(I));
+
+      if (isExpansionBottleneck(I, currentSubgraph)) {
+        if (FPOptPrint) {
+          llvm::errs() << "Bottleneck: " << *I << "\n";
+          llvm::errs() << "currentSubgraph.inputs ("
+                       << currentSubgraph.inputs.size() << "): ";
+          for (auto *input : currentSubgraph.inputs) {
+            llvm::errs() << "\t" << *input << "\n";
+          }
+          llvm::errs() << "\n";
+          llvm::errs() << "currentSubgraph.operations ("
+                       << currentSubgraph.operations.size() << "): ";
+          for (auto *op : currentSubgraph.operations) {
+            llvm::errs() << "\t" << *op << "\n";
+          }
+          llvm::errs() << "\n";
+          llvm::errs() << "currentSubgraph.outputs ("
+                       << currentSubgraph.outputs.size() << "): ";
+          for (auto *output : currentSubgraph.outputs) {
+            llvm::errs() << "\t" << *output << "\n";
+          }
+          llvm::errs() << "\n";
+        }
+
+        Subgraph newSubgraph, remainingSubgraph;
+        splitSubgraphAtBottleneck(currentSubgraph, I, newSubgraph,
+                                  remainingSubgraph);
+
+        if (FPOptPrint) {
+          llvm::errs() << "=== Splitting subgraph at bottleneck: " << *I
+                       << " ===\n";
+
+          llvm::errs() << "  New subgraph:\n";
+          llvm::errs() << "    Inputs (" << newSubgraph.inputs.size() << "):\n";
+          for (auto *input : newSubgraph.inputs) {
+            llvm::errs() << "      " << *input << "\n";
+          }
+          llvm::errs() << "    Operations (" << newSubgraph.operations.size()
+                       << "):\n";
+          for (auto *op : newSubgraph.operations) {
+            llvm::errs() << "      " << *op << "\n";
+          }
+          llvm::errs() << "    Outputs (" << newSubgraph.outputs.size()
+                       << "):\n";
+          for (auto *output : newSubgraph.outputs) {
+            llvm::errs() << "      " << *output << "\n";
+          }
+
+          llvm::errs() << "  Remaining subgraph:\n";
+
+          llvm::errs() << "    Inputs (" << remainingSubgraph.inputs.size()
+                       << "):\n";
+          for (auto *input : remainingSubgraph.inputs) {
+            llvm::errs() << "      " << *input << "\n";
+          }
+          llvm::errs() << "    Operations ("
+                       << remainingSubgraph.operations.size() << "):\n";
+          for (auto *op : remainingSubgraph.operations) {
+            llvm::errs() << "      " << *op << "\n";
+          }
+          llvm::errs() << "    Outputs (" << remainingSubgraph.outputs.size()
+                       << "):\n";
+          for (auto *output : remainingSubgraph.outputs) {
+            llvm::errs() << "      " << *output << "\n";
+          }
+        }
+
+        resultSubgraphs.push_back(newSubgraph);
+        currentSubgraph = remainingSubgraph;
+        madeSplit = true;
+      }
+    }
+
+    if (madeSplit) {
+      workQueue.push_back(currentSubgraph);
+    } else {
+      resultSubgraphs.push_back(currentSubgraph);
+    }
+  }
+
+  if (FPOptPrint) {
+    llvm::errs() << "=== Subgraph splitting complete ===\n";
+    llvm::errs() << "  Original subgraphs: " << subgraphs.size() << "\n";
+    llvm::errs() << "  Final subgraphs after splitting: "
+                 << resultSubgraphs.size() << "\n";
+  }
+
+  subgraphs = std::move(resultSubgraphs);
+}

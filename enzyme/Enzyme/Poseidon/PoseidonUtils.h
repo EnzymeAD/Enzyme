@@ -75,4 +75,6 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
                       SmallPtrSetImpl<Instruction *> &exprInsts,
                       SmallPtrSetImpl<Value *> &visited);
 
+void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs);
+
 #endif // ENZYME_POSEIDON_UTILS_H

@@ -621,6 +621,17 @@ B2:
     }
   }
 
+  if (FPOptPrint) {
+    llvm::errs() << "FPOpt: Found " << subgraphs.size()
+                 << " initial subgraphs in " << F.getName() << "\n";
+  }
+
+  splitSubgraphs(subgraphs);
+
+  if (FPOptPrint) {
+    llvm::errs() << "FPOpt: After splitting, have " << subgraphs.size()
+                 << " subgraphs in " << F.getName() << "\n";
+  }
 
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
