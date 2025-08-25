@@ -721,7 +721,6 @@ B2:
           continue;
         }
 
-        node->markAsInput();
         if (!node->hasSymbol()) {
           node->symbol = getNextSymbol();
         }
@@ -748,8 +747,8 @@ B2:
           continue;
         }
 
-        std::string expr =
-            valueToNodeMap[output]->toFullExpression(valueToNodeMap);
+        std::string expr = valueToNodeMap[output]->toFullExpression(
+            valueToNodeMap, subgraph.inputs);
         SmallSet<std::string, 8> args;
         getUniqueArgs(expr, args);
 

@@ -389,6 +389,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       break;
     }
     default: {
+      llvm::errs() << "Problematic instruction: " << *I << "\n";
       std::string msg = "Custom cost model: unexpected opcode " +
                         std::string(I->getOpcodeName());
       llvm_unreachable(msg.c_str());
@@ -646,7 +647,7 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
 }
 
 bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
-  // It makes no sense to split at outputs
+  // No need to split at outputs
   if (subgraph.outputs.contains(I)) {
     return false;
   }
@@ -699,15 +700,13 @@ findReachedInputs(const SetVector<Instruction *> &operations) {
     auto operands =
         isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
     for (auto &op : operands) {
-      Value *V = op.get();
-
-      if (auto *OpI = dyn_cast<Instruction>(V)) {
+      if (auto *OpI = dyn_cast<Instruction>(op)) {
         if (operations.contains(OpI)) {
           continue;
         }
       }
 
-      reachedInputs.insert(V);
+      reachedInputs.insert(op);
     }
   }
 
@@ -756,8 +755,7 @@ void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
     bool hasExternalUse = false;
     for (auto U : op->users()) {
       if (auto UI = dyn_cast<Instruction>(U)) {
-        if (currentSubgraph.operations.contains(UI) &&
-            !relevantTree.contains(UI)) {
+        if (!relevantTree.contains(UI)) {
           hasExternalUse = true;
           break;
         }

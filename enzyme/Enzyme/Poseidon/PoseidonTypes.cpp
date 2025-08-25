@@ -47,7 +47,7 @@ bool FPNode::hasSymbol() const {
 
 std::string FPNode::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    unsigned depth) {
+    const SetVector<Value *> &subgraphInputs, unsigned depth) {
   std::string msg = "Unexpected invocation of `toFullExpression` on an "
                     "unmaterialized " +
                     op + " FPNode";
@@ -63,13 +63,6 @@ unsigned FPNode::getMPFRPrec() const {
     return 53;
   std::string msg =
       "getMPFRPrec: operator " + op + " has unknown dtype " + dtype;
-  llvm_unreachable(msg.c_str());
-}
-
-void FPNode::markAsInput() {
-  std::string msg = "Unexpected invocation of `markAsInput` on an "
-                    "unmaterialized " +
-                    op + " FPNode";
   llvm_unreachable(msg.c_str());
 }
 
@@ -600,8 +593,9 @@ bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
 
 std::string FPLLValue::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    unsigned depth) {
-  if (input) {
+    const SetVector<Value *> &subgraphInputs, unsigned depth) {
+  // Check if this value is an input to the current subgraph
+  if (subgraphInputs.contains(value)) {
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
   } else {
@@ -617,14 +611,13 @@ std::string FPLLValue::toFullExpression(
 
     std::string expr = "(" + (op == "neg" ? "-" : op);
     for (auto operand : operands) {
-      expr += " " + operand->toFullExpression(valueToNodeMap, depth + 1);
+      expr += " " + operand->toFullExpression(valueToNodeMap, subgraphInputs,
+                                              depth + 1);
     }
     expr += ")";
     return expr;
   }
 }
-
-void FPLLValue::markAsInput() { input = true; }
 
 void FPLLValue::updateBounds(double lower, double upper) {
   lb = std::min(lb, lower);
@@ -652,7 +645,7 @@ bool FPLLValue::classof(const FPNode *N) {
 
 std::string FPConst::toFullExpression(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    unsigned depth) {
+    const SetVector<Value *> &subgraphInputs, unsigned depth) {
   return strValue;
 }
 
@@ -660,8 +653,6 @@ bool FPConst::hasSymbol() const {
   std::string msg = "Unexpected invocation of `hasSymbol` on an FPConst";
   llvm_unreachable(msg.c_str());
 }
-
-void FPConst::markAsInput() { return; }
 
 void FPConst::updateBounds(double lower, double upper) { return; }
 

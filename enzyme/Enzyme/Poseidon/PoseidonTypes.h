@@ -66,9 +66,8 @@ public:
   virtual bool hasSymbol() const;
   virtual std::string toFullExpression(
       std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0);
+      const SetVector<Value *> &subgraphInputs, unsigned depth = 0);
   unsigned getMPFRPrec() const;
-  virtual void markAsInput();
   virtual void updateBounds(double lower, double upper);
   virtual double getLowerBound() const;
   virtual double getUpperBound() const;
@@ -80,7 +79,6 @@ class FPLLValue : public FPNode {
 private:
   double lb = std::numeric_limits<double>::infinity();
   double ub = -std::numeric_limits<double>::infinity();
-  bool input = false;
 
 public:
   Value *value;
@@ -92,8 +90,7 @@ public:
   bool hasSymbol() const override;
   std::string toFullExpression(
       std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0) override;
-  void markAsInput() override;
+      const SetVector<Value *> &subgraphInputs, unsigned depth = 0) override;
   void updateBounds(double lower, double upper) override;
   double getLowerBound() const override;
   double getUpperBound() const override;
@@ -113,9 +110,8 @@ public:
 
   std::string toFullExpression(
       std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-      unsigned depth = 0) override;
+      const SetVector<Value *> &subgraphInputs, unsigned depth = 0) override;
   bool hasSymbol() const override;
-  void markAsInput() override;
   void updateBounds(double lower, double upper) override;
   double getLowerBound() const override;
   double getUpperBound() const override;
