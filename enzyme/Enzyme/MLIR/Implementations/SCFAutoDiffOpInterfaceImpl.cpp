@@ -80,8 +80,9 @@ public:
     // tensors, the other uses memrefs. memref is the default, but tensor can be
     // enabled with enzyme.cache_use_tensor
     enum CacheType cacheType = MEMREF;
-    if (op->hasAttr("enzyme.cache_use_tensor"))
+    if (op->hasAttr("enzyme.cache_use_tensor")) {
       cacheType = TENSOR;
+    }
 
     // Gradients whose values need to be passed as iteration variables.
     llvm::SetVector<Value> updatedGradients;
@@ -208,6 +209,8 @@ public:
 
     SmallVector<Value> newPushValues;
 
+    unsigned numNewValuePushes = 0;
+
     for (auto &info : caches) {
       Value cache = info.initOp.getResult();
 
@@ -319,6 +322,8 @@ public:
 
           term->insertOperands(term->getNumOperands(),
                                ValueRange(newCacheValue));
+
+          numNewValuePushes++;
         }
       } else if (cacheType == MEMREF) {
         Value initValue = rewriter.create<memref::AllocOp>(
@@ -379,10 +384,9 @@ public:
     }
 
     if (cacheType == TENSOR) {
-      for (auto res : newFor->getResults().slice(forOp.getNumResults(),
-                                                 newFor.getNumResults() -
-                                                     forOp.getNumResults()))
-        newPushValues.push_back(res);
+      for (int i = 0; i < numNewValuePushes; ++i)
+        newPushValues.push_back(
+            newFor->getResult(newFor->getNumResults() - numNewValuePushes + i));
     }
 
     rewriter.eraseOp(forOp);
@@ -625,6 +629,14 @@ private:
         .getResult();
   };
 
+  static void preserveAttributesButCheckpointing(Operation *newOp,
+                                                 Operation *oldOp) {
+    for (auto attr : oldOp->getDiscardableAttrs()) {
+      if (attr.getName() != "enzyme.enable_checkpointing")
+        newOp->setAttr(attr.getName(), attr.getValue());
+    }
+  }
+
   static bool needsCheckpointing(scf::ForOp forOp) {
     return forOp->hasAttrOfType<BoolAttr>("enzyme.enable_checkpointing") &&
            forOp->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing")
@@ -690,6 +702,7 @@ public:
           outerUB,
           makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy),
           incomingGradients);
+      preserveAttributesButCheckpointing(revOuter, forOp);
 
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(revOuter.getBody());
@@ -724,6 +737,7 @@ public:
 
       auto revInner = builder.create<scf::ForOp>(forOp.getLoc(), zero, nInnerUB,
                                                  one, initArgs);
+      preserveAttributesButCheckpointing(revInner, forOp);
 
       revInner->setAttrs(op->getAttrs());
       revInner->removeAttr("enzyme.enable_checkpointing");
@@ -772,6 +786,7 @@ public:
       auto revLoop = builder.create<scf::ForOp>(
           forOp.getLoc(), zero, nInnerUB, one,
           revOuter.getBody()->getArguments().drop_front());
+      preserveAttributesButCheckpointing(revLoop, forOp);
 
       Block *revLoopBody = revLoop.getBody();
       builder.setInsertionPointToEnd(revLoopBody);
@@ -842,6 +857,7 @@ public:
 
     auto repFor = builder.create<scf::ForOp>(forOp.getLoc(), start, end, step,
                                              incomingGradients);
+    preserveAttributesButCheckpointing(repFor, forOp);
 
     bool valid = true;
     for (auto &&[oldReg, newReg] :
@@ -951,6 +967,7 @@ public:
                           nInner * (nOuter + hasTrailing), ty),
           makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, nInner, ty),
           newForOp.getInitArgs());
+      preserveAttributesButCheckpointing(outerFwd, forOp);
 
       cacheBuilder.setInsertionPointToStart(outerFwd.getBody());
       auto nInnerCst = makeIntConstant(forOp.getUpperBound().getLoc(),
@@ -975,6 +992,7 @@ public:
           nInnerUB,
           makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty),
           outerFwd.getBody()->getArguments().drop_front());
+      preserveAttributesButCheckpointing(innerFwd, forOp);
 
       cacheBuilder.setInsertionPointToEnd(innerFwd.getBody());
       IRMapping &mapping = gutils->originalToNewFn;
