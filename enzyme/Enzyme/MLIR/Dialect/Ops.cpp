@@ -609,22 +609,41 @@ public:
     auto inpActivity = uop.getActivity();
     auto retActivity = uop.getRetActivity();
     auto out_idx = 0;
+    SmallVector<mlir::Value, 2> in_args;
     SmallVector<mlir::Value, 2> outs_args;
     SmallVector<Type, 2> out_ty;
     SmallVector<ActivityAttr, 2> newInActivityArgs;
     SmallVector<ActivityAttr, 2> newRetActivityArgs;
 
     bool changed = false;
+    auto in_idx = 0;
+
+    // go upto dOutput
+    for (auto [idx, act] : llvm::enumerate(inpActivity)) {
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+      mlir::Value res = uop.getInputs()[in_idx];
+      in_args.push_back(res);
+      in_idx++;
+
+      if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
+        mlir::Value dres = uop.getInputs()[in_idx];
+        in_args.push_back(dres);
+        in_idx++;
+      }
+    }
+
+    // function isn't differentiable
+    if (in_idx == uop.getInputs().size())
+      return failure();
 
     // handle pOutput
     for (auto [idx, act] : llvm::enumerate(retActivity)) {
-
       auto iattr = cast<ActivityAttr>(act);
       auto val = iattr.getValue();
 
       // skip primal return
       if (val == Activity::enzyme_constnoneed ||
-          val == Activity::enzyme_activenoneed ||
           val == Activity::enzyme_dupnoneed) {
         newRetActivityArgs.push_back(iattr);
         continue;
@@ -634,6 +653,9 @@ public:
 
       switch (val) {
       case Activity::enzyme_active:
+        // active -> activenoneed
+        // active -> const
+
         if (!res.use_empty()) {
           outs_args.push_back(res);
           out_ty.push_back(res.getType());
@@ -646,6 +668,11 @@ public:
         }
         break;
 
+      case Activity::enzyme_activenoneed:
+        // check if input is 0, if yes, convert to constnoneed
+
+        newRetActivityArgs.push_back(iattr);
+        break;
       case Activity::enzyme_const:
         if (!res.use_empty()) {
           outs_args.push_back(res);
@@ -666,7 +693,6 @@ public:
         newRetActivityArgs.push_back(iattr);
         break;
 
-      case Activity::enzyme_activenoneed:
       case Activity::enzyme_constnoneed:
       case Activity::enzyme_dupnoneed:
         break;
@@ -738,7 +764,6 @@ public:
     auto newIdx = 0;
     for (auto [idx, old_act, new_act] :
          llvm::enumerate(retActivity, newRetActivityArgs)) {
-
       auto iattr = cast<ActivityAttr>(old_act);
       auto old_val = iattr.getValue();
       auto new_val = new_act.getValue();
