@@ -1746,6 +1746,8 @@ void clearFunctionAttributes(Function *f) {
       "enzymejl_mi",
       "enzymejl_rt",
       "enzyme_ta_norecur",
+      "enzyme_ReadOnlyOrThrow",
+      "enzyme_LocalReadOnlyOrThrow",
   };
 
   for (auto attr : strfnattrs) {
