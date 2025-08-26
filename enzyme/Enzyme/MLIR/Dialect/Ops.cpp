@@ -611,6 +611,7 @@ public:
     auto out_idx = 0;
     SmallVector<mlir::Value, 2> in_args;
     SmallVector<mlir::Value, 2> outs_args;
+    SmallVector<Type, 2> in_ty;
     SmallVector<Type, 2> out_ty;
     SmallVector<ActivityAttr, 2> newInActivityArgs;
     SmallVector<ActivityAttr, 2> newRetActivityArgs;
@@ -624,11 +625,13 @@ public:
       auto val = iattr.getValue();
       mlir::Value res = uop.getInputs()[in_idx];
       in_args.push_back(res);
+      in_ty.push_back(res.getType());
       in_idx++;
 
       if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
         mlir::Value dres = uop.getInputs()[in_idx];
         in_args.push_back(dres);
+        in_ty.push_back(dres.getType());
         in_idx++;
       }
     }
@@ -652,27 +655,72 @@ public:
       mlir::Value res = uop.getOutputs()[out_idx];
 
       switch (val) {
-      case Activity::enzyme_active:
-        // active -> activenoneed
-        // active -> const
+      case Activity::enzyme_active: {
+        // active -> activenoneed(if res isn't used)
+        // active -> const(if dres == 0)
+        // active -> constnoneed(both)
+        mlir::Value dres = uop.getInputs()[in_idx];
+        in_idx++;
+
+        auto dres_type = dres.getType();
+        auto dres_type_intf = dyn_cast<AutoDiffTypeInterface>(dres_type);
 
         if (!res.use_empty()) {
           outs_args.push_back(res);
           out_ty.push_back(res.getType());
-          newRetActivityArgs.push_back(iattr);
+          ActivityAttr new_act = iattr;
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // const
+            changed = true;
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_const);
+
+          } else {
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(new_act);
         } else {
           changed = true;
-          auto new_activenn = ActivityAttr::get(rewriter.getContext(),
-                                                Activity::enzyme_activenoneed);
-          newRetActivityArgs.push_back(new_activenn);
+          ActivityAttr new_act = ActivityAttr::get(
+              rewriter.getContext(), Activity::enzyme_activenoneed);
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // constnoneed
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_constnoneed);
+          } else {
+            // activenoneed
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(new_act);
         }
         break;
+      }
 
       case Activity::enzyme_activenoneed:
-        // check if input is 0, if yes, convert to constnoneed
+        // activenoneed -> constnoneed
+        {
+          mlir::Value dres = uop.getInputs()[in_idx];
+          in_idx++;
+          auto new_act = iattr;
 
-        newRetActivityArgs.push_back(iattr);
-        break;
+          auto dres_type = dres.getType();
+          auto dres_type_intf = dyn_cast<AutoDiffTypeInterface>(dres_type);
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // constnoneed
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_constnoneed);
+          } else {
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(iattr);
+          break;
+        }
       case Activity::enzyme_const:
         if (!res.use_empty()) {
           outs_args.push_back(res);
