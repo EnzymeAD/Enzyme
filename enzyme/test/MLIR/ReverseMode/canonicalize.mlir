@@ -41,4 +41,20 @@ module {
     // CHECK: enzyme.autodiff @square2(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_activenoneed>]{{.*}}
     return %cst : f32
   }
+
+  // Test 5: active -> const for ret_activity (iff derivative is 0)
+  func.func @test5(%x: f32, %y: f32, %dr0: f32) -> (f32,f32,f32,f32) {
+    %cst = arith.constant 0.0000e+00 : f32
+    %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%cst) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
+    // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg2, %cst){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]{{.*}}
+    return %r#0,%r#1,%r#2,%r#3 : f32,f32,f32,f32
+  }
+
+  // Test 6: active -> activenoneed/const -> constnoneed for ret_activity
+  func.func @test6(%x: f32, %y: f32, %dr0: f32) -> (f32,f32,f32) {
+    %cst = arith.constant 0.0000e+00 : f32
+    %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%cst) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
+    // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg2, %cst){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_constnoneed>]{{.*}}
+    return %r#0,%r#2,%r#3 : f32,f32,f32
+  }
 } 

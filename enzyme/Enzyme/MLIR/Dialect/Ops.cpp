@@ -626,7 +626,6 @@ public:
 
       // skip primal return
       if (val == Activity::enzyme_constnoneed ||
-          val == Activity::enzyme_activenoneed ||
           val == Activity::enzyme_dupnoneed) {
         newRetActivityArgs.push_back(iattr);
         continue;
@@ -636,15 +635,35 @@ public:
 
       switch (val) {
       case Activity::enzyme_active:
-        if (!res.use_empty()) {
-          outs_args.push_back(res);
-          out_ty.push_back(res.getType());
-          newRetActivityArgs.push_back(iattr);
-        } else {
+        if (res.use_empty()) {
           changed = true;
           auto new_activenn = ActivityAttr::get(rewriter.getContext(),
                                                 Activity::enzyme_activenoneed);
           newRetActivityArgs.push_back(new_activenn);
+        } else {
+          int in_idx = 0;
+          for (auto act : inpActivity) {
+            auto v = cast<ActivityAttr>(act).getValue();
+            in_idx +=
+                (v == Activity::enzyme_dup || v == Activity::enzyme_dupnoneed)
+                    ? 2
+                    : 1;
+          }
+          in_idx += out_idx;
+          auto dres = uop.getInputs()[in_idx];
+
+          if (matchPattern(dres, m_Zero()) ||
+              matchPattern(dres, m_AnyZeroFloat())) {
+            changed = true;
+            auto new_const = ActivityAttr::get(rewriter.getContext(),
+                                               Activity::enzyme_const);
+            newRetActivityArgs.push_back(new_const);
+          } else {
+            newRetActivityArgs.push_back(iattr);
+          }
+
+          outs_args.push_back(res);
+          out_ty.push_back(res.getType());
         }
         break;
 
@@ -668,7 +687,31 @@ public:
         newRetActivityArgs.push_back(iattr);
         break;
 
-      case Activity::enzyme_activenoneed:
+      case Activity::enzyme_activenoneed: {
+        int in_idx = 0;
+        for (auto act : inpActivity) {
+          auto v = cast<ActivityAttr>(act).getValue();
+          in_idx +=
+              (v == Activity::enzyme_dup || v == Activity::enzyme_dupnoneed)
+                  ? 2
+                  : 1;
+        }
+        in_idx += out_idx;
+
+        auto dres = uop.getInputs()[in_idx];
+
+        if (matchPattern(dres, m_Zero()) ||
+            matchPattern(dres, m_AnyZeroFloat())) {
+          changed = true;
+          auto new_constnn = ActivityAttr::get(rewriter.getContext(),
+                                               Activity::enzyme_constnoneed);
+          newRetActivityArgs.push_back(new_constnn);
+        } else {
+          newRetActivityArgs.push_back(iattr);
+        }
+
+        continue;
+      }
       case Activity::enzyme_constnoneed:
       case Activity::enzyme_dupnoneed:
         break;
@@ -763,6 +806,10 @@ public:
         } else if (new_val == Activity::enzyme_constnoneed &&
                    old_val == Activity::enzyme_const) {
           ++oldIdx; // skip const primal
+        } else if (new_val == Activity::enzyme_const &&
+                   old_val == Activity::enzyme_active) {
+          uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+              newOp.getOutputs()[newIdx++]);
         }
       }
     }
