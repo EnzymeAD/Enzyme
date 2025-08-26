@@ -270,6 +270,8 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       break;
     case Instruction::PHI:
       return 0;
+    case Instruction::Select:
+      return 0;
     case Instruction::Call: {
       auto *Call = cast<CallInst>(I);
       if (auto *CalledFunc = Call->getCalledFunction()) {

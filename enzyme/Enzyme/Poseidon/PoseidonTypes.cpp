@@ -91,29 +91,10 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
   Module *M = builder.GetInsertBlock()->getModule();
   if (op == "if") {
     Value *condValue = operands[0]->getLLValue(builder, VMap);
-    auto IP = builder.GetInsertPoint();
-
-    Instruction *Then, *Else;
-    SplitBlockAndInsertIfThenElse(condValue, &*IP, &Then, &Else);
-
-    Then->getParent()->setName("herbie.then");
-    builder.SetInsertPoint(Then);
-    Value *ThenVal = operands[1]->getLLValue(builder, VMap);
-    if (Instruction *I = dyn_cast<Instruction>(ThenVal))
-      I->setName("herbie.then_val");
-
-    Else->getParent()->setName("herbie.else");
-    builder.SetInsertPoint(Else);
-    Value *ElseVal = operands[2]->getLLValue(builder, VMap);
-    if (Instruction *I = dyn_cast<Instruction>(ElseVal))
-      I->setName("herbie.else_val");
-
-    builder.SetInsertPoint(&*IP);
-    auto Phi = builder.CreatePHI(ThenVal->getType(), 2);
-    Phi->addIncoming(ThenVal, Then->getParent());
-    Phi->addIncoming(ElseVal, Else->getParent());
-    Phi->setName("herbie.merge");
-    return Phi;
+    Value *trueValue = operands[1]->getLLValue(builder, VMap);
+    Value *falseValue = operands[2]->getLLValue(builder, VMap);
+    
+    return builder.CreateSelect(condValue, trueValue, falseValue, "herbie.select");
   }
 
   SmallVector<Value *, 3> operandValues;
