@@ -2465,7 +2465,7 @@ FunctionType *getFunctionTypeForClone(
   
   if (RetTypes.size() == 0)
     RetType = Type::getVoidTy(RetType->getContext());
-  else if (RetTypes.size() == 1 && !returnTape && returnPrimal)
+  else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) && mode != DerivativeMode::ReverseModeCombined)
     RetType = RetTypes[0];
   else
     RetType = StructType::get(FTy->getContext(), RetTypes);
