@@ -126,8 +126,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, width, oldFunc, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, 
-      returnTape, returnPrimal, (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn, 
+      nonconstant_values, returnvals, returnTape, returnPrimal,
+      (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn,
       prefix + oldFunc->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 

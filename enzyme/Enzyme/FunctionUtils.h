@@ -105,8 +105,8 @@ public:
       llvm::ArrayRef<DIFFE_TYPE> constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
-      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, bool returnTape, bool returnPrimal, bool returnShadow,
-      const llvm::Twine &name,
+      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, bool returnTape,
+      bool returnPrimal, bool returnShadow, const llvm::Twine &name,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 

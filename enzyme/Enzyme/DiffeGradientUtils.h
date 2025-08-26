@@ -83,8 +83,8 @@ public:
                   llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool shadowReturnArg, bool diffeReturnArg,
-                  llvm::ArrayRef<DIFFE_TYPE> constant_args,
-                  bool returnTape, bool returnPrimal, llvm::Type *additionalArg, bool omp);
+                  llvm::ArrayRef<DIFFE_TYPE> constant_args, bool returnTape,
+                  bool returnPrimal, llvm::Type *additionalArg, bool omp);
 
   llvm::AllocaInst *getDifferential(llvm::Value *val);
 

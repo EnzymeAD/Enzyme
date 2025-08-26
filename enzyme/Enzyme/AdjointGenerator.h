@@ -5007,7 +5007,8 @@ public:
 
         FT = getFunctionTypeForClone(
             ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
-            argsInverted, false, /*returnTape*/false, /*returnPrimal*/subretused, /*returnShadow*/retActive);
+            argsInverted, false, /*returnTape*/ false,
+            /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
         PointerType *fptype = PointerType::getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));

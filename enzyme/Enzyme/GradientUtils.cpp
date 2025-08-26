@@ -4370,7 +4370,8 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       DerivativeMode::ReverseModePrimal, width, oldFunc, invertedPointers,
       constant_args, constant_values, nonconstant_values, returnvals,
-      /*returnTape*/true, /*returnPrimal*/returnUsed, /*returnShadow*/shadowReturnUsed, prefix, &originalToNew,
+      /*returnTape*/ true, /*returnPrimal*/ returnUsed,
+      /*returnShadow*/ shadowReturnUsed, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
   // Convert overwritten args from the input function to the preprocessed

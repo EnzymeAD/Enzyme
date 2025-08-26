@@ -2423,16 +2423,18 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
-    llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow) {
+FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
+                                      DerivativeMode mode, unsigned width,
+                                      llvm::Type *additionalArg,
+                                      llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                                      bool diffeReturnArg, bool returnTape,
+                                      bool returnPrimal, bool returnShadow) {
   SmallVector<Type *, 4> RetTypes;
   if (returnPrimal)
     RetTypes.push_back(FTy->getReturnType());
   if (returnShadow)
     RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
+        GradientUtils::getShadowType(FTy->getReturnType(), width));
   SmallVector<Type *, 4> ArgTypes;
 
   // The user might be deleting arguments to the function by specifying them in
@@ -2460,12 +2462,14 @@ FunctionType *getFunctionTypeForClone(
   }
   Type *RetType = StructType::get(FTy->getContext(), RetTypes);
   if (returnTape) {
-    RetTypes.insert(RetTypes.begin(), getDefaultAnonymousTapeType(FTy->getContext()));
+    RetTypes.insert(RetTypes.begin(),
+                    getDefaultAnonymousTapeType(FTy->getContext()));
   }
-  
+
   if (RetTypes.size() == 0)
     RetType = Type::getVoidTy(RetType->getContext());
-  else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) && mode != DerivativeMode::ReverseModeCombined)
+  else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) &&
+           mode != DerivativeMode::ReverseModeCombined)
     RetType = RetTypes[0];
   else
     RetType = StructType::get(FTy->getContext(), RetTypes);
@@ -2482,8 +2486,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, Function *&F,
     ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
-    SmallPtrSetImpl<Value *> &returnvals, bool returnTape, bool returnPrimal, bool returnShadow,
-    const Twine &name,
+    SmallPtrSetImpl<Value *> &returnvals, bool returnTape, bool returnPrimal,
+    bool returnShadow, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())

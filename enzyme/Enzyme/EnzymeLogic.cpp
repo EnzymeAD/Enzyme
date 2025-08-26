@@ -3167,7 +3167,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 }
 
 void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
-                      DIFFE_TYPE retType, bool returnPrimal, bool returnShadow) {
+                      DIFFE_TYPE retType, bool returnPrimal,
+                      bool returnShadow) {
   TypeResults &TR = gutils->TR;
   ReturnInst *inst = dyn_cast<ReturnInst>(oBB->getTerminator());
   // In forward mode we only need to update the return value
@@ -3227,16 +3228,16 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       rt = AT->getElementType();
     bool floatLike = rt->isFPOrFPVectorTy();
 
-    if (!floatLike &&
-               TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      shadow = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
+    if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      shadow =
+          invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
       assert(!invertedPtr);
       shadow = gutils->diffe(ret, nBuilder);
     } else {
       shadow = invertedPtr
-                  ? invertedPtr
-                  : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
+                   ? invertedPtr
+                   : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
     }
   }
 
@@ -4211,7 +4212,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       *this, key.mode, key.runtimeActivity, key.strongZero, key.width,
       key.todiff, TLI, TA, oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
-      diffeReturnArg, key.constant_args, /*returnTape*/false, key.returnUsed, key.additionalType, omp);
+      diffeReturnArg, key.constant_args, /*returnTape*/ false, key.returnUsed,
+      key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -4874,8 +4876,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, mode, runtimeActivity, strongZero, width, todiff, TLI, TA,
       oldTypeInfo, retType,
-      /*shadowReturn*/ retActive, diffeReturnArg, constant_args, /*returnTape*/false, returnUsed,
-      additionalArg, omp);
+      /*shadowReturn*/ retActive, diffeReturnArg, constant_args,
+      /*returnTape*/ false, returnUsed, additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
