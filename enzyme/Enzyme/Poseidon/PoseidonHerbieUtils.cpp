@@ -36,7 +36,7 @@
 using namespace llvm;
 
 extern "C" {
-cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(1), cl::Hidden,
+cl::opt<int> HerbieNumThreads("herbie-num-threads", cl::init(8), cl::Hidden,
                               cl::desc("Number of threads Herbie uses"));
 cl::opt<int> HerbieTimeout("herbie-timeout", cl::init(9999), cl::Hidden,
                            cl::desc("Herbie's timeout to use for each "
@@ -48,6 +48,10 @@ cl::opt<int>
 cl::opt<int> HerbieNumIters(
     "herbie-num-iters", cl::init(6), cl::Hidden,
     cl::desc("Number of times Herbie attempts to improve accuracy."));
+cl::opt<int> HerbieNumEnodes(
+    "herbie-num-enodes", cl::init(8000), cl::Hidden,
+    cl::desc("Number of equivalence graph nodes to use when doing algebraic "
+             "reasoning in Herbie."));
 cl::opt<bool> HerbieDisableNumerics(
     "herbie-disable-numerics", cl::init(false), cl::Hidden,
     cl::desc("Disable Herbie rewrite rules that produce numerical shorthands "
@@ -220,7 +224,8 @@ bool improveViaHerbie(
       "--timeout",    std::to_string(HerbieTimeout),
       "--threads",    std::to_string(HerbieNumThreads),
       "--num-points", std::to_string(HerbieNumPoints),
-      "--num-iters",  std::to_string(HerbieNumIters)};
+      "--num-iters",  std::to_string(HerbieNumIters),
+      "--num-enodes", std::to_string(HerbieNumEnodes)};
 
   BaseArgs.push_back("--disable");
   BaseArgs.push_back("generate:proofs");
@@ -268,11 +273,6 @@ bool improveViaHerbie(
   if (HerbieDisableAvgError) {
     BaseArgs.push_back("--disable");
     BaseArgs.push_back("reduce:avg-error");
-  }
-
-  if (!HerbieDisableTaylor) {
-    BaseArgs.push_back("--disable");
-    BaseArgs.push_back("generate:taylor");
   }
 
   SmallVector<SmallVector<std::string>> BaseArgsList;
@@ -396,8 +396,11 @@ bool improveViaHerbie(
     // If we have cached output, process it directly
     if (cached) {
       llvm::errs() << "Herbie output: " << content << "\n";
-      // Skip evaluation for cached results
-      if (processHerbieOutput(content, FPOptSolverType == "dp")) {
+      std::string dpCacheFilePath = FPOptCachePath + "/table.json";
+      bool skipEvaluation = FPOptSolverType == "dp" &&
+                            !FPOptCachePath.empty() &&
+                            llvm::sys::fs::exists(dpCacheFilePath);
+      if (processHerbieOutput(content, skipEvaluation)) {
         success = true;
       }
       continue;

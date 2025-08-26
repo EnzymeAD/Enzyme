@@ -30,7 +30,7 @@ cl::opt<std::string> FPOptSolverType("fpopt-solver-type", cl::init("dp"),
                                      cl::desc("Which solver to use; "
                                               "either 'dp' or 'greedy'"));
 cl::opt<int64_t> FPOptComputationCostBudget(
-    "fpopt-comp-cost-budget", cl::init(100000000000L), cl::Hidden,
+    "fpopt-comp-cost-budget", cl::init(0L), cl::Hidden,
     cl::desc("The maximum computation cost budget for the solver"));
 cl::opt<bool> FPOptShowTable(
     "fpopt-show-table", cl::init(false), cl::Hidden,
@@ -43,13 +43,13 @@ cl::list<int64_t> FPOptShowTableCosts(
         "entries. If provided, only specified computation costs are "
         "printed. "));
 cl::opt<bool> FPOptEarlyPrune(
-    "fpopt-early-prune", cl::init(false), cl::Hidden,
+    "fpopt-early-prune", cl::init(true), cl::Hidden,
     cl::desc("Prune dominated candidates in expression transformation phases"));
 cl::opt<double> FPOptCostDominanceThreshold(
-    "fpopt-cost-dom-thres", cl::init(0.05), cl::Hidden,
+    "fpopt-cost-dom-thres", cl::init(0.0), cl::Hidden,
     cl::desc("The threshold for cost dominance in DP solver"));
 cl::opt<double> FPOptAccuracyDominanceThreshold(
-    "fpopt-acc-dom-thres", cl::init(0.05), cl::Hidden,
+    "fpopt-acc-dom-thres", cl::init(0.0), cl::Hidden,
     cl::desc("The threshold for accuracy dominance in DP solver"));
 }
 
@@ -303,7 +303,7 @@ bool accuracyDPSolver(
           auto candCompCost = CO.getCompCostDelta(i);
           auto candAccCost = CO.getAccCostDelta(i);
 
-          // Don't ever try to apply a strictly useless candidate
+          // Don't apply a candidate that strictly makes things worse
           if (candCompCost >= 0 && candAccCost >= 0.) {
             continue;
           }

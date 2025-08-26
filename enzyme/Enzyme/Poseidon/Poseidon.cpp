@@ -68,13 +68,13 @@ cl::opt<bool> FPOptEnableHerbie(
     "fpopt-enable-herbie", cl::init(true), cl::Hidden,
     cl::desc("Use Herbie to rewrite floating-point expressions"));
 cl::opt<bool> FPOptEnablePT(
-    "fpopt-enable-pt", cl::init(false), cl::Hidden,
+    "fpopt-enable-pt", cl::init(true), cl::Hidden,
     cl::desc("Consider precision changes of floating-point expressions"));
 cl::opt<std::string> FPOptCachePath("fpopt-cache-path", cl::init("cache"),
                                     cl::Hidden,
                                     cl::desc("Path to cache Herbie results"));
 cl::opt<bool> FPOptEnableSolver(
-    "fpopt-enable-solver", cl::init(false), cl::Hidden,
+    "fpopt-enable-solver", cl::init(true), cl::Hidden,
     cl::desc("Use the solver to select desirable rewrite candidates; when "
              "disabled, apply all Herbie's first choices"));
 cl::opt<unsigned> FPOptMaxExprDepth(
@@ -749,6 +749,22 @@ B2:
 
         std::string expr = valueToNodeMap[output]->toFullExpression(
             valueToNodeMap, subgraph.inputs);
+
+        if (subgraph.outputs.size() > 1) {
+          unsigned parenCount = 0;
+          for (char c : expr) {
+            if (c == '(')
+              parenCount++;
+          }
+          assert(parenCount > 0);
+          if (parenCount == 1) {
+            if (FPOptPrint)
+              llvm::errs() << "Skipping Herbie for simple expression: " << expr
+                           << "\n";
+            continue;
+          }
+        }
+
         SmallSet<std::string, 8> args;
         getUniqueArgs(expr, args);
 
