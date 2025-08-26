@@ -56,7 +56,7 @@ if(ENABLE_POSEIDON)
   include(ExternalProject)
     ExternalProject_Add(herbie
         GIT_REPOSITORY https://github.com/sbrantq/herbie
-        GIT_TAG 92a9ab3ca0a2eb1cf8a3e24c3d39be09dd87f384
+        GIT_TAG 193e2a4e6e4902fe5ee7fa8bd5747c19f70ce19b
         UPDATE_COMMAND ""
         CONFIGURE_COMMAND ""
         BUILD_COMMAND make clean 
