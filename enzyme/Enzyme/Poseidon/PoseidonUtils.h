@@ -34,8 +34,8 @@ extern "C" {
 extern llvm::cl::opt<std::string> FPOptCostModelPath;
 extern llvm::cl::opt<unsigned> FPOptNumSamples;
 extern llvm::cl::opt<unsigned> FPOptRandomSeed;
-extern llvm::cl::opt<unsigned> FPOptMinOpsForSplit;
 extern llvm::cl::opt<unsigned> FPOptMinUsesForSplit;
+extern llvm::cl::opt<unsigned> FPOptSplitCoeff;
 }
 
 struct Subgraph;

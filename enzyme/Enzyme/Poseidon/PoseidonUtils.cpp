@@ -691,7 +691,7 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  return treeOps.size() >= FPOptMinOpsForSplit;
+  return internalUses * treeOps.size() >= FPOptSplitCoeff;
 }
 
 SetVector<Value *>
@@ -832,7 +832,7 @@ void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
   while (!workQueue.empty()) {
     Subgraph currentSubgraph = workQueue.pop_back_val();
 
-    if (currentSubgraph.operations.size() <= FPOptMinOpsForSplit) {
+    if (currentSubgraph.operations.size() <= 2) {
       resultSubgraphs.push_back(currentSubgraph);
       continue;
     }
