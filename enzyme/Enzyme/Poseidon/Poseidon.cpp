@@ -88,13 +88,16 @@ cl::opt<std::string> FPOptReductionEval(
     "fpopt-reduction-eval", cl::init("arithmean"), cl::Hidden,
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
-cl::opt<unsigned> FPOptMinOpsForSplit(
-    "fpopt-min-ops-split", cl::init(5), cl::Hidden,
-    cl::desc(
-        "Minimum number of operations before articulation point to split"));
 cl::opt<unsigned> FPOptMinUsesForSplit(
     "fpopt-min-uses-split", cl::init(3), cl::Hidden,
-    cl::desc("Minimum number of uses of articulation point to trigger split"));
+    cl::desc("Minimum number of uses of bottleneck node to trigger split"));
+cl::opt<unsigned> FPOptSplitCoeff(
+    "fpopt-split-coeff", cl::init(15), cl::Hidden,
+    cl::desc("Minimum product of uses * ops for bottleneck node to trigger split"));
+cl::opt<bool>
+    FPOptAggressiveDCE("fpopt-aggressive-dce", cl::init(true), cl::Hidden,
+                       cl::desc("Aggressively eliminate zero gradient outputs "
+                                "as dead code (non-conditional only)"));
 }
 
 bool Poseidonable(const llvm::Value &V) {
@@ -626,6 +629,74 @@ B2:
                  << " initial subgraphs in " << F.getName() << "\n";
   }
 
+  if (FPOptAggressiveDCE) {
+    auto subgraphIt = subgraphs.begin();
+    while (subgraphIt != subgraphs.end()) {
+      Subgraph &subgraph = *subgraphIt;
+
+      // Don't remove zero gradient outputs that are used as predicates
+      SmallVector<Instruction *, 4> deadOutputs;
+      for (auto *output : subgraph.outputs) {
+        if (valueToNodeMap[output]->grad == 0.) {
+          bool isPredicate = false;
+          for (auto *user : output->users()) {
+            if (isa<FCmpInst>(user)) {
+              isPredicate = true;
+              break;
+            }
+          }
+          if (!isPredicate) {
+            if (FPOptPrint)
+              llvm::errs() << "Aggressive DCE: found zero gradient output: "
+                           << *output << "\n";
+            deadOutputs.push_back(output);
+          }
+        }
+      }
+
+      for (auto *deadOutput : deadOutputs) {
+        if (FPOptPrint)
+          llvm::errs() << "Eliminating zero gradient output as dead code: "
+                       << *deadOutput << "\n";
+
+        if (!deadOutput->use_empty()) {
+          deadOutput->replaceAllUsesWith(
+              UndefValue::get(deadOutput->getType()));
+        }
+
+        subgraph.outputs.remove(deadOutput);
+      }
+
+      SmallVector<Instruction *, 8> sorted;
+      reverseTopoSort(subgraph.operations, sorted);
+
+      for (auto *inst : sorted) {
+        if (inst->use_empty()) {
+          if (FPOptPrint)
+            llvm::errs() << "Aggressive DCE: eliminating unused instruction: "
+                         << *inst << "\n";
+
+          subgraph.operations.remove(inst);
+          valueToNodeMap.erase(inst);
+          inst->eraseFromParent();
+        }
+      }
+
+      if (subgraph.outputs.empty()) {
+        if (FPOptPrint)
+          llvm::errs() << "Removing empty subgraph\n";
+        subgraphIt = subgraphs.erase(subgraphIt);
+      } else {
+        ++subgraphIt;
+      }
+    }
+  }
+
+  if (FPOptPrint && FPOptAggressiveDCE) {
+    llvm::errs() << "FPOpt: After aggressive DCE, have " << subgraphs.size()
+                 << " subgraphs in " << F.getName() << "\n";
+  }
+
   splitSubgraphs(subgraphs);
 
   if (FPOptPrint) {
@@ -740,10 +811,9 @@ B2:
         double grad = valueToNodeMap[output]->grad;
         unsigned executions = valueToNodeMap[output]->executions;
 
-        // TODO: For now just skip if grad is 0
         if (grad == 0.) {
-          llvm::errs() << "Skipping algebraic rewriting for " << *output
-                       << " since gradient is 0\n";
+          llvm::errs() << "Skipping zero gradient instruction: " << *output
+                       << "\n";
           continue;
         }
 
