@@ -3053,6 +3053,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
     llvm::errs() << *NewF << "\n";
+    assert(0);
     report_fatal_error("augmented function failed verification (3)");
   }
   {
@@ -3166,7 +3167,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 }
 
 void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
-                      DIFFE_TYPE retType, ReturnType retVal) {
+                      DIFFE_TYPE retType, bool returnPrimal, bool returnShadow) {
   TypeResults &TR = gutils->TR;
   ReturnInst *inst = dyn_cast<ReturnInst>(oBB->getTerminator());
   // In forward mode we only need to update the return value
@@ -3212,74 +3213,44 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     }
   }
 
-  switch (retVal) {
-  case ReturnType::Return: {
-    auto ret = inst->getOperand(0);
+  Value *primal = nullptr;
+  Value *shadow = nullptr;
 
+  if (returnPrimal) {
+    auto ret = inst->getOperand(0);
+    primal = gutils->getNewFromOriginal(ret);
+  }
+  if (returnShadow) {
+    auto ret = inst->getOperand(0);
     Type *rt = ret->getType();
     while (auto AT = dyn_cast<ArrayType>(rt))
       rt = AT->getElementType();
     bool floatLike = rt->isFPOrFPVectorTy();
 
-    if (retType == DIFFE_TYPE::CONSTANT) {
-      toret = gutils->getNewFromOriginal(ret);
-    } else if (!floatLike &&
+    if (!floatLike &&
                TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      toret = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
+      shadow = invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
       assert(!invertedPtr);
-      toret = gutils->diffe(ret, nBuilder);
+      shadow = gutils->diffe(ret, nBuilder);
     } else {
-      toret = invertedPtr
+      shadow = invertedPtr
                   ? invertedPtr
                   : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
     }
-
-    break;
   }
-  case ReturnType::TwoReturns: {
-    if (retType == DIFFE_TYPE::CONSTANT)
-      assert(false && "Invalid return type");
-    auto ret = inst->getOperand(0);
 
-    Type *rt = ret->getType();
-    while (auto AT = dyn_cast<ArrayType>(rt))
-      rt = AT->getElementType();
-    bool floatLike = rt->isFPOrFPVectorTy();
-
-    toret =
-        nBuilder.CreateInsertValue(toret, gutils->getNewFromOriginal(ret), 0);
-
-    if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      toret = nBuilder.CreateInsertValue(
-          toret,
-          invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder), 1);
-    } else if (!gutils->isConstantValue(ret)) {
-      assert(!invertedPtr);
-      toret =
-          nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
-    } else {
-      toret = nBuilder.CreateInsertValue(
-          toret,
-          invertedPtr
-              ? invertedPtr
-              : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true),
-          1);
-    }
-    break;
-  }
-  case ReturnType::Void: {
+  if (primal && shadow) {
+    toret = nBuilder.CreateInsertValue(toret, primal, 0);
+    toret = nBuilder.CreateInsertValue(toret, shadow, 1);
+  } else if (primal) {
+    toret = primal;
+  } else if (shadow) {
+    toret = shadow;
+  } else {
     gutils->erase(gutils->getNewFromOriginal(inst));
     nBuilder.CreateRetVoid();
     return;
-  }
-  default: {
-    llvm::errs() << "Invalid return type: " << to_string(retVal)
-                 << "for function: \n"
-                 << gutils->newFunc << "\n";
-    assert(false && "Invalid return type for function");
-    return;
-  }
   }
 
   gutils->erase(newInst);
@@ -4234,19 +4205,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
-  ReturnType retVal =
-      key.returnUsed ? (key.shadowReturnUsed ? ReturnType::ArgsWithTwoReturns
-                                             : ReturnType::ArgsWithReturn)
-                     : (key.shadowReturnUsed ? ReturnType::ArgsWithReturn
-                                             : ReturnType::Args);
-
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, key.mode, key.runtimeActivity, key.strongZero, key.width,
       key.todiff, TLI, TA, oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
-      diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
+      diffeReturnArg, key.constant_args, /*returnTape*/false, key.returnUsed, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -4904,16 +4869,12 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
 
-  ReturnType retVal =
-      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                 : (retActive ? ReturnType::Return : ReturnType::Void);
-
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, mode, runtimeActivity, strongZero, width, todiff, TLI, TA,
       oldTypeInfo, retType,
-      /*shadowReturn*/ retActive, diffeReturnArg, constant_args, retVal,
+      /*shadowReturn*/ retActive, diffeReturnArg, constant_args, /*returnTape*/false, returnUsed,
       additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
@@ -5092,7 +5053,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       maker->visit(&*it);
     }
 
-    createTerminator(gutils, &oBB, retType, retVal);
+    createTerminator(gutils, &oBB, retType, returnUsed, retActive);
   }
 
   if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)

@@ -89,7 +89,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     bool strongZero, unsigned width, Function *todiff, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
     bool shadowReturn, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, Type *additionalArg, bool omp) {
+    bool returnTape, bool returnPrimal, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -126,7 +126,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, width, oldFunc, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnValue, retType,
+      nonconstant_values, returnvals, 
+      returnTape, returnPrimal, (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn, 
       prefix + oldFunc->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 

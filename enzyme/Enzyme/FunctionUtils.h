@@ -105,8 +105,8 @@ public:
       llvm::ArrayRef<DIFFE_TYPE> constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
-      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, ReturnType returnValue,
-      DIFFE_TYPE returnType, const llvm::Twine &name,
+      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, bool returnTape, bool returnPrimal, bool returnShadow,
+      const llvm::Twine &name,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
@@ -412,7 +412,7 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
+    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow);
 
 /// Lower __enzyme_todense, returning if changed.
 bool LowerSparsification(llvm::Function *F, bool replaceAll = true);

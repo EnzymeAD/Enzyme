@@ -5005,14 +5005,9 @@ public:
         auto ft = call.getFunctionType();
         bool retActive = subretType != DIFFE_TYPE::CONSTANT;
 
-        ReturnType subretVal =
-            subretused
-                ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                : (retActive ? ReturnType::Return : ReturnType::Void);
-
         FT = getFunctionTypeForClone(
             ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
-            argsInverted, false, subretVal, subretType);
+            argsInverted, false, /*returnTape*/false, /*returnPrimal*/subretused, /*returnShadow*/retActive);
         PointerType *fptype = PointerType::getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));

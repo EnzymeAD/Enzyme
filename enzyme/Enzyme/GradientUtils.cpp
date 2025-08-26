@@ -4352,16 +4352,6 @@ GradientUtils *GradientUtils::CreateFromClone(
     ++returnCount;
   }
 
-  ReturnType returnValue;
-  if (returnCount == 0)
-    returnValue = ReturnType::Tape;
-  else if (returnCount == 1)
-    returnValue = ReturnType::TapeAndReturn;
-  else if (returnCount == 2)
-    returnValue = ReturnType::TapeAndTwoReturns;
-  else
-    llvm_unreachable("illegal number of elements in augmented return struct");
-
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -4380,7 +4370,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       DerivativeMode::ReverseModePrimal, width, oldFunc, invertedPointers,
       constant_args, constant_values, nonconstant_values, returnvals,
-      /*returnValue*/ returnValue, retType, prefix, &originalToNew,
+      /*returnTape*/true, /*returnPrimal*/returnUsed, /*returnShadow*/shadowReturnUsed, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
   // Convert overwritten args from the input function to the preprocessed
