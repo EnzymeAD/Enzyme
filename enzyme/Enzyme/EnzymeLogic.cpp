@@ -3053,7 +3053,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
     llvm::errs() << *NewF << "\n";
-    assert(0);
     report_fatal_error("augmented function failed verification (3)");
   }
   {
