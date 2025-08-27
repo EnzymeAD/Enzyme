@@ -573,18 +573,16 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
  * shadow(which we then accumulate into and return). So specifically,
  *
  * pInput' = 	pInput (if the activity is enzyme_active, enzyme_const)
- * 		| pInput, dInput (if the activity is enzyme_dup)
- * 		| dInput (if the activity is enzyme_dupnoneed)
+ * 		| pInput, dInput (if the activity is enzyme_dup,
+ * enzyme_dupnoneed)
  *
  * Now that we have fixed the codegen semantics, we can go ahead and optimize
  * for both the input return activities based on usage. Possible activity
  * promotion flow for the inputs can be as follows:
  * 1. enzyme_active --> enzyme_const (dInput is never used, so we simply don't
  * compute it)
- * 2. enzyme_activenoneed --> enzyme_constnoneed (It is the noneed equivalent
- * of the previous rule and semantically makes sense, although I can't think of
- * a function where you don't pass in the input but still compute the derivative
- * w.r.t that input)
+ * 2. enzyme_dup --> enzyme_const (pInput is mutable, readonly, nocapture,
+ * dInput is never used post AD)
  *
  * Similarly, one can define a similar activity promotion flow for the outputs:
  * 1. enzyme_active --> enzyme_activenoneed (we do need to pass in dOutput into
@@ -611,22 +609,43 @@ public:
     auto inpActivity = uop.getActivity();
     auto retActivity = uop.getRetActivity();
     auto out_idx = 0;
+    SmallVector<mlir::Value, 2> in_args;
     SmallVector<mlir::Value, 2> outs_args;
+    SmallVector<Type, 2> in_ty;
     SmallVector<Type, 2> out_ty;
     SmallVector<ActivityAttr, 2> newInActivityArgs;
     SmallVector<ActivityAttr, 2> newRetActivityArgs;
 
     bool changed = false;
+    auto in_idx = 0;
+
+    // go upto dOutput
+    for (auto [idx, act] : llvm::enumerate(inpActivity)) {
+      auto iattr = cast<ActivityAttr>(act);
+      auto val = iattr.getValue();
+      mlir::Value res = uop.getInputs()[in_idx];
+      in_args.push_back(res);
+      in_ty.push_back(res.getType());
+      in_idx++;
+
+      if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
+        mlir::Value dres = uop.getInputs()[in_idx];
+        in_args.push_back(dres);
+        in_ty.push_back(dres.getType());
+        in_idx++;
+      }
+    }
+    // function isn't differentiable
+    if (in_idx == uop.getInputs().size())
+      return failure();
 
     // handle pOutput
     for (auto [idx, act] : llvm::enumerate(retActivity)) {
-
       auto iattr = cast<ActivityAttr>(act);
       auto val = iattr.getValue();
 
       // skip primal return
       if (val == Activity::enzyme_constnoneed ||
-          val == Activity::enzyme_activenoneed ||
           val == Activity::enzyme_dupnoneed) {
         newRetActivityArgs.push_back(iattr);
         continue;
@@ -635,40 +654,101 @@ public:
       mlir::Value res = uop.getOutputs()[out_idx];
 
       switch (val) {
-      case Activity::enzyme_active:
-        if (!res.use_empty()) {
-          outs_args.push_back(res);
-          out_ty.push_back(res.getType());
-          newRetActivityArgs.push_back(iattr);
-        } else {
-          changed = true;
-          auto new_activenn = ActivityAttr::get(rewriter.getContext(),
-                                                Activity::enzyme_activenoneed);
-          newRetActivityArgs.push_back(new_activenn);
-        }
-        break;
+      case Activity::enzyme_active: {
+        // active -> activenoneed(if res isn't used)
+        // active -> const(if dres == 0)
+        // active -> constnoneed(both)
 
-      case Activity::enzyme_const:
+        mlir::Value dres = uop.getInputs()[in_idx];
+        in_idx++;
+
+        auto dres_type = dres.getType();
+        auto dres_type_intf = dyn_cast<AutoDiffTypeInterface>(dres_type);
+
         if (!res.use_empty()) {
           outs_args.push_back(res);
           out_ty.push_back(res.getType());
-          newRetActivityArgs.push_back(iattr);
+          ActivityAttr new_act = iattr;
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // const
+            changed = true;
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_const);
+          } else {
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(new_act);
         } else {
           changed = true;
-          auto new_constnn = ActivityAttr::get(rewriter.getContext(),
-                                               Activity::enzyme_constnoneed);
-          newRetActivityArgs.push_back(new_constnn);
+          ActivityAttr new_act = ActivityAttr::get(
+              rewriter.getContext(), Activity::enzyme_activenoneed);
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // constnoneed
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_constnoneed);
+          } else {
+            // activenoneed
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(new_act);
         }
+
+        ++out_idx;
         break;
+      }
+
+      case Activity::enzyme_activenoneed:
+        // activenoneed -> constnoneed
+        {
+          mlir::Value dres = uop.getInputs()[in_idx];
+          in_idx++;
+          auto new_act = iattr;
+
+          auto dres_type = dres.getType();
+          auto dres_type_intf = dyn_cast<AutoDiffTypeInterface>(dres_type);
+          if (dres_type_intf && !isMutable(dres_type) &&
+              dres_type_intf.isZero(dres)) {
+            // constnoneed
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_constnoneed);
+          } else {
+            in_args.push_back(dres);
+            in_ty.push_back(dres_type);
+          }
+          newRetActivityArgs.push_back(iattr);
+          break;
+        }
+      case Activity::enzyme_const:
+        // const -> constnoneed
+        {
+          auto new_act = iattr;
+          if (!res.use_empty()) {
+            outs_args.push_back(res);
+            out_ty.push_back(res.getType());
+            newRetActivityArgs.push_back(new_act);
+          } else {
+            changed = true;
+            new_act = ActivityAttr::get(rewriter.getContext(),
+                                        Activity::enzyme_constnoneed);
+            newRetActivityArgs.push_back(new_act);
+          }
+          ++out_idx;
+          break;
+        }
 
       case Activity::enzyme_dup:
-        // dont do anything here for now
+        // TODO: check if ret_arg == enzyme_dup inserts a derivative as the
+        // output and input both
         outs_args.push_back(res);
         out_ty.push_back(res.getType());
         newRetActivityArgs.push_back(iattr);
+        ++out_idx;
         break;
 
-      case Activity::enzyme_activenoneed:
       case Activity::enzyme_constnoneed:
       case Activity::enzyme_dupnoneed:
         break;
@@ -676,8 +756,6 @@ public:
       default:
         llvm_unreachable("unexpected activity arg");
       }
-
-      ++out_idx;
     }
 
     // handle dInputs
@@ -732,7 +810,7 @@ public:
                                                  newRetActivityArgs.end()));
 
     AutoDiffOp newOp = rewriter.create<AutoDiffOp>(
-        uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(), newInActivity,
+        uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
         newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
 
     // Map old uses of uop to newOp
@@ -740,7 +818,6 @@ public:
     auto newIdx = 0;
     for (auto [idx, old_act, new_act] :
          llvm::enumerate(retActivity, newRetActivityArgs)) {
-
       auto iattr = cast<ActivityAttr>(old_act);
       auto old_val = iattr.getValue();
       auto new_val = new_act.getValue();
@@ -763,6 +840,16 @@ public:
         } else if (new_val == Activity::enzyme_constnoneed &&
                    old_val == Activity::enzyme_const) {
           ++oldIdx; // skip const primal
+        } else if (old_val == Activity::enzyme_active &&
+                   new_val == Activity::enzyme_const) {
+          uop.getOutputs()[oldIdx++].replaceAllUsesWith(
+              newOp.getOutputs()[newIdx++]);
+        } else if (old_val == Activity::enzyme_active &&
+                   new_val == Activity::enzyme_constnoneed) {
+          ++oldIdx;
+        } else if (old_val == Activity::enzyme_activenoneed &&
+                   new_val == Activity::enzyme_constnoneed) {
+          // just skip
         }
       }
     }
@@ -788,7 +875,6 @@ public:
         }
       }
     }
-
     rewriter.eraseOp(uop);
     return success();
   }
