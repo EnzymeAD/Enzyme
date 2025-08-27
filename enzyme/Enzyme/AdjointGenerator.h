@@ -5255,7 +5255,8 @@ public:
                                           i))[{-1, -1}] == BaseType::Pointer) ||
                gutils->isConstantInstruction(&call)) &&
               !replaceFunction) {
-            darg = getUndefinedValueForType(M, argi->getType());
+            darg = getUndefinedValueForType(
+                M, gutils->getShadowType(argi->getType()));
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
             revType = (revType == ValueType::None) ? ValueType::Shadow
