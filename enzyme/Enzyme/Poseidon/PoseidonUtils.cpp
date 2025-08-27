@@ -649,8 +649,8 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
 }
 
 bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
-  // No need to split at outputs
-  if (subgraph.outputs.contains(I)) {
+  // Allow splitting at outputs if there are multiple outputs
+  if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
     return false;
   }
 
@@ -691,7 +691,7 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  return internalUses * treeOps.size() >= FPOptSplitCoeff;
+  return treeOps.size() >= FPOptMinOpsForSplit;
 }
 
 SetVector<Value *>
@@ -808,14 +808,19 @@ void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
   // 5. Build remaining subgraph.
   // `operations`: unmoved ops of `currentSubgraph.operations`
   // `inputs`: reached inputs of `operations`
-  // `outputs`: the outputs of the original subgraph (bottleneck is guaranteed
-  // to NOT be an output)
+  // `outputs`: the outputs of the original subgraph (excluding bottleneck if it
+  // was an output)
   for (auto I : currentSubgraph.operations) {
     if (!movedOps.contains(I)) {
       remainingSubgraph.operations.insert(I);
     }
   }
+
   remainingSubgraph.outputs = currentSubgraph.outputs;
+  if (currentSubgraph.outputs.contains(bottleneck)) {
+    remainingSubgraph.outputs.remove(bottleneck);
+  }
+
   remainingSubgraph.inputs = findReachedInputs(remainingSubgraph.operations);
   assert(remainingSubgraph.inputs.contains(bottleneck));
 }

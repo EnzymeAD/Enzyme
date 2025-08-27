@@ -91,9 +91,10 @@ cl::opt<std::string> FPOptReductionEval(
 cl::opt<unsigned> FPOptMinUsesForSplit(
     "fpopt-min-uses-split", cl::init(3), cl::Hidden,
     cl::desc("Minimum number of uses of bottleneck node to trigger split"));
-cl::opt<unsigned> FPOptSplitCoeff(
-    "fpopt-split-coeff", cl::init(15), cl::Hidden,
-    cl::desc("Minimum product of uses * ops for bottleneck node to trigger split"));
+cl::opt<unsigned>
+    FPOptMinOpsForSplit("fpopt-min-ops-split", cl::init(3), cl::Hidden,
+                        cl::desc("Minimum number of upstream operations of "
+                                 "bottleneck node to trigger split"));
 cl::opt<bool>
     FPOptAggressiveDCE("fpopt-aggressive-dce", cl::init(true), cl::Hidden,
                        cl::desc("Aggressively eliminate zero gradient outputs "
@@ -820,19 +821,14 @@ B2:
         std::string expr = valueToNodeMap[output]->toFullExpression(
             valueToNodeMap, subgraph.inputs);
 
-        if (subgraph.outputs.size() > 1) {
-          unsigned parenCount = 0;
-          for (char c : expr) {
-            if (c == '(')
-              parenCount++;
-          }
-          assert(parenCount > 0);
-          if (parenCount == 1) {
-            if (FPOptPrint)
-              llvm::errs() << "Skipping Herbie for simple expression: " << expr
-                           << "\n";
-            continue;
-          }
+        // Skip trivial expressions with only one operation
+        auto parenCount = std::count(expr.begin(), expr.end(), '(');
+        assert(parenCount > 0);
+        if (parenCount == 1) {
+          if (FPOptPrint)
+            llvm::errs() << "Skipping Herbie for simple expression: " << expr
+                         << "\n";
+          continue;
         }
 
         SmallSet<std::string, 8> args;
