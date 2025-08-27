@@ -620,6 +620,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
     return llvm::IntegerType::get(T->getContext(), 64);
   if (T->isX86_FP80Ty())
     return llvm::IntegerType::get(T->getContext(), 80);
+  if (T->isFP128Ty())
+    return llvm::IntegerType::get(T->getContext(), 128);
   assert(0 && "unknown floating point type");
   return nullptr;
 }
@@ -641,6 +643,10 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
       return llvm::Type::getFloatTy(T->getContext());
     case 64:
       return llvm::Type::getDoubleTy(T->getContext());
+    case 80:
+      return llvm::Type::getX86_FP80Ty(T->getContext());
+    case 128:
+      return llvm::Type::getFP128Ty(T->getContext());
     }
   }
   assert(0 && "unknown int to floating point type");

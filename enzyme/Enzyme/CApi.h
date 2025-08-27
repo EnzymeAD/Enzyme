@@ -61,6 +61,7 @@ typedef enum {
   DT_Unknown = 6,
   DT_X86_FP80 = 7,
   DT_BFloat16 = 8,
+  DT_FP128 = 9,
 } CConcreteType;
 
 struct CDataPair {

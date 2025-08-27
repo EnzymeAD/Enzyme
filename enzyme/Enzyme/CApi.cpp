@@ -99,6 +99,8 @@ ConcreteType eunwrap(CConcreteType CDT, llvm::LLVMContext &ctx) {
     return ConcreteType(llvm::Type::getX86_FP80Ty(ctx));
   case DT_BFloat16:
     return ConcreteType(llvm::Type::getBFloatTy(ctx));
+  case DT_FP128:
+    return ConcreteType(llvm::Type::getFP128Ty(ctx));
   case DT_Unknown:
     return BaseType::Unknown;
   }
@@ -133,6 +135,8 @@ CConcreteType ewrap(const ConcreteType &CT) {
       return DT_X86_FP80;
     if (flt->isBFloatTy())
       return DT_BFloat16;
+    if (flt->isFP128Ty())
+      return DT_FP128;
   } else {
     switch (CT.SubTypeEnum) {
     case BaseType::Integer:
