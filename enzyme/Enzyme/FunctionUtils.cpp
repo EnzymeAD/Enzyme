@@ -2423,31 +2423,18 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
-    llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType) {
+FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
+                                      DerivativeMode mode, unsigned width,
+                                      llvm::Type *additionalArg,
+                                      llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                                      bool diffeReturnArg, bool returnTape,
+                                      bool returnPrimal, bool returnShadow) {
   SmallVector<Type *, 4> RetTypes;
-  if (returnValue == ReturnType::ArgsWithReturn ||
-      returnValue == ReturnType::Return) {
-    if (returnType != DIFFE_TYPE::CONSTANT &&
-        returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
-    } else {
-      RetTypes.push_back(FTy->getReturnType());
-    }
-  } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
-             returnValue == ReturnType::TwoReturns) {
+  if (returnPrimal)
     RetTypes.push_back(FTy->getReturnType());
-    if (returnType != DIFFE_TYPE::CONSTANT &&
-        returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
-    } else {
-      RetTypes.push_back(FTy->getReturnType());
-    }
-  }
+  if (returnShadow)
+    RetTypes.push_back(
+        GradientUtils::getShadowType(FTy->getReturnType(), width));
   SmallVector<Type *, 4> ArgTypes;
 
   // The user might be deleting arguments to the function by specifying them in
@@ -2459,7 +2446,7 @@ FunctionType *getFunctionTypeForClone(
     if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(GradientUtils::getShadowType(I, width));
-    } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
+    } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF && !returnTape) {
       RetTypes.push_back(GradientUtils::getShadowType(I, width));
     }
     ++argno;
@@ -2474,30 +2461,18 @@ FunctionType *getFunctionTypeForClone(
     ArgTypes.push_back(additionalArg);
   }
   Type *RetType = StructType::get(FTy->getContext(), RetTypes);
-  if (returnValue == ReturnType::TapeAndTwoReturns ||
-      returnValue == ReturnType::TapeAndReturn ||
-      returnValue == ReturnType::Tape) {
-    RetTypes.clear();
-    RetTypes.push_back(getDefaultAnonymousTapeType(FTy->getContext()));
-    if (returnValue == ReturnType::TapeAndTwoReturns) {
-      RetTypes.push_back(FTy->getReturnType());
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
-    } else if (returnValue == ReturnType::TapeAndReturn) {
-      if (returnType != DIFFE_TYPE::CONSTANT &&
-          returnType != DIFFE_TYPE::OUT_DIFF)
-        RetTypes.push_back(
-            GradientUtils::getShadowType(FTy->getReturnType(), width));
-      else
-        RetTypes.push_back(FTy->getReturnType());
-    }
-    RetType = StructType::get(FTy->getContext(), RetTypes);
-  } else if (returnValue == ReturnType::Return) {
-    assert(RetTypes.size() == 1);
-    RetType = RetTypes[0];
-  } else if (returnValue == ReturnType::TwoReturns) {
-    assert(RetTypes.size() == 2);
+  if (returnTape) {
+    RetTypes.insert(RetTypes.begin(),
+                    getDefaultAnonymousTapeType(FTy->getContext()));
   }
+
+  if (RetTypes.size() == 0)
+    RetType = Type::getVoidTy(RetType->getContext());
+  else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) &&
+           mode != DerivativeMode::ReverseModeCombined)
+    RetType = RetTypes[0];
+  else
+    RetType = StructType::get(FTy->getContext(), RetTypes);
 
   bool noReturn = RetTypes.size() == 0;
   if (noReturn)
@@ -2511,8 +2486,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, Function *&F,
     ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
-    SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,
-    DIFFE_TYPE returnType, const Twine &name,
+    SmallPtrSetImpl<Value *> &returnvals, bool returnTape, bool returnPrimal,
+    bool returnShadow, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())
@@ -2520,7 +2495,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
-      diffeReturnArg, returnValue, returnType);
+      diffeReturnArg, returnTape, returnPrimal, returnShadow);
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
