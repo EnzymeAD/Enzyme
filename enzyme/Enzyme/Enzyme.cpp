@@ -2350,6 +2350,8 @@ public:
       if (!optimized) {
         EmitWarning("NoChange", *CI, "Poseidon returned false (no change) for ",
                     F->getName());
+      } else {
+        Logic.PPC.optimizeIntermediate(F);
       }
     }
 
@@ -2359,6 +2361,8 @@ public:
 
     CI->replaceAllUsesWith(optCall);
     CI->eraseFromParent();
+    
+    calls.push_back(optCall);
 
     return true;
   }
