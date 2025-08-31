@@ -10,19 +10,21 @@ jobs:
     name: Enzyme Tag CI
     runs-on: ubuntu-latest
     steps:
-    - uses: tibdex/github-app-token@v1
+    - uses: actions/create-github-app-token@v2
       id: generate_token
       with:
-        app_id: ${{ secrets.APP_ID }}
-        private_key: ${{ secrets.APP_PRIVATE_KEY }}
-        repository: JuliaPackaging/Yggdrasil
+        app-id: ${{ secrets.APP_ID }}
+        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+        owner: JuliaPackaging
+        repositories: |
+          Yggdrasil
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
           repository: 'JuliaPackaging/Yggdrasil'
           path: ygg
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
       with:
         path: enz
     - name: replace
