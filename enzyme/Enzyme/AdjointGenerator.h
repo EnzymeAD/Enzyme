@@ -755,7 +755,22 @@ public:
           if (dif == nullptr)
             dif = Constant::getNullValue(I.getType());
           if (!gutils->isConstantInstruction(&I)) {
-            assert(ptr);
+            if (!ptr) {
+              if (!gutils->runtimeActivity) {
+                    std::string str;
+                    raw_string_ostream ss(str);
+                    ss << "Mismatched activity for: " << I
+                       << " const val: " << *orig_val;
+                    if (CustomErrorHandler)
+                      diff = unwrap(CustomErrorHandler(
+                          str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
+                          wrap(orig_val), wrap(&BuilderZ)));
+                    else
+                      EmitWarning("MixedActivityError", I, ss.str());
+                  }
+                  return Constant::getNullValue(dif->getType());
+              }
+            }
             AtomicRMWInst *rmw = nullptr;
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
