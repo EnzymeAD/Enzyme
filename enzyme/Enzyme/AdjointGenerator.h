@@ -770,7 +770,6 @@ public:
               }
               return Constant::getNullValue(dif->getType());
             }
-          }
             AtomicRMWInst *rmw = nullptr;
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
                                            I.getAlign(), I.getOrdering(),
