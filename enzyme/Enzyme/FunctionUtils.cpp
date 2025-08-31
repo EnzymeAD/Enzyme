@@ -628,8 +628,20 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       continue;
     }
+    if (auto IVI = dyn_cast<InsertValueInst>(inst)) {
+      if (IVI->getInsertedValueOperand() == prev && EnzymeJuliaAddrLoad &&
+          cast<PointerType>(rep->getType())->getAddressSpace() == 0 &&
+          cast<PointerType>(IVI->getInsertedValueOperand()->getType())
+                  ->getAddressSpace() == 11) {
+        IRBuilder<> B(IVI);
+        auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
+        IVI->setOperand(1, Addr);
+        continue;
+      }
+    }
     if (auto I = dyn_cast<Instruction>(inst))
       llvm::errs() << *I->getParent()->getParent() << "\n";
+    llvm::errs() << " inst: " << *inst << "\n";
     llvm_unreachable("Illegal address space propagation");
   }
 
