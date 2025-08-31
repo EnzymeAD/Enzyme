@@ -760,7 +760,7 @@ public:
                 std::string str;
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << I
-                   << " const val: " << *orig_val;
+                   << " const val: " << *I.getPointerOperand();
                 Value *diff = Constant::getNullValue(dif->getType());
                 if (CustomErrorHandler)
                   diff = unwrap(CustomErrorHandler(
