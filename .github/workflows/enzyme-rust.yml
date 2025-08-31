@@ -1,0 +1,62 @@
+name: Enzyme Rust CI
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+
+jobs:
+  rust-autodiff:
+    name: Rust Autodiff Tests LLVM ${{ matrix.llvm }}
+    runs-on: [self-hosted, Linux, X64, 32-core]
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["19", "20"]
+    
+    timeout-minutes: 90
+    
+    steps:
+    - name: Install LLVM and dependencies
+      run: |
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+        sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev libzstd-dev
+        sudo python3 -m pip install --upgrade pip lit
+    - name: Install Rust toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source ~/.cargo/env
+        rustup toolchain install nightly
+        rustup default nightly
+    - uses: actions/checkout@v4
+      name: Checkout Enzyme
+    - name: Build Enzyme
+      run: |
+        rm -rf build && mkdir build && cd build
+        cmake ../enzyme -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+        make -j `nproc` LLVMEnzyme-${{ matrix.llvm }}
+    - name: Clone and configure Rust compiler
+      run: |
+        source ~/.cargo/env
+        git clone --depth 1 --branch master https://github.com/rust-lang/rust.git
+        cd rust
+        ./configure --enable-llvm-link-shared --enable-llvm-plugins --enable-llvm-enzyme --release-channel=nightly --enable-llvm-assertions --enable-clang --enable-lld --enable-option-checking --enable-ninja --disable-docs
+    - name: Build Rust compiler stage 1
+      working-directory: rust
+      run: |
+        source ~/.cargo/env
+        ./x build --stage 1 library
+    - name: Run Rust autodiff tests
+      working-directory: rust
+      run: |
+        source ~/.cargo/env
+        ./x test --stage 1 tests/codegen-llvm/autodiff
+        ./x test --stage 1 tests/pretty/autodiff
+        ./x test --stage 1 tests/ui/autodiff
+        ./x test --stage 1 tests/ui/feature-gates/feature-gate-autodiff.rs
