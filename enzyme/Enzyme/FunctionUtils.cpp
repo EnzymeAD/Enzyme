@@ -283,10 +283,12 @@ static inline bool OnlyUsedInOMP(AllocaInst *AI) {
 }
 
 bool anyJuliaObjects(Type *T) {
-  if (isSpecialPtr(T)) return true;
+  if (isSpecialPtr(T))
+    return true;
   if (auto ST = dyn_cast<StructType>(T)) {
     for (auto elem : ST->elements()) {
-      if (anyJuliaObjects(elem)) return true;
+      if (anyJuliaObjects(elem))
+        return true;
     }
     return false;
   }
@@ -299,9 +301,9 @@ bool anyJuliaObjects(Type *T) {
   return false;
 }
 
-SmallVector<Value*, 1> getJuliaObjects(Value *v, IRBuilder <>&B) {
-  SmallVector<Value*, 1> todo = {v};
-  SmallVector<Value*, 1> done;
+SmallVector<Value *, 1> getJuliaObjects(Value *v, IRBuilder<> &B) {
+  SmallVector<Value *, 1> todo = {v};
+  SmallVector<Value *, 1> done;
   while (todo.size()) {
     auto cur = todo.pop_back_val();
     auto T = cur->getType();
@@ -315,14 +317,14 @@ SmallVector<Value*, 1> getJuliaObjects(Value *v, IRBuilder <>&B) {
     if (auto ST = dyn_cast<StructType>(T)) {
       for (auto en : llvm::enumerate(ST->elements())) {
         if (anyJuliaObjects(en.value())) {
-	  auto V2 = B.CreateExtractValue(cur, en.index());
-	  todo.push_back(V2);
-	}
+          auto V2 = B.CreateExtractValue(cur, en.index());
+          todo.push_back(V2);
+        }
       }
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(T)) {
-      for (size_t i=0; i<AT->getNumElements(); i++) {
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
         todo.push_back(B.CreateExtractValue(cur, i));
       }
       continue;
@@ -330,7 +332,7 @@ SmallVector<Value*, 1> getJuliaObjects(Value *v, IRBuilder <>&B) {
     if (auto VT = dyn_cast<VectorType>(T)) {
       assert(!VT->getElementCount().isScalable());
       size_t numElems = VT->getElementCount().getKnownMinValue();
-      for (size_t i=0; i<numElems; i++) {
+      for (size_t i = 0; i < numElems; i++) {
         todo.push_back(B.CreateExtractElement(cur, i));
       }
       continue;
@@ -392,12 +394,14 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto GEP = dyn_cast<GetElementPtrInst>(inst)) {
       IRBuilder<> B(GEP);
-      if (EnzymeJuliaAddrLoad && cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
-        rep = B.CreateAddrSpaceCast(rep,
+      if (EnzymeJuliaAddrLoad &&
+          cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
+        rep = B.CreateAddrSpaceCast(
+            rep,
 #if LLVM_VERSION_MAJOR < 17
-          PointerType::get(rep->getType()->getPointerElementType(), 11)
+            PointerType::get(rep->getType()->getPointerElementType(), 11)
 #else
-	  PointerType::get(rep->getContext(), 11)
+            PointerType::get(rep->getContext(), 11)
 #endif
         );
       }
@@ -494,13 +498,15 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
     }
     if (auto LI = dyn_cast<LoadInst>(inst)) {
-      if (EnzymeJuliaAddrLoad && cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
+      if (EnzymeJuliaAddrLoad &&
+          cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
         IRBuilder<> B(LI);
-        rep = B.CreateAddrSpaceCast(rep,
+        rep = B.CreateAddrSpaceCast(
+            rep,
 #if LLVM_VERSION_MAJOR < 17
-          PointerType::get(rep->getType()->getPointerElementType(), 11)
+            PointerType::get(rep->getType()->getPointerElementType(), 11)
 #else
-	  PointerType::get(rep->getContext(), 11)
+            PointerType::get(rep->getContext(), 11)
 #endif
         );
       }
@@ -509,30 +515,39 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto SI = dyn_cast<StoreInst>(inst)) {
       if (SI->getPointerOperand() == prev) {
-        if (EnzymeJuliaAddrLoad && cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
+        if (EnzymeJuliaAddrLoad &&
+            cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
           IRBuilder<> B(SI);
-          rep = B.CreateAddrSpaceCast(rep,
+          rep = B.CreateAddrSpaceCast(
+              rep,
 #if LLVM_VERSION_MAJOR < 17
-          PointerType::get(rep->getType()->getPointerElementType(), 11)
+              PointerType::get(rep->getType()->getPointerElementType(), 11)
 #else
-	  PointerType::get(rep->getContext(), 11)
+              PointerType::get(rep->getContext(), 11)
 #endif
-        );
+          );
         }
         SI->setOperand(1, rep);
-        if (EnzymeJuliaAddrLoad && cast<PointerType>(rep->getType())->getAddressSpace() == 11 && cast<PointerType>(SI->getPointerOperand()->getType())->getAddressSpace() == 0) {
+        if (EnzymeJuliaAddrLoad &&
+            cast<PointerType>(rep->getType())->getAddressSpace() == 11 &&
+            cast<PointerType>(SI->getPointerOperand()->getType())
+                    ->getAddressSpace() == 0) {
           IRBuilder<> B(SI);
-	  auto subvals = getJuliaObjects(SI->getValueOperand(), B);
-	  if (subvals.size()) {
-	  auto JLT = PointerType::get(StructType::get(SI->getContext(), {}), 10);
-	  auto FT = FunctionType::get(JLT, {}, true);
-	  auto wb = B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction("julia.write_barrier", FT);
-	  auto obj = getBaseObject(rep);
-	  assert(obj->getType() == JLT);
-	  subvals.insert(subvals.begin(), obj);
-	  B.CreateCall(wb, subvals);
-	  } 
-	}
+          auto subvals = getJuliaObjects(SI->getValueOperand(), B);
+          if (subvals.size()) {
+            auto JLT =
+                PointerType::get(StructType::get(SI->getContext(), {}), 10);
+            auto FT = FunctionType::get(JLT, {}, true);
+            auto wb = B.GetInsertBlock()
+                          ->getParent()
+                          ->getParent()
+                          ->getOrInsertFunction("julia.write_barrier", FT);
+            auto obj = getBaseObject(rep);
+            assert(obj->getType() == JLT);
+            subvals.insert(subvals.begin(), obj);
+            B.CreateCall(wb, subvals);
+          }
+        }
         toPostCache.push_back(SI);
         continue;
       }
