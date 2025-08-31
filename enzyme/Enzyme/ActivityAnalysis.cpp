@@ -2445,8 +2445,9 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     // values and thus the store is inactive
     if (isConstantValue(TR, RMW->getPointerOperand())) {
       if (EnzymePrintActivity)
-        llvm::errs() << " constant instruction as rmw pointer operand is inactive "
-                     << *inst << "\n";
+        llvm::errs()
+            << " constant instruction as rmw pointer operand is inactive "
+            << *inst << "\n";
       return true;
     }
   }
