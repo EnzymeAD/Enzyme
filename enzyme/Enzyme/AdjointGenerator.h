@@ -765,7 +765,7 @@ public:
                 if (CustomErrorHandler)
                   diff = unwrap(CustomErrorHandler(
                       str.c_str(), wrap(&I), ErrorType::MixedActivityError,
-                      gutils, wrap(orig_val), wrap(&BuilderZ)));
+                      gutils, wrap(I.getPointerOperand()), wrap(&BuilderZ)));
                 else
                   EmitWarning("MixedActivityError", I, ss.str());
                 return diff;
