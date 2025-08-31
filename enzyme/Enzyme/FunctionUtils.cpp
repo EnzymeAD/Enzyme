@@ -555,8 +555,15 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
 
-      Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
-                        MS->getArgOperand(3)};
+      Value *nargs[] = {MS->getArgOperand(0), MS->getArgOperand(1),
+                        MS->getArgOperand(2), MS->getArgOperand(3)};
+
+      if (nargs[0] == prev)
+        nargs[0] = rep;
+
+      if (nargs[1] == prev)
+        nargs[1] = rep;
+
       Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
       auto nMS = cast<CallInst>(B.CreateCall(
           getIntrinsicDeclaration(MS->getParent()->getParent()->getParent(),
