@@ -365,6 +365,16 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         toErase.push_back(ASC);
         continue;
       }
+      if (EnzymeJuliaAddrLoad &&
+          cast<PointerType>(rep->getType())->getAddressSpace() == 0 &&
+          ASC->getDestAddressSpace() == 11) {
+        for (auto U : ASC->users()) {
+          Todo.push_back(
+              std::make_tuple(rep, (Value *)ASC, cast<Instruction>(U)));
+        }
+        toErase.push_back(CI);
+        continue;
+      }
       ASC->setOperand(0, rep);
       continue;
     }
