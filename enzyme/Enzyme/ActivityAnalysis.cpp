@@ -2440,6 +2440,17 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     }
   }
 
+  if (auto RMW = dyn_cast<AtomicRMWInst>(inst)) {
+    // if either src or dst is inactive, there cannot be a transfer of active
+    // values and thus the store is inactive
+    if (isConstantValue(TR, RMW->getPointerOperand())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as rmw pointer operand is inactive "
+                     << *inst << "\n";
+      return true;
+    }
+  }
+
   if (!considerValue) {
     if (auto IEI = dyn_cast<InsertElementInst>(inst)) {
       if ((!TR.anyFloat(IEI->getOperand(0)) ||
