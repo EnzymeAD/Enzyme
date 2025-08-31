@@ -761,14 +761,15 @@ public:
                 raw_string_ostream ss(str);
                 ss << "Mismatched activity for: " << I
                    << " const val: " << *orig_val;
+                Value *diff = Constant::getNullValue(dif->getType());
                 if (CustomErrorHandler)
                   diff = unwrap(CustomErrorHandler(
                       str.c_str(), wrap(&I), ErrorType::MixedActivityError,
                       gutils, wrap(orig_val), wrap(&BuilderZ)));
                 else
                   EmitWarning("MixedActivityError", I, ss.str());
+                return diff;
               }
-              return Constant::getNullValue(dif->getType());
             }
             AtomicRMWInst *rmw = nullptr;
             rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
