@@ -372,7 +372,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           Todo.push_back(
               std::make_tuple(rep, (Value *)ASC, cast<Instruction>(U)));
         }
-        toErase.push_back(CI);
+        toErase.push_back(ASC);
         continue;
       }
       ASC->setOperand(0, rep);
