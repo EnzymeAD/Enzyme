@@ -803,6 +803,38 @@ B2:
                  << " subgraphs in " << F.getName() << "\n";
   }
 
+  if (FPOptPrint) {
+    llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
+
+    std::unordered_map<Instruction *, int> instToSubgraphIdx;
+    for (size_t idx = 0; idx < subgraphs.size(); ++idx) {
+      for (auto *inst : subgraphs[idx].operations) {
+        instToSubgraphIdx[inst] = idx;
+      }
+      for (auto *inst : subgraphs[idx].outputs) {
+        if (instToSubgraphIdx.find(inst) == instToSubgraphIdx.end()) {
+          instToSubgraphIdx[inst] = idx;
+        }
+      }
+    }
+
+    for (auto &BB : F) {
+      BB.printAsOperand(llvm::errs(), false);
+      llvm::errs() << ":\n";
+      for (auto &I : BB) {
+        llvm::errs() << "  ";
+        I.print(llvm::errs());
+
+        auto it = instToSubgraphIdx.find(&I);
+        if (it != instToSubgraphIdx.end()) {
+          llvm::errs() << " ; [SG" << it->second << "]";
+        }
+        llvm::errs() << "\n";
+      }
+    }
+    llvm::errs() << "=== End of Function IR ===\n\n";
+  }
+
   // 1) Identify subgraphs of the computation which can be entirely represented
   // in herbie-style arithmetic
   // 2) Make the herbie FP-style expression by

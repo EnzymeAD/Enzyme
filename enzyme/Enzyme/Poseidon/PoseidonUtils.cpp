@@ -669,10 +669,10 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
   }
 
   // Criteria 2: Number of upstream internal operations (complexity)
-  SetVector<Instruction *> treeOps;
+  SetVector<Instruction *> relevantTree;
   SmallVector<Instruction *, 16> worklist;
   worklist.push_back(I);
-  treeOps.insert(I);
+  relevantTree.insert(I);
 
   while (!worklist.empty()) {
     Instruction *current = worklist.pop_back_val();
@@ -683,15 +683,78 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
         continue;
       }
       if (auto *OpI = dyn_cast<Instruction>(op)) {
-        if (subgraph.operations.contains(OpI) && !treeOps.contains(OpI)) {
+        if (subgraph.operations.contains(OpI) && !relevantTree.contains(OpI)) {
           worklist.push_back(OpI);
-          treeOps.insert(OpI);
+          relevantTree.insert(OpI);
         }
       }
     }
   }
 
-  return treeOps.size() >= FPOptMinOpsForSplit;
+  SetVector<Instruction *> movedOps;
+  SetVector<Instruction *> keptSubtreeRoots;
+
+  for (auto *op : relevantTree) {
+    if (op == I) {
+      movedOps.insert(op);
+      continue;
+    }
+
+    bool hasExternalUse = false;
+    for (auto *U : op->users()) {
+      if (auto *UI = dyn_cast<Instruction>(U)) {
+        if (!relevantTree.contains(UI)) {
+          hasExternalUse = true;
+          break;
+        }
+      }
+    }
+
+    if (hasExternalUse) {
+      keptSubtreeRoots.insert(op);
+    } else {
+      movedOps.insert(op);
+    }
+  }
+
+  for (auto *keptRoot : keptSubtreeRoots) {
+    SetVector<Instruction *> keptUpstream;
+    SmallVector<Instruction *, 16> keptWorklist;
+    keptWorklist.push_back(keptRoot);
+    keptUpstream.insert(keptRoot);
+
+    while (!keptWorklist.empty()) {
+      Instruction *current = keptWorklist.pop_back_val();
+      auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
+                                             : current->operands();
+      for (auto &op : operands) {
+        if (subgraph.inputs.contains(op)) {
+          continue;
+        }
+        if (auto *OpI = dyn_cast<Instruction>(op)) {
+          if (relevantTree.contains(OpI) && !keptUpstream.contains(OpI)) {
+            keptWorklist.push_back(OpI);
+            keptUpstream.insert(OpI);
+            movedOps.remove(OpI);
+          }
+        }
+      }
+    }
+  }
+
+  bool isBottleneck = movedOps.size() >= FPOptMinOpsForSplit;
+  if (FPOptPrint && isBottleneck) {
+    llvm::errs() << "Bottleneck: " << *I << "\n";
+    llvm::errs() << "Num of operations that would be moved: " << movedOps.size()
+                 << " (>=" << FPOptMinOpsForSplit << ")\n";
+    llvm::errs() << "Num of internal uses: " << internalUses
+                 << " (>=" << FPOptMinUsesForSplit << ")\n";
+    llvm::errs() << "Operations that would be moved:\n";
+    for (auto *op : movedOps) {
+      llvm::errs() << "\t" << *op << "\n";
+    }
+  }
+  return isBottleneck;
 }
 
 SetVector<Value *>
