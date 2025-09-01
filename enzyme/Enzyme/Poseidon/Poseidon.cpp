@@ -347,6 +347,9 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
                 double relErrorTol) {
   bool changed = false;
 
+  // llvm::errs() << "FPOpt: Starting optimization for " << F.getName() << "\n";
+  // F.print(llvm::errs());
+
   const std::string functionName = F.getName().str();
   assert(!FPProfileUse.empty());
   SmallString<128> profilePathBuf(FPProfileUse);
@@ -945,6 +948,7 @@ B2:
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
         if (PTFuncs.count(node->op) != 0) {
           operations.insert(node);
+          llvm::errs() << "FPOpt: PT Function identified: " << *I << "\n";
         }
       }
 
@@ -955,8 +959,14 @@ B2:
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
+      size_t lastNumChanged = 0;
       for (int percent = 10; percent <= 100; percent += 10) {
         size_t numToChange = sortedOps.size() * percent / 100;
+        if (numToChange == 0 || numToChange == lastNumChanged) {
+          continue;
+        }
+
+        lastNumChanged = numToChange;
 
         if (FPOptPrint && numToChange > 0) {
           llvm::errs() << "Created PrecisionChange for " << percent
@@ -1009,8 +1019,14 @@ B2:
       });
 
       // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
+      lastNumChanged = 0;
       for (int percent = 10; percent <= 100; percent += 10) {
         size_t numToChange = sortedAllOps.size() * percent / 100;
+        if (numToChange == 0 || numToChange == lastNumChanged) {
+          continue;
+        }
+
+        lastNumChanged = numToChange;
 
         if (FPOptPrint && numToChange > 0) {
           llvm::errs() << "Created PrecisionChange for " << percent

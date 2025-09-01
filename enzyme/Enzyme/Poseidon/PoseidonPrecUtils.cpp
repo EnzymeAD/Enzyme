@@ -180,8 +180,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
         } else if (Constant *constArg = dyn_cast<Constant>(arg)) {
           IRBuilder<> ConstBuilder(I);
           ConstBuilder.setFastMathFlags(I->getFastMathFlags());
-          newArg =
-              ConstBuilder.CreateFPCast(constArg, newType, "fpopt.const.fpcast");
+          newArg = ConstBuilder.CreateFPCast(constArg, newType,
+                                             "fpopt.const.fpcast");
         } else {
           llvm_unreachable("Unsupported argument type");
         }
@@ -621,8 +621,12 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
 
   pt.apply(subgraph, &VMap);
   // output values in VMap are changed to the new casted values
-  // llvm::errs() << "\nDEBUG: " << pt.desc << "\n";
+  // llvm::errs() << "\n========================================\n";
+  // llvm::errs() << "DEBUG PT Cost Measurement: " << pt.desc << "\n";
+  // llvm::errs() << "========================================\n";
+  // llvm::errs() << "Cloned function AFTER precision changes:\n";
   // FClone->print(llvm::errs());
+  // llvm::errs() << "========================================\n";
 
   SmallPtrSet<Value *, 8> clonedInputs;
   for (auto &input : subgraph.inputs) {
@@ -648,7 +652,20 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       auto instCost = getInstructionCompCost(I, TTI);
-      // llvm::errs() << "Cost of " << *I << " is: " << instCost << "\n";
+
+      // if (I->getType()->isFPOrFPVectorTy() ||
+      //     (I->getOpcode() == Instruction::FCmp)) {
+      //   Type *Ty = I->getType();
+      //   if (I->getOpcode() == Instruction::FCmp)
+      //     Ty = I->getOperand(0)->getType();
+
+      //   std::string precStr = "unknown";
+      //   if (Ty->isFloatTy()) precStr = "FP32";
+      //   else if (Ty->isDoubleTy()) precStr = "FP64";
+
+      //   llvm::errs() << "  [" << precStr << "] Cost=" << instCost
+      //                << " : " << *I << "\n";
+      // }
 
       cost += instCost;
 
@@ -659,6 +676,8 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
       }
     }
   }
+  // llvm::errs() << "Total PT cost for " << pt.desc << ": " << cost << "\n";
+  // llvm::errs() << "========================================\n\n";
 
   FClone->eraseFromParent();
 
