@@ -48,7 +48,8 @@ public:
   }
 
   void updateGradient(double value, double grad) {
-    if (!std::isnan(grad) && !std::isnan(value)) {
+    if (!std::isnan(grad) && !std::isnan(value) && !std::isinf(grad) &&
+        !std::isinf(value)) {
       sumGrad += grad;
       sumSens += std::fabs(grad * value);
     }
