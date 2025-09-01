@@ -32,7 +32,7 @@ jobs:
       run: |
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source ~/.cargo/env
-        rustup toolchain install nightly
+        rustup toolchain install nightly-2025-09-01
         rustup default nightly
     - uses: actions/checkout@v4
       name: Checkout Enzyme
