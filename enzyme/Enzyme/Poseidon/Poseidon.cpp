@@ -89,14 +89,14 @@ cl::opt<std::string> FPOptReductionEval(
     cl::desc("Which reduction result to use in candidate evaluation. "
              "Options are 'geomean', 'arithmean', and 'maxabs'"));
 cl::opt<unsigned> FPOptMinUsesForSplit(
-    "fpopt-min-uses-split", cl::init(3), cl::Hidden,
+    "fpopt-min-uses-split", cl::init(99), cl::Hidden,
     cl::desc("Minimum number of uses of bottleneck node to trigger split"));
 cl::opt<unsigned>
-    FPOptMinOpsForSplit("fpopt-min-ops-split", cl::init(3), cl::Hidden,
+    FPOptMinOpsForSplit("fpopt-min-ops-split", cl::init(99), cl::Hidden,
                         cl::desc("Minimum number of upstream operations of "
                                  "bottleneck node to trigger split"));
 cl::opt<bool>
-    FPOptAggressiveDCE("fpopt-aggressive-dce", cl::init(true), cl::Hidden,
+    FPOptAggressiveDCE("fpopt-aggressive-dce", cl::init(false), cl::Hidden,
                        cl::desc("Aggressively eliminate zero gradient outputs "
                                 "as dead code (non-conditional only)"));
 }
@@ -630,81 +630,7 @@ B2:
                  << " initial subgraphs in " << F.getName() << "\n";
   }
 
-  if (FPOptAggressiveDCE) {
-    auto subgraphIt = subgraphs.begin();
-    while (subgraphIt != subgraphs.end()) {
-      Subgraph &subgraph = *subgraphIt;
-
-      // Don't remove zero gradient outputs that are used as predicates
-      SmallVector<Instruction *, 4> deadOutputs;
-      for (auto *output : subgraph.outputs) {
-        if (valueToNodeMap[output]->grad == 0.) {
-          bool isPredicate = false;
-          for (auto *user : output->users()) {
-            if (isa<FCmpInst>(user)) {
-              isPredicate = true;
-              break;
-            }
-          }
-          if (!isPredicate) {
-            if (FPOptPrint)
-              llvm::errs() << "Aggressive DCE: found zero gradient output: "
-                           << *output << "\n";
-            deadOutputs.push_back(output);
-          }
-        }
-      }
-
-      for (auto *deadOutput : deadOutputs) {
-        if (FPOptPrint)
-          llvm::errs() << "Eliminating zero gradient output as dead code: "
-                       << *deadOutput << "\n";
-
-        if (!deadOutput->use_empty()) {
-          deadOutput->replaceAllUsesWith(
-              UndefValue::get(deadOutput->getType()));
-        }
-
-        subgraph.outputs.remove(deadOutput);
-      }
-
-      SmallVector<Instruction *, 8> sorted;
-      reverseTopoSort(subgraph.operations, sorted);
-
-      for (auto *inst : sorted) {
-        if (inst->use_empty()) {
-          if (FPOptPrint)
-            llvm::errs() << "Aggressive DCE: eliminating unused instruction: "
-                         << *inst << "\n";
-
-          subgraph.operations.remove(inst);
-          valueToNodeMap.erase(inst);
-          inst->eraseFromParent();
-        }
-      }
-
-      if (subgraph.outputs.empty()) {
-        if (FPOptPrint)
-          llvm::errs() << "Removing empty subgraph\n";
-        subgraphIt = subgraphs.erase(subgraphIt);
-      } else {
-        ++subgraphIt;
-      }
-    }
-  }
-
-  if (FPOptPrint && FPOptAggressiveDCE) {
-    llvm::errs() << "FPOpt: After aggressive DCE, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
-  }
-
-  splitSubgraphs(subgraphs);
-
-  if (FPOptPrint) {
-    llvm::errs() << "FPOpt: After splitting, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
-  }
-
+  // Profile read must happen before aggressive DCE as it requires gradients
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
       if (auto MD = op->getMetadata("enzyme_fpprofile_idx")) {
@@ -766,6 +692,112 @@ B2:
         }
       }
     }
+  }
+
+  if (FPOptAggressiveDCE) {
+    SmallSet<Value *, 32> critical;
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        if (auto *fcmp = dyn_cast<FCmpInst>(&I)) {
+          critical.insert(fcmp->getOperand(0));
+          critical.insert(fcmp->getOperand(1));
+        }
+      }
+    }
+
+    SmallVector<Value *, 16> worklist(critical.begin(), critical.end());
+    while (!worklist.empty()) {
+      Value *V = worklist.pop_back_val();
+
+      if (auto *inst = dyn_cast<Instruction>(V)) {
+        auto operands = isa<CallInst>(inst) ? cast<CallInst>(inst)->args()
+                                            : inst->operands();
+        for (auto &op : operands) {
+          if (op->getType()->isFloatingPointTy() &&
+              critical.insert(op).second) {
+            worklist.push_back(op);
+          }
+        }
+
+        if (auto *phi = dyn_cast<PHINode>(inst)) {
+          for (unsigned i = 0; i < phi->getNumIncomingValues(); ++i) {
+            Value *incoming = phi->getIncomingValue(i);
+            if (incoming->getType()->isFloatingPointTy() &&
+                critical.insert(incoming).second) {
+              worklist.push_back(incoming);
+            }
+          }
+        }
+
+        if (auto *load = dyn_cast<LoadInst>(inst)) {
+          Value *ptr = load->getPointerOperand();
+          for (auto *user : ptr->users()) {
+            if (auto *store = dyn_cast<StoreInst>(user)) {
+              Value *storedVal = store->getValueOperand();
+              if (storedVal->getType()->isFloatingPointTy() &&
+                  critical.insert(storedVal).second) {
+                worklist.push_back(storedVal);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (FPOptPrint) {
+      llvm::errs() << "Critical values:\n";
+      for (auto *value : critical) {
+        llvm::errs() << "\t" << *value << "\n";
+      }
+    }
+
+    auto subgraphIt = subgraphs.begin();
+    while (subgraphIt != subgraphs.end()) {
+      Subgraph &subgraph = *subgraphIt;
+      SmallVector<Instruction *, 32> toRemove;
+
+      for (auto *op : subgraph.operations) {
+        auto node = valueToNodeMap[op];
+        if (node->grad == 0. && !critical.count(op)) {
+          if (FPOptPrint)
+            llvm::errs() << "Aggressive DCE: eliminating zero-gradient "
+                         << "non-critical instruction: " << *op << "\n";
+          toRemove.push_back(op);
+        }
+      }
+
+      for (auto *op : toRemove) {
+        if (!op->use_empty()) {
+          op->replaceAllUsesWith(UndefValue::get(op->getType()));
+        }
+
+        valueToNodeMap.erase(op);
+        subgraph.operations.remove(op);
+        subgraph.outputs.remove(op);
+
+        op->eraseFromParent();
+      }
+
+      if (subgraph.outputs.empty()) {
+        if (FPOptPrint)
+          llvm::errs() << "Removing empty subgraph\n";
+        subgraphIt = subgraphs.erase(subgraphIt);
+      } else {
+        ++subgraphIt;
+      }
+    }
+  }
+
+  if (FPOptPrint && FPOptAggressiveDCE) {
+    llvm::errs() << "FPOpt: After aggressive DCE, have " << subgraphs.size()
+                 << " subgraphs in " << F.getName() << "\n";
+  }
+
+  splitSubgraphs(subgraphs);
+
+  if (FPOptPrint) {
+    llvm::errs() << "FPOpt: After splitting, have " << subgraphs.size()
+                 << " subgraphs in " << F.getName() << "\n";
   }
 
   // 1) Identify subgraphs of the computation which can be entirely represented
@@ -936,15 +968,19 @@ B2:
         }
 
         for (auto prec : precTypes) {
+          PrecisionChangeType currentPrec =
+              getPrecisionChangeType(subgraph.outputs[0]->getType());
+          if (prec == currentPrec) {
+            continue;
+          }
+
           std::string precStr = getPrecisionChangeTypeString(prec).str();
           std::string desc =
               "Funcs 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
           SetVector<FPLLValue *> nodesToChange(sortedOps.begin(),
                                                sortedOps.begin() + numToChange);
-          PrecisionChange change(
-              nodesToChange,
-              getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
+          PrecisionChange change(nodesToChange, currentPrec, prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
@@ -986,15 +1022,19 @@ B2:
         }
 
         for (auto prec : precTypes) {
+          PrecisionChangeType currentPrec =
+              getPrecisionChangeType(subgraph.outputs[0]->getType());
+          if (prec == currentPrec) {
+            continue;
+          }
+
           std::string precStr = getPrecisionChangeTypeString(prec).str();
           std::string desc =
               "All 0% -- " + std::to_string(percent) + "% -> " + precStr;
 
           SetVector<FPLLValue *> nodesToChange(
               sortedAllOps.begin(), sortedAllOps.begin() + numToChange);
-          PrecisionChange change(
-              nodesToChange,
-              getPrecisionChangeType(subgraph.outputs[0]->getType()), prec);
+          PrecisionChange change(nodesToChange, currentPrec, prec);
 
           SmallVector<PrecisionChange, 1> changes{std::move(change)};
           PTCandidate candidate{std::move(changes), desc};
@@ -1112,7 +1152,7 @@ B2:
 
   if (FPOptPrint) {
     llvm::errs() << "FPOpt: Finished Optimization\n";
-    // F.print(llvm::errs());
+    F.print(llvm::errs());
   }
 
   return changed;

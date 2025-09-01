@@ -580,6 +580,13 @@ std::string getPrecondition(
     double lower = node->getLowerBound();
     double upper = node->getUpperBound();
 
+    if (upper - lower < 1e-10 && !std::isinf(lower) && !std::isinf(upper)) {
+      double midpoint = (lower + upper) / 2.0;
+      double tolerance = std::max(1e-10, std::abs(midpoint) * 1e-6);
+      lower = midpoint - tolerance;
+      upper = midpoint + tolerance;
+    }
+
     std::ostringstream lowerStr, upperStr;
     lowerStr << std::setprecision(std::numeric_limits<double>::max_digits10)
              << std::scientific << lower;

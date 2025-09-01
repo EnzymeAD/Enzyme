@@ -93,8 +93,9 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
     Value *condValue = operands[0]->getLLValue(builder, VMap);
     Value *trueValue = operands[1]->getLLValue(builder, VMap);
     Value *falseValue = operands[2]->getLLValue(builder, VMap);
-    
-    return builder.CreateSelect(condValue, trueValue, falseValue, "herbie.select");
+
+    return builder.CreateSelect(condValue, trueValue, falseValue,
+                                "herbie.select");
   }
 
   SmallVector<Value *, 3> operandValues;
@@ -772,7 +773,7 @@ void CandidateOutput::findErasableInstructions() {
   erasableInsts.clear();
   erasableInsts.insert(cast<Instruction>(oldOutput));
 
-  for (auto *I : reverse(instsToProcessSorted)) {
+  for (auto *I : instsToProcessSorted) {
     if (erasableInsts.contains(I))
       continue;
 
