@@ -564,11 +564,23 @@ bool accuracyDPSolver(
                   llvm::errs()
                       << "\t\t" << item->expr << " --(" << step.candidateIndex
                       << ")-> " << item->candidates[step.candidateIndex].expr
-                      << "\n";
+                      << "\n\t\tComp cost: "
+                      << item->getCompCostDelta(step.candidateIndex)
+                      << "\n\t\tAcc cost: "
+                      << item->getAccCostDelta(step.candidateIndex) << "\n";
                 } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
                   llvm::errs() << "\t\tCS: "
                                << item->candidates[step.candidateIndex].desc
                                << " (#" << step.candidateIndex << ")\n";
+                  llvm::errs()
+                      << "\t\tAdjusted Comp cost: "
+                      << item->getAdjustedCompCostDelta(
+                             step.candidateIndex, costToSolutionMap[pair.first])
+                      << "\n\t\tAdjusted Acc cost: "
+                      << item->getAdjustedAccCostDelta(
+                             step.candidateIndex, costToSolutionMap[pair.first],
+                             valueToNodeMap, symbolToValueMap)
+                      << "\n";
                   if (FPOptShowPTDetails) {
                     auto &candidate = item->candidates[step.candidateIndex];
                     for (const auto &change : candidate.changes) {
