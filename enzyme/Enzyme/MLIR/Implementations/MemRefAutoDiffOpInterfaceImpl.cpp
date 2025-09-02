@@ -43,7 +43,7 @@ struct LoadOpInterfaceReverse
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
       if (!gutils->isConstantValue(loadOp) &&
           !gutils->isConstantValue(memref)) {
-        Value gradient = gutils->invertPointerM(loadOp, builder);
+        Value gradient = gutils->diffe(loadOp, builder);
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
@@ -190,7 +190,7 @@ struct SubViewOpInterfaceReverse
           gutils->invertPointerM(subviewOp.getSource(), builder),
           newSubviewOp.getMixedOffsets(), newSubviewOp.getMixedSizes(),
           newSubviewOp.getMixedStrides());
-      gutils->setDiffe(subviewOp, shadow, builder);
+      gutils->setInvertedPointer(subviewOp, shadow);
     }
   }
 };

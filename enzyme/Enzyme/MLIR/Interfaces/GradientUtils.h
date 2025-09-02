@@ -87,6 +87,7 @@ public:
   LogicalResult visitChild(Operation *op);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+  void setInvertedPointer(mlir::Value origv, mlir::Value newv);
 
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
