@@ -461,7 +461,12 @@ const std::unordered_set<std::string> &getPTFuncs() {
     for (const auto &func : LibmFuncs) {
       InstructionCost costFP32 = queryCostModel(func, "float");
       InstructionCost costFP64 = queryCostModel(func, "double");
-      if (costFP32 < costFP64)
+      InstructionCost costFPTrunc =
+          queryCostModel("fptrunc_double_to_float", "double");
+      InstructionCost costFPExt =
+          queryCostModel("fpext_float_to_double", "float");
+      InstructionCost costFPCast = costFPTrunc + costFPExt;
+      if (costFP32 + costFPCast < costFP64)
         funcs.insert(func);
     }
     return funcs;
