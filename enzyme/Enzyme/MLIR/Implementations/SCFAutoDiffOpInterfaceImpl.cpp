@@ -1059,12 +1059,108 @@ public:
   }
 };
 
+struct IfOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<IfOpInterfaceReverse,
+                                                       scf::IfOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto ifOp = cast<scf::IfOp>(op);
+    bool hasElse = ifOp.elseBlock() != nullptr;
+    Value cond = gutils->popCache(caches[0], builder);
+
+    SmallVector<bool> resultsActive(ifOp.getNumResults(), false);
+    for (int i = 0, e = resultsActive.size(); i < e; ++i) {
+      resultsActive[i] = !gutils->isConstantValue(ifOp.getResult(i));
+    }
+
+    SmallVector<Value> incomingGradients;
+    for (auto &&[active, res] :
+         llvm::zip_equal(resultsActive, ifOp.getResults())) {
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(res, builder));
+        if (!gutils->isConstantValue(res))
+          gutils->zeroDiffe(res, builder);
+      }
+    }
+
+    auto revIf =
+        builder.create<scf::IfOp>(ifOp.getLoc(), TypeRange{}, cond, hasElse);
+    bool valid = true;
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(op->getRegions(), revIf->getRegions())) {
+      for (auto &&[oBB, revBB] : llvm::zip(oldReg, newReg)) {
+        OpBuilder bodyBuilder(&revBB, revBB.end());
+        bodyBuilder.setInsertionPoint(revBB.getTerminator());
+
+        // All values defined in the body should have no use outside this block
+        // therefore we can set their diffe to zero upon entering the reverse
+        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
+        for (auto &it : oBB.getOperations()) {
+          for (auto res : it.getResults()) {
+            if (!gutils->isConstantValue(res)) {
+              gutils->zeroDiffe(res, bodyBuilder);
+            }
+          }
+        }
+
+        auto term = oBB.getTerminator();
+        // Align incomingGradients with their corresponding yield operands.
+        SmallVector<Value> activeTermOperands;
+        activeTermOperands.reserve(incomingGradients.size());
+        for (auto &&[resultActive, operand] :
+             llvm::zip_equal(resultsActive, term->getOperands())) {
+          if (resultActive)
+            activeTermOperands.push_back(operand);
+        }
+
+        for (auto &&[arg, operand] :
+             llvm::zip_equal(incomingGradients, activeTermOperands)) {
+          // Check activity of the argument separately from the result. If some
+          // branches yield inactive values while others yield active values,
+          // the result will be active, but this operand may still be inactive
+          // (and we cannot addToDiffe)
+          if (!gutils->isConstantValue(operand)) {
+            gutils->addToDiffe(operand, arg, bodyBuilder);
+          }
+        }
+
+        auto first = oBB.rbegin();
+        first++; // skip terminator
+
+        auto last = oBB.rend();
+
+        for (auto it = first; it != last; ++it) {
+          Operation *op = &*it;
+          valid &=
+              gutils->Logic.visitChild(op, bodyBuilder, gutils).succeeded();
+        }
+      }
+    }
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto ifOp = cast<scf::IfOp>(op);
+
+    Operation *newOp = gutils->getNewFromOriginal(op);
+    OpBuilder cacheBuilder(newOp);
+    Value cacheCond = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(ifOp.getCondition()), cacheBuilder);
+    return SmallVector<Value>{cacheCond};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
     registerInterfaces(context);
+    scf::IfOp::attachInterface<IfOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
