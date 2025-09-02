@@ -33,21 +33,34 @@ jobs:
       run: |
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         . ~/.cargo/env
-        rustup toolchain install nightly-2025-09-01
-        rustup default nightly
+        # Pin to specific nightly commit for reproducibility
+        rustup toolchain install nightly-2024-12-15
+        rustup default nightly-2024-12-15
     - uses: actions/checkout@v4
       name: Checkout Enzyme
-    - name: Set BASE_DIR
-      run: |
-        BASE_DIR=${GITHUB_WORKSPACE}
-        echo "BASE_DIR=${BASE_DIR}" >> ${GITHUB_ENV}
     - name: Clone and configure Rust compiler
       run: |
         . ~/.cargo/env
-        git clone --depth 1 --branch master https://github.com/rust-lang/rust.git
+        git clone --depth 1 https://github.com/rust-lang/rust.git
         cd rust
-        ./configure --enable-llvm-link-shared --enable-llvm-plugins --enable-llvm-enzyme --release-channel=nightly --enable-llvm-assertions --enable-clang --enable-lld --enable-option-checking --enable-ninja --disable-docs --enable-ccache
-    - name: Cache Rust build
+        ./configure \
+          --enable-llvm-link-shared \
+          --enable-llvm-plugins \
+          --enable-llvm-enzyme \
+          --release-channel=nightly \
+          --enable-llvm-assertions \
+          --enable-clang \
+          --enable-option-checking \
+          --enable-ninja \
+          --disable-docs \
+          --enable-ccache
+    - name: Setup ccache
+      run: |
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+        echo "CC=ccache gcc" >> $GITHUB_ENV
+        echo "CXX=ccache g++" >> $GITHUB_ENV
+        ccache --max-size=2G
+    - name: Cache build artifacts
       uses: actions/cache@v4
       with:
         path: |
@@ -55,9 +68,9 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           ~/.ccache
-        key: rust-${{ matrix.os }}-${{ hashFiles('rust/.git/HEAD') }}
+        key: rust-nightly-2024-12-15-${{ matrix.os }}-${{ hashFiles('rust/Cargo.lock', 'rust/src/bootstrap/Cargo.lock') }}
         restore-keys: |
-          rust-${{ matrix.os }}-
+          rust-nightly-2024-12-15-${{ matrix.os }}-
     - name: Build Rust compiler stage 1
       working-directory: rust
       run: |
@@ -67,12 +80,18 @@ jobs:
       run: |
         . ~/.cargo/env
         rm -rf build && mkdir build && cd build
-        cmake ../enzyme -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR=${{ env.BASE_DIR }}/rust/build/x86_64-unknown-linux-gnu/llvm/lib/cmake/llvm
-        make -j `nproc`
+        RUST_LLVM_DIR=${GITHUB_WORKSPACE}/rust/build/x86_64-unknown-linux-gnu/llvm
+        cmake ../enzyme \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DLLVM_DIR=$RUST_LLVM_DIR/lib/cmake/llvm \
+          -DLLVM_EXTERNAL_LIT=$RUST_LLVM_DIR/bin/llvm-lit \
+          -GNinja
+        ninja -j `nproc`
     - name: Run Rust autodiff tests
       working-directory: rust
       run: |
         source ~/.cargo/env
+        export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build/Enzyme:$LD_LIBRARY_PATH"
         ./x test --stage 1 tests/codegen-llvm/autodiff
         ./x test --stage 1 tests/pretty/autodiff
         ./x test --stage 1 tests/ui/autodiff
