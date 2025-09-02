@@ -145,6 +145,26 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   let hasCanonicalizer = 1;
 }
 
+def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
+  let summary = "Perform reverse mode AD on a child region";
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
+  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+  }];
+}
+
+def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
+    HasParent<"AutoDiffRegionOp">]> {
+  let summary = "Yield values at the end of an autodiff_region op";
+  let arguments = (ins Variadic<AnyType>:$operands);
+  let assemblyFormat = [{
+    attr-dict ($operands^ `:` type($operands))?
+  }];
+}
+
 def BatchOp : Enzyme_Op<"batch",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";

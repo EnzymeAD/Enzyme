@@ -185,6 +185,17 @@ def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
 }
 
+def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
+  let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
+}
+
+def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
+  let summary = "Outlines enzyme.autodiff_region ops into enzyme.autodiff ops.";
+  let dependentDialects = [
+    "func::FuncDialect"
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
