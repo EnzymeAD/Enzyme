@@ -11,6 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -18,6 +24,8 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include "../Utils.h"
 #include "Poseidon.h"
@@ -811,9 +819,31 @@ InstructionCost getCompCost(
 
   auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap);
 
-  // Materialize the expression in a temporary function
-  FunctionType *FT =
-      FunctionType::get(Type::getVoidTy(M->getContext()), argTypes, false);
+  Type *ReturnType = nullptr;
+  for (Type *ArgTy : argTypes) {
+    if (ArgTy->isFloatingPointTy()) {
+      ReturnType = ArgTy;
+      break;
+    }
+    if (ArgTy->isVectorTy()) {
+      if (auto *VT = dyn_cast<VectorType>(ArgTy)) {
+        if (VT->getElementType()->isFloatingPointTy()) {
+          ReturnType = ArgTy;
+          break;
+        }
+      }
+    }
+  }
+  if (!ReturnType) {
+    if (parsedNode->dtype == "f32")
+      ReturnType = Type::getFloatTy(M->getContext());
+    else if (parsedNode->dtype == "f16")
+      ReturnType = Type::getHalfTy(M->getContext());
+    else
+      ReturnType = Type::getDoubleTy(M->getContext());
+  }
+
+  FunctionType *FT = FunctionType::get(ReturnType, argTypes, false);
   Function *tempFunction =
       Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
 
@@ -826,12 +856,27 @@ InstructionCost getCompCost(
 
   BasicBlock *entry =
       BasicBlock::Create(M->getContext(), "entry", tempFunction);
-  Instruction *ReturnInst = ReturnInst::Create(M->getContext(), entry);
 
-  IRBuilder<> builder(ReturnInst);
+  IRBuilder<> builder(entry);
 
   builder.setFastMathFlags(FMF);
-  parsedNode->getLLValue(builder, &VMap);
+  Value *RetVal = parsedNode->getLLValue(builder, &VMap);
+  assert(RetVal && "Parsed node did not produce a value");
+  assert((RetVal->getType() == ReturnType) &&
+         "Return value type mismatch with temp function return type");
+  builder.CreateRet(RetVal);
+
+  // llvm::errs() << "Temp function before optimizations:\n";
+  // tempFunction->print(llvm::errs());
+
+  PassBuilder PB;
+  FunctionAnalysisManager FAM;
+  PB.registerFunctionAnalyses(FAM);
+  EarlyCSEPass ECSE(false);
+  (void)ECSE.run(*tempFunction, FAM);
+
+  // llvm::errs() << "Temp function after optimizations:\n";
+  // tempFunction->print(llvm::errs());
 
   InstructionCost cost = getCompCost(tempFunction, TTI);
 

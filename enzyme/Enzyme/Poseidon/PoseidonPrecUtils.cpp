@@ -11,8 +11,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cmath>
@@ -237,6 +244,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
     }
 
   } else {
+    llvm::errs() << "Unexpectedly Poseidonable instruction: " << *I << "\n";
     llvm_unreachable("Unexpectedly Poseidonable instruction");
   }
 
@@ -620,13 +628,19 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
   FClone->setName(F->getName() + "_clone");
 
   pt.apply(subgraph, &VMap);
-  // output values in VMap are changed to the new casted values
+
+  PassBuilder PB;
+  FunctionAnalysisManager FAM;
+  PB.registerFunctionAnalyses(FAM);
+  EarlyCSEPass ECSE(false);
+  (void)ECSE.run(*FClone, FAM);
+
   // llvm::errs() << "\n========================================\n";
   // llvm::errs() << "DEBUG PT Cost Measurement: " << pt.desc << "\n";
   // llvm::errs() << "========================================\n";
-  // llvm::errs() << "Cloned function AFTER precision changes:\n";
-  // FClone->print(llvm::errs());
-  // llvm::errs() << "========================================\n";
+  // llvm::errs() << "Cloned function AFTER precision changes and
+  // optimization:\n"; FClone->print(llvm::errs()); llvm::errs() <<
+  // "========================================\n";
 
   SmallPtrSet<Value *, 8> clonedInputs;
   for (auto &input : subgraph.inputs) {
