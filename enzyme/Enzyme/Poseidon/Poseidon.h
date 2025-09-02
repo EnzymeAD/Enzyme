@@ -23,6 +23,7 @@ extern llvm::cl::opt<unsigned> FPOptMaxExprDepth;
 extern llvm::cl::opt<unsigned> FPOptMaxExprLength;
 extern llvm::cl::opt<std::string> FPOptReductionEval;
 extern llvm::cl::opt<std::string> FPOptCachePath;
+extern llvm::cl::opt<bool> FPOptMultiOutputPTOnly;
 }
 
 bool Poseidonable(const Value &V);

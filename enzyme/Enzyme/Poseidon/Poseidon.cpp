@@ -99,6 +99,10 @@ cl::opt<bool>
     FPOptAggressiveDCE("fpopt-aggressive-dce", cl::init(false), cl::Hidden,
                        cl::desc("Aggressively eliminate zero gradient outputs "
                                 "as dead code (non-conditional only)"));
+cl::opt<bool> FPOptMultiOutputPTOnly(
+    "fpopt-multi-output-pt-only", cl::init(false), cl::Hidden,
+    cl::desc("Skip Herbie expression generation for subgraphs with multiple "
+             "outputs (only apply precision changes)"));
 }
 
 bool Poseidonable(const llvm::Value &V) {
@@ -852,7 +856,17 @@ B2:
 
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
-    if (FPOptEnableHerbie) {
+
+    bool skipHerbie = false;
+    if (FPOptMultiOutputPTOnly && subgraph.outputs.size() > 1) {
+      skipHerbie = true;
+      if (FPOptPrint)
+        llvm::errs() << "Skipping Herbie for subgraph with "
+                     << subgraph.outputs.size()
+                     << " outputs (fpopt-multi-output-pt-only is set)\n";
+    }
+
+    if (FPOptEnableHerbie && !skipHerbie) {
       for (const auto &input : subgraph.inputs) {
         auto node = valueToNodeMap[input];
         if (node->op == "__const") {
@@ -871,7 +885,6 @@ B2:
 
       std::vector<std::string> herbieInputs;
       std::vector<CandidateOutput> newCOs;
-      int outputCounter = 0;
 
       assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
       for (auto &output : subgraph.outputs) {
@@ -887,6 +900,14 @@ B2:
 
         std::string expr = valueToNodeMap[output]->toFullExpression(
             valueToNodeMap, subgraph.inputs);
+
+        if (expr.length() > FPOptMaxExprLength) {
+          llvm::errs() << "WARNING: Skipping Herbie optimization for "
+                       << *output << " since expression length "
+                       << expr.length() << " exceeds limit of "
+                       << FPOptMaxExprLength << "\n";
+          continue;
+        }
 
         // Skip trivial expressions with only one operation
         auto parenCount = std::count(expr.begin(), expr.end(), '(');
@@ -915,7 +936,7 @@ B2:
         properties += " :pre " + precondition;
 
         CandidateOutput CO(subgraph, output, expr, grad, executions, TTI);
-        properties += " :name \"" + std::to_string(outputCounter++) + "\"";
+        properties += " :name \"" + std::to_string(newCOs.size()) + "\"";
 
         std::string argStr;
         for (const auto &arg : args) {
@@ -928,14 +949,6 @@ B2:
             "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
         if (FPOptPrint)
           llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
-
-        if (herbieInput.length() > FPOptMaxExprLength) {
-          llvm::errs() << "WARNING: Skipping Herbie optimization for "
-                       << *output
-                       << " since expression length exceeds limit of "
-                       << FPOptMaxExprLength << "\n";
-          continue;
-        }
 
         herbieInputs.push_back(herbieInput);
         newCOs.push_back(CO);
