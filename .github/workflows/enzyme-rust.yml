@@ -54,23 +54,14 @@ jobs:
           --enable-ninja \
           --disable-docs \
           --enable-ccache
-    - name: Setup ccache
-      run: |
-        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-        echo "CC=ccache gcc" >> $GITHUB_ENV
-        echo "CXX=ccache g++" >> $GITHUB_ENV
-        ccache --max-size=2G
     - name: Cache build artifacts
       uses: actions/cache@v4
       with:
         path: |
           rust/build
-          ~/.cargo/registry
-          ~/.cargo/git
-          ~/.ccache
-        key: rust-nightly-2024-12-15-${{ matrix.os }}-${{ hashFiles('rust/Cargo.lock', 'rust/src/bootstrap/Cargo.lock') }}
+        key: rust-51ff8950-${{ matrix.os }}
         restore-keys: |
-          rust-nightly-2024-12-15-${{ matrix.os }}-
+          rust-51ff8950-
     - name: Build Rust compiler stage 1
       working-directory: rust
       run: |
