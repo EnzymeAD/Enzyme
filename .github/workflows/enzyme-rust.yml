@@ -41,8 +41,9 @@ jobs:
     - name: Clone and configure Rust compiler
       run: |
         . ~/.cargo/env
-        git clone --depth 1 https://github.com/rust-lang/rust.git
+        git clone https://github.com/rust-lang/rust.git
         cd rust
+        git checkout 51ff895062ba60a7cba53f57af928c3fb7b0f2f4
         ./configure \
           --enable-llvm-link-shared \
           --enable-llvm-plugins \
