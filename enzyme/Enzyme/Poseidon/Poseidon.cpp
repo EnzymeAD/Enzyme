@@ -1211,6 +1211,8 @@ B2:
     llvm::errs() << "FPOpt: Finished cleaning up " << F.getName() << "\n";
   }
 
+  runPoseidonFunctionSimplify(F, OptimizationLevel::O3);
+
   if (FPOptPrint) {
     llvm::errs() << "FPOpt: Finished Optimization\n";
     F.print(llvm::errs());

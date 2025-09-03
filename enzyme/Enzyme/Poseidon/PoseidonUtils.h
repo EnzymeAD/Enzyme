@@ -21,6 +21,7 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Passes/OptimizationLevel.h"
 #include "llvm/Support/InstructionCost.h"
 
 #include <map>
@@ -76,5 +77,7 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
                       SmallPtrSetImpl<Value *> &visited);
 
 void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs);
+
+void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level);
 
 #endif // ENZYME_POSEIDON_UTILS_H

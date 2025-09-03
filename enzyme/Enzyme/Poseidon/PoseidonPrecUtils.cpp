@@ -18,9 +18,12 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include <cmath>
 #include <string>
@@ -139,27 +142,17 @@ void changePrecision(Instruction *I, PrecisionChange &change,
         newOp = oldToNew[operand];
       } else if (operand->getType()->isIntegerTy()) {
         newOp = operand;
-        oldToNew[operand] = newOp;
       } else {
-        if (Instruction *opInst = dyn_cast<Instruction>(operand)) {
-          IRBuilder<> OpBuilder(opInst->getParent(),
-                                ++BasicBlock::iterator(opInst));
-          OpBuilder.setFastMathFlags(I->getFastMathFlags());
-          newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
-        } else if (Argument *argOp = dyn_cast<Argument>(operand)) {
-          BasicBlock &entry = argOp->getParent()->getEntryBlock();
-          IRBuilder<> OpBuilder(&*entry.getFirstInsertionPt());
-          OpBuilder.setFastMathFlags(I->getFastMathFlags());
-          newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
-        } else if (Constant *constOp = dyn_cast<Constant>(operand)) {
-          IRBuilder<> ConstBuilder(I);
-          ConstBuilder.setFastMathFlags(I->getFastMathFlags());
+        IRBuilder<> OpBuilder(I);
+        OpBuilder.setFastMathFlags(I->getFastMathFlags());
+        if (isa<Constant>(operand)) {
           newOp =
-              ConstBuilder.CreateFPCast(constOp, newType, "fpopt.const.fpcast");
+              OpBuilder.CreateFPCast(operand, newType, "fpopt.const.fpcast");
+        } else if (isa<Argument>(operand) || isa<Instruction>(operand)) {
+          newOp = OpBuilder.CreateFPCast(operand, newType, "fpopt.fpcast");
         } else {
           llvm_unreachable("Unsupported operand type");
         }
-        oldToNew[operand] = newOp;
       }
       newOps.push_back(newOp);
     }
@@ -172,27 +165,16 @@ void changePrecision(Instruction *I, PrecisionChange &change,
         newArg = oldToNew[arg];
       } else if (arg->getType()->isIntegerTy()) {
         newArg = arg;
-        oldToNew[arg] = newArg;
       } else {
-        if (Instruction *argInst = dyn_cast<Instruction>(arg)) {
-          IRBuilder<> ArgBuilder(argInst->getParent(),
-                                 ++BasicBlock::iterator(argInst));
-          ArgBuilder.setFastMathFlags(I->getFastMathFlags());
+        IRBuilder<> ArgBuilder(I);
+        ArgBuilder.setFastMathFlags(I->getFastMathFlags());
+        if (isa<Constant>(arg)) {
+          newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.const.fpcast");
+        } else if (isa<Argument>(arg) || isa<Instruction>(arg)) {
           newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
-        } else if (Argument *argArg = dyn_cast<Argument>(arg)) {
-          BasicBlock &entry = argArg->getParent()->getEntryBlock();
-          IRBuilder<> ArgBuilder(&*entry.getFirstInsertionPt());
-          ArgBuilder.setFastMathFlags(I->getFastMathFlags());
-          newArg = ArgBuilder.CreateFPCast(arg, newType, "fpopt.fpcast");
-        } else if (Constant *constArg = dyn_cast<Constant>(arg)) {
-          IRBuilder<> ConstBuilder(I);
-          ConstBuilder.setFastMathFlags(I->getFastMathFlags());
-          newArg = ConstBuilder.CreateFPCast(constArg, newType,
-                                             "fpopt.const.fpcast");
         } else {
           llvm_unreachable("Unsupported argument type");
         }
-        oldToNew[arg] = newArg;
       }
       newArgs.push_back(newArg);
     }
@@ -629,27 +611,46 @@ InstructionCost getCompCost(Subgraph &subgraph, const TargetTransformInfo &TTI,
 
   pt.apply(subgraph, &VMap);
 
-  PassBuilder PB;
-  FunctionAnalysisManager FAM;
-  PB.registerFunctionAnalyses(FAM);
-  EarlyCSEPass ECSE(false);
-  (void)ECSE.run(*FClone, FAM);
-
   // llvm::errs() << "\n========================================\n";
   // llvm::errs() << "DEBUG PT Cost Measurement: " << pt.desc << "\n";
   // llvm::errs() << "========================================\n";
+  // llvm::errs() << "Before optimization:\n";
+  // FClone->print(llvm::errs());
+  // llvm::errs() << "========================================\n";
+
+  SmallVector<WeakTrackingVH, 8> trackedInputs;
+  for (auto &input : subgraph.inputs) {
+    if (VMap.count(input))
+      trackedInputs.emplace_back(VMap[input]);
+  }
+  SmallVector<WeakTrackingVH, 8> trackedOutputs;
+  for (auto &output : subgraph.outputs) {
+    if (VMap.count(output))
+      trackedOutputs.emplace_back(VMap[output]);
+  }
+
+  runPoseidonFunctionSimplify(*FClone, OptimizationLevel::O3);
+
   // llvm::errs() << "Cloned function AFTER precision changes and
   // optimization:\n"; FClone->print(llvm::errs()); llvm::errs() <<
   // "========================================\n";
 
   SmallPtrSet<Value *, 8> clonedInputs;
-  for (auto &input : subgraph.inputs) {
-    clonedInputs.insert(VMap[input]);
+  for (auto &VH : trackedInputs) {
+    if (!VH.pointsToAliveValue())
+      continue;
+    Value *V = VH;
+    if (V)
+      clonedInputs.insert(V);
   }
 
   SmallPtrSet<Value *, 8> clonedOutputs;
-  for (auto &output : subgraph.outputs) {
-    clonedOutputs.insert(VMap[output]);
+  for (auto &VH : trackedOutputs) {
+    if (!VH.pointsToAliveValue())
+      continue;
+    Value *V = VH;
+    if (V)
+      clonedOutputs.insert(V);
   }
 
   SmallPtrSet<Value *, 8> seen;

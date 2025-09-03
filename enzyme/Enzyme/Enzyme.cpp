@@ -1128,10 +1128,11 @@ public:
           if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
             errTol = CFP->getValueAPF().convertToDouble();
           } else {
-            EmitFailure("InvalidErrorTolerance", CI->getDebugLoc(), CI,
-                        "Relative error tolerance must be a constant floating-point "
-                        "value, got ",
-                        *relErrorArg);
+            EmitFailure(
+                "InvalidErrorTolerance", CI->getDebugLoc(), CI,
+                "Relative error tolerance must be a constant floating-point "
+                "value, got ",
+                *relErrorArg);
             return {};
           }
           skipArg = true;
@@ -2350,8 +2351,6 @@ public:
       if (!optimized) {
         EmitWarning("NoChange", *CI, "Poseidon returned false (no change) for ",
                     F->getName());
-      } else {
-        Logic.PPC.optimizeIntermediate(F);
       }
     }
 
@@ -2361,7 +2360,7 @@ public:
 
     CI->replaceAllUsesWith(optCall);
     CI->eraseFromParent();
-    
+
     calls.push_back(optCall);
 
     return true;
@@ -3141,31 +3140,31 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,
+&AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,
+&AAMemoryLocation::ID,
+&AANoUnwind::ID,
+          &AANoSync::ID,
+&AANoRecurse::ID,
+&AAWillReturn::ID,
+          &AANoReturn::ID,
+&AANonNull::ID,
+&AANoAlias::ID,
+          &AADereferenceable::ID,
+&AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,
+&AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
       AttributorConfig aconfig(CGUpdater);

@@ -869,11 +869,7 @@ InstructionCost getCompCost(
   // llvm::errs() << "Temp function before optimizations:\n";
   // tempFunction->print(llvm::errs());
 
-  PassBuilder PB;
-  FunctionAnalysisManager FAM;
-  PB.registerFunctionAnalyses(FAM);
-  EarlyCSEPass ECSE(false);
-  (void)ECSE.run(*tempFunction, FAM);
+  runPoseidonFunctionSimplify(*tempFunction, OptimizationLevel::O3);
 
   // llvm::errs() << "Temp function after optimizations:\n";
   // tempFunction->print(llvm::errs());

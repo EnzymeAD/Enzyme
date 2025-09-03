@@ -72,6 +72,28 @@ cl::opt<unsigned>
                     cl::desc("The random seed used in the FPOpt pass"));
 }
 
+void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
+
+  PassBuilder PB;
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  if (verifyFunction(F, &llvm::errs())) {
+    llvm_unreachable("Poseidon intermediate function failed verification");
+  }
+
+  FunctionPassManager FPM =
+      PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+  (void)FPM.run(F, FAM);
+}
+
 static const std::unordered_set<std::string> LibmFuncs = {
     "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
     "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "exp",
