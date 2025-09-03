@@ -201,8 +201,43 @@ struct SubViewOpInterfaceReverse
   }
 };
 
-class MemRefTypeInterface
-    : public AutoDiffTypeInterface::ExternalModel<MemRefTypeInterface,
+class MemRefCachableTypeInterface
+    : public CachableTypeInterface::ExternalModel<MemRefCachableTypeInterface,
+                                                  MemRefType> {
+
+public:
+  mlir::Operation *createPush(mlir::Type self, OpBuilder &builder, Value cache,
+                              Value value) const {
+    MemRefType MT = cast<MemRefType>(self);
+    SmallVector<Value> dynamicSizes;
+
+    for (auto [i, s] : llvm::enumerate(MT.getShape())) {
+      if (s == ShapedType::kDynamic) {
+        Value dim = builder.create<arith::ConstantIndexOp>(value.getLoc(), i);
+        dynamicSizes.push_back(
+            builder.create<memref::DimOp>(value.getLoc(), value, dim));
+      }
+    }
+
+    auto clone =
+        builder.create<memref::AllocOp>(value.getLoc(), self, dynamicSizes);
+    builder.create<memref::CopyOp>(value.getLoc(), value, clone);
+
+    return builder.create<enzyme::PushOp>(value.getLoc(), cache, clone);
+  }
+
+  Value createPop(mlir::Type self, OpBuilder &builder, Value cache) const {
+    return builder.create<enzyme::PopOp>(cache.getLoc(), self, cache);
+  }
+
+  void deletePoppedValue(mlir::Type self, OpBuilder &builder,
+                         Value value) const {
+    builder.create<memref::DeallocOp>(value.getLoc(), value);
+  };
+};
+
+class MemRefAutoDiffTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<MemRefAutoDiffTypeInterface,
                                                   MemRefType> {
 public:
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
@@ -250,7 +285,8 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
     registerInterfaces(context);
-    MemRefType::attachInterface<MemRefTypeInterface>(*context);
+    MemRefType::attachInterface<MemRefAutoDiffTypeInterface>(*context);
+    MemRefType::attachInterface<MemRefCachableTypeInterface>(*context);
 
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);

@@ -114,4 +114,41 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
   }];
 }
 
+def CachableTypeInterface : TypeInterface<"CachableTypeInterface"> {
+  let description = [{
+    An MLIR type values of which should be cached in a specific manner.
+    Used for mutable types which needs to allocate on push/free on pop.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{
+        Create a push of a value on a cache of this type.
+      }],
+      /*retTy=*/"::mlir::Operation *",
+      /*methodName=*/"createPush",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$cache, "::mlir::Value":$value)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Pop the content of the cache which contains this value.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"createPop",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$cache)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        The popped value is no longer needed, perform any cleanup necessary.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"deletePoppedValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$value)
+    >
+  ];
+
+  let extraSharedClassDeclaration = [{}];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFTYPEINTERFACE
