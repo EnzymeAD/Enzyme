@@ -80,11 +80,11 @@ jobs:
       run: |
         . ~/.cargo/env
         rm -rf build && mkdir build && cd build
-        RUST_LLVM_DIR=${GITHUB_WORKSPACE}/rust/build/x86_64-unknown-linux-gnu/llvm
+        RUST_LLVM_DIR="${GITHUB_WORKSPACE}/rust/build/x86_64-unknown-linux-gnu/llvm"
         cmake ../enzyme \
           -DCMAKE_BUILD_TYPE=Release \
-          -DLLVM_DIR=$RUST_LLVM_DIR/lib/cmake/llvm \
-          -DLLVM_EXTERNAL_LIT=$RUST_LLVM_DIR/bin/llvm-lit \
+          -DLLVM_DIR="$RUST_LLVM_DIR/lib/cmake/llvm" \
+          -DLLVM_EXTERNAL_LIT="$RUST_LLVM_DIR/bin/llvm-lit" \
           -GNinja
         ninja -j `nproc`
     - name: Run Rust autodiff tests
