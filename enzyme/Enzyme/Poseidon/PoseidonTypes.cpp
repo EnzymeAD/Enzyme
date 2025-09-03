@@ -867,25 +867,17 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
 
   Subgraph newSubgraph = *this->subgraph;
 
-  SmallPtrSet<Instruction *, 32> rewrittenInsts;
   for (auto &step : steps) {
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
       const auto &CO = **ptr;
       if (CO.subgraph == subgraph) {
-        rewrittenInsts.insert(CO.erasableInsts.begin(), CO.erasableInsts.end());
-
-        SmallPtrSet<Instruction *, 16> exprInsts;
-        SmallPtrSet<Value *, 16> visited;
-        collectExprInsts(CO.oldOutput, subgraph->inputs, exprInsts, visited);
-        rewrittenInsts.insert(exprInsts.begin(), exprInsts.end());
-
+        // Eliminate erasadable instructions from the adjusted CS
+        newSubgraph.operations.remove_if(
+            [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
         newSubgraph.outputs.remove(cast<Instruction>(CO.oldOutput));
       }
     }
   }
-
-  newSubgraph.operations.remove_if(
-      [&rewrittenInsts](Instruction *I) { return rewrittenInsts.contains(I); });
 
   // If all outputs are rewritten, then the adjusted CS is empty
   if (newSubgraph.outputs.empty()) {
@@ -934,33 +926,28 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
   double totalCandidateAccCost = 0.0;
   double totalInitialAccCost = 0.0;
 
-  SmallPtrSet<Instruction *, 32> rewrittenInsts;
-  SmallPtrSet<FPNode *, 8> rewrittenOutputNodes;
-
+  // Collect erased output nodes
+  SmallPtrSet<FPNode *, 8> stepNodes;
   for (const auto &step : steps) {
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
       const auto &CO = **ptr;
       if (CO.subgraph == subgraph) {
         auto it = valueToNodeMap.find(CO.oldOutput);
         assert(it != valueToNodeMap.end() && it->second);
-        rewrittenOutputNodes.insert(it->second.get());
-
-        SmallPtrSet<Instruction *, 16> exprInsts;
-        SmallPtrSet<Value *, 16> visited;
-        collectExprInsts(CO.oldOutput, subgraph->inputs, exprInsts, visited);
-        rewrittenInsts.insert(exprInsts.begin(), exprInsts.end());
+        stepNodes.insert(it->second.get());
       }
     }
   }
 
+  // Iterate over all output nodes and sum costs for nodes not erased
   for (auto &[node, cost] : perOutputInitialAccCost) {
-    if (!rewrittenOutputNodes.count(node)) {
+    if (!stepNodes.count(node)) {
       totalInitialAccCost += cost;
     }
   }
 
   for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
-    if (!rewrittenOutputNodes.count(node)) {
+    if (!stepNodes.count(node)) {
       totalCandidateAccCost += cost;
     }
   }
