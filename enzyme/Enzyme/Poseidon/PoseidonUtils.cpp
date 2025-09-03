@@ -291,8 +291,8 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       OpcodeName = "fptrunc";
       break;
     case Instruction::PHI:
-      return 0;
     case Instruction::Select:
+    case Instruction::Load:
       return 0;
     case Instruction::Call: {
       auto *Call = cast<CallInst>(I);

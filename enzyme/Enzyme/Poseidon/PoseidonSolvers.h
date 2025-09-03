@@ -15,6 +15,8 @@
 #define ENZYME_POSEIDON_SOLVERS_H
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -42,6 +44,7 @@ bool accuracyGreedySolver(
     std::unordered_map<std::string, Value *> &symbolToValueMap);
 
 bool accuracyDPSolver(
+    Function &F, const TargetTransformInfo &TTI,
     SmallVector<CandidateOutput, 4> &COs,
     SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,

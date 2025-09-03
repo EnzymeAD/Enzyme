@@ -241,9 +241,12 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
   if (VMap) {
     for (auto *I : subgraph.operations) {
       assert(VMap->count(I));
-      operations.insert(cast<Instruction>(VMap->lookup(I)));
-
-      clonedToOriginal[VMap->lookup(I)] = I;
+      if (Value *Mapped = VMap->lookup(I)) {
+        if (auto *MappedI = dyn_cast<Instruction>(Mapped)) {
+          operations.insert(MappedI);
+          clonedToOriginal[MappedI] = I;
+        }
+      }
       // llvm::errs() << "Mapping back: " << *VMap->lookup(I) << " (in "
       //              << cast<Instruction>(VMap->lookup(I))
       //                     ->getParent()
@@ -270,7 +273,15 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
       auto *I = cast<Instruction>(node->value);
       if (VMap) {
         assert(VMap->count(I));
-        I = cast<Instruction>(VMap->lookup(I));
+        if (Value *Mapped = VMap->lookup(I)) {
+          if (auto *MappedI = dyn_cast<Instruction>(Mapped)) {
+            I = MappedI;
+          } else {
+            continue;
+          }
+        } else {
+          continue;
+        }
       }
       if (!operations.contains(I)) {
         // Already erased by `CO.apply()`.

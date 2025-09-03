@@ -20,6 +20,13 @@
 #include "PoseidonSolvers.h"
 #include "PoseidonTypes.h"
 
+#include "PoseidonHerbieUtils.h"
+#include "PoseidonPrecUtils.h"
+#include "PoseidonUtils.h"
+
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+
 #include <random>
 
 using namespace llvm;
@@ -51,6 +58,11 @@ cl::opt<double> FPOptCostDominanceThreshold(
 cl::opt<double> FPOptAccuracyDominanceThreshold(
     "fpopt-acc-dom-thres", cl::init(0.0), cl::Hidden,
     cl::desc("The threshold for accuracy dominance in DP solver"));
+cl::opt<bool> FPOptRefineDPTable(
+    "fpopt-refine-dp", cl::init(false), cl::Hidden,
+    cl::desc("After initial DP build, materialize each solution in a cloned\n"
+             "function, run O3, and recompute cost deltas. Only applies when\n"
+             "generating a new cache, not when loading from cache."));
 }
 
 #if LLVM_VERSION_MAJOR >= 21
@@ -169,6 +181,7 @@ bool accuracyGreedySolver(
 }
 
 bool accuracyDPSolver(
+    Function &F, const TargetTransformInfo &TTI,
     SmallVector<CandidateOutput, 4> &COs,
     SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -526,15 +539,159 @@ bool accuracyDPSolver(
     }
     jsonObj["costToSolutionMap"] = std::move(costSolMap);
 
-    std::error_code EC;
-    llvm::raw_fd_ostream cacheFile(cacheFilePath, EC, llvm::sys::fs::OF_Text);
-    if (EC) {
-      llvm::errs() << "Error writing cache file: " << EC.message() << "\n";
-    } else {
-      cacheFile << llvm::formatv("{0:2}", llvm::json::Value(std::move(jsonObj)))
-                << "\n";
-      cacheFile.close();
-      llvm::errs() << "DP tables cached to file.\n";
+    if (!FPOptRefineDPTable) {
+      std::error_code EC;
+      llvm::raw_fd_ostream cacheFile(cacheFilePath, EC, llvm::sys::fs::OF_Text);
+      if (EC) {
+        llvm::errs() << "Error writing cache file: " << EC.message() << "\n";
+      } else {
+        cacheFile << llvm::formatv("{0:2}",
+                                   llvm::json::Value(std::move(jsonObj)))
+                  << "\n";
+        cacheFile.close();
+        llvm::errs() << "DP tables cached to file.\n";
+      }
+    } else if (!COs.empty() || !CSs.empty()) {
+      ValueToValueMapTy BaseVMap;
+      Function *BaseClone = CloneFunction(&F, BaseVMap);
+      runPoseidonFunctionSimplify(*BaseClone, OptimizationLevel::O3);
+      InstructionCost BaseCost = getCompCost(BaseClone, TTI);
+      BaseClone->eraseFromParent();
+
+      using CostMap = std::map<InstructionCost, double>;
+      using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
+      CostMap refinedCostToAccuracyMap;
+      SolutionMap refinedCostToSolutionMap;
+
+      for (const auto &pair : costToSolutionMap) {
+        const SmallVector<SolutionStep> &steps = pair.second;
+
+        ValueToValueMapTy VMap;
+        Function *FClone = CloneFunction(&F, VMap);
+
+        for (const auto &step : steps) {
+          std::visit(
+              [&](auto *item) {
+                using T = std::decay_t<decltype(*item)>;
+                if constexpr (std::is_same_v<T, CandidateOutput>) {
+                  auto &CO = *item;
+                  Instruction *oldI = cast<Instruction>(CO.oldOutput);
+                  Instruction *clonedOldI = cast<Instruction>(VMap[oldI]);
+                  IRBuilder<> builder(clonedOldI->getParent(),
+                                      ++BasicBlock::iterator(clonedOldI));
+                  builder.setFastMathFlags(clonedOldI->getFastMathFlags());
+                  auto parsedNode =
+                      parseHerbieExpr(CO.candidates[step.candidateIndex].expr,
+                                      valueToNodeMap, symbolToValueMap);
+                  Value *newVal = parsedNode->getLLValue(builder, &VMap);
+                  clonedOldI->replaceAllUsesWith(newVal);
+                } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
+                  auto &CS = *item;
+                  PTCandidate &pt = CS.candidates[step.candidateIndex];
+                  pt.apply(*CS.subgraph, &VMap);
+                } else {
+                  llvm_unreachable("accuracyDPSolver refine: unexpected step");
+                }
+              },
+              step.item);
+        }
+
+        runPoseidonFunctionSimplify(*FClone, OptimizationLevel::O3);
+        InstructionCost NewTotal = getCompCost(FClone, TTI);
+        InstructionCost NewDelta = NewTotal - BaseCost;
+        FClone->eraseFromParent();
+
+        double accCost = costToAccuracyMap[pair.first];
+        auto it = refinedCostToAccuracyMap.find(NewDelta);
+        if (it == refinedCostToAccuracyMap.end() || it->second > accCost) {
+          refinedCostToAccuracyMap[NewDelta] = accCost;
+          refinedCostToSolutionMap[NewDelta] = steps;
+        }
+      }
+
+      // One-pass domination pruning
+      std::map<InstructionCost, double> refinedPrunedAcc;
+      std::map<InstructionCost, SmallVector<SolutionStep>> refinedPrunedSol;
+      for (const auto &l : refinedCostToAccuracyMap) {
+        InstructionCost currCompCost = l.first;
+        double currAccCost = l.second;
+        bool dominated = false;
+        for (const auto &r : refinedCostToAccuracyMap) {
+          InstructionCost otherCompCost = r.first;
+          double otherAccCost = r.second;
+          if (currCompCost - otherCompCost >
+                  std::fabs(FPOptCostDominanceThreshold *
+                            GET_INSTRUCTION_COST(otherCompCost)) &&
+              currAccCost - otherAccCost >=
+                  std::fabs(FPOptAccuracyDominanceThreshold * otherAccCost)) {
+            dominated = true;
+            break;
+          }
+        }
+        if (!dominated) {
+          refinedPrunedAcc[currCompCost] = currAccCost;
+          refinedPrunedSol[currCompCost] =
+              refinedCostToSolutionMap[currCompCost];
+        }
+      }
+
+      costToAccuracyMap = std::move(refinedPrunedAcc);
+      costToSolutionMap = std::move(refinedPrunedSol);
+
+      json::Object jsonObj;
+
+      json::Object costAccMap;
+      for (const auto &p : costToAccuracyMap) {
+        costAccMap[std::to_string(GET_INSTRUCTION_COST(p.first))] = p.second;
+      }
+      jsonObj["costToAccuracyMap"] = std::move(costAccMap);
+
+      json::Object costSolMap;
+      std::unordered_map<CandidateOutput *, size_t> aoPtrToIndex;
+      for (size_t i = 0; i < COs.size(); ++i)
+        aoPtrToIndex[&COs[i]] = i;
+      std::unordered_map<CandidateSubgraph *, size_t> accPtrToIndex;
+      for (size_t i = 0; i < CSs.size(); ++i)
+        accPtrToIndex[&CSs[i]] = i;
+
+      for (const auto &p : costToSolutionMap) {
+        json::Array stepsArray;
+        for (const auto &step : p.second) {
+          json::Object stepObj;
+          stepObj["candidateIndex"] = static_cast<int64_t>(step.candidateIndex);
+          std::visit(
+              [&](auto *item) {
+                using T = std::decay_t<decltype(*item)>;
+                if constexpr (std::is_same_v<T, CandidateOutput>) {
+                  stepObj["itemType"] = "CO";
+                  size_t index = aoPtrToIndex[item];
+                  stepObj["itemIndex"] = static_cast<int64_t>(index);
+                } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
+                  stepObj["itemType"] = "CS";
+                  size_t index = accPtrToIndex[item];
+                  stepObj["itemIndex"] = static_cast<int64_t>(index);
+                }
+              },
+              step.item);
+          stepsArray.push_back(std::move(stepObj));
+        }
+        costSolMap[std::to_string(GET_INSTRUCTION_COST(p.first))] =
+            std::move(stepsArray);
+      }
+      jsonObj["costToSolutionMap"] = std::move(costSolMap);
+
+      std::error_code EC;
+      llvm::raw_fd_ostream cacheFile(cacheFilePath, EC, llvm::sys::fs::OF_Text);
+      if (EC) {
+        llvm::errs() << "Error writing refined cache file: " << EC.message()
+                     << "\n";
+      } else {
+        cacheFile << llvm::formatv("{0:2}",
+                                   llvm::json::Value(std::move(jsonObj)))
+                  << "\n";
+        cacheFile.close();
+        llvm::errs() << "Refined DP tables cached to file.\n";
+      }
     }
   }
 
@@ -563,24 +720,11 @@ bool accuracyDPSolver(
                 if constexpr (std::is_same_v<T, CandidateOutput>) {
                   llvm::errs()
                       << "\t\t" << item->expr << " --(" << step.candidateIndex
-                      << ")-> " << item->candidates[step.candidateIndex].expr
-                      << "\n\t\tComp cost: "
-                      << item->getCompCostDelta(step.candidateIndex)
-                      << "\n\t\tAcc cost: "
-                      << item->getAccCostDelta(step.candidateIndex) << "\n";
+                      << ")-> " << item->candidates[step.candidateIndex].expr;
                 } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
                   llvm::errs() << "\t\tCS: "
                                << item->candidates[step.candidateIndex].desc
                                << " (#" << step.candidateIndex << ")\n";
-                  llvm::errs()
-                      << "\t\tAdjusted Comp cost: "
-                      << item->getAdjustedCompCostDelta(
-                             step.candidateIndex, costToSolutionMap[pair.first])
-                      << "\n\t\tAdjusted Acc cost: "
-                      << item->getAdjustedAccCostDelta(
-                             step.candidateIndex, costToSolutionMap[pair.first],
-                             valueToNodeMap, symbolToValueMap)
-                      << "\n";
                   if (FPOptShowPTDetails) {
                     auto &candidate = item->candidates[step.candidateIndex];
                     for (const auto &change : candidate.changes) {

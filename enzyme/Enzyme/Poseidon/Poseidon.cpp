@@ -1179,7 +1179,8 @@ B2:
       changed =
           accuracyGreedySolver(COs, CSs, valueToNodeMap, symbolToValueMap);
     } else if (FPOptSolverType == "dp") {
-      changed = accuracyDPSolver(COs, CSs, valueToNodeMap, symbolToValueMap);
+      changed =
+          accuracyDPSolver(F, TTI, COs, CSs, valueToNodeMap, symbolToValueMap);
     } else {
       llvm::errs() << "FPOpt: Unknown solver type: " << FPOptSolverType << "\n";
       return false;
