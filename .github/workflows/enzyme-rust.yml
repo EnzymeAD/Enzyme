@@ -33,9 +33,8 @@ jobs:
       run: |
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         . ~/.cargo/env
-        # Pin to specific nightly commit for reproducibility
-        rustup toolchain install nightly-2024-12-15
-        rustup default nightly-2024-12-15
+        rustup toolchain install nightly
+        rustup default nightly
     - uses: actions/checkout@v4
       name: Checkout Enzyme
     - name: Clone and configure Rust compiler
