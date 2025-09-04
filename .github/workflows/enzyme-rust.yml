@@ -18,6 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux-x86-n2-32]
+        commit: [51ff895062ba60a7cba53f57af928c3fb7b0f2f4]
     
     timeout-minutes: 90
 
@@ -42,7 +43,7 @@ jobs:
         . ~/.cargo/env
         git clone https://github.com/rust-lang/rust.git
         cd rust
-        git checkout 51ff895062ba60a7cba53f57af928c3fb7b0f2f4
+        git checkout ${{ matrix.commit }}
         ./configure \
           --enable-llvm-link-shared \
           --enable-llvm-plugins \
@@ -59,9 +60,9 @@ jobs:
       with:
         path: |
           rust/build
-        key: rust-51ff8950-${{ matrix.os }}
+        key: rust-${{ matrix.commit }}-${{ matrix.os }}
         restore-keys: |
-          rust-51ff8950-
+          rust-${{ matrix.commit }}-
     - name: Build Rust compiler stage 1
       working-directory: rust
       run: |
