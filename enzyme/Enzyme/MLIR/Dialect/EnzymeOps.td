@@ -180,12 +180,14 @@ def PushOp : Enzyme_Op<"push"> {
   let summary = "Push value to cache or ShadowedGradient";
   let arguments = (ins AnyType : $cache, AnyType : $value);
   let results = (outs );
+  let hasVerifier = 1;
 }
 
 def PopOp : Enzyme_Op<"pop"> {
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
+  let hasVerifier = 1;
 }
 
 def InitOp : Enzyme_Op<"init",
@@ -222,6 +224,7 @@ def SetOp : Enzyme_Op<"set",
   let arguments = (ins Arg<AnyType, "the reference to store to",
                            [MemWrite]>:$gradient, AnyType : $value);
   let results = (outs );
+  let hasVerifier = 1;
 }
 
 def GetOp : Enzyme_Op<"get",
@@ -231,6 +234,7 @@ def GetOp : Enzyme_Op<"get",
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
   let results = (outs AnyType);
+  let hasVerifier = 1;
 }
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
