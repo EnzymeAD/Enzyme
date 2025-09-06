@@ -54,6 +54,8 @@ jobs:
           --release-channel=nightly \
           --enable-llvm-assertions \
           --enable-clang \
+          --enable-lld \
+          --disable-optimize-llvm \
           --enable-option-checking \
           --enable-ninja \
           --disable-docs \
