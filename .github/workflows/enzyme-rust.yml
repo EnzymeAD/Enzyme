@@ -44,6 +44,9 @@ jobs:
         git clone https://github.com/rust-lang/rust.git
         cd rust
         git checkout ${{ matrix.commit }}
+        # Replace rustc's built-in Enzyme submodule with the Enzyme source code from this repository
+        rm -rf src/tools/enzyme
+        ln -s "${GITHUB_WORKSPACE}/enzyme" src/tools/enzyme
         ./configure \
           --enable-llvm-link-shared \
           --enable-llvm-plugins \
@@ -68,22 +71,10 @@ jobs:
       run: |
         . ~/.cargo/env
         ./x build --stage 1 library
-    - name: Build Enzyme with Rust's LLVM
-      run: |
-        . ~/.cargo/env
-        rm -rf build && mkdir build && cd build
-        RUST_LLVM_DIR="${GITHUB_WORKSPACE}/rust/build/x86_64-unknown-linux-gnu/llvm"
-        cmake ../enzyme \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DLLVM_DIR="$RUST_LLVM_DIR/lib/cmake/llvm" \
-          -DLLVM_EXTERNAL_LIT="$RUST_LLVM_DIR/bin/llvm-lit" \
-          -GNinja
-        ninja -j `nproc`
     - name: Run Rust autodiff tests
       working-directory: rust
       run: |
         source ~/.cargo/env
-        export LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build/Enzyme:$LD_LIBRARY_PATH"
         ./x test --stage 1 tests/codegen-llvm/autodiff
         ./x test --stage 1 tests/pretty/autodiff
         ./x test --stage 1 tests/ui/autodiff
