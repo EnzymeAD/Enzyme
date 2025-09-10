@@ -875,6 +875,14 @@ void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
   *(TypeTree *)CTT =
       ((TypeTree *)CTT)->ShiftIndices(DL, offset, maxSize, addOffset);
 }
+void EnzymeTypeTreeInsertEq(CTypeTreeRef CTT, const int64_t *indices,
+                            size_t len, CConcreteType ct, LLVMContextRef ctx) {
+  std::vector<int> seq;
+  for (size_t i = 0; i < len; i++) {
+    seq.push_back(indices[i]);
+  }
+  ((TypeTree *)CTT)->insert(seq, eunwrap(ct, *unwrap(ctx)));
+}
 const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
   std::string tmp = ((TypeTree *)src)->str();
   char *cstr = new char[tmp.length() + 1];
