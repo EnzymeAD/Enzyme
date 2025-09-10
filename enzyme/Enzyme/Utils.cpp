@@ -2358,6 +2358,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   using namespace llvm;
   if (isa<StoreInst>(maybeReader))
     return false;
+  if (isa<FenceInst>(maybeReader)) {
+    return false;
+  }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     StringRef funcName = getFuncNameFromCall(call);
 
