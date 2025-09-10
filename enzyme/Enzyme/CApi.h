@@ -96,6 +96,8 @@ void EnzymeTypeTreeData0Eq(CTypeTreeRef dst);
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef dst, const char *datalayout,
                                    int64_t offset, int64_t maxSize,
                                    uint64_t addOffset);
+void EnzymeTypeTreeInsertEq(CTypeTreeRef dst, const int64_t *indices,
+                            size_t len, CConcreteType ct, LLVMContextRef ctx);
 const char *EnzymeTypeTreeToString(CTypeTreeRef src);
 void EnzymeTypeTreeToStringFree(const char *cstr);
 
