@@ -3985,6 +3985,17 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   if (lhs == rhs) {
     return false;
   }
+  if (auto i1 = dyn_cast<Instruction>(op1))
+    if (isa<ConstantPointerNull>(op0) &&
+        hasMetadata(i1, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+  if (auto i0 = dyn_cast<Instruction>(op1))
+    if (isa<ConstantPointerNull>(op1) &&
+        hasMetadata(i0, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
 
