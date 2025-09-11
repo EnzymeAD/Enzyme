@@ -3990,7 +3990,7 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         hasMetadata(i1, LLVMContext::MD_nonnull)) {
       return true;
     }
-  if (auto i0 = dyn_cast<Instruction>(op1))
+  if (auto i0 = dyn_cast<Instruction>(op0))
     if (isa<ConstantPointerNull>(op1) &&
         hasMetadata(i0, LLVMContext::MD_nonnull)) {
       return true;
