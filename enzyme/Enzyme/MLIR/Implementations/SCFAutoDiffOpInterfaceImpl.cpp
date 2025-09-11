@@ -682,14 +682,23 @@ public:
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
 
+      SmallVector<Value> immutableRefs;
+      SmallVector<Value> mutableRefs;
+
+      for (auto ref : outsideRefs) {
+        if (isa<CachableTypeInterface>(ref.getType()))
+          mutableRefs.push_back(ref);
+        else
+          immutableRefs.push_back(ref);
+      }
+
       IRMapping &mapping = gutils->originalToNewFn;
 
       assert(outsideRefs.size() == caches.size() - numIterArgs);
 
-      SmallVector<Value> cachedOutsideRefs;
-      for (auto [i, ref] : llvm::enumerate(outsideRefs)) {
-        Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
-        cachedOutsideRefs.push_back(refVal);
+      for (auto [i, ref] : llvm::enumerate(immutableRefs)) {
+        Value refVal = gutils->popCache(
+            caches[numIterArgs + mutableRefs.size() + i], builder);
         mapping.map(ref, refVal);
       }
 
@@ -706,6 +715,13 @@ public:
 
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(revOuter.getBody());
+
+      SmallVector<Value> cachedOutsideRefs;
+      for (auto [i, ref] : llvm::enumerate(mutableRefs)) {
+        Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
+        cachedOutsideRefs.push_back(refVal);
+        mapping.map(ref, refVal);
+      }
 
       Location loc = forOp.getInductionVar().getLoc();
       Value currentOuterStep = builder.create<arith::SubIOp>(
@@ -738,9 +754,6 @@ public:
       auto revInner = builder.create<scf::ForOp>(forOp.getLoc(), zero, nInnerUB,
                                                  one, initArgs);
       preserveAttributesButCheckpointing(revInner, forOp);
-
-      revInner->setAttrs(op->getAttrs());
-      revInner->removeAttr("enzyme.enable_checkpointing");
 
       llvm::APInt stepI;
       if (!matchPattern(forOp.getStep(), m_ConstantInt(&stepI))) {
@@ -782,6 +795,13 @@ public:
       }
 
       builder.setInsertionPointToEnd(revOuter.getBody());
+
+      for (auto outsideRef : cachedOutsideRefs) {
+        if (auto cachableT =
+                dyn_cast<CachableTypeInterface>(outsideRef.getType())) {
+          cachableT.deletePoppedValue(builder, outsideRef);
+        }
+      }
 
       auto revLoop = builder.create<scf::ForOp>(
           forOp.getLoc(), zero, nInnerUB, one,
@@ -955,6 +975,16 @@ public:
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
 
+      SmallVector<Value> immutableRefs;
+      SmallVector<Value> mutableRefs;
+
+      for (auto ref : outsideRefs) {
+        if (isa<CachableTypeInterface>(ref.getType()))
+          mutableRefs.push_back(ref);
+        else
+          immutableRefs.push_back(ref);
+      }
+
       SmallVector<Value> caches;
 
       scf::ForOp newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
@@ -986,6 +1016,14 @@ public:
             makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
       }
 
+      IRMapping &mapping = gutils->originalToNewFn;
+
+      SmallVector<Value> mutableRefsCaches;
+      for (auto ref : mutableRefs) {
+        mutableRefsCaches.push_back(gutils->initAndPushCache(
+            mapping.lookupOrDefault(ref), cacheBuilder));
+      }
+
       auto innerFwd = cacheBuilder.create<scf::ForOp>(
           op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
@@ -995,7 +1033,6 @@ public:
       preserveAttributesButCheckpointing(innerFwd, forOp);
 
       cacheBuilder.setInsertionPointToEnd(innerFwd.getBody());
-      IRMapping &mapping = gutils->originalToNewFn;
 
       Location loc = forOp.getInductionVar().getLoc();
       auto currentIV = cacheBuilder.create<arith::MulIOp>(
@@ -1025,13 +1062,27 @@ public:
 
       cacheBuilder.setInsertionPointAfter(outerFwd);
 
-      for (auto ref : outsideRefs)
+      caches.append(mutableRefsCaches);
+
+      for (auto ref : immutableRefs)
         caches.push_back(gutils->initAndPushCache(mapping.lookupOrDefault(ref),
                                                   cacheBuilder));
 
       gutils->replaceOrigOpWith(op, outerFwd.getResults());
       gutils->erase(newForOp);
       gutils->originalToNewFnOps[op] = outerFwd;
+
+      // caches is composed of:
+      // [
+      //  <caches of iter args>...,
+      //  <caches of mutable values>...,
+      //  <caches of immutable values>...,
+      // ]
+      //
+      // TODO: we don't need to cache refs of arith.constants
+      // ....  which we can "clone" just before the inner forward
+      // ....  in the reverse pass.
+      // ....  create an interface that mincut can also use?
 
       return caches;
     }
