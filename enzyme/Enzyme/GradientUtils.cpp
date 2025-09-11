@@ -58,6 +58,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TimeProfiler.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
@@ -9472,7 +9474,8 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     GradientUtils *gutils) {
   assert(isAllocationFunction(allocationfn, TLI));
 
-  if (allocationfn == "__rust_alloc" || allocationfn == "__rust_alloc_zeroed") {
+  std::string demangledName = llvm::demangle(allocationfn);
+  if (demangledName == "__rustc::__rust_alloc" || demangledName == "__rustc::__rust_alloc_zeroed" ) {
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
     Type *IntPtrTy = orig->getType();
     Type *RustSz = orig->getArgOperand(0)->getType();

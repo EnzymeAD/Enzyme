@@ -26,6 +26,7 @@
 #include <llvm/ADT/StringMap.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
+#include "llvm/Demangle/Demangle.h"
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/Instructions.h>
@@ -55,7 +56,8 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "__size_returning_new_experiment")
     return true;
-  if (name == "__rust_alloc" || name == "__rust_alloc_zeroed")
+  std::string demangledName = llvm::demangle(name.str());
+  if (demangledName == "__rustc::__rust_alloc" || demangledName == "__rustc::__rust_alloc_zeroed")
     return true;
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
@@ -131,7 +133,8 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
       return true;
     if (name == "_mlir_memref_to_llvm_free")
       return true;
-    if (name == "__rust_dealloc")
+    std::string demangledName = llvm::demangle(name.str());
+    if (demangledName == "__rustc::__rust_dealloc")
       return true;
     if (name == "swift_release")
       return true;
@@ -207,7 +210,8 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   assert(isAllocationFunction(funcName, TLI));
 
   // Don't re-zero an already-zero buffer
-  if (funcName == "calloc" || funcName == "__rust_alloc_zeroed")
+    std::string demangledName = llvm::demangle(funcName.str());
+  if (funcName == "calloc" || demangledName == "__rustc::__rust_alloc_zeroed")
     return;
 
   Value *allocSize = argValues[0];
