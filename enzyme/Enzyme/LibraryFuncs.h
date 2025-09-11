@@ -56,9 +56,11 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "__size_returning_new_experiment")
     return true;
+#if LLVM_VERSION_MAJOR >= 17
   std::string demangledName = llvm::demangle(name.str());
   if (demangledName == "__rustc::__rust_alloc" || demangledName == "__rustc::__rust_alloc_zeroed")
     return true;
+#endif
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
     return true;
@@ -210,8 +212,12 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   assert(isAllocationFunction(funcName, TLI));
 
   // Don't re-zero an already-zero buffer
+#if LLVM_VERSION_MAJOR >= 17
     std::string demangledName = llvm::demangle(funcName.str());
-  if (funcName == "calloc" || demangledName == "__rustc::__rust_alloc_zeroed")
+  if (demangledName == "__rustc::__rust_alloc_zeroed")
+    return;
+#endif
+  if (funcName == "calloc")
     return;
 
   Value *allocSize = argValues[0];
