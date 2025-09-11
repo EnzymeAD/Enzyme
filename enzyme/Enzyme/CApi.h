@@ -100,6 +100,7 @@ void EnzymeTypeTreeInsertEq(CTypeTreeRef dst, const int64_t *indices,
                             size_t len, CConcreteType ct, LLVMContextRef ctx);
 const char *EnzymeTypeTreeToString(CTypeTreeRef src);
 void EnzymeTypeTreeToStringFree(const char *cstr);
+unsigned EnzymeGetMaxTypeDepth();
 
 void EnzymeSetCLBool(void *, uint8_t);
 void EnzymeSetCLInteger(void *, int64_t);

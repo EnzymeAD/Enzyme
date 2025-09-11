@@ -894,6 +894,10 @@ const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
 // TODO deprecated
 void EnzymeTypeTreeToStringFree(const char *cstr) { delete[] cstr; }
 
+extern llvm::cl::opt<unsigned> EnzymeMaxTypeDepth;
+
+unsigned EnzymeGetMaxTypeDepth() { return EnzymeMaxTypeDepth; }
+
 const char *EnzymeTypeAnalyzerToString(void *src) {
   auto TA = (TypeAnalyzer *)src;
   std::string str;
