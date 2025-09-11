@@ -720,7 +720,8 @@ bool accuracyDPSolver(
                 if constexpr (std::is_same_v<T, CandidateOutput>) {
                   llvm::errs()
                       << "\t\t" << item->expr << " --(" << step.candidateIndex
-                      << ")-> " << item->candidates[step.candidateIndex].expr;
+                      << ")-> " << item->candidates[step.candidateIndex].expr
+                      << "\n";
                 } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
                   llvm::errs() << "\t\tCS: "
                                << item->candidates[step.candidateIndex].desc

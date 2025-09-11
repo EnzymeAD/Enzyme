@@ -241,9 +241,9 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"fma",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateIntrinsic(Intrinsic::fmuladd, {ops[0]->getType()},
+             return b.CreateIntrinsic(Intrinsic::fma, {ops[0]->getType()},
                                       {ops[0], ops[1], ops[2]}, nullptr,
-                                      "herbie.fmuladd");
+                                      "herbie.fma");
            }},
           {"fabs",
            [](IRBuilder<> &b, Module *M,

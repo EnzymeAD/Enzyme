@@ -95,12 +95,12 @@ void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
 }
 
 static const std::unordered_set<std::string> LibmFuncs = {
-    "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
-    "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "exp",
-    "log",   "sqrt",  "cbrt",     "pow",   "fabs",   "fma",   "hypot",
-    "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
-    "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
-    "fdim",  "fmod",  "remainder"};
+    "sin",      "cos",   "tan",   "asin",     "acos",  "atan",   "atan2",
+    "sinh",     "cosh",  "tanh",  "asinh",    "acosh", "atanh",  "exp",
+    "log",      "sqrt",  "cbrt",  "pow",      "powi",  "fabs",   "fma",
+    "hypot",    "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",
+    "lgamma",   "log10", "log2",  "rint",     "round", "tgamma", "trunc",
+    "copysign", "fdim",  "fmod",  "remainder"};
 
 double getOneULP(double value) {
   assert(!std::isnan(value) && !std::isinf(value));
@@ -112,20 +112,12 @@ double getOneULP(double value) {
 }
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
-  static const std::unordered_set<std::string> libmFunctions = {
-      "sin",   "cos",   "tan",      "asin",  "acos",   "atan",  "atan2",
-      "sinh",  "cosh",  "tanh",     "asinh", "acosh",  "atanh", "sqrt",
-      "cbrt",  "pow",   "exp",      "log",   "fabs",   "fma",   "hypot",
-      "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",  "lgamma",
-      "log10", "log2",  "rint",     "round", "tgamma", "trunc", "copysign",
-      "fdim",  "fmod",  "remainder"};
-
   std::string baseName = funcName.str();
   if (baseName.back() == 'f' || baseName.back() == 'l') {
     baseName.pop_back();
   }
 
-  if (libmFunctions.count(baseName)) {
+  if (LibmFuncs.count(baseName)) {
     if (newType->isFloatTy()) {
       return baseName + "f";
     } else if (newType->isDoubleTy()) {

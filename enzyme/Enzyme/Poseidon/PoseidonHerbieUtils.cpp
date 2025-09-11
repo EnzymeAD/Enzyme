@@ -739,8 +739,11 @@ void setUnifiedAccuracyCost(
         }
       }
       if (!discardCandidate) {
-        assert(count != 0 && "No valid sample found for candidate expr");
-        candCost = std::exp(sumLog / count);
+        if (count == 0) {
+          discardCandidate = true;
+        } else {
+          candCost = std::exp(sumLog / count);
+        }
       }
     } else if (FPOptReductionEval == "arithmean") {
       double sum = 0.0;
@@ -763,11 +766,15 @@ void setUnifiedAccuracyCost(
         }
       }
       if (!discardCandidate) {
-        assert(count != 0 && "No valid sample found for candidate expr");
-        candCost = sum / count;
+        if (count == 0) {
+          discardCandidate = true;
+        } else {
+          candCost = sum / count;
+        }
       }
     } else if (FPOptReductionEval == "maxabs") {
       double maxErr = 0.0;
+      bool hasValid = false;
       for (const auto &pair : enumerate(sampledPoints)) {
         SmallVector<double, 1> results;
         getFPValues({parsedNode.get()}, pair.value(), results);
@@ -780,11 +787,18 @@ void setUnifiedAccuracyCost(
         }
 
         double error = std::fabs(goldVal - realVal);
-        if (!std::isnan(error))
+        if (!std::isnan(error)) {
+          hasValid = true;
           maxErr = std::max(maxErr, error);
+        }
       }
-      if (!discardCandidate)
-        candCost = maxErr;
+      if (!discardCandidate) {
+        if (!hasValid) {
+          discardCandidate = true;
+        } else {
+          candCost = maxErr;
+        }
+      }
     } else {
       llvm_unreachable("Unknown fpopt-reduction strategy");
     }
