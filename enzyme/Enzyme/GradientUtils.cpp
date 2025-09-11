@@ -8552,13 +8552,18 @@ bool GradientUtils::getContext(llvm::BasicBlock *BB, LoopContext &lc) {
 void GradientUtils::forceAugmentedReturns() {
   assert(TR.getFunction() == oldFunc);
 
+  // Pass 1: create BB-level contexts for the whole loop/function
   for (BasicBlock &oBB : *oldFunc) {
-    // Don't create derivatives for code that results in termination
     if (notForAnalysis.find(&oBB) != notForAnalysis.end())
       continue;
+    LoopContext LC;
+    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), LC);
+  }
 
-    LoopContext loopContext;
-    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
+  // Pass 2: instruction processing
+  for (BasicBlock &oBB : *oldFunc) {
+    if (notForAnalysis.find(&oBB) != notForAnalysis.end())
+      continue;
 
     for (Instruction &I : oBB) {
       Instruction *inst = &I;
