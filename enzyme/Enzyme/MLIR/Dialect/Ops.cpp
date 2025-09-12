@@ -597,29 +597,36 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
  *
  */
 
-// Overload for AutoDiffOp
-static inline AutoDiffOp createOp(PatternRewriter &rewriter, AutoDiffOp uop,
-                                  ArrayRef<Type> out_ty,
-                                  ArrayRef<Value> in_args,
-                                  ArrayAttr newInActivity,
-                                  ArrayAttr newRetActivity) {
-  return rewriter.create<AutoDiffOp>(
-      uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
-      newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
-}
-
-// Overload for AutoDiffRegionOp
-static inline AutoDiffRegionOp
-createOp(PatternRewriter &rewriter, AutoDiffRegionOp uop, ArrayRef<Type> out_ty,
-         ArrayRef<Value> in_args, ArrayAttr newInActivity,
-         ArrayAttr newRetActivity) {
-  return rewriter.create<AutoDiffRegionOp>(
-      uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
-      uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
-}
-
 template <typename SourceOp>
 class ReverseRetOpt final : public OpRewritePattern<SourceOp> {
+private:
+  template <typename T> struct SourceOpCreator;
+
+  template <> struct SourceOpCreator<AutoDiffOp> {
+    static AutoDiffOp create(PatternRewriter &rewriter, AutoDiffOp uop,
+                             ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                             ArrayAttr newInActivity,
+                             ArrayAttr newRetActivity) {
+
+      return rewriter.create<AutoDiffOp>(
+          uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
+          newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
+    }
+  };
+
+  template <> struct SourceOpCreator<AutoDiffRegionOp> {
+    static AutoDiffRegionOp create(PatternRewriter &rewriter, AutoDiffOp uop,
+                                   ArrayRef<Type> out_ty,
+                                   ArrayRef<Value> in_args,
+                                   ArrayAttr newInActivity,
+                                   ArrayAttr newRetActivity) {
+
+      return rewriter.create<AutoDiffRegionOp>(
+          uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
+          uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
+    }
+  };
+
 public:
   using OpRewritePattern<SourceOp>::OpRewritePattern;
 
@@ -832,8 +839,8 @@ public:
                        llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
                                                  newRetActivityArgs.end()));
 
-    SourceOp newOp =
-        createOp(rewriter, uop, out_ty, in_args, newInActivity, newRetActivity);
+    SourceOp newOp = SourceOpCreator<SourceOp>::create(
+        rewriter, uop, out_ty, in_args, newInActivity, newRetActivity);
 
     // Map old uses of uop to newOp
     auto oldIdx = 0;
