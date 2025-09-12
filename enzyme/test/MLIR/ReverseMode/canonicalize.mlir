@@ -1,5 +1,5 @@
 // RUN: %eopt --canonicalize %s | FileCheck %s
-
+// RUN: %eopt --inline-enzyme-regions --canonicalize %s | FileCheck %s --check-prefix=INLINE
 module {
   func.func @square(%x : f64) -> f64 {
     %y = arith.mulf %x, %x : f64
@@ -16,14 +16,15 @@ module {
   func.func @test1(%x: f32, %y: f32, %dr0: f32, %dr1: f32) -> (f32,f32,f32,f32) {
     %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%dr1) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
     // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}
+    // INLINE: %{{.*}} = enzyme.autodiff_region(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}
     return %r#0,%r#1,%r#2,%r#3 : f32,f32,f32,f32
   }
-  
 
   // Test 2: active -> activenoneed, const -> constnoneed for ret_activity
   func.func @test2(%x: f32, %y: f32, %dr0: f32, %dr1: f32) -> (f32,f32) {
     %r:4 = enzyme.autodiff @square2(%x,%y,%dr1) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>] } : (f32,f32,f32) -> (f32,f32,f32,f32)
     // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg3){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_constnoneed>, #enzyme<activity enzyme_activenoneed>]{{.*}}
+    // INLINE: %{{.*}} = enzyme.autodiff_region(%arg0, %arg1, %arg3){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_constnoneed>, #enzyme<activity enzyme_activenoneed>]{{.*}}
     return %r#2, %r#3 : f32,f32
   }
 
@@ -31,6 +32,7 @@ module {
   func.func @test3(%x: f32, %y: f32, %dr0: f32, %dr1: f32) -> (f32,f32,f32) {
     %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%dr1) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
     // CHECK: {{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}
+    // INLINE: {{.*}} = enzyme.autodiff_region(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}
     return %r#0, %r#1, %r#3 : f32,f32,f32
   }
 
@@ -39,6 +41,7 @@ module {
     %cst = arith.constant 1.0000e+1 : f32
     %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%dr1) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
     // CHECK: enzyme.autodiff @square2(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_activenoneed>]{{.*}}
+    // INLINE: enzyme.autodiff_region(%arg0, %arg1, %arg2, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_const>]{{.*}}ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_activenoneed>]{{.*}}
     return %cst : f32
   }
 
@@ -47,6 +50,7 @@ module {
     %cst = arith.constant 0.0000e+00 : f32
     %r:4 = enzyme.autodiff @square2(%x,%y,%dr0,%cst) { activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32,f32)
     // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg2){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]{{.*}}
+    // INLINE: %{{.*}} = enzyme.autodiff_region(%arg0, %arg1, %arg2){{.*}}activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]{{.*}}
     return %r#0,%r#1,%r#2,%r#3 : f32,f32,f32,f32
   }
 } 

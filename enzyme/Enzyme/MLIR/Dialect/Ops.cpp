@@ -902,9 +902,11 @@ template <> struct ReverseRetOpt<AutoDiffRegionOp>::SourceOpCreator {
                                  ArrayAttr newInActivity,
                                  ArrayAttr newRetActivity) {
 
-    return rewriter.create<AutoDiffRegionOp>(
-        uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
+    auto newOp = rewriter.create<AutoDiffRegionOp>(
+        uop.getLoc(), out_ty, uop.getInputs(), newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
+    newOp.getBody().takeBody(uop.getBody());
+    return newOp;
   }
 };
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
