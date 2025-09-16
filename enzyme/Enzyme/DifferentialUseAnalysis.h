@@ -179,7 +179,9 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-      if (!TR.allFloat(const_cast<Value *>(inst)))
+      if (!TR.allFloat(const_cast<Value *>(inst)) &&
+          gutils->mode != DerivativeMode::ForwardMode &&
+          gutils->mode != DerivativeMode::ForwardModeError)
         if (auto IVI = dyn_cast<Instruction>(user)) {
           bool inserted = false;
           if (auto II = dyn_cast<InsertValueInst>(IVI))
