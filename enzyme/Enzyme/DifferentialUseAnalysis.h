@@ -179,7 +179,7 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-      if (!TR.anyFloat(const_cast<Value *>(inst)))
+      if (!TR.allFloat(const_cast<Value *>(inst)))
         if (auto IVI = dyn_cast<Instruction>(user)) {
           bool inserted = false;
           if (auto II = dyn_cast<InsertValueInst>(IVI))
@@ -217,7 +217,11 @@ inline bool is_value_needed_in_reverse(
                 bool partial = false;
                 if (!gutils->isConstantValue(const_cast<Instruction *>(cur))) {
                   partial = is_value_needed_in_reverse<QueryType::Shadow>(
-                      gutils, user, mode, seen, oldUnreachable);
+                      gutils, u, mode, seen, oldUnreachable);
+                } else if (VT == QueryType::Shadow) {
+                  partial = is_value_needed_in_reverse<
+                      QueryType::ShadowByConstPrimal>(gutils, u, mode, seen,
+                                                      oldUnreachable);
                 }
                 if (partial) {
 
