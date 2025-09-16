@@ -205,6 +205,9 @@ public:
   // be considered a float.
   bool anyFloat(llvm::Value *val, bool anythingIsFloat = true) const;
 
+  /// Whether all of the top level register is known to contain float data
+  bool allFloat(llvm::Value *val) const;
+
   /// Whether any part of the top level register can contain a pointer
   ///   e.g. { i64, i8* } can contain a pointer, but { i64, float } would not.
   //    Of course, here we compute with type analysis rather than llvm type

@@ -6099,6 +6099,35 @@ size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
   return prevOff;
 }
 
+bool TypeResults::allFloat(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt.isFloat();
+
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+    return false;
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
+  SmallSet<size_t, 8> offs;
+  size_t ObjSize = skippedBytes(offs, val->getType(), dl);
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (auto FT = dt.isFloat()) {
+      i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    if (offs.count(i)) {
+      i++;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   assert(val);
   assert(val->getType());
