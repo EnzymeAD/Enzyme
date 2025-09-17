@@ -7,10 +7,6 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-//
-// This file implements a pass to lower gpu kernels in NVVM/gpu dialects into
-// a generic parallel for representation
-//===----------------------------------------------------------------------===//
 
 #include "Passes/EnzymeBatchDiffPass.h"
 #include "Dialect/Ops.h"
@@ -135,7 +131,87 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       SmallVector<enzyme::ForwardDiffOp> allOps = mergeItr->second;
       auto width = allOps.size();
 
-      // emit tensor.concat
+      if (width < 2)
+        continue;
+
+      auto lastOp = allOps.back();
+      auto loc = lastOp->getLoc();
+      auto context = builder.getContext();
+
+      SmallVector<mlir::Value> in_args;
+      SmallVector<ActivityAttr, 2> inActivity;
+      SmallVector<ActivityAttr, 2> retActivity;
+      SmallVector<mlir::Value> out_args;
+      SmallVector<mlir::Type, 2> out_ty;
+      auto in_idx = 0;
+
+      // process inputs
+      for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
+        ActivityAttr iattr = ActivityAttr::get(context, act);
+        inActivity.push_back(iattr);
+        in_args.push_back(key.inputs[in_idx]);
+        in_idx++;
+
+        // collect derivatives
+        SmallVector<mlir::Value> derivToBatch;
+        if (act == Activity::enzyme_dup || act == Activity::enzyme_dupnoneed) {
+          for (auto uop : allOps) {
+            derivToBatch.push_back(uop.getInputs()[in_idx]);
+          }
+
+          auto derivTy = derivToBatch[0].getType();
+          auto T = dyn_cast<TensorType>(derivTy);
+          mlir::Value batchedDeriv;
+          if (!T) {
+            // use tensor.from_elements
+            batchedDeriv =
+                builder.create<tensor::FromElementsOp>(loc, derivToBatch);
+          } else {
+            // use tensor.concat on dim 0
+            batchedDeriv =
+                builder.create<tensor::ConcatOp>(loc, 0, derivToBatch);
+          }
+
+          in_args.push_back(batchedDeriv);
+          in_idx++;
+        }
+      }
+
+      // process outputs
+      auto out_idx = 0;
+      for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
+        ActivityAttr iattr = ActivityAttr::get(context, ract);
+
+        if (ract == Activity::enzyme_constnoneed) {
+          retActivity.push_back(iattr);
+          continue;
+        }
+
+        switch (ract) {
+        case Activity::enzyme_active:
+          break;
+        case Activity::enzyme_const:
+          break;
+        case Activity::enzyme_dupnoneed:
+          break;
+        case Activity::enzyme_dup:
+          break;
+        case Activity::enzyme_constnoneed:
+          break;
+        case Activity::enzyme_activenoneed:
+          break;
+        default:
+          llvm_unreachable(
+              "unknown activity value encountered for ret_activity");
+        }
+      }
+
+      // emit tensor.concat for derivative values
+      {
+        auto lastDiff = allOps[width - 1];
+        IRRewriter::InsertionGuard insertGuard(builder);
+        builder.setInsertionPoint(lastDiff);
+      }
       // emit enzyme.fwddiff
       // emit tensor.extract
       // rename uses from old to new results
