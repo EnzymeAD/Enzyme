@@ -219,6 +219,29 @@ FunctionOpInterface batchCloneFunction(
   return NewF;
 }
 
+template <typename T>
+FunctionOpInterface batchOperationWithoutInsertingCallOp(
+    OpBuilder &builder, T CI, FunctionOpInterface fn,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  enzyme::batchutils::BatchCacheKey key{
+      fn, SmallVector<int64_t>(CI.getBatchShape().begin(),
+                               CI.getBatchShape().end())};
+
+  // Check if we already have a batched version
+  auto it = batchedFunctionCache.find(key);
+  FunctionOpInterface newFunc;
+
+  if (it != batchedFunctionCache.end()) {
+    return it->second;
+  } else {
+    // Create new batched function and store in cache
+    std::string newFnName = "batched_" + fn.getName().str();
+    newFunc = batchCloneFunction(builder, fn, newFnName, CI.getBatchShape(),
+                                 batchedFunctionCache);
+    return newFunc;
+  }
+}
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
