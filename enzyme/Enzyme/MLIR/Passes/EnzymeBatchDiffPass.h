@@ -22,28 +22,32 @@ struct BatchDiffCacheKey {
 
   // for use in std::map:
   bool operator<(const BatchDiffCacheKey &other) const {
-    if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName()) {
-      return const_cast<FunctionOpInterface &>(function).getName() <
-             const_cast<FunctionOpInterface &>(other.function).getName();
-    } else if (inputs != other.inputs) {
-      if (inputs.size() != other.inputs.size()) {
-        return inputs.size() < other.inputs.size();
-      } else {
-        bool b = false;
-        for (auto [idx, inp_val, other_val] :
-             llvm::enumerate(inputs, other.inputs)) {
-          if (inp_val != other_val) {
-            b = inp_val.getAsOpaquePointer() < other_val.getAsOpaquePointer();
-            break;
-          }
-        }
-        return b;
-      }
-    } else if (inActivity != other.inActivity) {
-      return inActivity < other.inActivity;
+    auto lhs_name = const_cast<FunctionOpInterface &>(function).getName();
+    auto rhs_name = const_cast<FunctionOpInterface &>(other.function).getName();
+
+    if (lhs_name < rhs_name)
+      return true;
+    if (rhs_name < lhs_name)
+      return false;
+    if (inputs.size() < other.inputs.size())
+      return true;
+    if (other.inputs.size() < inputs.size())
+      return false;
+
+    // Sizes are equal, so compare elements
+    for (auto i = 0; i < inputs.size(); ++i) {
+      auto lhs_ptr = inputs[i].getAsOpaquePointer();
+      auto rhs_ptr = other.inputs[i].getAsOpaquePointer();
+      if (lhs_ptr < rhs_ptr)
+        return true;
+      if (rhs_ptr < lhs_ptr)
+        return false;
     }
 
+    if (inActivity < other.inActivity)
+      return true;
+    if (other.inActivity < inActivity)
+      return false;
     return outActivity < other.outActivity;
   }
 };
