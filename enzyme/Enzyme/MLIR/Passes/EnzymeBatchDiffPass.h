@@ -40,11 +40,11 @@ struct BatchDiffCacheKey {
         }
         return b;
       }
-    } else if(inActivity != other.inActivity){
+    } else if (inActivity != other.inActivity) {
       return inActivity < other.inActivity;
-    } 
+    }
 
-    return outActivity < other.outActivity; 
+    return outActivity < other.outActivity;
   }
 };
 
