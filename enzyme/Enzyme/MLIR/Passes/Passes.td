@@ -64,6 +64,17 @@ def BatchPass : Pass<"enzyme-batch"> {
   ];
 }
 
+def BatchDiffPass : Pass<"enzyme-diff-batch">{
+  let summary = "Batching enzyme.fwddiff and enzyme.autodiff calls";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
+    "cf::ControlFlowDialect",
+    "tensor::TensorDialect",
+    "enzyme::EnzymeDialect",
+  ];
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
