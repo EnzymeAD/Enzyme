@@ -117,9 +117,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
       batchutils::BatchDiffCacheKey key{fnOp, in_args, inActivity, retActivity};
 
-      auto mergeIt = toMerge.find(key);
-      if (mergeIt != toMerge.end()) {
-        mergeIt->second.push_back(dop);
+      auto mergeItr = toMerge.find(key);
+      if (mergeItr != toMerge.end()) {
+        mergeItr->second.push_back(dop);
       } else {
         SmallVector<enzyme::ForwardDiffOp> v;
         v.push_back(dop);
@@ -127,8 +127,19 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
     });
 
+    OpBuilder builder(op);
     // process map
-    ;
+    for (auto mergeItr = toMerge.begin(); mergeItr != toMerge.end();
+         ++mergeItr) {
+      auto key = mergeItr->first;
+      SmallVector<enzyme::ForwardDiffOp> allOps = mergeItr->second;
+      auto width = allOps.size();
+
+      // emit tensor.concat
+      // emit enzyme.fwddiff
+      // emit tensor.extract
+      // rename uses from old to new results
+    };
   };
 };
 
