@@ -14,45 +14,19 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
-struct BatchDiffCacheKey {
+struct BatchFwdDiffKey {
   FunctionOpInterface function;
-  SmallVector<mlir::Value> inputs;
-  SmallVector<enzyme::Activity> inActivity;
-  SmallVector<enzyme::Activity> retActivity;
+  SmallVector<int64_t> batchSizes;
 
   // for use in std::map:
-  bool operator<(const BatchDiffCacheKey &other) const {
-    auto lhs_name = const_cast<FunctionOpInterface &>(function).getName();
-    auto rhs_name = const_cast<FunctionOpInterface &>(other.function).getName();
-
-    if (lhs_name < rhs_name)
-      return true;
-    if (rhs_name < lhs_name)
-      return false;
-    if (inputs.size() < other.inputs.size())
-      return true;
-    if (other.inputs.size() < inputs.size())
-      return false;
-
-    // Sizes are equal, so compare elements
-    for (auto i = 0; i < inputs.size(); ++i) {
-      auto lhs_ptr = inputs[i].getAsOpaquePointer();
-      auto rhs_ptr = other.inputs[i].getAsOpaquePointer();
-      if (lhs_ptr < rhs_ptr)
-        return true;
-      if (rhs_ptr < lhs_ptr)
-        return false;
-    }
-
-    if (inActivity < other.inActivity)
-      return true;
-    if (other.inActivity < inActivity)
-      return false;
-    return retActivity < other.retActivity;
+  bool operator<(const BatchCacheKey &other) const {
+    if (const_cast<FunctionOpInterface &>(function).getName() !=
+        const_cast<FunctionOpInterface &>(other.function).getName())
+      return const_cast<FunctionOpInterface &>(function).getName() <
+             const_cast<FunctionOpInterface &>(other.function).getName();
+    return batchSizes < other.batchSizes;
   }
 };
-
-bool isReadOnly(Operation *op);
 
 } // namespace batchutils
 } // namespace enzyme
