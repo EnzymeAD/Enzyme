@@ -14,17 +14,37 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
-struct BatchFwdDiffKey {
+struct BatchDiffCacheKey {
   FunctionOpInterface function;
-  SmallVector<int64_t> batchSizes;
+  SmallVector<mlir::Value> inputs;
+  SmallVector<enzyme::Activity> inActivity;
+  SmallVector<enzyme::Activity> outActivity;
 
   // for use in std::map:
-  bool operator<(const BatchCacheKey &other) const {
+  bool operator<(const BatchDiffCacheKey &other) const {
     if (const_cast<FunctionOpInterface &>(function).getName() !=
-        const_cast<FunctionOpInterface &>(other.function).getName())
+        const_cast<FunctionOpInterface &>(other.function).getName()) {
       return const_cast<FunctionOpInterface &>(function).getName() <
              const_cast<FunctionOpInterface &>(other.function).getName();
-    return batchSizes < other.batchSizes;
+    } else if (inputs != other.inputs) {
+      if (inputs.size() != other.inputs.size()) {
+        return inputs.size() < other.inputs.size();
+      } else {
+        bool b = false;
+        for (auto [idx, inp_val, other_val] :
+             llvm::enumerate(inputs, other.inputs)) {
+          if (inp_val != other_val) {
+            b = inp_val.getAsOpaquePointer() < other_val.getAsOpaquePointer();
+            break;
+          }
+        }
+        return b;
+      }
+    } else if(inActivity != other.inActivity){
+      return inActivity < other.inActivity;
+    } 
+
+    return outActivity < other.outActivity; 
   }
 };
 
