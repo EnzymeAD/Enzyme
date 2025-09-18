@@ -18,7 +18,7 @@ struct BatchDiffCacheKey {
   FunctionOpInterface function;
   SmallVector<mlir::Value> inputs;
   SmallVector<enzyme::Activity> inActivity;
-  SmallVector<enzyme::Activity> outActivity;
+  SmallVector<enzyme::Activity> retActivity;
 
   // for use in std::map:
   bool operator<(const BatchDiffCacheKey &other) const {
@@ -48,7 +48,7 @@ struct BatchDiffCacheKey {
       return true;
     if (other.inActivity < inActivity)
       return false;
-    return outActivity < other.outActivity;
+    return retActivity < other.retActivity;
   }
 };
 
