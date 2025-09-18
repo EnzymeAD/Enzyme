@@ -77,6 +77,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         toMerge;
 
     op->walk([&](enzyme::ForwardDiffOp dop) {
+      LLVM_DEBUG(llvm::dbgs() << "found fwddiff" << "\n");
       // lookup function, check if its readOnly
       auto *symbolOp =
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
@@ -84,6 +85,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
       // skip if fn isn't readonly
       if (!isReadOnly(fnOp)) {
+        LLVM_DEBUG(llvm::dbgs() << "skipping fn." << "\n");
         return mlir::WalkResult::skip();
       }
 
@@ -115,6 +117,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
       auto mergeItr = toMerge.find(key);
       if (mergeItr != toMerge.end()) {
+        LLVM_DEBUG(llvm::dbgs() << "adding to map" << "\n");
         mergeItr->second.push_back(dop);
       } else {
         SmallVector<enzyme::ForwardDiffOp> v;
