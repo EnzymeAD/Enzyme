@@ -8321,13 +8321,45 @@ void GradientUtils::computeMinCache() {
                 QueryType::Primal,
                 /*OneLevel*/ true>(this, &I, minCutMode, OneLevelSeen,
                                    notForAnalysis);
-            if (oneneed) {
+
+	    bool shadowOneNeed = false;
+	    // even if the primal is not needed directly by its users, if the primal is constant
+	    // and used to create a shadow insertvalue which is used, we need to save the shadow
+	    // since shadow cache and primal cache are the same, we force a save of cache here.
+	    // TODO(wsmoses): extend this to separate caching decisions for primal and shadow
+	    if (!oneneed && isConstantValue(&I) && !TR.allFloat(&I)) {
+    SmallVector<Instruction *, 1> todo;
+    todo.push_back(&I);
+    while (todo.size()) {
+      auto cur = todo.pop_back_val();
+      for (auto u : cur->users()) {
+        if (isa<InsertValueInst>(u) || isa<InsertElementInst>(u) ||
+            isa<ExtractValueInst>(u) || isa<ExtractElementInst>(u)) {
+          auto I2 = cast<Instruction>(u);
+  	  if (!isConstantValue(I2)) {
+            if ( DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
+                this, I2, minCutMode, FullSeen, notForAnalysis)) {
+		    shadowOneNeed = true;
+		    goto endOneNeed;
+          }
+        } else {
+          todo.push_back(I2);
+	}
+      }
+    }
+  }
+    	endOneNeed:;
+	    
+	    }
+
+            if (oneneed || shadowOneNeed) {
               knownRecomputeHeuristic[&I] = false;
 
               CountTrackedPointers T(I.getType());
               assert(!T.derived);
-            } else
+            } else {
               Recomputes.insert(&I);
+	    }
           }
         }
       }
