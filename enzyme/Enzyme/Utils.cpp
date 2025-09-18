@@ -161,7 +161,12 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     name += ".custom@" + std::to_string((size_t)RT);
 
   FunctionType *FT = FunctionType::get(allocType, types, false);
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  AttributeList AL;
+  if (newFunc->hasFnAttribute("enzymejl_world")) {
+    AL = AL.addFnAttribute(newFunc->getContext(),
+                           newFunc->getFnAttribute("enzymejl_world"));
+  }
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 
   if (!F->empty())
     return F;
