@@ -134,143 +134,292 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       if (width < 2)
         continue;
 
-      auto lastOp = allOps.back();
-      auto loc = lastOp->getLoc();
-      auto context = builder.getContext();
+      {
+        // insert merged op BEFORE first fwddiff op
+        auto firstDiffOp = allOps.front();
+        IRRewriter::InsertionGuard insertGuard(builder);
+        builder.setInsertionPoint(firstDiffOp);
+        auto loc = firstDiffOp->getLoc();
+        auto context = builder.getContext();
 
-      SmallVector<mlir::Value> in_args;
-      SmallVector<ActivityAttr, 2> inActivity;
-      SmallVector<ActivityAttr, 2> retActivity;
-      SmallVector<mlir::Value> out_args;
-      SmallVector<mlir::Type, 2> out_ty;
-      auto in_idx = 0;
+        SmallVector<mlir::Value> in_args;
+        SmallVector<ActivityAttr, 2> inActivityAttrs;
+        SmallVector<ActivityAttr, 2> retActivityAttrs;
+        SmallVector<mlir::Type, 2> out_ty;
+        auto in_idx = 0;
 
-      // process inputs
-      for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
-        ActivityAttr iattr = ActivityAttr::get(context, act);
-        inActivity.push_back(iattr);
-        in_args.push_back(key.inputs[in_idx]);
-        in_idx++;
-
-        // collect derivatives
-        SmallVector<mlir::Value> derivToBatch;
-        if (act == Activity::enzyme_dup || act == Activity::enzyme_dupnoneed) {
-          for (auto uop : allOps) {
-            derivToBatch.push_back(uop.getInputs()[in_idx]);
-          }
-
-          auto derivTy = derivToBatch[0].getType();
-          auto T = dyn_cast<TensorType>(derivTy);
-          mlir::Value batchedDeriv;
-          if (!T) {
-            // use tensor.from_elements
-            batchedDeriv =
-                builder.create<tensor::FromElementsOp>(loc, derivToBatch);
-          } else {
-            // use tensor.concat on dim 0
-            batchedDeriv =
-                builder.create<tensor::ConcatOp>(loc, 0, derivToBatch);
-          }
-
-          in_args.push_back(batchedDeriv);
+        // process inputs
+        for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
+          ActivityAttr iattr = ActivityAttr::get(context, act);
+          inActivityAttrs.push_back(iattr);
+          in_args.push_back(key.inputs[in_idx]);
           in_idx++;
+
+          // collect derivatives
+          SmallVector<mlir::Value> derivToBatch;
+          if (act == Activity::enzyme_dup ||
+              act == Activity::enzyme_dupnoneed) {
+            for (auto uop : allOps) {
+              derivToBatch.push_back(uop.getInputs()[in_idx]);
+            }
+
+            auto derivTy = derivToBatch[0].getType();
+            auto T = dyn_cast<TensorType>(derivTy);
+            mlir::Value batchedDeriv;
+            if (!T) {
+              // use tensor.from_elements
+              batchedDeriv =
+                  builder.create<tensor::FromElementsOp>(loc, derivToBatch);
+            } else {
+              // use tensor.concat on dim 0
+              batchedDeriv = builder.create<tensor::ConcatOp>(loc, /*dim*/ 0,
+                                                              derivToBatch);
+            }
+
+            in_args.push_back(batchedDeriv);
+            in_idx++;
+          }
+        }
+
+        // process output type
+        auto out_idx = 0;
+        for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
+          ActivityAttr iattr = ActivityAttr::get(context, ract);
+
+          retActivityAttrs.push_back(iattr);
+          switch (ract) {
+
+          case Activity::enzyme_active: {
+            mlir::Value res = firstDiffOp.getOutputs()[out_idx];
+            out_ty.push_back(res.getType());
+            ++out_idx;
+            break;
+          }
+
+          case Activity::enzyme_const: {
+            mlir::Value res = firstDiffOp.getOutputs()[out_idx];
+            out_ty.push_back(res.getType());
+            ++out_idx;
+            break;
+          }
+
+          case Activity::enzyme_dupnoneed: {
+            // derivative
+
+            mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
+            auto dresTy = dres.getType();
+            auto T = dyn_cast<TensorType>(dresTy);
+            if (!T) {
+              out_ty.push_back(RankedTensorType::get(width, dresTy));
+            } else {
+              // prepend to shape
+              SmallVector<int64_t> shape;
+              shape.push_back(width);
+              shape.append(T.getShape().begin(), T.getShape().end());
+              auto T2 = T.clone(shape);
+              out_ty.push_back(T2);
+            }
+            ++out_idx;
+            break;
+          }
+
+          case Activity::enzyme_dup: {
+            mlir::Value res = firstDiffOp.getOutputs()[out_idx];
+            out_ty.push_back(res.getType());
+
+            ++out_idx;
+
+            // derivative
+            mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
+            auto dresTy = dres.getType();
+            auto T = dyn_cast<TensorType>(dresTy);
+            if (!T) {
+              out_ty.push_back(RankedTensorType::get(width, dresTy));
+            } else {
+              // prepend to shape
+              SmallVector<int64_t> shape;
+              shape.push_back(width);
+              shape.append(T.getShape().begin(), T.getShape().end());
+              auto T2 = T.clone(shape);
+              out_ty.push_back(T2);
+            }
+            ++out_idx;
+            break;
+          }
+
+          case Activity::enzyme_constnoneed: {
+            break;
+          }
+
+          case Activity::enzyme_activenoneed: {
+            mlir::Value res = firstDiffOp.getOutputs()[out_idx];
+            out_ty.push_back(res.getType());
+            ++out_idx;
+            break;
+          }
+
+          default:
+            llvm_unreachable(
+                "unknown activity value encountered for ret_activity");
+          }
+        }
+
+        // create new FwdDiffOp
+        ArrayAttr newInActivity = ArrayAttr::get(
+            context, llvm::ArrayRef<Attribute>(inActivityAttrs.begin(),
+                                               inActivityAttrs.end()));
+
+        ArrayAttr newRetActivity = ArrayAttr::get(
+            context, llvm::ArrayRef<Attribute>(retActivityAttrs.begin(),
+                                               retActivityAttrs.end()));
+
+        IntegerAttr newWidthAttr =
+            IntegerAttr::get(context, llvm::APSInt(width));
+
+        ForwardDiffOp newDiffOp = builder.create<ForwardDiffOp>(
+            loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
+            newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
+
+        // map old uses to new uses
+        // reduce primal from multiple to 1
+        // preserve derivative uses
+        out_idx = 0;
+        for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
+          switch (ract) {
+          case Activity::enzyme_constnoneed:
+            // no-op
+            break;
+          case Activity::enzyme_const: {
+            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+
+            for (ForwardDiffOp dop : allOps) {
+              dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
+            }
+            out_idx++;
+            break;
+          }
+
+          case Activity::enzyme_dupnoneed: {
+            // derivative
+            mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
+            for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
+
+              mlir::Value old_dres = dop.getOutputs()[out_idx];
+              auto old_dresTy = old_dres.getType();
+              mlir::Value new_dres;
+              auto T = cast<TensorType>(old_dresTy);
+              mlir::Value indexOp =
+                  builder.create<arith::ConstantIndexOp>(loc, dop_idx);
+
+              if (!T) {
+                new_dres =
+                    builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
+              } else {
+                auto rankedType = cast<RankedTensorType>(batch_dout.getType());
+                SmallVector<OpFoldResult> offsets, sizes, strides;
+
+                // Offsets: [dop_idx, 0, 0, ...]
+                offsets.push_back(builder.getI64IntegerAttr(dop_idx));
+                for (int i = 1; i < rankedType.getRank(); ++i) {
+                  offsets.push_back(builder.getI64IntegerAttr(0));
+                }
+                // Sizes: [1, original_dim1, original_dim2, ...]
+                sizes.push_back(builder.getI64IntegerAttr(1));
+                for (auto dim : cast<RankedTensorType>(T).getShape()) {
+                  sizes.push_back(builder.getI64IntegerAttr(dim));
+                }
+
+                // Strides: [1, 1, 1, ...]
+                for (int i = 0; i < rankedType.getRank(); ++i) {
+                  strides.push_back(builder.getI64IntegerAttr(1));
+                }
+
+                new_dres = builder.create<tensor::ExtractSliceOp>(
+                    loc, batch_dout, offsets, sizes, strides);
+              }
+
+              old_dres.replaceAllUsesWith(new_dres);
+            }
+            ++out_idx;
+            break;
+          }
+
+          case Activity::enzyme_dup: {
+            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+
+            for (ForwardDiffOp dop : allOps) {
+              dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
+            }
+            out_idx++;
+
+            // derivative
+            mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
+            for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
+
+              mlir::Value old_dres = dop.getOutputs()[out_idx];
+              auto old_dresTy = old_dres.getType();
+              mlir::Value new_dres;
+              auto T = cast<TensorType>(old_dresTy);
+              mlir::Value indexOp =
+                  builder.create<arith::ConstantIndexOp>(loc, dop_idx);
+
+              if (!T) {
+                new_dres =
+                    builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
+              } else {
+                auto rankedType = cast<RankedTensorType>(batch_dout.getType());
+                SmallVector<OpFoldResult> offsets, sizes, strides;
+
+                // Offsets: [dop_idx, 0, 0, ...]
+                offsets.push_back(builder.getI64IntegerAttr(dop_idx));
+                for (int i = 1; i < rankedType.getRank(); ++i) {
+                  offsets.push_back(builder.getI64IntegerAttr(0));
+                }
+                // Sizes: [1, original_dim1, original_dim2, ...]
+                sizes.push_back(builder.getI64IntegerAttr(1));
+                for (auto dim : cast<RankedTensorType>(T).getShape()) {
+                  sizes.push_back(builder.getI64IntegerAttr(dim));
+                }
+
+                // Strides: [1, 1, 1, ...]
+                for (int i = 0; i < rankedType.getRank(); ++i) {
+                  strides.push_back(builder.getI64IntegerAttr(1));
+                }
+
+                new_dres = builder.create<tensor::ExtractSliceOp>(
+                    loc, batch_dout, offsets, sizes, strides);
+              }
+
+              old_dres.replaceAllUsesWith(new_dres);
+            }
+
+            ++out_idx;
+            break;
+          }
+          case Activity::enzyme_active: {
+            // TODO: check later
+            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+
+            for (ForwardDiffOp dop : allOps) {
+              dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
+            }
+            out_idx++;
+            break;
+          }
+
+          case Activity::enzyme_activenoneed: {
+            // TODO: check later
+            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+
+            for (ForwardDiffOp dop : allOps) {
+              dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
+            }
+            out_idx++;
+            break;
+          }
+          }
         }
       }
-
-      // process output type
-      auto out_idx = 0;
-      for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
-        ActivityAttr iattr = ActivityAttr::get(context, ract);
-
-        retActivity.push_back(iattr);
-        switch (ract) {
-
-        case Activity::enzyme_active: {
-          mlir::Value res = lastOp.getOutputs()[out_idx];
-          out_ty.push_back(res.getType());
-          ++out_idx;
-          break;
-        }
-
-        case Activity::enzyme_const: {
-          mlir::Value res = lastOp.getOutputs()[out_idx];
-          out_ty.push_back(res.getType());
-          ++out_idx;
-          break;
-        }
-
-        case Activity::enzyme_dupnoneed: {
-          // derivative
-
-          mlir::Value dres = lastOp.getOutputs()[out_idx];
-          auto dresTy = dres.getType();
-          auto T = dyn_cast<TensorType>(dresTy);
-          if (!T) {
-            out_ty.push_back(RankedTensorType::get(width, dresTy));
-          } else {
-            // prepend to shape
-            SmallVector<int64_t> shape;
-            shape.push_back(width);
-            shape.append(T.getShape().begin(), T.getShape().end());
-            auto T2 = T.clone(shape);
-            out_ty.push_back(T2);
-          }
-          ++out_idx;
-          break;
-        }
-
-        case Activity::enzyme_dup: {
-          mlir::Value res = lastOp.getOutputs()[out_idx];
-          out_ty.push_back(res.getType());
-
-          ++out_idx;
-
-          // derivative
-          mlir::Value dres = lastOp.getOutputs()[out_idx];
-          auto dresTy = dres.getType();
-          auto T = dyn_cast<TensorType>(dresTy);
-          if (!T) {
-            out_ty.push_back(RankedTensorType::get(width, dresTy));
-          } else {
-            // prepend to shape
-            SmallVector<int64_t> shape;
-            shape.push_back(width);
-            shape.append(T.getShape().begin(), T.getShape().end());
-            auto T2 = T.clone(shape);
-            out_ty.push_back(T2);
-          }
-          ++out_idx;
-          break;
-        }
-
-        case Activity::enzyme_constnoneed: {
-          break;
-        }
-
-        case Activity::enzyme_activenoneed: {
-          mlir::Value res = lastOp.getOutputs()[out_idx];
-          out_ty.push_back(res.getType());
-          ++out_idx;
-          break;
-        }
-
-        default:
-          llvm_unreachable(
-              "unknown activity value encountered for ret_activity");
-        }
-      }
-      
-      // create new FwdDiffOp
-      
-      IntegerAttr newWidthAttr = IntegerAttr::get(context, llvm::APSInt(width));
-      auto newMergedDiffOp = builder.create<ForwardDiffOp>(
-          loc, out_ty, lastOp.getFnAttr(), in_args, inActivity, retActivity,
-          newWidthAttr, lastOp.getStrongZeroAttr());
-      
-      // 
-
-      // rename uses from old to new results
-
     };
   };
 };
