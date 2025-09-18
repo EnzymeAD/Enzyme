@@ -419,6 +419,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
           }
         }
+
+        // erase old ops
+        for (auto dop : allOps) {
+          op->erase();
+        }
       }
     };
   };
