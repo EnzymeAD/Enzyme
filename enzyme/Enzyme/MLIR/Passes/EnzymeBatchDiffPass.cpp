@@ -177,44 +177,100 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         }
       }
 
-      // process outputs
+      // process output type
       auto out_idx = 0;
       for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
         ActivityAttr iattr = ActivityAttr::get(context, ract);
 
-        if (ract == Activity::enzyme_constnoneed) {
-          retActivity.push_back(iattr);
-          continue;
+        retActivity.push_back(iattr);
+        switch (ract) {
+
+        case Activity::enzyme_active: {
+          mlir::Value res = lastOp.getOutputs()[out_idx];
+          out_ty.push_back(res.getType());
+          ++out_idx;
+          break;
         }
 
-        switch (ract) {
-        case Activity::enzyme_active:
+        case Activity::enzyme_const: {
+          mlir::Value res = lastOp.getOutputs()[out_idx];
+          out_ty.push_back(res.getType());
+          ++out_idx;
           break;
-        case Activity::enzyme_const:
+        }
+
+        case Activity::enzyme_dupnoneed: {
+          // derivative
+
+          mlir::Value dres = lastOp.getOutputs()[out_idx];
+          auto dresTy = dres.getType();
+          auto T = dyn_cast<TensorType>(dresTy);
+          if (!T) {
+            out_ty.push_back(RankedTensorType::get(width, dresTy));
+          } else {
+            // prepend to shape
+            SmallVector<int64_t> shape;
+            shape.push_back(width);
+            shape.append(T.getShape().begin(), T.getShape().end());
+            auto T2 = T.clone(shape);
+            out_ty.push_back(T2);
+          }
+          ++out_idx;
           break;
-        case Activity::enzyme_dupnoneed:
+        }
+
+        case Activity::enzyme_dup: {
+          mlir::Value res = lastOp.getOutputs()[out_idx];
+          out_ty.push_back(res.getType());
+
+          ++out_idx;
+
+          // derivative
+          mlir::Value dres = lastOp.getOutputs()[out_idx];
+          auto dresTy = dres.getType();
+          auto T = dyn_cast<TensorType>(dresTy);
+          if (!T) {
+            out_ty.push_back(RankedTensorType::get(width, dresTy));
+          } else {
+            // prepend to shape
+            SmallVector<int64_t> shape;
+            shape.push_back(width);
+            shape.append(T.getShape().begin(), T.getShape().end());
+            auto T2 = T.clone(shape);
+            out_ty.push_back(T2);
+          }
+          ++out_idx;
           break;
-        case Activity::enzyme_dup:
+        }
+
+        case Activity::enzyme_constnoneed: {
           break;
-        case Activity::enzyme_constnoneed:
+        }
+
+        case Activity::enzyme_activenoneed: {
+          mlir::Value res = lastOp.getOutputs()[out_idx];
+          out_ty.push_back(res.getType());
+          ++out_idx;
           break;
-        case Activity::enzyme_activenoneed:
-          break;
+        }
+
         default:
           llvm_unreachable(
               "unknown activity value encountered for ret_activity");
         }
       }
+      
+      // create new FwdDiffOp
+      
+      IntegerAttr newWidthAttr = IntegerAttr::get(context, llvm::APSInt(width));
+      auto newMergedDiffOp = builder.create<ForwardDiffOp>(
+          loc, out_ty, lastOp.getFnAttr(), in_args, inActivity, retActivity,
+          newWidthAttr, lastOp.getStrongZeroAttr());
+      
+      // 
 
-      // emit tensor.concat for derivative values
-      {
-        auto lastDiff = allOps[width - 1];
-        IRRewriter::InsertionGuard insertGuard(builder);
-        builder.setInsertionPoint(lastDiff);
-      }
-      // emit enzyme.fwddiff
-      // emit tensor.extract
       // rename uses from old to new results
+
     };
   };
 };
