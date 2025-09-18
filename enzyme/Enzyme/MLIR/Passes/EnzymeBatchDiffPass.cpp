@@ -19,6 +19,7 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #define DEBUG_TYPE "enzyme-diff-batch"
+#define ENZYME_DBGS llvm::dbgs() << "[" << DEBUG_TYPE << "]"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -36,10 +37,45 @@ namespace {
 struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
   void runOnOperation() override;
 
+  bool isReadOnly2(Operation *op) {
+    // If the op has memory effects, try to characterize them to see if the op
+    // is trivially dead here.
+    if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+      LLVM_DEBUG(ENZYME_DBGS << "querying memory effects of fn op" << "\n");
+      // Check to see if this op either has no effects, or only allocates/reads
+      // memory.
+      SmallVector<MemoryEffects::EffectInstance, 1> effects;
+      effectInterface.getEffects(effects);
+      if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+            return isa<MemoryEffects::Read>(it.getEffect());
+          })) {
+        return false;
+      }
+    }
+
+    bool isRecursiveContainer =
+        op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+        isa<FunctionOpInterface>(op);
+    if (isRecursiveContainer) {
+      LLVM_DEBUG(ENZYME_DBGS << "has rec mem effects" << "\n");
+      for (Region &region : op->getRegions()) {
+        for (auto &block : region) {
+          for (auto &nestedOp : block)
+            if (!isReadOnly(&nestedOp))
+              return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
   bool isReadOnly(Operation *op) {
+    LLVM_DEBUG(ENZYME_DBGS << "inside isReadOnly check" << "\n");
     bool hasRecursiveEffects =
         op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
     if (hasRecursiveEffects) {
+      LLVM_DEBUG(ENZYME_DBGS << "has rec mem effects" << "\n");
       for (Region &region : op->getRegions()) {
         for (auto &block : region) {
           for (auto &nestedOp : block)
@@ -49,10 +85,12 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
       return true;
     }
+    LLVM_DEBUG(ENZYME_DBGS << "has no rec mem effects" << "\n");
 
     // If the op has memory effects, try to characterize them to see if the op
     // is trivially dead here.
     if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+      LLVM_DEBUG(ENZYME_DBGS << "querying memory effects of fn op" << "\n");
       // Check to see if this op either has no effects, or only allocates/reads
       // memory.
       SmallVector<MemoryEffects::EffectInstance, 1> effects;
@@ -64,6 +102,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
       return true;
     }
+
+    LLVM_DEBUG(ENZYME_DBGS << "has no mem effects" << "\n");
     return false;
   }
 
@@ -77,15 +117,30 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         toMerge;
 
     op->walk([&](enzyme::ForwardDiffOp dop) {
-      LLVM_DEBUG(llvm::dbgs() << "found fwddiff" << "\n");
+      LLVM_DEBUG(ENZYME_DBGS << "found fwddiff" << "\n");
       // lookup function, check if its readOnly
       auto *symbolOp =
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
-      // skip if fn isn't readonly
-      if (!isReadOnly(fnOp)) {
-        LLVM_DEBUG(llvm::dbgs() << "skipping fn." << "\n");
+      // skip if fn isn't readonly(iterate through toplevel ops)
+      LLVM_DEBUG(ENZYME_DBGS << *symbolOp << "\n");
+      LLVM_DEBUG(ENZYME_DBGS << *fnOp << "\n");
+      LLVM_DEBUG(ENZYME_DBGS << fnOp.getFunctionBody().front().front() << "\n");
+      mlir::Region &fnReg = fnOp.getFunctionBody();
+      for (mlir::Block &fnBlk : fnReg) {
+        LLVM_DEBUG({
+          llvm::dbgs() << "Processing block: ";
+          fnBlk.printAsOperand(llvm::dbgs());
+          llvm::dbgs() << "\n";
+        });
+
+        for (mlir::Operation &fnOp : fnBlk.getOperations()) {
+          LLVM_DEBUG(llvm::dbgs() << "Processing op " << fnOp << "\n");
+        }
+      }
+      if (!isReadOnly2(fnOp)) {
+        LLVM_DEBUG(ENZYME_DBGS << "skipping fn." << "\n");
         return mlir::WalkResult::skip();
       }
 
