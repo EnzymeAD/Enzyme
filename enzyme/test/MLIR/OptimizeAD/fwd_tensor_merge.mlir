@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-diff-batch %s | FileCheck %s
+// RUN: %eopt --enzyme %s | FileCheck %s
 
 module {
   func.func @square(%x : tensor<10xf64>) -> tensor<10xf64>{
