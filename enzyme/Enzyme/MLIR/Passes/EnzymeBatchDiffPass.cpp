@@ -167,9 +167,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         auto val = iattr.getValue();
         retActivity.push_back(val);
       }
-
+      LLVM_DEBUG(ENZYME_DBGS << "creating key for cache" << "\n");
       batchutils::BatchDiffCacheKey key{fnOp, in_args, inActivity, retActivity};
 
+      LLVM_DEBUG(ENZYME_DBGS << "created key for cache" << "\n");
       auto mergeItr = toMerge.find(key);
       if (mergeItr != toMerge.end()) {
         LLVM_DEBUG(llvm::dbgs() << "adding to map" << "\n");
@@ -179,6 +180,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         v.push_back(dop);
         toMerge[key] = v;
       }
+      LLVM_DEBUG(ENZYME_DBGS << "created val for cache" << "\n");
+      return mlir::WalkResult::advance();
     });
 
     OpBuilder builder(op);
