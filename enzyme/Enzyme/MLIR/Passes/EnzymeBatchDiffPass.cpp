@@ -335,7 +335,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                                                retActivityAttrs.end()));
 
         IntegerAttr newWidthAttr =
-            IntegerAttr::get(context, llvm::APSInt(width));
+            IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
 
         ForwardDiffOp newDiffOp = builder.create<ForwardDiffOp>(
             loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
@@ -368,7 +368,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               mlir::Value old_dres = dop.getOutputs()[out_idx];
               auto old_dresTy = old_dres.getType();
               mlir::Value new_dres;
-              auto T = cast<TensorType>(old_dresTy);
+              auto T = dyn_cast<TensorType>(old_dresTy);
               mlir::Value indexOp =
                   builder.create<arith::ConstantIndexOp>(loc, dop_idx);
 
@@ -480,10 +480,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
           }
         }
-
-        // erase old ops
+        LLVM_DEBUG(ENZYME_DBGS << "Created new FwdDiff op, renamed all uses"
+                               << "\n");
+        // erase all old ops
         for (auto dop : allOps) {
-          op->erase();
+          dop->erase();
         }
       }
     };
