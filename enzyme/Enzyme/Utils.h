@@ -386,6 +386,7 @@ enum class MProbProgMode {
   Call = 0,
   Simulate = 1,
   Generate = 2,
+  Regenerate = 3,
 };
 
 /// Classification of value as an original program
