@@ -521,4 +521,112 @@ def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
   }];
 }
 
+def RandOp : Enzyme_Op<"rand"> {
+  let summary = "Draw a uniform random variable in (0, 1)";
+  let description = [{
+  Draw a uniform random variate in (0, 1) given an RNG state. 
+  By convention, the 0th operand in inputs is the initial RNG state
+  and the 0th operand in results is the updated RNG state.
+  }];
+
+  let arguments = (ins AnyType:$rng_state);
+
+  let results = (outs AnyType:$output_rng_state, AnyType:$value);
+
+  let assemblyFormat = [{
+    $rng_state attr-dict `:` functional-type($rng_state, results)
+  }];
+}
+
+def GetSubtraceOp : Enzyme_Op<"getSubtrace"> {
+  let summary = "Get a subtrace from a trace for a given symbol";
+  let description = [{
+    Get a subtrace from a trace for a given symbol.
+  }];
+  let arguments = (ins Trace:$trace, SymbolAttr:$symbol);
+
+  let results = (outs Trace:$subtrace);
+
+  let assemblyFormat = [{
+    $trace attr-dict
+  }];
+}
+
+def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace"> {
+  let summary = "Get the sampled value for a given symbol from an execution trace";
+  let description = [{
+    Get the sampled value for a given symbol from an execution trace.
+  }];
+  let arguments = (ins Trace:$trace, SymbolAttr:$symbol);
+
+  let results = (outs Variadic<AnyType>:$sample);
+
+  let assemblyFormat = [{
+    $trace attr-dict `:` type($sample)
+  }];
+}
+
+def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace"> {
+  let summary = "Get the accumulated weight from an execution trace";
+  let description = [{
+    Get the accumulated log-probability weight from an execution trace.
+  }];
+  let arguments = (ins Trace:$trace);
+
+  let results = (outs AnyType:$weight);
+
+  let assemblyFormat = [{
+    $trace attr-dict `:` type($weight)
+  }];
+}
+
+def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Regenerate selected addresses in a probabilistic function";
+  let description = [{
+    Regenerate selected addresses in a probabilistic function while keeping
+    other addresses fixed to their values in the given trace.
+    By convention, the 0th operand in inputs is the initial RNG state
+    and the 0th operand in results is the updated RNG state.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    Trace:$original_trace,
+    AddressArrayAttr:$selection,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$trace, AnyType:$weight, AnyType:$output_rng_state);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Metropolis-Hastings step for probabilistic inference";
+  let description = [{
+    Perform a Metropolis-Hastings step on a probabilistic function.
+    This operation proposes a new trace by regenerating selected addresses,
+    computes the acceptance probability, and returns the updated trace.
+    By convention, the 0th operand in inputs is the initial RNG state
+    and the 0th operand in results is the updated RNG state.
+  }];
+
+  let arguments = (ins
+    FlatSymbolRefAttr:$fn,
+    Variadic<AnyType>:$inputs,
+    Trace:$original_trace,
+    AddressArrayAttr:$selection,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 #endif // ENZYME_OPS
