@@ -68,6 +68,13 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
+  case MProbProgMode::Regenerate:
+    suffix = "regenerate";
+    OperandTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
+    ResultTypes.push_back(originalResults[0]);
+    break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
