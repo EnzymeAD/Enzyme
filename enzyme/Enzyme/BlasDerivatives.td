@@ -801,8 +801,8 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                       (CopyLowerToUpper<""> $layout, $uplo, (Shadow $A), $n),
                       
                       // Actual Math
-                      (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
-                      (BlasCall<"trsm"> $layout, Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),
+                      (BlasCall<"trsm"> $layout, Char<"L">, $uplo, (uplo_to_normal $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $A)),
+                      (BlasCall<"trsm"> $layout, Char<"R">, $uplo, (uplo_to_trans $uplo), Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $A)),
                       (BlasCall<"scal"> $n, Constant<"0.5">, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
 
                      (Seq<["tmp", "vector", "n"], [], 1>
@@ -814,7 +814,7 @@ def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),
                         (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>)),
 
                         // More math
-                        (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, $lda, (Shadow $A)),    
+                        (BlasCall<"trmm"> $layout, (uplo_to_side $uplo), $uplo, Char<"N">, Char<"N">, $n, $n, Constant<"1.0">, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $A)),    
                         // Restore the flipped side, but saving our computed diagonal
                         (BlasCall<"copy"> $n, (First (Shadow $A)), (Add $lda, ConstantInt<1>), use<"tmp">, ConstantInt<1>),
                         (BlasCall<"lacpy"> $layout, (flip_uplo $uplo), $n, $n, use<"tri">, $n, (Shadow $A)),
