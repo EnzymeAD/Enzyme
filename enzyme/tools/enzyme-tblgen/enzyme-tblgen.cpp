@@ -660,7 +660,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             dyn_cast<StringInit>(Def->getValueInit("type"))->getValue();
         if (typeCast != "")
           os << "(" << typeCast << ")";
-        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType(), ";
+        os << "mlir::enzyme::getConstantAttr(" << ord << ".getType()";
+        if (shadowType)
+          os << ")";
+	os << ", ";
         os << "\"" << value->getValue() << "\"))";
       } else {
         if (resultRoot->getNumArgs() != 1)
