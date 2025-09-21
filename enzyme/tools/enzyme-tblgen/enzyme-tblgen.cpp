@@ -663,7 +663,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "mlir::enzyme::getConstantAttr(" << ord << ".getType()";
         if (shadowType)
           os << ")";
-	os << ", ";
+        os << ", ";
         os << "\"" << value->getValue() << "\"))";
       } else {
         if (resultRoot->getNumArgs() != 1)
