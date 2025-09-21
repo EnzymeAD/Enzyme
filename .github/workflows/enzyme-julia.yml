@@ -23,32 +23,33 @@ jobs:
           - ubuntu-latest
           - macOS-latest
         arch:
-          - x64
+          - 'default'
     timeout-minutes: 60 
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
+    - uses: actions/checkout@v5
       with:
         repository: 'EnzymeAD/Enzyme.jl'
         path: ./jl
         ref: main
-    - uses: julia-actions/setup-julia@v1
+    - uses: julia-actions/setup-julia@v2
       with:
         version: ${{ matrix.version }}
         arch: ${{ matrix.arch }}
+    - uses: julia-actions/cache@v2
 
     - name: Build libEnzyme
       if: ${{ matrix.os != 'macOS-latest'}}
       run: |
-        julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
-        julia --project=jl/deps jl/deps/build_local.jl ./enzyme
+        julia --color=yes --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
+        julia --color=yes --project=jl/deps jl/deps/build_local.jl ./enzyme
     - name: Build libEnzyme MacOS
       if: ${{ matrix.os == 'macOS-latest'}}
       run: |
-        julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
-        SDKROOT=`xcrun --show-sdk-path` julia --project=jl/deps jl/deps/build_local.jl ./enzyme
+        julia --color=yes --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
+        SDKROOT=`xcrun --show-sdk-path` julia --color=yes --project=jl/deps jl/deps/build_local.jl ./enzyme
     - name: Dev EnzymeCore
-      run: julia --project=jl -e 'using Pkg; Pkg.develop(path="jl/lib/EnzymeCore")'
+      run: julia --color=yes --project=jl -e 'using Pkg; Pkg.develop(path="jl/lib/EnzymeCore")'
     - uses: julia-actions/julia-buildpkg@v1
       with:
         project: jl
