@@ -1241,10 +1241,37 @@ public:
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
   bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr) {
-    // TODO detect recursive merge and simplify
+    // Add fast path where nothing could change because all potentially inserted
+    // value are already in the map. Save all other ones that may need slow
+    // insertion
+    std::vector<std::pair<const std::vector<int>, ConcreteType>> todo;
 
+    for (const auto &pair : RHS.mapping) {
+      auto found = mapping.find(pair.first);
+      if (found == mapping.end()) {
+        todo.emplace_back(pair);
+        continue;
+      }
+      bool SubLegalOr = true;
+      auto cur = found->second;
+      bool SubChanged =
+          cur.checkedOrIn(pair.second, PointerIntSame, SubLegalOr);
+      if (!SubLegalOr) {
+        LegalOr = false;
+        return false;
+      }
+      if (!SubChanged) {
+        todo.emplace_back(pair);
+        continue;
+      }
+    }
+
+    if (todo.size() == 0)
+      return false;
+
+    // TODO detect recursive merge and simplify
     bool changed = false;
-    for (auto &pair : RHS.mapping) {
+    for (auto &pair : todo) {
       changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr);
     }
     return changed;
