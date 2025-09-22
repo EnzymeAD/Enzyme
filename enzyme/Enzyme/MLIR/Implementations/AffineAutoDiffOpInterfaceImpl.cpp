@@ -181,7 +181,7 @@ struct AffineForOpInterfaceReverse
       }
     }
 
-    return success();
+    return success(valid);
   }
 
   SmallVector<Value> cacheValues(Operation *op,
