@@ -52,6 +52,39 @@ struct BatchDiffCacheKey {
   }
 };
 
+template <typename SourceOp>
+BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
+  // extract in_activity, ret_activity, in_args
+  SmallVector<Activity> inActivity;
+  SmallVector<Activity> retActivity;
+  SmallVector<Value> in_args;
+
+  auto in_idx = 0;
+
+  for (auto [idx, act] : llvm::enumerate(uop.getActivity())) {
+    auto iattr = cast<ActivityAttr>(act);
+    auto val = iattr.getValue();
+    inActivity.push_back(val);
+
+    in_args.push_back(uop.getInputs()[in_idx]);
+    ++in_idx;
+
+    if (val == Activity::enzyme_dup || val == Activity::enzyme_dupnoneed) {
+      ++in_idx;
+    }
+  }
+
+  for (auto [idx, ract] : llvm::enumerate(uop.getRetActivity())) {
+    auto iattr = cast<ActivityAttr>(ract);
+    auto val = iattr.getValue();
+    retActivity.push_back(val);
+  }
+
+  batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity};
+
+  return key;
+}
+
 bool isReadOnly(Operation *op);
 
 } // namespace batchutils
