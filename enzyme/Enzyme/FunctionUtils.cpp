@@ -1685,62 +1685,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         continue;
       if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
         continue;
-      if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (isLocalReadOnlyOrThrow(CI)) {
-          continue;
-        }
-        if (isAllocationCall(CI, TLI)) {
-          continue;
-        }
-        if (auto F2 = CI->getCalledFunction()) {
-          if (isDebugFunction(F2))
-            continue;
-          if (F2->getCallingConv() == CI->getCallingConv()) {
-            if (F2 == &F)
-              continue;
-            if (isReadOnlyOrThrow(F2))
-              continue;
-            if (!F2->empty()) {
-              if (EnzymePrintPerf) {
-                EmitWarning(
-                    "WritingInstruction", I, "Instruction could write forcing ",
-                    F.getName(),
-                    " to not be marked readonly_or_throw per sub-call of ",
-                    F2->getName());
-              }
-              calls_todo.insert(F2);
-              continue;
-            }
-          }
-        }
-      }
-      if (auto SI = dyn_cast<StoreInst>(&I)) {
-        auto Obj = getBaseObject(SI->getPointerOperand());
-        // Storing into local memory is fine since it definitionally will not be
-        // seen outside the function. Note, even if one stored into x =
-        // malloc(..), and stored x into a global/arg pointer, that second store
-        // would trigger not readonly.
-        if (isa<AllocaInst>(Obj))
-          continue;
-        if (isAllocationCall(Obj, TLI)) {
-          if (local)
-            continue;
-          if (notCaptured(Obj))
-            continue;
-          local = true;
-          continue;
-        }
-        if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid()) {
-            local = true;
-            continue;
-          }
-        }
-      }
+
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Storing into local memory is fine since it definitionally will not be
@@ -1770,6 +1715,93 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
         auto Obj = getBaseObject(MSI->getOperand(0));
+        // Storing into local memory is fine since it definitionally will not be
+        // seen outside the function. Note, even if one stored into x =
+        // malloc(..), and stored x into a global/arg pointer, that second store
+        // would trigger not readonly.
+        if (isa<AllocaInst>(Obj))
+          continue;
+        if (isAllocationCall(Obj, TLI)) {
+          if (local)
+            continue;
+          if (notCaptured(Obj))
+            continue;
+          local = true;
+          continue;
+        }
+        if (auto arg = dyn_cast<Argument>(Obj)) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
+            local = true;
+            continue;
+          }
+        }
+      }
+
+      if (auto CI = dyn_cast<CallBase>(&I)) {
+        if (isLocalReadOnlyOrThrow(CI)) {
+          continue;
+        }
+        if (isAllocationCall(CI, TLI)) {
+          continue;
+        }
+        if (getFuncNameFromCall(CI) == "zeroType") {
+          auto Obj = getBaseObject(CI->getArgOperand(0));
+          // Storing into local memory is fine since it definitionally will not
+          // be seen outside the function. Note, even if one stored into x =
+          // malloc(..), and stored x into a global/arg pointer, that second
+          // store would trigger not readonly.
+          if (isa<AllocaInst>(Obj))
+            continue;
+          if (isAllocationCall(Obj, TLI)) {
+            if (local)
+              continue;
+            if (notCaptured(Obj))
+              continue;
+            local = true;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(Obj)) {
+            if (arg->hasStructRetAttr() ||
+                arg->getParent()
+                    ->getAttribute(arg->getArgNo() +
+                                       AttributeList::FirstArgIndex,
+                                   "enzymejl_returnRoots")
+                    .isValid()) {
+              local = true;
+              continue;
+            }
+          }
+        }
+        if (auto F2 = CI->getCalledFunction()) {
+          if (isDebugFunction(F2))
+            continue;
+          if (F2->getName() == "julia.write_barrier")
+            continue;
+          if (F2->getCallingConv() == CI->getCallingConv()) {
+            if (F2 == &F)
+              continue;
+            if (isReadOnlyOrThrow(F2))
+              continue;
+            if (!F2->empty()) {
+              if (EnzymePrintPerf) {
+                EmitWarning(
+                    "WritingInstruction", I, "Instruction could write forcing ",
+                    F.getName(),
+                    " to not be marked readonly_or_throw per sub-call of ",
+                    F2->getName());
+              }
+              calls_todo.insert(F2);
+              continue;
+            }
+          }
+        }
+      }
+      if (auto SI = dyn_cast<StoreInst>(&I)) {
+        auto Obj = getBaseObject(SI->getPointerOperand());
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store
