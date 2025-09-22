@@ -91,7 +91,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
       // skip if fn isn't readonly(iterate through toplevel ops)
-      mlir::Region &fnReg = fnOp.getFunctionBody();
       if (!batchutils::isReadOnly(fnOp)) {
         return mlir::WalkResult::skip();
       }
@@ -133,6 +132,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
     });
 
     OpBuilder builder(op);
+
     // process map
     for (auto mergeItr = toMerge.begin(); mergeItr != toMerge.end();
          ++mergeItr) {
