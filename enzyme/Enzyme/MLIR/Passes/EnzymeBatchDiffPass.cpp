@@ -32,80 +32,48 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
+namespace mlir {
+namespace enzyme {
+namespace batchutils {
+
+bool isReadOnly(Operation *op) {
+  // If the op has memory effects, try to characterize them to see if the op
+  // is trivially dead here.
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    // Check to see if this op either has no effects, or only allocates/reads
+    // memory.
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+          return isa<MemoryEffects::Read>(it.getEffect());
+        })) {
+      return false;
+    }
+  }
+
+  bool isRecursiveContainer =
+      op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+      isa<FunctionOpInterface>(op);
+  if (isRecursiveContainer) {
+    for (Region &region : op->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          if (!isReadOnly(&nestedOp))
+            return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+} // namespace batchutils
+} // namespace enzyme
+} // namespace mlir
 namespace {
 
 struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
   void runOnOperation() override;
-
-  bool isReadOnly2(Operation *op) {
-    // If the op has memory effects, try to characterize them to see if the op
-    // is trivially dead here.
-    if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-      LLVM_DEBUG(ENZYME_DBGS << "querying memory effects of fn op" << "\n");
-      // Check to see if this op either has no effects, or only allocates/reads
-      // memory.
-      SmallVector<MemoryEffects::EffectInstance, 1> effects;
-      effectInterface.getEffects(effects);
-      if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
-            return isa<MemoryEffects::Read>(it.getEffect());
-          })) {
-        return false;
-      }
-    }
-
-    bool isRecursiveContainer =
-        op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
-        isa<FunctionOpInterface>(op);
-    if (isRecursiveContainer) {
-      LLVM_DEBUG(ENZYME_DBGS << "has rec mem effects" << "\n");
-      for (Region &region : op->getRegions()) {
-        for (auto &block : region) {
-          for (auto &nestedOp : block)
-            if (!isReadOnly2(&nestedOp))
-              return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  bool isReadOnly(Operation *op) {
-    LLVM_DEBUG(ENZYME_DBGS << "inside isReadOnly check" << "\n");
-    bool hasRecursiveEffects =
-        op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
-    if (hasRecursiveEffects) {
-      LLVM_DEBUG(ENZYME_DBGS << "has rec mem effects" << "\n");
-      for (Region &region : op->getRegions()) {
-        for (auto &block : region) {
-          for (auto &nestedOp : block)
-            if (!isReadOnly(&nestedOp))
-              return false;
-        }
-      }
-      return true;
-    }
-    LLVM_DEBUG(ENZYME_DBGS << "has no rec mem effects" << "\n");
-
-    // If the op has memory effects, try to characterize them to see if the op
-    // is trivially dead here.
-    if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-      LLVM_DEBUG(ENZYME_DBGS << "querying memory effects of fn op" << "\n");
-      // Check to see if this op either has no effects, or only allocates/reads
-      // memory.
-      SmallVector<MemoryEffects::EffectInstance, 1> effects;
-      effectInterface.getEffects(effects);
-      if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
-            return isa<MemoryEffects::Read>(it.getEffect());
-          })) {
-        return false;
-      }
-      return true;
-    }
-
-    LLVM_DEBUG(ENZYME_DBGS << "has no mem effects" << "\n");
-    return false;
-  }
 
   // Map tracking batchable subset of fwddiff calls
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
@@ -124,7 +92,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
       // skip if fn isn't readonly(iterate through toplevel ops)
       mlir::Region &fnReg = fnOp.getFunctionBody();
-      if (!isReadOnly2(fnOp)) {
+      if (!batchutils::isReadOnly(fnOp)) {
         return mlir::WalkResult::skip();
       }
 
@@ -463,8 +431,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
           }
         }
-        LLVM_DEBUG(ENZYME_DBGS << "Created new FwdDiff op, renamed all uses"
-                               << "\n");
+
         // erase all old ops
         for (auto dop : allOps) {
           dop->erase();

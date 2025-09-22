@@ -52,6 +52,8 @@ struct BatchDiffCacheKey {
   }
 };
 
+bool isReadOnly(Operation *op);
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
