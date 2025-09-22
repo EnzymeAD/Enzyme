@@ -61,7 +61,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       for (Region &region : op->getRegions()) {
         for (auto &block : region) {
           for (auto &nestedOp : block)
-            if (!isReadOnly(&nestedOp))
+            if (!isReadOnly2(&nestedOp))
               return false;
         }
       }
@@ -117,30 +117,14 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         toMerge;
 
     op->walk([&](enzyme::ForwardDiffOp dop) {
-      LLVM_DEBUG(ENZYME_DBGS << "found fwddiff" << "\n");
       // lookup function, check if its readOnly
       auto *symbolOp =
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
       // skip if fn isn't readonly(iterate through toplevel ops)
-      LLVM_DEBUG(ENZYME_DBGS << *symbolOp << "\n");
-      LLVM_DEBUG(ENZYME_DBGS << *fnOp << "\n");
-      LLVM_DEBUG(ENZYME_DBGS << fnOp.getFunctionBody().front().front() << "\n");
       mlir::Region &fnReg = fnOp.getFunctionBody();
-      for (mlir::Block &fnBlk : fnReg) {
-        LLVM_DEBUG({
-          llvm::dbgs() << "Processing block: ";
-          fnBlk.printAsOperand(llvm::dbgs());
-          llvm::dbgs() << "\n";
-        });
-
-        for (mlir::Operation &fnOp : fnBlk.getOperations()) {
-          LLVM_DEBUG(llvm::dbgs() << "Processing op " << fnOp << "\n");
-        }
-      }
       if (!isReadOnly2(fnOp)) {
-        LLVM_DEBUG(ENZYME_DBGS << "skipping fn." << "\n");
         return mlir::WalkResult::skip();
       }
 
@@ -167,20 +151,16 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         auto val = iattr.getValue();
         retActivity.push_back(val);
       }
-      LLVM_DEBUG(ENZYME_DBGS << "creating key for cache" << "\n");
       batchutils::BatchDiffCacheKey key{fnOp, in_args, inActivity, retActivity};
 
-      LLVM_DEBUG(ENZYME_DBGS << "created key for cache" << "\n");
       auto mergeItr = toMerge.find(key);
       if (mergeItr != toMerge.end()) {
-        LLVM_DEBUG(llvm::dbgs() << "adding to map" << "\n");
         mergeItr->second.push_back(dop);
       } else {
         SmallVector<enzyme::ForwardDiffOp> v;
         v.push_back(dop);
         toMerge[key] = v;
       }
-      LLVM_DEBUG(ENZYME_DBGS << "created val for cache" << "\n");
       return mlir::WalkResult::advance();
     });
 
@@ -396,7 +376,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 }
 
                 new_dres = builder.create<tensor::ExtractSliceOp>(
-                    loc, batch_dout, offsets, sizes, strides);
+                    loc,
+                    RankedTensorType::get(rankedType.getShape().drop_front(),
+                                          rankedType.getElementType()),
+                    batch_dout, offsets, sizes, strides);
               }
 
               old_dres.replaceAllUsesWith(new_dres);
