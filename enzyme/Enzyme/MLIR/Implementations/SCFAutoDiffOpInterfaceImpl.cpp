@@ -28,6 +28,8 @@
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include <functional>
 
 using namespace mlir;
@@ -568,6 +570,200 @@ public:
   }
 };
 
+struct ParallelOpEnzymeOpsRemover
+    : public ForLikeEnzymeOpsRemover<ParallelOpEnzymeOpsRemover,
+                                     scf::ParallelOp> {
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(Value lb, Value ub, Value step) {
+    IntegerAttr lbAttr, ubAttr, stepAttr;
+    if (!matchPattern(lb, m_Constant(&lbAttr)))
+      return std::nullopt;
+    if (!matchPattern(ub, m_Constant(&ubAttr)))
+      return std::nullopt;
+    if (!matchPattern(step, m_Constant(&stepAttr)))
+      return std::nullopt;
+
+    int64_t lbI = lbAttr.getInt(), ubI = ubAttr.getInt(),
+            stepI = stepAttr.getInt();
+    return (ubI - lbI) / stepI;
+  }
+
+  static SmallVector<IntOrValue, 1> getDimensionBounds(OpBuilder &builder,
+                                                       scf::ParallelOp parOp) {
+    SmallVector<IntOrValue, 1> bounds;
+    bounds.reserve(parOp.getNumLoops());
+    for (auto &&[lb, ub, step] : llvm::zip_equal(
+             parOp.getLowerBound(), parOp.getUpperBound(), parOp.getStep())) {
+      auto iters = getConstantNumberOfIterations(lb, ub, step);
+      if (iters) {
+        bounds.push_back(IntOrValue(*iters));
+      } else {
+        Value diff = arith::SubIOp::create(builder, parOp.getLoc(), ub, lb);
+        Value nSteps =
+            arith::DivUIOp::create(builder, parOp.getLoc(), diff, step);
+        bounds.push_back(IntOrValue(nSteps));
+      }
+    }
+    return bounds;
+  }
+  static SmallVector<Value>
+  computeReversedIndices(PatternRewriter &rewriter, scf::ParallelOp parOp,
+                         ArrayRef<Value> otherInductionVariable,
+                         ArrayRef<IntOrValue> bounds) {
+    return SmallVector<Value>(otherInductionVariable);
+  }
+
+  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
+                                                scf::ParallelOp parOp) {
+    SmallVector<Value> canonicalIVs;
+    canonicalIVs.reserve(parOp.getNumLoops());
+    for (auto &&[iv, lb, step] :
+         llvm::zip_equal(parOp.getInductionVars(), parOp.getLowerBound(),
+                         parOp.getStep())) {
+      Value val = iv;
+      if (!matchPattern(lb, m_Zero())) {
+        val = arith::SubIOp::create(builder, parOp.getLoc(), val, step);
+      }
+
+      if (!matchPattern(step, m_One())) {
+        val = arith::DivUIOp::create(builder, parOp.getLoc(), val, step);
+      }
+      canonicalIVs.push_back(val);
+    }
+    return canonicalIVs;
+  }
+
+  static IRMapping createArgumentMap(PatternRewriter &rewriter,
+                                     scf::ParallelOp parOp,
+                                     ArrayRef<Value> indPar,
+                                     scf::ParallelOp otherParOp,
+                                     ArrayRef<Value> indOther) {
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indPar, indOther))
+      map.map(f, o);
+
+    for (auto &&[iv, oiv, lb, olb, step, ostep] : llvm::zip_equal(
+             parOp.getInductionVars(), otherParOp.getInductionVars(),
+             parOp.getLowerBound(), otherParOp.getLowerBound(), parOp.getStep(),
+             otherParOp.getStep())) {
+      if (!map.contains(iv)) {
+        assert(Equivalent(lb, olb));
+        assert(Equivalent(step, ostep));
+        map.map(iv, oiv);
+      }
+    }
+    return map;
+  }
+
+  static scf::ParallelOp replaceWithNewOperands(PatternRewriter &rewriter,
+                                                scf::ParallelOp otherParallelOp,
+                                                ArrayRef<Value> operands) {
+    auto newOtherParOp = scf::ParallelOp::create(
+        rewriter, otherParallelOp.getLoc(), otherParallelOp.getLowerBound(),
+        otherParallelOp.getUpperBound(), otherParallelOp.getStep(),
+        otherParallelOp.getInitVals());
+
+    newOtherParOp.getRegion().takeBody(otherParallelOp.getRegion());
+    rewriter.replaceOp(
+        otherParallelOp,
+        newOtherParOp.getResults().slice(0, otherParallelOp.getNumResults()));
+    return newOtherParOp;
+  }
+
+  static ValueRange getInits(scf::ParallelOp parallelOp) {
+    return parallelOp.getInitVals();
+  }
+};
+
+struct ParallelOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          ParallelOpInterfaceReverse, scf::ParallelOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto parallelOp = cast<scf::ParallelOp>(op);
+    if (parallelOp.getNumReductions() != 0) {
+      return parallelOp.emitError()
+             << "parallel reductions not yet implemented\n";
+    }
+
+    unsigned loopCount = parallelOp.getNumLoops();
+    SmallVector<Value> bounds = llvm::map_to_vector(
+        caches, [&](Value cache) { return gutils->popCache(cache, builder); });
+
+    auto revPar = scf::ParallelOp::create(
+        builder, op->getLoc(),
+        /*lowerBounds=*/ValueRange(bounds).slice(0, loopCount),
+        /*upperBounds=*/ValueRange(bounds).slice(loopCount, loopCount),
+        /*steps=*/ValueRange(bounds).slice(loopCount * 2, loopCount));
+
+    bool valid = true;
+    bool wasAtomic = gutils->AtomicAdd;
+    gutils->AtomicAdd = true;
+    std::function<Value(Location, Type)> gradientCreator = [&](Location loc,
+                                                               Type t) {
+      auto shadowty = getShadowType(t);
+      OpBuilder builder(t.getContext());
+      // Gradients of values defined within the parallel body should be local to
+      // each iteration
+      builder.setInsertionPointToStart(revPar.getBody());
+
+      auto shadow = builder.create<enzyme::InitOp>(
+          loc, enzyme::GradientType::get(t.getContext(), shadowty));
+      auto toset =
+          cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
+      builder.create<enzyme::SetOp>(loc, shadow, toset);
+      return shadow;
+    };
+    gutils->registerGradientCreatorHook(gradientCreator);
+    auto scope = llvm::make_scope_exit(
+        [&]() { gutils->deregisterGradientCreatorHook(gradientCreator); });
+
+    {
+      Block *oBB = parallelOp.getBody();
+      Block *revBB = revPar.getBody();
+
+      OpBuilder bodyBuilder(revBB, revBB->end());
+      bodyBuilder.setInsertionPoint(revBB->getTerminator());
+
+      auto first = oBB->rbegin();
+      first++; // skip terminator
+
+      auto last = oBB->rend();
+
+      for (auto it = first; it != last; ++it) {
+        Operation *op = &*it;
+        valid &= gutils->Logic.visitChild(op, bodyBuilder, gutils).succeeded();
+      }
+    }
+
+    gutils->AtomicAdd = wasAtomic;
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto parallelOp = cast<scf::ParallelOp>(op);
+    Operation *newOp = gutils->getNewFromOriginal(op);
+    OpBuilder cacheBuilder(newOp);
+    SmallVector<Value> caches;
+    for (Value lb : parallelOp.getLowerBound())
+      caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(lb),
+                                                cacheBuilder));
+    for (Value ub : parallelOp.getUpperBound())
+      caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(ub),
+                                                cacheBuilder));
+    for (Value step : parallelOp.getStep())
+      caches.push_back(gutils->initAndPushCache(
+          gutils->getNewFromOriginal(step), cacheBuilder));
+
+    return caches;
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 struct IfOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<IfOpInterfaceReverse,
                                                        scf::IfOp> {
@@ -707,6 +903,8 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
     registerInterfaces(context);
     scf::IfOp::attachInterface<IfOpInterfaceReverse>(*context);
+    scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
+    scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);

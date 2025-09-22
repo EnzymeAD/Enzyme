@@ -21,7 +21,6 @@
 
 namespace mlir {
 namespace enzyme {
-
 /// Information about a cache, each cache init should have one corresponding
 /// push and pop.
 struct CacheInfo {
