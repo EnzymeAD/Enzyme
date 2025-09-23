@@ -1,5 +1,6 @@
 #include "ActivityAnalysis.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/OperationUtils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -255,35 +256,6 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
 
 constexpr bool EnzymePrintActivity = false;
 
-static bool isReadOnly(Operation *op) {
-  bool hasRecursiveEffects = op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
-  if (hasRecursiveEffects) {
-    for (Region &region : op->getRegions()) {
-      for (auto &block : region) {
-        for (auto &nestedOp : block)
-          if (!isReadOnly(&nestedOp))
-            return false;
-      }
-    }
-    return true;
-  }
-
-  // If the op has memory effects, try to characterize them to see if the op
-  // is trivially dead here.
-  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    // Check to see if this op either has no effects, or only allocates/reads
-    // memory.
-    SmallVector<MemoryEffects::EffectInstance, 1> effects;
-    effectInterface.getEffects(effects);
-    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
-          return isa<MemoryEffects::Read>(it.getEffect());
-        })) {
-      return false;
-    }
-    return true;
-  }
-  return false;
-}
 
 bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
   auto find = readOnlyCache.find(val);
@@ -697,7 +669,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   // doesn't write to any memory
   bool noActiveWrite = false;
 
-  if (isReadOnly(I))
+  if (oputils::isReadOnly(I))
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallOpInterface>(I)) {
     // if (AA.onlyReadsMemory(CI)) {
@@ -3410,7 +3382,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         continue;
       }
 
-      if (isReadOnly(I)) {
+      if (oputils::isReadOnly(I)) {
         // if (TR.query(I)[{-1}].isIntegral()) {
         //  continue;
         //}
