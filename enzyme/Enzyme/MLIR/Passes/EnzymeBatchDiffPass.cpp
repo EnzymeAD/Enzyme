@@ -51,6 +51,45 @@ Value tensorizeArg(OpBuilder &builder, Location &loc,
   return out;
 }
 
+Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
+                 int64_t index) {
+  // Extract the original output from the tensorized output at the given index.
+  auto T = cast<TensorType>(argTy);
+  Value out;
+  if (!T) {
+    Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
+    out = builder.create<tensor::ExtractOp>(loc, val, indexOp);
+  } else {
+    auto valRTy = cast<RankedTensorType>(val.getType());
+    SmallVector<OpFoldResult> offsets, sizes, strides;
+
+    // Offsets: [index, 0, 0, ...]
+    offsets.push_back(builder.getI64IntegerAttr(index));
+    for (auto i = 1; i < valRTy.getRank(); ++i) {
+      offsets.push_back(builder.getI64IntegerAttr(0));
+    }
+
+    // Sizes: [1, original_dim1, original_dim2, ...]
+    sizes.push_back(builder.getI64IntegerAttr(1));
+    for (auto dim : cast<RankedTensorType>(T).getShape()) {
+      sizes.push_back(builder.getI64IntegerAttr(dim));
+    }
+
+    // Strides: [1, 1, 1, ...]
+    for (int i = 0; i < valRTy.getRank(); ++i) {
+      strides.push_back(builder.getI64IntegerAttr(1));
+    }
+
+    // reduce rank
+    auto out_ty = RankedTensorType::get(valRTy.getShape().drop_front(),
+                                        valRTy.getElementType());
+    out = builder.create<tensor::ExtractSliceOp>(loc, out_ty, val, offsets,
+                                                 sizes, strides);
+  }
+
+  return out;
+}
+
 bool isReadOnly(Operation *op) {
   // If the op has memory effects, try to characterize them to see if the op
   // is trivially dead here.
@@ -274,7 +313,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             // no-op
             break;
           case Activity::enzyme_const: {
-            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+            auto new_out = newDiffOp.getOutputs()[out_idx];
 
             for (auto dop : allOps) {
               dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
@@ -286,51 +325,12 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           case Activity::enzyme_dupnoneed: {
             // derivative
-            mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
+          auto batch_dout = newDiffOp.getOutputs()[out_idx];
             for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
-
-              mlir::Value old_dout = dop.getOutputs()[out_idx];
-              auto old_doutTy = old_dout.getType();
-
-              mlir::Value new_dout;
-              auto T = dyn_cast<TensorType>(old_doutTy);
-
-              mlir::Value indexOp =
-                  builder.create<arith::ConstantIndexOp>(loc, dop_idx);
-
-              if (!T) {
-                new_dout =
-                    builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
-              } else {
-                auto batch_doutRankTy =
-                    cast<RankedTensorType>(batch_dout.getType());
-                SmallVector<OpFoldResult> offsets, sizes, strides;
-
-                // Offsets: [dop_idx, 0, 0, ...]
-                offsets.push_back(builder.getI64IntegerAttr(dop_idx));
-                for (int i = 1; i < batch_doutRankTy.getRank(); ++i) {
-                  offsets.push_back(builder.getI64IntegerAttr(0));
-                }
-
-                // Sizes: [1, original_dim1, original_dim2, ...]
-                sizes.push_back(builder.getI64IntegerAttr(1));
-                for (auto dim : cast<RankedTensorType>(T).getShape()) {
-                  sizes.push_back(builder.getI64IntegerAttr(dim));
-                }
-
-                // Strides: [1, 1, 1, ...]
-                for (int i = 0; i < batch_doutRankTy.getRank(); ++i) {
-                  strides.push_back(builder.getI64IntegerAttr(1));
-                }
-
-                // reduce rank by 1
-                new_dout = builder.create<tensor::ExtractSliceOp>(
-                    loc,
-                    RankedTensorType::get(
-                        batch_doutRankTy.getShape().drop_front(),
-                        batch_doutRankTy.getElementType()),
-                    batch_dout, offsets, sizes, strides);
-              }
+              auto old_dout = dop.getOutputs()[out_idx];
+              auto doutTy = old_dout.getType();
+              auto new_dout = batchutils::extractArg(builder, loc, doutTy,
+                                                     batch_dout, dop_idx);
 
               old_dout.replaceAllUsesWith(new_dout);
             }
@@ -347,44 +347,13 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             out_idx++;
 
             // derivative
-            mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
+            auto batch_dout = newDiffOp.getOutputs()[out_idx];
             for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
 
-              mlir::Value old_dout = dop.getOutputs()[out_idx];
-              auto old_doutTy = old_dout.getType();
-              mlir::Value new_dout;
-              auto T = cast<TensorType>(old_doutTy);
-              mlir::Value indexOp =
-                  builder.create<arith::ConstantIndexOp>(loc, dop_idx);
-
-              if (!T) {
-                new_dout =
-                    builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
-              } else {
-                auto batch_doutRankTy =
-                    cast<RankedTensorType>(batch_dout.getType());
-                SmallVector<OpFoldResult> offsets, sizes, strides;
-
-                // Offsets: [dop_idx, 0, 0, ...]
-                offsets.push_back(builder.getI64IntegerAttr(dop_idx));
-                for (int i = 1; i < batch_doutRankTy.getRank(); ++i) {
-                  offsets.push_back(builder.getI64IntegerAttr(0));
-                }
-
-                // Sizes: [1, original_dim1, original_dim2, ...]
-                sizes.push_back(builder.getI64IntegerAttr(1));
-                for (auto dim : cast<RankedTensorType>(T).getShape()) {
-                  sizes.push_back(builder.getI64IntegerAttr(dim));
-                }
-
-                // Strides: [1, 1, 1, ...]
-                for (int i = 0; i < batch_doutRankTy.getRank(); ++i) {
-                  strides.push_back(builder.getI64IntegerAttr(1));
-                }
-
-                new_dout = builder.create<tensor::ExtractSliceOp>(
-                    loc, batch_dout, offsets, sizes, strides);
-              }
+              auto old_dout = dop.getOutputs()[out_idx];
+              auto doutTy = old_dout.getType();
+              auto new_dout = batchutils::extractArg(builder, loc, doutTy,
+                                                     batch_dout, dop_idx);
 
               old_dout.replaceAllUsesWith(new_dout);
             }
@@ -394,7 +363,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
           case Activity::enzyme_active: {
             // TODO: check later
-            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+            auto new_out = newDiffOp.getOutputs()[out_idx];
 
             for (ForwardDiffOp dop : allOps) {
               dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
@@ -405,7 +374,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           case Activity::enzyme_activenoneed: {
             // TODO: check later
-            mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
+            auto new_out = newDiffOp.getOutputs()[out_idx];
 
             for (ForwardDiffOp dop : allOps) {
               dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
@@ -530,8 +499,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               derivList.push_back(uop.getInputs()[call_idx]);
             }
 
-            auto derivTy = derivList.front().getType();
-
+            Value batch_dout =
+                batchutils::tensorizeArg(builder, loc, derivList);
+            in_args.push_back(batch_dout);
             call_idx++;
           }
 
@@ -556,6 +526,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
           }
         }
+
         // process output type
         auto out_idx = 0;
         for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
