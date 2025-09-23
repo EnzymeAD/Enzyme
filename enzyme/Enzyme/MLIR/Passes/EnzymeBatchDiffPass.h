@@ -81,10 +81,11 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   }
 
   batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity};
-
   return key;
 }
 
+Value tensorizeArg(OpBuilder &builder, Location &loc,
+                   SmallVector<Value> &argList);
 bool isReadOnly(Operation *op);
 
 } // namespace batchutils

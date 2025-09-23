@@ -36,6 +36,21 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
+Value tensorizeArg(OpBuilder &builder, Location &loc,
+                   SmallVector<Value> &argList) {
+  auto argTy = argList.front().getType();
+  auto T = dyn_cast<TensorType>(argTy);
+  mlir::Value out;
+  if (!T) {
+    // use tensor.from_elements
+    out = builder.create<tensor::FromElementsOp>(loc, argList);
+  } else {
+    // use tensor.concat on dim 0
+    out = builder.create<tensor::ConcatOp>(loc, /*dim*/ 0, argList);
+  }
+  return out;
+}
+
 bool isReadOnly(Operation *op) {
   // If the op has memory effects, try to characterize them to see if the op
   // is trivially dead here.
@@ -102,27 +117,25 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       if (mergeItr != toMerge.end()) {
         mergeItr->second.push_back(dop);
       } else {
-        SmallVector<enzyme::ForwardDiffOp> v;
-        v.push_back(dop);
-        toMerge[key] = v;
+        toMerge[key] = {dop};
       }
       return mlir::WalkResult::advance();
     });
 
     OpBuilder builder(op);
 
-    // process map
+    // Merge call subsets
     for (auto mergeItr = toMerge.begin(); mergeItr != toMerge.end();
          ++mergeItr) {
       auto key = mergeItr->first;
       SmallVector<enzyme::ForwardDiffOp> allOps = mergeItr->second;
-      auto width = allOps.size();
+      int64_t width = allOps.size();
 
       if (width < 2)
         continue;
 
       {
-        // insert merged op BEFORE first fwddiff op
+        // We will insert the merged op before the first fwddiff call
         auto firstDiffOp = allOps.front();
         IRRewriter::InsertionGuard insertGuard(builder);
         builder.setInsertionPoint(firstDiffOp);
@@ -135,40 +148,28 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<mlir::Type, 2> out_ty;
         auto in_idx = 0;
 
-        // process inputs
+        // process input, d<input>
         for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
           ActivityAttr iattr = ActivityAttr::get(context, act);
           inActivityAttrs.push_back(iattr);
           in_args.push_back(key.inputs[in_idx]);
           in_idx++;
 
-          // collect derivatives
-          SmallVector<mlir::Value> derivToBatch;
+          SmallVector<mlir::Value> derivList;
           if (act == Activity::enzyme_dup ||
               act == Activity::enzyme_dupnoneed) {
             for (auto uop : allOps) {
-              derivToBatch.push_back(uop.getInputs()[in_idx]);
+              derivList.push_back(uop.getInputs()[in_idx]);
             }
 
-            auto derivTy = derivToBatch[0].getType();
-            auto T = dyn_cast<TensorType>(derivTy);
-            mlir::Value batchedDeriv;
-            if (!T) {
-              // use tensor.from_elements
-              batchedDeriv =
-                  builder.create<tensor::FromElementsOp>(loc, derivToBatch);
-            } else {
-              // use tensor.concat on dim 0
-              batchedDeriv = builder.create<tensor::ConcatOp>(loc, /*dim*/ 0,
-                                                              derivToBatch);
-            }
-
+            mlir::Value batchedDeriv =
+                batchutils::tensorizeArg(builder, loc, derivList);
             in_args.push_back(batchedDeriv);
             in_idx++;
           }
         }
 
-        // process output type
+        // process out, d<out> (only need types)
         auto out_idx = 0;
         for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
           ActivityAttr iattr = ActivityAttr::get(context, ract);
@@ -200,8 +201,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               out_ty.push_back(RankedTensorType::get(width, dresTy));
             } else {
               // prepend to shape
-              SmallVector<int64_t> shape;
-              shape.push_back(width);
+              SmallVector<int64_t> shape = {width};
               shape.append(T.getShape().begin(), T.getShape().end());
               auto T2 = T.clone(shape);
               out_ty.push_back(T2);
@@ -224,8 +224,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               out_ty.push_back(RankedTensorType::get(width, dresTy));
             } else {
               // prepend to shape
-              SmallVector<int64_t> shape;
-              shape.push_back(width);
+              SmallVector<int64_t> shape = {width};
               shape.append(T.getShape().begin(), T.getShape().end());
               auto T2 = T.clone(shape);
               out_ty.push_back(T2);
@@ -263,13 +262,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         IntegerAttr newWidthAttr =
             IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
 
-        ForwardDiffOp newDiffOp = builder.create<ForwardDiffOp>(
+        auto newDiffOp = builder.create<ForwardDiffOp>(
             loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
             newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
 
-        // map old uses to new uses
-        // reduce primal from multiple to 1
-        // preserve derivative uses
+        // Rename old users of out,d<out> to new users
         out_idx = 0;
         for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
           switch (ract) {
@@ -279,9 +276,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           case Activity::enzyme_const: {
             mlir::Value new_out = newDiffOp.getOutputs()[out_idx];
 
-            for (ForwardDiffOp dop : allOps) {
+            for (auto dop : allOps) {
               dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
             }
+
             out_idx++;
             break;
           }
@@ -291,25 +289,29 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
             for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
 
-              mlir::Value old_dres = dop.getOutputs()[out_idx];
-              auto old_dresTy = old_dres.getType();
-              mlir::Value new_dres;
-              auto T = dyn_cast<TensorType>(old_dresTy);
+              mlir::Value old_dout = dop.getOutputs()[out_idx];
+              auto old_doutTy = old_dout.getType();
+
+              mlir::Value new_dout;
+              auto T = dyn_cast<TensorType>(old_doutTy);
+
               mlir::Value indexOp =
                   builder.create<arith::ConstantIndexOp>(loc, dop_idx);
 
               if (!T) {
-                new_dres =
+                new_dout =
                     builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
               } else {
-                auto rankedType = cast<RankedTensorType>(batch_dout.getType());
+                auto batch_doutRankTy =
+                    cast<RankedTensorType>(batch_dout.getType());
                 SmallVector<OpFoldResult> offsets, sizes, strides;
 
                 // Offsets: [dop_idx, 0, 0, ...]
                 offsets.push_back(builder.getI64IntegerAttr(dop_idx));
-                for (int i = 1; i < rankedType.getRank(); ++i) {
+                for (int i = 1; i < batch_doutRankTy.getRank(); ++i) {
                   offsets.push_back(builder.getI64IntegerAttr(0));
                 }
+
                 // Sizes: [1, original_dim1, original_dim2, ...]
                 sizes.push_back(builder.getI64IntegerAttr(1));
                 for (auto dim : cast<RankedTensorType>(T).getShape()) {
@@ -317,18 +319,20 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 }
 
                 // Strides: [1, 1, 1, ...]
-                for (int i = 0; i < rankedType.getRank(); ++i) {
+                for (int i = 0; i < batch_doutRankTy.getRank(); ++i) {
                   strides.push_back(builder.getI64IntegerAttr(1));
                 }
 
-                new_dres = builder.create<tensor::ExtractSliceOp>(
+                // reduce rank by 1
+                new_dout = builder.create<tensor::ExtractSliceOp>(
                     loc,
-                    RankedTensorType::get(rankedType.getShape().drop_front(),
-                                          rankedType.getElementType()),
+                    RankedTensorType::get(
+                        batch_doutRankTy.getShape().drop_front(),
+                        batch_doutRankTy.getElementType()),
                     batch_dout, offsets, sizes, strides);
               }
 
-              old_dres.replaceAllUsesWith(new_dres);
+              old_dout.replaceAllUsesWith(new_dout);
             }
             ++out_idx;
             break;
@@ -346,25 +350,27 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             mlir::Value batch_dout = newDiffOp.getOutputs()[out_idx];
             for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
 
-              mlir::Value old_dres = dop.getOutputs()[out_idx];
-              auto old_dresTy = old_dres.getType();
-              mlir::Value new_dres;
-              auto T = cast<TensorType>(old_dresTy);
+              mlir::Value old_dout = dop.getOutputs()[out_idx];
+              auto old_doutTy = old_dout.getType();
+              mlir::Value new_dout;
+              auto T = cast<TensorType>(old_doutTy);
               mlir::Value indexOp =
                   builder.create<arith::ConstantIndexOp>(loc, dop_idx);
 
               if (!T) {
-                new_dres =
+                new_dout =
                     builder.create<tensor::ExtractOp>(loc, batch_dout, indexOp);
               } else {
-                auto rankedType = cast<RankedTensorType>(batch_dout.getType());
+                auto batch_doutRankTy =
+                    cast<RankedTensorType>(batch_dout.getType());
                 SmallVector<OpFoldResult> offsets, sizes, strides;
 
                 // Offsets: [dop_idx, 0, 0, ...]
                 offsets.push_back(builder.getI64IntegerAttr(dop_idx));
-                for (int i = 1; i < rankedType.getRank(); ++i) {
+                for (int i = 1; i < batch_doutRankTy.getRank(); ++i) {
                   offsets.push_back(builder.getI64IntegerAttr(0));
                 }
+
                 // Sizes: [1, original_dim1, original_dim2, ...]
                 sizes.push_back(builder.getI64IntegerAttr(1));
                 for (auto dim : cast<RankedTensorType>(T).getShape()) {
@@ -372,15 +378,15 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 }
 
                 // Strides: [1, 1, 1, ...]
-                for (int i = 0; i < rankedType.getRank(); ++i) {
+                for (int i = 0; i < batch_doutRankTy.getRank(); ++i) {
                   strides.push_back(builder.getI64IntegerAttr(1));
                 }
 
-                new_dres = builder.create<tensor::ExtractSliceOp>(
+                new_dout = builder.create<tensor::ExtractSliceOp>(
                     loc, batch_dout, offsets, sizes, strides);
               }
 
-              old_dres.replaceAllUsesWith(new_dres);
+              old_dout.replaceAllUsesWith(new_dout);
             }
 
             ++out_idx;
@@ -415,9 +421,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           dop->erase();
         }
       }
-    };
-  };
-  // Map tracking batchable subset of fwddiff calls
+    }
+  }
+
   void mergeRevdiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
 
@@ -438,10 +444,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       }
 
       // add to map
-      SmallVector<Activity> inActivity;
-      SmallVector<Activity> retActivity;
-      SmallVector<Value> in_args;
-
       batchutils::BatchDiffCacheKey key =
           batchutils::createDiffCacheKey(dop, fnOp);
 
@@ -449,9 +451,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
       if (mergeItr != toMerge.end()) {
         mergeItr->second.push_back(dop);
       } else {
-        SmallVector<enzyme::AutoDiffOp> v;
-        v.push_back(dop);
-        toMerge[key] = v;
+        toMerge[key] = {dop};
       }
       return mlir::WalkResult::advance();
     });
@@ -463,57 +463,99 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
          ++mergeItr) {
       auto key = mergeItr->first;
       SmallVector<enzyme::AutoDiffOp> allOps = mergeItr->second;
-      auto width = allOps.size();
+      int64_t width = allOps.size();
+
       if (width < 2)
         continue;
 
       {
-        // insert merged op BEFORE first fwddiff op
         auto firstDiffOp = allOps.front();
         IRRewriter::InsertionGuard insertGuard(builder);
         builder.setInsertionPoint(firstDiffOp);
         auto loc = firstDiffOp->getLoc();
         auto context = builder.getContext();
 
+        // Emit the merged operation
+
         SmallVector<mlir::Value> in_args;
         SmallVector<ActivityAttr, 2> inActivityAttrs;
         SmallVector<ActivityAttr, 2> retActivityAttrs;
         SmallVector<mlir::Type, 2> out_ty;
-        auto in_idx = 0;
 
-        // process inputs
+        // process input
+        auto call_idx = 0;
         for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
-          ActivityAttr iattr = ActivityAttr::get(context, act);
+          auto iattr = ActivityAttr::get(context, act);
           inActivityAttrs.push_back(iattr);
-          in_args.push_back(key.inputs[in_idx]);
-          in_idx++;
+          in_args.push_back(key.inputs[call_idx]);
+          call_idx++;
 
-          // collect derivatives
-          SmallVector<mlir::Value> derivToBatch;
           if (act == Activity::enzyme_dup ||
               act == Activity::enzyme_dupnoneed) {
+
+            SmallVector<mlir::Value> derivList;
             for (auto uop : allOps) {
-              derivToBatch.push_back(uop.getInputs()[in_idx]);
+              derivList.push_back(uop.getInputs()[call_idx]);
             }
 
-            auto derivTy = derivToBatch[0].getType();
-            auto T = dyn_cast<TensorType>(derivTy);
-            mlir::Value batchedDeriv;
-            if (!T) {
-              // use tensor.from_elements
-              batchedDeriv =
-                  builder.create<tensor::FromElementsOp>(loc, derivToBatch);
-            } else {
-              // use tensor.concat on dim 0
-              batchedDeriv = builder.create<tensor::ConcatOp>(loc, /*dim*/ 0,
-                                                              derivToBatch);
-            }
+            mlir::Value b_din =
+                batchutils::tensorizeArg(builder, loc, derivList);
 
-            in_args.push_back(batchedDeriv);
-            in_idx++;
+            in_args.push_back(b_din);
+            call_idx++;
           }
         }
 
+        // Skip if function is non-differentiable
+        if (call_idx == firstDiffOp.getInputs().size()) {
+          continue;
+        }
+
+        // process d<out>
+        for (auto ract : key.retActivity) {
+          auto iattr = ActivityAttr::get(context, ract);
+          retActivityAttrs.push_back(iattr);
+
+          // no effect on out or d<out>
+          if (ract == Activity::enzyme_constnoneed ||
+              ract == Activity::enzyme_dupnoneed) {
+            continue;
+          }
+
+          // batching for d<out>
+          if (ract == Activity::enzyme_active ||
+              ract == Activity::enzyme_activenoneed) {
+            SmallVector<mlir::Value> derivList;
+            for (auto uop : allOps) {
+              derivList.push_back(uop.getInputs()[call_idx]);
+            }
+
+            auto derivTy = derivList.front().getType();
+
+            call_idx++;
+          }
+
+          switch (ract) {
+          case Activity::enzyme_active: {
+            break;
+          }
+          case Activity::enzyme_const: {
+            break;
+          }
+          case Activity::enzyme_dup: {
+            break;
+          }
+          case Activity::enzyme_dupnoneed: {
+            break;
+          }
+          case Activity::enzyme_activenoneed: {
+            break;
+          }
+          case Activity::enzyme_constnoneed: {
+            break;
+          }
+          }
+        }
         // process output type
         auto out_idx = 0;
         for (auto [idx, ract] : llvm::enumerate(key.retActivity)) {
