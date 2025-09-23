@@ -2504,7 +2504,22 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
 
   // TODO replace forwardBlock with the first block dominated by inst,
   // that dominates (or is) forwardBlock to ensuring maximum reuse
-  IRBuilder<> lcssa(&forwardBlock->front());
+  auto inspos = forwardBlock->front().getIterator();
+#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 21
+#else
+  if (forwardBlock->IsNewDbgInfoFormat)
+#endif
+  {
+    if (!inspos.getHeadBit()) {
+      auto srcmarker = forwardBlock->getMarker(inspos);
+      if (srcmarker && !srcmarker->empty()) {
+        inspos.setHeadBit(true);
+      }
+    }
+  }
+#endif
+  IRBuilder<> lcssa(forwardBlock, inspos);
   auto lcssaPHI =
       lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
   lcssaFixes[inst][forwardBlock] = lcssaPHI;
