@@ -109,6 +109,18 @@ def Activity : I32EnumAttr<"Activity",
 
 def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
 
+def RngDistribution : I32EnumAttr<"RngDistribution",
+    "Random number distribution type",
+    [
+      I32EnumAttrCase<"UNIFORM", 0>,
+      I32EnumAttrCase<"NORMAL", 1>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::enzyme";
+}
+
+def RngDistributionAttr : EnumAttr<Enzyme_Dialect, RngDistribution, "rng_distribution">;
+
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
 
@@ -629,20 +641,35 @@ def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
   }];
 }
 
-def RandOp : Enzyme_Op<"rand"> {
-  let summary = "Draw a uniform random variable in (0, 1)";
+def RandomOp : Enzyme_Op<"random"> {
+  let summary = "Generate random numbers using specified distribution";
   let description = [{
-  Draw a uniform random variate in (0, 1) given an RNG state. 
-  By convention, the 0th operand in inputs is the initial RNG state
-  and the 0th operand in results is the updated RNG state.
+  Generates random numbers using the rng_distribution algorithm and produces
+  a result tensor.
+
+  If rng_distribution = UNIFORM, then the random numbers are generated following
+  the uniform distribution over the interval [a, b). If a >= b, the behavior is
+  undefined.
+
+  If rng_distribution = NORMAL, then the random numbers are generated following
+  the normal distribution with mean = a and standard deviation = b. If b < 0,
+  the behavior is undefined.
+
+  By convention, the 0th operand in inputs is the initial RNG state and the
+  0th operand in results is the updated RNG state.
   }];
 
-  let arguments = (ins AnyType:$rng_state);
+  let arguments = (ins
+    AnyType:$rng_state,
+    AnyType:$a,
+    AnyType:$b,
+    RngDistributionAttr:$rng_distribution
+  );
 
-  let results = (outs AnyType:$output_rng_state, AnyType:$value);
+  let results = (outs AnyType:$output_rng_state, AnyType:$result);
 
   let assemblyFormat = [{
-    $rng_state attr-dict `:` functional-type($rng_state, results)
+    $rng_state `,` $a `,` $b  attr-dict `:` functional-type(operands, results)
   }];
 }
 
