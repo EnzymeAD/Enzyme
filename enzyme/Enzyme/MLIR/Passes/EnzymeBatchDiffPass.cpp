@@ -54,7 +54,7 @@ Value tensorizeArg(OpBuilder &builder, Location &loc,
 Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
                  int64_t index) {
   // Extract the original output from the tensorized output at the given index.
-  auto T = cast<TensorType>(argTy);
+  auto T = dyn_cast<TensorType>(argTy);
   Value out;
   if (!T) {
     Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
