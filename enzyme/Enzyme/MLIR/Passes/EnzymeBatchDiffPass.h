@@ -9,6 +9,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include <cstdint>
 
 namespace mlir {
 namespace enzyme {
@@ -86,6 +87,10 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
 
 Value tensorizeArg(OpBuilder &builder, Location &loc,
                    SmallVector<Value> &argList);
+
+Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
+                 int64_t index);
+
 bool isReadOnly(Operation *op);
 
 } // namespace batchutils
