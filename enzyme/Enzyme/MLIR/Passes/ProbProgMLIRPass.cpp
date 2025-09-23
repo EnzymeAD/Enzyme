@@ -343,17 +343,25 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           /*selection*/ mhOp.getSelectionAttr(),
           /*name*/ mhOp.getNameAttr());
 
-      // 2. Compute acceptance probability
+      // 2. Metropolis-Hastings accept/reject step
       auto getOriginalWeightOp = rewriter.create<enzyme::GetWeightFromTraceOp>(
           mhOp.getLoc(), tensorType, mhOp.getOriginalTrace());
       auto logAlpha = rewriter.create<arith::SubFOp>(
           mhOp.getLoc(), regenerateOp.getWeight(),
           getOriginalWeightOp.getWeight());
-      auto randOp = rewriter.create<enzyme::RandOp>(
+
+      auto zeroConst = rewriter.create<arith::ConstantOp>(
+          mhOp.getLoc(), tensorType, DenseElementsAttr::get(tensorType, 0.0));
+      auto oneConst = rewriter.create<arith::ConstantOp>(
+          mhOp.getLoc(), tensorType, DenseElementsAttr::get(tensorType, 1.0));
+
+      auto randomOp = rewriter.create<enzyme::RandomOp>(
           mhOp.getLoc(), TypeRange{rngStateType, tensorType},
-          ValueRange{regenerateOp.getOutputRngState()});
+          regenerateOp.getOutputRngState(), zeroConst, oneConst,
+          enzyme::RngDistributionAttr::get(rewriter.getContext(),
+                                           enzyme::RngDistribution::UNIFORM));
       auto logRand =
-          rewriter.create<math::LogOp>(mhOp.getLoc(), randOp.getValue());
+          rewriter.create<math::LogOp>(mhOp.getLoc(), randomOp.getResult());
 
       // 3. Check if proposal is accepted: log(rand()) < log_alpha
       auto accepted = rewriter.create<arith::CmpFOp>(
@@ -366,8 +374,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           mhOp.getLoc(), acceptedExtract, regenerateOp.getTrace(),
           mhOp.getOriginalTrace());
 
-      rewriter.replaceOp(mhOp,
-                         {selectedTrace, accepted, randOp.getOutputRngState()});
+      rewriter.replaceOp(
+          mhOp, {selectedTrace, accepted, randomOp.getOutputRngState()});
       return success();
     }
   };
