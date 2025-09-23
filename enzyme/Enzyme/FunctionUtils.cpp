@@ -342,15 +342,9 @@ SmallVector<Value *, 1> getJuliaObjects(Value *v, IRBuilder<> &B) {
   return done;
 }
 
-void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
-  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
-  for (auto U : AI->users()) {
-    Todo.push_back(
-        std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
-  }
-  SmallVector<Instruction *, 1> toErase;
-  if (auto I = dyn_cast<Instruction>(AI))
-    toErase.push_back(I);
+void RecursivelyReplaceAddressSpace(
+    SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
+    SmallVector<Instruction *, 1> &toErase, bool legal) {
   SmallVector<StoreInst *, 1> toPostCache;
   while (Todo.size()) {
     auto cur = Todo.back();
@@ -432,6 +426,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       for (size_t i = 0; i < NumOperands; i++)
         if (P->getOperand(i) == prev)
           replacedOperands[i] = rep;
+
       for (auto tval : Todo) {
         if (std::get<2>(tval) != P)
           continue;
@@ -456,7 +451,6 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         }
         if (!remainingArePHIs) {
           Todo.insert(Todo.begin(), cur);
-          llvm::errs() << " continuing\n";
           continue;
         }
       } else {
@@ -654,6 +648,18 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
   }
 }
 
+void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  for (auto U : AI->users()) {
+    Todo.push_back(
+        std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
+  }
+  SmallVector<Instruction *, 1> toErase;
+  if (auto I = dyn_cast<Instruction>(AI))
+    toErase.push_back(I);
+  RecursivelyReplaceAddressSpace(Todo, toErase, legal);
+}
+
 /// Convert necessary stack allocations into mallocs for use in the reverse
 /// pass. Specifically if we're not topLevel all allocations must be upgraded
 /// Even if topLevel any allocations that aren't in the entry block (and
@@ -684,6 +690,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
   Function *end_lifetime = nullptr;
 #endif
 
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  SmallVector<Instruction *, 1> toErase;
   for (auto AI : ToConvert) {
     std::string nam = AI->getName().str();
     AI->setName("");
@@ -775,13 +783,19 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto PT0 = cast<PointerType>(rep->getType());
     auto PT1 = cast<PointerType>(AI->getType());
     if (PT0->getAddressSpace() != PT1->getAddressSpace()) {
-      RecursivelyReplaceAddressSpace(AI, rep, /*legal*/ false);
+      for (auto U : AI->users()) {
+        Todo.push_back(
+            std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
+      }
+      if (auto I = dyn_cast<Instruction>(AI))
+        toErase.push_back(I);
     } else {
       assert(rep->getType() == AI->getType());
       AI->replaceAllUsesWith(rep);
       AI->eraseFromParent();
     }
   }
+  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ false);
 }
 
 // Create a stack variable containing the size of the allocation
