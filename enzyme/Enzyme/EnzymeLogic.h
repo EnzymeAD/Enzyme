@@ -454,8 +454,10 @@ public:
   /// \p PostOpt is whether to perform basic
   ///  optimization of the function after synthesis
   bool PostOpt;
+  /// Provided through the frontend and only used from it.
+  void* ExternalContext;
 
-  EnzymeLogic(bool PostOpt) : PostOpt(PostOpt) {}
+  EnzymeLogic(bool PostOpt) : PostOpt(PostOpt), ExternalContext(nullptr) {}
 
   struct AugmentedCacheKey {
     llvm::Function *fn;
