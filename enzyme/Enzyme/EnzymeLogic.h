@@ -455,7 +455,7 @@ public:
   ///  optimization of the function after synthesis
   bool PostOpt;
   /// Provided through the frontend and only used from it.
-  void* ExternalContext;
+  void *ExternalContext;
 
   EnzymeLogic(bool PostOpt) : PostOpt(PostOpt), ExternalContext(nullptr) {}
 

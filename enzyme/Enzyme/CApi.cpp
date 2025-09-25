@@ -217,7 +217,7 @@ void EnzymeLogicSetExternalContext(EnzymeLogicRef Ref, void *ExternalContext) {
   eunwrap(Ref).ExternalContext = ExternalContext;
 }
 
-void* EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
   return eunwrap(Ref).ExternalContext;
 }
 

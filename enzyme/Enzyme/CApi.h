@@ -172,7 +172,7 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt);
 void ClearEnzymeLogic(EnzymeLogicRef);
 void FreeEnzymeLogic(EnzymeLogicRef);
 void EnzymeLogicSetExternalContext(EnzymeLogicRef, void *ExternalContext);
-void* EnzymeLogicGetExternalContext(EnzymeLogicRef);
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef);
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
                              uint8_t *existed, size_t len);
