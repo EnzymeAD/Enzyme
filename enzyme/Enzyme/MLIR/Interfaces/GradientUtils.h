@@ -31,7 +31,7 @@ public:
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
-  DenseMap<Value, bool> readOnlyCache;
+  DenseMap<Operation *, bool> readOnlyCache;
   std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
 
   MTypeAnalysis &TA;

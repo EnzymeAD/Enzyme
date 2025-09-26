@@ -168,7 +168,7 @@ struct PrintActivityAnalysisPass
           ReturnActivity.push_back(DIFFE_TYPE::CONSTANT);
       }
 
-      DenseMap<Value, bool> readOnlyCache;
+      DenseMap<Operation *, bool> readOnlyCache;
       enzyme::ActivityAnalyzer activityAnalyzer(blocksNotForAnalysis,
                                                 readOnlyCache, constant_values,
                                                 activevals_, ReturnActivity);

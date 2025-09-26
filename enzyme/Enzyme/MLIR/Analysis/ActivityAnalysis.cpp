@@ -285,9 +285,9 @@ static bool isReadOnly(Operation *op) {
   return false;
 }
 
-bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Value val) {
+bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
   auto find = readOnlyCache.find(val);
-  if (find != val.end()) {
+  if (find != readOnlyCache.end()) {
     return find->second;
   }
   auto res = ::isReadOnly(val);

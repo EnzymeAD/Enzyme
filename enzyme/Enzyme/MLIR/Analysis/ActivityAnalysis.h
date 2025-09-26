@@ -26,7 +26,7 @@ class ActivityAnalyzer {
   const llvm::SmallPtrSetImpl<Block *> &notForAnalysis;
 
   // Blocks not to be analyzed
-  llvm::DenseMap<Value> &readOnlyCache;
+  llvm::DenseMap<Operation *, bool> &readOnlyCache;
 
   /// Library Information
   // llvm::TargetLibraryInfo &TLI;
@@ -71,7 +71,7 @@ public:
   ActivityAnalyzer(
       // PreProcessCache &PPC, llvm::AAResults &AA_,
       const llvm::SmallPtrSetImpl<Block *> &notForAnalysis_,
-      llvm::DenseMap<Value> readOnlyCache_,
+      llvm::DenseMap<Operation *, bool> &readOnlyCache_,
       // llvm::TargetLibraryInfo &TLI_,
       const llvm::SmallPtrSetImpl<Value> &ConstantValues,
       const llvm::SmallPtrSetImpl<Value> &ActiveValues,
@@ -90,7 +90,7 @@ public:
   /// information, either directly or as a pointer to
   bool isConstantValue(MTypeResults const &TR, Value val);
 
-  bool isReadOnly(Value val);
+  bool isReadOnly(Operation *val);
 
 private:
   DenseMap<Operation *, llvm::SmallPtrSet<Value, 4>>
