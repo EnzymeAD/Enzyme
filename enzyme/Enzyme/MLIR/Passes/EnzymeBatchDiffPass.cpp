@@ -19,6 +19,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/SmallSet.h"
 
 #define DEBUG_TYPE "enzyme-diff-batch"
 #define ENZYME_DBGS llvm::dbgs() << "[" << DEBUG_TYPE << "]"
@@ -92,6 +93,48 @@ Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
   return out;
 }
 
+void collectReadWrite(Operation *rootOp, SmallPtrSet<Value, 4> &vals) {
+
+  // if the op has memory effects, try to characterize them and check if the
+  // value it effects is a read or a write
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(rootOp)) {
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    for (const MemoryEffects::EffectInstance &it : effects) {
+      if ((isa<MemoryEffects::Read>(it.getEffect()) ||
+           isa<MemoryEffects::Write>(it.getEffect())) &&
+          it.getValue()) {
+        vals.insert(it.getValue());
+      }
+    }
+  }
+
+  bool isRecursiveContainer =
+      rootOp->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+      isa<FunctionOpInterface>(rootOp);
+  if (isRecursiveContainer) {
+    for (Region &region : rootOp->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          collectReadWrite(&nestedOp, vals);
+      }
+    }
+  }
+}
+
+void collectFnEffects(
+    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> &fnMap,
+    FunctionOpInterface fn) {
+  if (fnMap.find(fn) != fnMap.end()) {
+    // have already collected values, simply return
+    return;
+  } else {
+    SmallPtrSet<Value, 4> vals;
+    collectReadWrite(fn, vals);
+    fnMap.insert(std::make_pair(fn, vals));
+  }
+}
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
@@ -102,12 +145,14 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
-    // TODO: run an alias analysis to handle aliased inputs to merge
 
     // map tracking batchable AD calls
     std::map<enzyme::batchutils::BatchDiffCacheKey,
              SmallVector<enzyme::ForwardDiffOp>>
         toMerge;
+
+    // list of values read/written to inside fn
+    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;
 
     op->walk([&](enzyme::ForwardDiffOp dop) {
       // lookup function, check if its readOnly
@@ -115,14 +160,13 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
+      batchutils::collectFnEffects(rwfMap, fnOp);
       // skip if fn isn't readonly(iterate through toplevel ops)
       if (!oputils::isReadOnly(fnOp)) {
         return mlir::WalkResult::skip();
       }
-
       batchutils::BatchDiffCacheKey key =
           batchutils::createDiffCacheKey(dop, fnOp);
-
       auto mergeItr = toMerge.find(key);
       if (mergeItr != toMerge.end()) {
         mergeItr->second.push_back(dop);
@@ -365,7 +409,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                          FunctionOpInterface op) {
     // TODO: run an alias analysis to handle aliased inputs to merge
 
-    // map tracking batchable AD calls
+    // list of values read/written to inside fn
+    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;
+    
+        // map tracking batchable AD calls
     std::map<enzyme::batchutils::BatchDiffCacheKey,
              SmallVector<enzyme::AutoDiffOp>>
         toMerge;
@@ -376,6 +423,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
+      batchutils::collectFnEffects(rwfMap, fnOp);
       // skip if fn isn't readonly(iterate through toplevel ops)
       if (!oputils::isReadOnly(fnOp)) {
         return mlir::WalkResult::skip();
