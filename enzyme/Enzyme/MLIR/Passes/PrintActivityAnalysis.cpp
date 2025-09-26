@@ -168,8 +168,10 @@ struct PrintActivityAnalysisPass
           ReturnActivity.push_back(DIFFE_TYPE::CONSTANT);
       }
 
-      enzyme::ActivityAnalyzer activityAnalyzer(
-          blocksNotForAnalysis, constant_values, activevals_, ReturnActivity);
+      DenseMap<Operation *, bool> readOnlyCache;
+      enzyme::ActivityAnalyzer activityAnalyzer(blocksNotForAnalysis,
+                                                readOnlyCache, constant_values,
+                                                activevals_, ReturnActivity);
 
       callee.walk([&](Operation *op) {
 
