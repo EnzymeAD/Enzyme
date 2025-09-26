@@ -87,7 +87,8 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
     retActivity.push_back(val);
   }
 
-  batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity, uop->getBlock()};
+  batchutils::BatchDiffCacheKey key{fn, in_args, inActivity, retActivity,
+                                    uop->getBlock()};
   return key;
 }
 
@@ -99,6 +100,11 @@ Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
 
 bool isReadOnly(Operation *op);
 
+void collectReadWrite(Operation *rootOp, SmallPtrSet<Value, 4> &vals);
+
+void collectFnEffects(
+    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> &fnMap,
+    FunctionOpInterface fn);
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
