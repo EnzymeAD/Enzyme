@@ -49,8 +49,8 @@ jobs:
         . ~/.cargo/env
         cd rust
         # Replace rustc's built-in Enzyme submodule with the Enzyme source code from this repository
-        rm -rf src/tools/enzyme
-        ln -s "${GITHUB_WORKSPACE}/enzyme" src/tools/enzyme
+        rm -rf src/tools/enzyme/enzyme
+        ln -s "${GITHUB_WORKSPACE}/enzyme" src/tools/enzyme/enzyme
         ./configure \
           --enable-llvm-link-shared \
           --enable-llvm-plugins \
