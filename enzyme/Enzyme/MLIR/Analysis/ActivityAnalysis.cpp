@@ -285,6 +285,16 @@ static bool isReadOnly(Operation *op) {
   return false;
 }
 
+bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Value val) {
+  auto find = readOnlyCache.find(val);
+  if (find != val.end()) {
+    return find->second;
+  }
+  auto res = ::isReadOnly(val);
+  readOnlyCache[val] = res;
+  return res;
+}
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(

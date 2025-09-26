@@ -25,6 +25,9 @@ class ActivityAnalyzer {
   // Blocks not to be analyzed
   const llvm::SmallPtrSetImpl<Block *> &notForAnalysis;
 
+  // Blocks not to be analyzed
+  llvm::DenseMap<Value> &readOnlyCache;
+
   /// Library Information
   // llvm::TargetLibraryInfo &TLI;
 
@@ -68,12 +71,13 @@ public:
   ActivityAnalyzer(
       // PreProcessCache &PPC, llvm::AAResults &AA_,
       const llvm::SmallPtrSetImpl<Block *> &notForAnalysis_,
+      llvm::DenseMap<Value> readOnlyCache_,
       // llvm::TargetLibraryInfo &TLI_,
       const llvm::SmallPtrSetImpl<Value> &ConstantValues,
       const llvm::SmallPtrSetImpl<Value> &ActiveValues,
       llvm::ArrayRef<DIFFE_TYPE> ActiveReturns)
-      : notForAnalysis(notForAnalysis_), ActiveReturns(ActiveReturns),
-        directions(UP | DOWN),
+      : notForAnalysis(notForAnalysis_), readOnlyCache(readOnlyCache_),
+        ActiveReturns(ActiveReturns), directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
         ActiveValues(ActiveValues.begin(), ActiveValues.end()) {}
 
@@ -85,6 +89,8 @@ public:
   /// Return whether this values is known not to contain derivative
   /// information, either directly or as a pointer to
   bool isConstantValue(MTypeResults const &TR, Value val);
+
+  bool isReadOnly(Value val);
 
 private:
   DenseMap<Operation *, llvm::SmallPtrSet<Value, 4>>
@@ -100,8 +106,8 @@ private:
   /// This is used to perform inductive assumptions
   ActivityAnalyzer(ActivityAnalyzer &Other, uint8_t directions)
       : notForAnalysis(Other.notForAnalysis),
-        ActiveReturns(Other.ActiveReturns), directions(directions),
-        ConstantOperations(Other.ConstantOperations),
+        readOnlyCache(Other.readOnlyCache), ActiveReturns(Other.ActiveReturns),
+        directions(directions), ConstantOperations(Other.ConstantOperations),
         ActiveOperations(Other.ActiveOperations),
         ConstantValues(Other.ConstantValues), ActiveValues(Other.ActiveValues) {
     // DeducingPointers(Other.DeducingPointers) {
