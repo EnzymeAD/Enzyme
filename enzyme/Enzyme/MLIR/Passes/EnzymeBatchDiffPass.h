@@ -6,6 +6,7 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -20,7 +21,7 @@ struct BatchDiffCacheKey {
   SmallVector<mlir::Value> inputs;
   SmallVector<enzyme::Activity> inActivity;
   SmallVector<enzyme::Activity> retActivity;
-  Block* blk;
+  Block *blk;
 
   // for use in std::map:
   bool operator<(const BatchDiffCacheKey &other) const {
@@ -50,10 +51,10 @@ struct BatchDiffCacheKey {
       return true;
     if (other.inActivity < inActivity)
       return false;
-    if(retActivity < other.retActivity)
-            return true;
-        if(other.retActivity < retActivity)
-            return false;
+    if (retActivity < other.retActivity)
+      return true;
+    if (other.retActivity < retActivity)
+      return false;
 
     return blk < other.blk;
   }
@@ -105,7 +106,9 @@ SmallVector<MemoryEffects::EffectInstance> collectFnEffects(
 
 bool isFnArg(FunctionOpInterface fnOp, Value val);
 
-bool mayAlias(MemoryEffects::EffectInstance a, MemoryEffects::EffectInstance b);
+bool mayAlias(MemoryEffects::EffectInstance &a,
+              MemoryEffects::EffectInstance &b,
+              mlir::AliasAnalysis &aliasAnalyzer);
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
