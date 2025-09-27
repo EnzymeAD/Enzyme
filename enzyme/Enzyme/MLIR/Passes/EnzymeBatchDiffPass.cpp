@@ -93,46 +93,30 @@ Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
   return out;
 }
 
-void collectReadWrite(Operation *rootOp, SmallPtrSet<Value, 4> &vals) {
+SmallVector<MemoryEffects::EffectInstance> collectFnEffects(
+    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+        &effectCache,
+    FunctionOpInterface fnOp) {
 
-  // if the op has memory effects, try to characterize them and check if the
-  // value it effects is a read or a write
-  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(rootOp)) {
-    SmallVector<MemoryEffects::EffectInstance, 1> effects;
-    effectInterface.getEffects(effects);
-    for (const MemoryEffects::EffectInstance &it : effects) {
-      if ((isa<MemoryEffects::Read>(it.getEffect()) ||
-           isa<MemoryEffects::Write>(it.getEffect())) &&
-          it.getValue()) {
-        vals.insert(it.getValue());
+  // even if the calling context changes, the inner effects of the primal
+  // function being differentiated will remain the same(as it depends only on
+  // the primal arguments local to the function definition itself). We thus try
+  // to cache the effects across multiple AD-calling contexts.
+
+  if (effectCache.find(fnOp) == effectCache.end()) {
+    SmallVector<MemoryEffects::EffectInstance> innerEffects;
+    for (auto &blk : fnOp.getBlocks()) {
+      for (auto &op : blk) {
+        auto opEffects = mlir::getEffectsRecursively(&op);
+        if (opEffects.has_value()) {
+          innerEffects.append(opEffects->begin(), opEffects->end());
+        }
       }
     }
-  }
 
-  bool isRecursiveContainer =
-      rootOp->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
-      isa<FunctionOpInterface>(rootOp);
-  if (isRecursiveContainer) {
-    for (Region &region : rootOp->getRegions()) {
-      for (auto &block : region) {
-        for (auto &nestedOp : block)
-          collectReadWrite(&nestedOp, vals);
-      }
-    }
+    effectCache[fnOp] = innerEffects;
   }
-}
-
-void collectFnEffects(
-    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> &fnMap,
-    FunctionOpInterface fn) {
-  if (fnMap.find(fn) != fnMap.end()) {
-    // have already collected values, simply return
-    return;
-  } else {
-    SmallPtrSet<Value, 4> vals;
-    collectReadWrite(fn, vals);
-    fnMap.insert(std::make_pair(fn, vals));
-  }
+  return effectCache[fnOp];
 }
 
 } // namespace batchutils
@@ -146,10 +130,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
 
-    // map tracking batchable AD calls
-    std::map<enzyme::batchutils::BatchDiffCacheKey,
-             SmallVector<enzyme::ForwardDiffOp>>
-        toMerge;
 
     // list of values read/written to inside fn
     std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;

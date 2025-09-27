@@ -98,13 +98,10 @@ Value tensorizeArg(OpBuilder &builder, Location &loc,
 Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
                  int64_t index);
 
-bool isReadOnly(Operation *op);
+SmallVector<MemoryEffects::EffectInstance> collectFnEffects(
+    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>> &effectCache,
+    FunctionOpInterface fnOp);
 
-void collectReadWrite(Operation *rootOp, SmallPtrSet<Value, 4> &vals);
-
-void collectFnEffects(
-    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> &fnMap,
-    FunctionOpInterface fn);
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
