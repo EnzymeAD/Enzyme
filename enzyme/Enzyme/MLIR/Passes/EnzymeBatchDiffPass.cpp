@@ -130,33 +130,204 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
 
-
     // list of values read/written to inside fn
-    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;
-
-    op->walk([&](enzyme::ForwardDiffOp dop) {
-      // lookup function, check if its readOnly
-      auto *symbolOp =
-          symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
-      auto fnOp = cast<FunctionOpInterface>(symbolOp);
-
-      batchutils::collectFnEffects(rwfMap, fnOp);
-      // skip if fn isn't readonly(iterate through toplevel ops)
-      if (!oputils::isReadOnly(fnOp)) {
-        return mlir::WalkResult::skip();
-      }
-      batchutils::BatchDiffCacheKey key =
-          batchutils::createDiffCacheKey(dop, fnOp);
-      auto mergeItr = toMerge.find(key);
-      if (mergeItr != toMerge.end()) {
-        mergeItr->second.push_back(dop);
-      } else {
-        toMerge[key] = {dop};
-      }
-      return mlir::WalkResult::advance();
-    });
+    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+        innerEffectCache;
 
     OpBuilder builder(op);
+    op->walk([&](Block *blk) {
+      // map tracking batchable AD calls
+      std::map<enzyme::batchutils::BatchDiffCacheKey,
+               SmallVector<enzyme::ForwardDiffOp>>
+          toMerge;
+
+      for (auto fwdOp : blk->getOps<enzyme::ForwardDiffOp>()) {
+        auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(fwdOp, fwdOp.getFnAttr()));
+        if (!fnOp)
+          continue;
+        auto inputs = fwdOp.getInputs();
+        // Get the first value from the named 'inputs' list.
+        mlir::Value firstInputVal = inputs.back();
+        auto v = fwdOp.getInputsMutable();
+        // Find the index of the first input value.
+        unsigned index = inputs.getBeginOperandIndex();
+
+        // Now get the specific OpOperand using the index.
+        mlir::OpOperand &firstOpOperand = op->getOpOperand(index);
+
+        batchutils::BatchDiffCacheKey key =
+            batchutils::createDiffCacheKey(fwdOp, fnOp);
+
+        toMerge[key].push_back(fwdOp);
+      }
+
+      for (auto &pair : toMerge) {
+        auto key = pair.first;
+        auto allOps = pair.second;
+        if (allOps.size() < 2)
+          continue;
+
+        // Collect inner effects of function
+        SmallVector<MemoryEffects::EffectInstance> calleeEffects =
+            batchutils::collectFnEffects(innerEffectCache, key.function);
+
+        // TODO skip if known readonly from existing analyses
+
+        bool skipMergeEntry = false;
+        // Map callee(primal function) memory effects to the calling
+        // function's(autodiff op's) memory effects. This allows us to also
+        // reason about memory effects on the derivative argument potentially
+        // being passed in(if the primal argument has activity enzyme_dup)
+
+        // ForwardDiff read(primal) ?-> read(deriv);
+        // write(primal) ?-> write(deriv)
+        //
+        // ReverseDiff read(primal) ?-> read or write(deriv);
+        // write(primal) ?-> read or write(deriv);
+        //
+        // Unknown effects are retained in the caller, and will always alias to
+        // true with any other effect
+
+        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
+
+        for (auto &eff : calleeEffects) {
+          if (isa<MemoryEffects::Read>(eff) || isa<MemoryEffects::Write>(eff)) {
+            if (Value resource = eff.getValue()) {
+
+              auto argnum = 0;
+              bool found = false;
+              for (auto fnArg : key.function.getArguments()) {
+                if (fnArg == resource) {
+                  argnum = fnArg.getArgNumber();
+                  found = true;
+                  break;
+                }
+              }
+              auto e = eff.getEffect();
+              if (found) {
+
+                // Primal value as effect
+                Value primalVal = key.inputs[argnum];
+                if (auto primalOpResult = dyn_cast<OpResult>(primalVal))
+                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                      eff.getEffect(), primalOpResult, eff.getResource()));
+                else if (auto primalBlockArg =
+                             dyn_cast<BlockArgument>(primalVal)) {
+                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                      eff.getEffect(), primalBlockArg, eff.getResource()));
+                } else {
+                  llvm_unreachable("Value is neither an argument nor a result "
+                                   "of an op. This is not allowed by SSA");
+                }
+
+                // Derivative effects(remain the same for fwddiff)
+                for (auto dop : allOps) {
+                  auto act_val =
+                      cast<ActivityAttr>(dop.getActivity()[argnum]).getValue();
+                  if (act_val == Activity::enzyme_dup ||
+                      act_val == Activity::enzyme_dupnoneed) {
+                    // derivative index is always argnum + 1
+                    Value dVal = dop.getInputs()[argnum + 1];
+                    if (auto dOpResult = dyn_cast<OpResult>(dVal)) {
+                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                          eff.getEffect(), dOpResult, eff.getResource()));
+                    } else if (auto dBlockArg = dyn_cast<BlockArgument>(dVal)) {
+                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                          eff.getEffect(), dBlockArg, eff.getResource()));
+                    } else {
+                      llvm_unreachable(
+                          "Value is neither an argument nor a result "
+                          "of an op. This is not allowed by SSA");
+                    }
+                  }
+                }
+              } else {
+                // effect on some unknown mlir::Value which is not a primal
+                // function argument
+                // TODO: Handle this either as a global value, or a value which
+                // is inside of the MLIR function.
+                callerEffects.emplace_back(eff);
+              }
+
+            } else {
+              // unknown effect which isnt a value
+              callerEffects.emplace_back(eff);
+            }
+          } else {
+            // encountered an allocate / load effect. Skip to next map entry
+            skipMergeEntry = true;
+            break;
+          }
+        }
+
+        if (skipMergeEntry)
+          continue;
+
+        SmallVector<enzyme::ForwardDiffOp> legalMerge;
+        if (callerEffects.size() == 0) {
+          // legal to merge since there is no effect overwrite
+          legalMerge = allOps;
+        } else {
+
+          legalMerge.emplace_back(allOps[0]);
+          SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
+
+          for (auto *cur = allOps[0]->getNextNode();
+               cur != dyn_cast<mlir::Operation *>(allOps.back());
+               cur = cur->getNextNode()) {
+            auto curOpEffects = mlir::getEffectsRecursively(cur);
+            if (curOpEffects.has_value()) {
+              betweenEffects.clear();
+              betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
+            }
+
+            bool stillOk = true;
+
+            for (auto eff : betweenEffects) {
+              // read before write
+              if (isa<MemoryEffects::Read>(eff)) {
+                for (auto fneff : callerEffects) {
+                  if (isa<MemoryEffects::Write>(fneff)) {
+                    if (batchutils::mayAlias(eff, fneff)) {
+                      stillOk = false;
+                      break;
+                    }
+                  }
+                }
+              }
+              // write before read
+              if (isa<MemoryEffects::Write>(eff)) {
+                for (auto fneff : callerEffects) {
+                  if (isa<MemoryEffects::Read>(fneff)) {
+                    if (batchutils::mayAlias(eff, fneff)) {
+                      stillOk = false;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            if (!stillOk) {
+              break;
+            }
+
+
+            auto curFnOp = dyn_cast<enzyme::ForwardDiffOp>(cur);
+            if (curFnOp && (std::find(pair.second.begin(), pair.second.end(),
+                                      curFnOp) != pair.second.end())) {
+              legalMerge.push_back(cast<enzyme::ForwardDiffOp>(cur));
+            }
+          }
+        }
+
+        if (legalMerge.size() < 2)
+          continue;
+
+        // go ahead and actually do the merge now
+      }
+    }); // block walker
+
 
     // Merge call subsets
     for (auto mergeItr = toMerge.begin(); mergeItr != toMerge.end();
@@ -391,8 +562,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
     // list of values read/written to inside fn
     std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;
-    
-        // map tracking batchable AD calls
+
+    // map tracking batchable AD calls
     std::map<enzyme::batchutils::BatchDiffCacheKey,
              SmallVector<enzyme::AutoDiffOp>>
         toMerge;
@@ -405,7 +576,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
       batchutils::collectFnEffects(rwfMap, fnOp);
       // skip if fn isn't readonly(iterate through toplevel ops)
-      if (!oputils::isReadOnly(fnOp)) {
+      if (!mlir::isMemoryEffectFree(fnOp)) {
         return mlir::WalkResult::skip();
       }
 

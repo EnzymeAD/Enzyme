@@ -99,9 +99,13 @@ Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
                  int64_t index);
 
 SmallVector<MemoryEffects::EffectInstance> collectFnEffects(
-    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>> &effectCache,
+    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+        &effectCache,
     FunctionOpInterface fnOp);
 
+bool isFnArg(FunctionOpInterface fnOp, Value val);
+
+bool mayAlias(MemoryEffects::EffectInstance a, MemoryEffects::EffectInstance b);
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
