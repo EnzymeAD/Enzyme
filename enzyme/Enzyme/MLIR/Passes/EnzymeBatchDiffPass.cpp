@@ -338,15 +338,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             symbolTable.lookupNearestSymbolFrom(fwdOp, fwdOp.getFnAttr()));
         if (!fnOp)
           continue;
-        auto inputs = fwdOp.getInputs();
-        // Get the first value from the named 'inputs' list.
-        mlir::Value firstInputVal = inputs.back();
-        auto v = fwdOp.getInputsMutable();
-        // Find the index of the first input value.
-        unsigned index = inputs.getBeginOperandIndex();
-
-        // Now get the specific OpOperand using the index.
-        mlir::OpOperand &firstOpOperand = op->getOpOperand(index);
 
         batchutils::BatchDiffCacheKey key =
             batchutils::createDiffCacheKey(fwdOp, fnOp);
@@ -384,7 +375,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         for (auto &eff : calleeEffects) {
-          if (isa<MemoryEffects::Read>(eff) || isa<MemoryEffects::Write>(eff)) {
+          if (isa<MemoryEffects::Read>(eff.getEffect()) || isa<MemoryEffects::Write>(eff.getEffect())) {
             if (Value resource = eff.getValue()) {
 
               auto argnum = 0;
@@ -465,8 +456,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           legalMerge.emplace_back(allDiffs[0]);
           SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
 
-          for (auto *cur = allDiffs[0]->getNextNode();
-               cur != dyn_cast<mlir::Operation *>(allDiffs.back());
+          for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
                cur = cur->getNextNode()) {
             auto curOpEffects = mlir::getEffectsRecursively(cur);
             if (curOpEffects.has_value()) {
@@ -478,9 +468,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
             for (auto eff : betweenEffects) {
               // read before write
-              if (isa<MemoryEffects::Read>(eff)) {
+              if (isa<MemoryEffects::Read>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Write>(fneff)) {
+                  if (isa<MemoryEffects::Write>(fneff.getEffect())) {
                     if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
                       stillOk = false;
                       break;
@@ -489,9 +479,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 }
               }
               // write before read
-              if (isa<MemoryEffects::Write>(eff)) {
+              if (isa<MemoryEffects::Write>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Read>(fneff)) {
+                  if (isa<MemoryEffects::Read>(fneff.getEffect())) {
                     if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
                       stillOk = false;
                       break;
@@ -737,20 +727,12 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
         }
       }
-
-      // erase all old ops
-      for (auto dop : allOps) {
-        dop->erase();
-      }
-    }
+    }); // block walker
   }
 
   void mergeRevdiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
     // TODO: run an alias analysis to handle aliased inputs to merge
-
-    // list of values read/written to inside fn
-    std::map<FunctionOpInterface, SmallPtrSet<Value, 4>> rwfMap;
 
     // map tracking batchable AD calls
     std::map<enzyme::batchutils::BatchDiffCacheKey,
@@ -763,7 +745,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
       auto fnOp = cast<FunctionOpInterface>(symbolOp);
 
-      batchutils::collectFnEffects(rwfMap, fnOp);
       // skip if fn isn't readonly(iterate through toplevel ops)
       if (!mlir::isMemoryEffectFree(fnOp)) {
         return mlir::WalkResult::skip();
