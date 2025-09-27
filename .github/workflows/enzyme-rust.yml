@@ -72,7 +72,7 @@ jobs:
     - name: Run Rust autodiff tests
       working-directory: rust
       run: |
-        source ~/.cargo/env
+        . ~/.cargo/env
         ./x test --stage 1 tests/codegen-llvm/autodiff
         ./x test --stage 1 tests/pretty/autodiff
         ./x test --stage 1 tests/ui/autodiff
