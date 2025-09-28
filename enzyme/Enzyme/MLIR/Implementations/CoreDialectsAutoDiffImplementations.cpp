@@ -27,7 +27,8 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
   if (auto T = dyn_cast<TensorType>(type)) {
     APFloat values[] = {APFloat(
         cast<FloatType>(T.getElementType()).getFloatSemantics(), value)};
-    return DenseElementsAttr::get(cast<ShapedType>(type), values);
+    return DenseElementsAttr::get(cast<ShapedType>(type),
+                                  ArrayRef<APFloat>(values));
   }
   auto T = cast<FloatType>(type);
   APFloat apvalue(T.getFloatSemantics(), value);
