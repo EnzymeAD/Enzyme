@@ -425,6 +425,9 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     if (auto PN = dyn_cast<PHINode>(&I)) {
       if (PN->getType() != val->getType())
         continue;
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
+        continue;
+
       int Idx = PN->getBasicBlockIndex(lc.preheader);
       if (Idx < 0) {
 
@@ -504,6 +507,8 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
       if (PN->getNumIncomingValues() == 0)
         continue;
       if (PN->getType() != lc.incvar->getType())
+        continue;
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
         continue;
       Value *ival = PN->getIncomingValueForBlock(lc.preheader);
       if (auto C = dyn_cast<Constant>(ival)) {
