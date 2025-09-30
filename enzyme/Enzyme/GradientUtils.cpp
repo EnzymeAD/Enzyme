@@ -425,7 +425,25 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     if (auto PN = dyn_cast<PHINode>(&I)) {
       if (PN->getType() != val->getType())
         continue;
-      Value *ival = PN->getIncomingValueForBlock(lc.preheader);
+      int Idx = PN->getBasicBlockIndex(lc.preheader);
+      if (Idx < 0) {
+
+        std::string str;
+        raw_string_ostream ss(str);
+
+        ss << " Could not find block for index, PN: " << *PN << "\n";
+        ss << " preheader: " << *lc.preheader << "\n";
+        ss << " header: " << *lc.header << "\n";
+        ss << " fn: " << *lc.header->getParent() << "\n";
+
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
+        } else {
+          EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
+        }
+      }
+      Value *ival = PN->getIncomingValue(Idx);
       if (auto CDV = dyn_cast<ConstantDataVector>(ival)) {
         if (CDV->isSplat())
           ival = CDV->getSplatValue();
