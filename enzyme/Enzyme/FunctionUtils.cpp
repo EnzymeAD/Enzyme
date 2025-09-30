@@ -342,15 +342,9 @@ SmallVector<Value *, 1> getJuliaObjects(Value *v, IRBuilder<> &B) {
   return done;
 }
 
-void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
-  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
-  for (auto U : AI->users()) {
-    Todo.push_back(
-        std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
-  }
-  SmallVector<Instruction *, 1> toErase;
-  if (auto I = dyn_cast<Instruction>(AI))
-    toErase.push_back(I);
+void RecursivelyReplaceAddressSpace(
+    SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
+    SmallVector<Instruction *, 1> &toErase, bool legal) {
   SmallVector<StoreInst *, 1> toPostCache;
   while (Todo.size()) {
     auto cur = Todo.back();
@@ -432,6 +426,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       for (size_t i = 0; i < NumOperands; i++)
         if (P->getOperand(i) == prev)
           replacedOperands[i] = rep;
+
       for (auto tval : Todo) {
         if (std::get<2>(tval) != P)
           continue;
@@ -456,7 +451,6 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
         }
         if (!remainingArePHIs) {
           Todo.insert(Todo.begin(), cur);
-          llvm::errs() << " continuing\n";
           continue;
         }
       } else {
@@ -654,6 +648,18 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
   }
 }
 
+void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  for (auto U : AI->users()) {
+    Todo.push_back(
+        std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
+  }
+  SmallVector<Instruction *, 1> toErase;
+  if (auto I = dyn_cast<Instruction>(AI))
+    toErase.push_back(I);
+  RecursivelyReplaceAddressSpace(Todo, toErase, legal);
+}
+
 /// Convert necessary stack allocations into mallocs for use in the reverse
 /// pass. Specifically if we're not topLevel all allocations must be upgraded
 /// Even if topLevel any allocations that aren't in the entry block (and
@@ -684,6 +690,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
   Function *end_lifetime = nullptr;
 #endif
 
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  SmallVector<Instruction *, 1> toErase;
   for (auto AI : ToConvert) {
     std::string nam = AI->getName().str();
     AI->setName("");
@@ -775,13 +783,19 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto PT0 = cast<PointerType>(rep->getType());
     auto PT1 = cast<PointerType>(AI->getType());
     if (PT0->getAddressSpace() != PT1->getAddressSpace()) {
-      RecursivelyReplaceAddressSpace(AI, rep, /*legal*/ false);
+      for (auto U : AI->users()) {
+        Todo.push_back(
+            std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
+      }
+      if (auto I = dyn_cast<Instruction>(AI))
+        toErase.push_back(I);
     } else {
       assert(rep->getType() == AI->getType());
       AI->replaceAllUsesWith(rep);
       AI->eraseFromParent();
     }
   }
+  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ false);
 }
 
 // Create a stack variable containing the size of the allocation
@@ -1685,62 +1699,7 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
         continue;
       if (hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow"))
         continue;
-      if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (isLocalReadOnlyOrThrow(CI)) {
-          continue;
-        }
-        if (isAllocationCall(CI, TLI)) {
-          continue;
-        }
-        if (auto F2 = CI->getCalledFunction()) {
-          if (isDebugFunction(F2))
-            continue;
-          if (F2->getCallingConv() == CI->getCallingConv()) {
-            if (F2 == &F)
-              continue;
-            if (isReadOnlyOrThrow(F2))
-              continue;
-            if (!F2->empty()) {
-              if (EnzymePrintPerf) {
-                EmitWarning(
-                    "WritingInstruction", I, "Instruction could write forcing ",
-                    F.getName(),
-                    " to not be marked readonly_or_throw per sub-call of ",
-                    F2->getName());
-              }
-              calls_todo.insert(F2);
-              continue;
-            }
-          }
-        }
-      }
-      if (auto SI = dyn_cast<StoreInst>(&I)) {
-        auto Obj = getBaseObject(SI->getPointerOperand());
-        // Storing into local memory is fine since it definitionally will not be
-        // seen outside the function. Note, even if one stored into x =
-        // malloc(..), and stored x into a global/arg pointer, that second store
-        // would trigger not readonly.
-        if (isa<AllocaInst>(Obj))
-          continue;
-        if (isAllocationCall(Obj, TLI)) {
-          if (local)
-            continue;
-          if (notCaptured(Obj))
-            continue;
-          local = true;
-          continue;
-        }
-        if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid()) {
-            local = true;
-            continue;
-          }
-        }
-      }
+
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
         auto Obj = getBaseObject(MTI->getOperand(0));
         // Storing into local memory is fine since it definitionally will not be
@@ -1770,6 +1729,93 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
         auto Obj = getBaseObject(MSI->getOperand(0));
+        // Storing into local memory is fine since it definitionally will not be
+        // seen outside the function. Note, even if one stored into x =
+        // malloc(..), and stored x into a global/arg pointer, that second store
+        // would trigger not readonly.
+        if (isa<AllocaInst>(Obj))
+          continue;
+        if (isAllocationCall(Obj, TLI)) {
+          if (local)
+            continue;
+          if (notCaptured(Obj))
+            continue;
+          local = true;
+          continue;
+        }
+        if (auto arg = dyn_cast<Argument>(Obj)) {
+          if (arg->hasStructRetAttr() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_returnRoots")
+                  .isValid()) {
+            local = true;
+            continue;
+          }
+        }
+      }
+
+      if (auto CI = dyn_cast<CallBase>(&I)) {
+        if (isLocalReadOnlyOrThrow(CI)) {
+          continue;
+        }
+        if (isAllocationCall(CI, TLI)) {
+          continue;
+        }
+        if (getFuncNameFromCall(CI) == "zeroType") {
+          auto Obj = getBaseObject(CI->getArgOperand(0));
+          // Storing into local memory is fine since it definitionally will not
+          // be seen outside the function. Note, even if one stored into x =
+          // malloc(..), and stored x into a global/arg pointer, that second
+          // store would trigger not readonly.
+          if (isa<AllocaInst>(Obj))
+            continue;
+          if (isAllocationCall(Obj, TLI)) {
+            if (local)
+              continue;
+            if (notCaptured(Obj))
+              continue;
+            local = true;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(Obj)) {
+            if (arg->hasStructRetAttr() ||
+                arg->getParent()
+                    ->getAttribute(arg->getArgNo() +
+                                       AttributeList::FirstArgIndex,
+                                   "enzymejl_returnRoots")
+                    .isValid()) {
+              local = true;
+              continue;
+            }
+          }
+        }
+        if (auto F2 = CI->getCalledFunction()) {
+          if (isDebugFunction(F2))
+            continue;
+          if (F2->getName() == "julia.write_barrier")
+            continue;
+          if (F2->getCallingConv() == CI->getCallingConv()) {
+            if (F2 == &F)
+              continue;
+            if (isReadOnlyOrThrow(F2))
+              continue;
+            if (!F2->empty()) {
+              if (EnzymePrintPerf) {
+                EmitWarning(
+                    "WritingInstruction", I, "Instruction could write forcing ",
+                    F.getName(),
+                    " to not be marked readonly_or_throw per sub-call of ",
+                    F2->getName());
+              }
+              calls_todo.insert(F2);
+              continue;
+            }
+          }
+        }
+      }
+      if (auto SI = dyn_cast<StoreInst>(&I)) {
+        auto Obj = getBaseObject(SI->getPointerOperand());
         // Storing into local memory is fine since it definitionally will not be
         // seen outside the function. Note, even if one stored into x =
         // malloc(..), and stored x into a global/arg pointer, that second store

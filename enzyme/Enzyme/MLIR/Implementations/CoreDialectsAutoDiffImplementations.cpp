@@ -25,13 +25,10 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                               llvm::StringRef value) {
   using namespace mlir;
   if (auto T = dyn_cast<TensorType>(type)) {
-    size_t num = 1;
-    for (auto sz : T.getShape())
-      num *= sz;
-    APFloat apvalue(cast<FloatType>(T.getElementType()).getFloatSemantics(),
-                    value);
-    SmallVector<APFloat> supportedValues(num, apvalue);
-    return DenseFPElementsAttr::get(cast<ShapedType>(type), supportedValues);
+    APFloat values[] = {APFloat(
+        cast<FloatType>(T.getElementType()).getFloatSemantics(), value)};
+    return DenseElementsAttr::get(cast<ShapedType>(type),
+                                  ArrayRef<APFloat>(values));
   }
   auto T = cast<FloatType>(type);
   APFloat apvalue(T.getFloatSemantics(), value);

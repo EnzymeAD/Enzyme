@@ -213,6 +213,14 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
+void EnzymeLogicSetExternalContext(EnzymeLogicRef Ref, void *ExternalContext) {
+  eunwrap(Ref).ExternalContext = ExternalContext;
+}
+
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
+  return eunwrap(Ref).ExternalContext;
+}
+
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
 }

@@ -43,7 +43,8 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
-          blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
+          blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,
+          ReturnActivity)),
       TA(TA_), TR(TR_), omp(omp), verifyPostPasses(verifyPostPasses),
       postpasses(postpasses), strongZero(strongZero),
       returnPrimals(returnPrimals), returnShadows(returnShadows), width(width),
