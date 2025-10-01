@@ -410,6 +410,10 @@ uint8_t EnzymeGradientUtilsGetRuntimeActivity(GradientUtils *gutils) {
   return gutils->runtimeActivity;
 }
 
+void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils) {
+  return gutils->Logic.ExternalContext;
+}
+
 uint8_t EnzymeGradientUtilsGetStrongZero(GradientUtils *gutils) {
   return gutils->strongZero;
 }
