@@ -256,7 +256,6 @@ static Operation *getFunctionFromCall(CallOpInterface iface) {
 
 constexpr bool EnzymePrintActivity = false;
 
-
 bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
   auto find = readOnlyCache.find(val);
   if (find != readOnlyCache.end()) {
