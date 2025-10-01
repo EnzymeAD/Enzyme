@@ -375,7 +375,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         for (auto &eff : calleeEffects) {
-          if (isa<MemoryEffects::Read>(eff.getEffect()) || isa<MemoryEffects::Write>(eff.getEffect())) {
+          if (isa<MemoryEffects::Read>(eff.getEffect()) ||
+              isa<MemoryEffects::Write>(eff.getEffect())) {
             if (Value resource = eff.getValue()) {
 
               auto argnum = 0;
@@ -734,185 +735,369 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                          FunctionOpInterface op) {
     // TODO: run an alias analysis to handle aliased inputs to merge
 
-    // map tracking batchable AD calls
-    std::map<enzyme::batchutils::BatchDiffCacheKey,
-             SmallVector<enzyme::AutoDiffOp>>
-        toMerge;
+    // list of values read/written to inside fn
+    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+        innerEffectCache;
 
-    op->walk([&](enzyme::AutoDiffOp dop) {
-      // lookup function, check if its readOnly
-      auto *symbolOp =
-          symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
-      auto fnOp = cast<FunctionOpInterface>(symbolOp);
-
-      // skip if fn isn't readonly(iterate through toplevel ops)
-      if (!mlir::isMemoryEffectFree(fnOp)) {
-        return mlir::WalkResult::skip();
-      }
-
-      // add to map
-      batchutils::BatchDiffCacheKey key =
-          batchutils::createDiffCacheKey(dop, fnOp);
-
-      auto mergeItr = toMerge.find(key);
-      if (mergeItr != toMerge.end()) {
-        mergeItr->second.push_back(dop);
-      } else {
-        toMerge[key] = {dop};
-      }
-      return mlir::WalkResult::advance();
-    });
+    mlir::AliasAnalysis aliasAnalysisHandle(op);
 
     OpBuilder builder(op);
 
-    // process map
-    for (auto mergeItr = toMerge.begin(); mergeItr != toMerge.end();
-         ++mergeItr) {
-      auto key = mergeItr->first;
-      SmallVector<enzyme::AutoDiffOp> allOps = mergeItr->second;
-      int64_t width = allOps.size();
+    op->walk([&](Block *blk) {
+      // map tracking batchable AD calls
+      std::map<enzyme::batchutils::BatchDiffCacheKey,
+               SmallVector<enzyme::AutoDiffOp>>
+          toMerge;
 
-      if (width < 2)
-        continue;
-
-      auto firstDiffOp = allOps.front();
-      IRRewriter::InsertionGuard insertGuard(builder);
-      builder.setInsertionPoint(firstDiffOp);
-      auto loc = firstDiffOp->getLoc();
-      auto context = builder.getContext();
-
-      // Prepare args for merged operation
-
-      SmallVector<mlir::Value> in_args;
-      SmallVector<ActivityAttr, 2> inActivityAttrs;
-      SmallVector<ActivityAttr, 2> retActivityAttrs;
-      SmallVector<mlir::Type, 2> out_ty;
-
-      // fill in_args using inputs
-      auto call_idx = 0;
-      for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
-        auto iattr = ActivityAttr::get(context, act);
-        inActivityAttrs.push_back(iattr);
-        in_args.push_back(key.inputs[call_idx]);
-        call_idx++;
-
-        if (act == Activity::enzyme_dup || act == Activity::enzyme_dupnoneed) {
-
-          SmallVector<mlir::Value> derivList;
-          for (auto uop : allOps) {
-            derivList.push_back(uop.getInputs()[call_idx]);
-          }
-
-          mlir::Value b_din = batchutils::tensorizeArg(builder, loc, derivList);
-
-          in_args.push_back(b_din);
-          call_idx++;
-        }
-      }
-
-      // Skip if function is non-differentiable
-      if (call_idx == firstDiffOp.getInputs().size()) {
-        continue;
-      }
-
-      // fill in_args using d<out>, fill out_ty using out
-      auto out_idx = 0;
-      for (auto ract : key.retActivity) {
-        auto iattr = ActivityAttr::get(context, ract);
-        retActivityAttrs.push_back(iattr);
-
-        // no effect on out or d<out>
-        if (ract == Activity::enzyme_constnoneed ||
-            ract == Activity::enzyme_dupnoneed) {
+      for (auto revOp : blk->getOps<enzyme::AutoDiffOp>()) {
+        auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(revOp, revOp.getFnAttr()));
+        if (!fnOp)
           continue;
-        }
 
-        // handle d<out>
-        if (ract == Activity::enzyme_active ||
-            ract == Activity::enzyme_activenoneed) {
-          SmallVector<mlir::Value> derivList;
-          for (auto uop : allOps) {
-            derivList.push_back(uop.getInputs()[call_idx]);
-          }
+        batchutils::BatchDiffCacheKey key =
+            batchutils::createDiffCacheKey(revOp, fnOp);
 
-          Value batch_dout = batchutils::tensorizeArg(builder, loc, derivList);
-          in_args.push_back(batch_dout);
-          call_idx++;
-        }
-
-        // handle out
-        if (ract == Activity::enzyme_active || ract == Activity::enzyme_const ||
-            ract == Activity::enzyme_dup) {
-          Value out = firstDiffOp.getOutputs()[out_idx];
-          out_ty.push_back(out.getType());
-          ++out_idx;
-        }
+        toMerge[key].push_back(revOp);
       }
 
-      // fill out_ty using d<in>
-      for (auto act : key.inActivity) {
-        if (act == Activity::enzyme_active) {
-          Value din = firstDiffOp.getOutputs()[out_idx];
-          auto dinTy = din.getType();
-          auto T = dyn_cast<TensorType>(dinTy);
-          if (!T) {
-            out_ty.push_back(RankedTensorType::get(width, dinTy));
+      for (auto &pair : toMerge) {
+        auto key = pair.first;
+        auto allDiffs = pair.second;
+        if (allDiffs.size() < 2)
+          continue;
+
+        // Collect inner effects of function
+        SmallVector<MemoryEffects::EffectInstance> calleeEffects =
+            batchutils::collectFnEffects(innerEffectCache, key.function);
+
+        // TODO skip if known readonly from existing analyses
+
+        bool skipMergeEntry = false;
+        // Map callee(primal function) memory effects to the calling
+        // function's(autodiff op's) memory effects. This allows us to also
+        // reason about memory effects on the derivative argument potentially
+        // being passed in(if the primal argument has activity enzyme_dup)
+
+        // ForwardDiff read(primal) ?-> read(deriv);
+        // write(primal) ?-> write(deriv)
+        //
+        // ReverseDiff read(primal) ?-> read or write(deriv);
+        // write(primal) ?-> read or write(deriv);
+        //
+        // Unknown effects are retained in the caller, and will always alias to
+        // true with any other effect
+
+        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
+
+        for (auto &eff : calleeEffects) {
+          if (isa<MemoryEffects::Read>(eff.getEffect()) ||
+              isa<MemoryEffects::Write>(eff.getEffect())) {
+            if (Value resource = eff.getValue()) {
+
+              auto argnum = 0;
+              bool found = false;
+              for (auto fnArg : key.function.getArguments()) {
+                if (fnArg == resource) {
+                  argnum = fnArg.getArgNumber();
+                  found = true;
+                  break;
+                }
+              }
+
+              if (found) {
+
+                // Primal value as effect
+                Value primalVal = key.inputs[argnum];
+                if (auto primalOpResult = dyn_cast<OpResult>(primalVal))
+                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                      eff.getEffect(), primalOpResult, eff.getResource()));
+                else if (auto primalBlockArg =
+                             dyn_cast<BlockArgument>(primalVal)) {
+                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                      eff.getEffect(), primalBlockArg, eff.getResource()));
+                } else {
+                  llvm_unreachable("Value is neither an argument nor a result "
+                                   "of an op. This is not allowed by SSA");
+                }
+
+                auto deff_read =
+                    isa<MemoryEffects::Read>(eff.getEffect()) ? true : false;
+
+                // Derivative effects(flipped for revdiff)
+                for (auto dop : allDiffs) {
+                  auto act_val =
+                      cast<ActivityAttr>(dop.getActivity()[argnum]).getValue();
+                  if (act_val == Activity::enzyme_dup ||
+                      act_val == Activity::enzyme_dupnoneed) {
+                    // derivative index is always argnum + 1
+                    Value dVal = dop.getInputs()[argnum + 1];
+                    if (auto dOpResult = dyn_cast<OpResult>(dVal)) {
+                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                          eff.getEffect(), dOpResult, eff.getResource()));
+                      if (deff_read) {
+                        callerEffects.emplace_back(
+                            MemoryEffects::EffectInstance(
+                                MemoryEffects::Write::get(), dOpResult,
+                                eff.getResource()));
+                      } else {
+                        callerEffects.emplace_back(
+                            MemoryEffects::EffectInstance(
+                                MemoryEffects::Read::get(), dOpResult,
+                                eff.getResource()));
+                      }
+                    } else if (auto dBlockArg = dyn_cast<BlockArgument>(dVal)) {
+                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
+                          eff.getEffect(), dBlockArg, eff.getResource()));
+                      if (deff_read) {
+                        callerEffects.emplace_back(
+                            MemoryEffects::EffectInstance(
+                                MemoryEffects::Write::get(), dBlockArg,
+                                eff.getResource()));
+                      } else {
+                        callerEffects.emplace_back(
+                            MemoryEffects::EffectInstance(
+                                MemoryEffects::Read::get(), dBlockArg,
+                                eff.getResource()));
+                      }
+                    } else {
+                      llvm_unreachable(
+                          "Value is neither an argument nor a result "
+                          "of an op. This is not allowed by SSA");
+                    }
+                  }
+                }
+              } else {
+                // effect on some unknown mlir::Value which is not a primal
+                // function argument
+                // TODO: Handle this either as a global value, or a value which
+                // is inside of the MLIR function.
+                callerEffects.emplace_back(eff);
+              }
+
+            } else {
+              // unknown effect which isnt a value
+              callerEffects.emplace_back(eff);
+            }
           } else {
-            SmallVector<int64_t> shape = {width};
-            shape.append(T.getShape().begin(), T.getShape().end());
-            out_ty.push_back(T.clone(shape));
+            // encountered an allocate / load effect. Skip to next map entry
+            skipMergeEntry = true;
+            break;
           }
-          ++out_idx;
         }
-      }
 
-      ArrayAttr newInActivity = ArrayAttr::get(
-          context, llvm::ArrayRef<Attribute>(inActivityAttrs.begin(),
-                                             inActivityAttrs.end()));
+        if (skipMergeEntry)
+          continue;
 
-      ArrayAttr newRetActivity = ArrayAttr::get(
-          context, llvm::ArrayRef<Attribute>(retActivityAttrs.begin(),
-                                             retActivityAttrs.end()));
+        SmallVector<enzyme::AutoDiffOp> legalMerge;
+        if (callerEffects.size() == 0) {
+          // legal to merge since there is no effect overwrite
+          legalMerge = allDiffs;
+        } else {
 
-      IntegerAttr newWidthAttr =
-          IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
+          legalMerge.emplace_back(allDiffs[0]);
+          SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
 
-      auto newDiffOp = builder.create<AutoDiffOp>(
-          loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
-          newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
+          for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
+               cur = cur->getNextNode()) {
+            auto curOpEffects = mlir::getEffectsRecursively(cur);
+            if (curOpEffects.has_value()) {
+              betweenEffects.clear();
+              betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
+            }
 
-      // Map old uses to new uses
+            bool stillOk = true;
 
-      out_idx = 0;
-      for (auto ract : key.retActivity) {
-        if (ract == Activity::enzyme_active || ract == Activity::enzyme_const ||
-            ract == Activity::enzyme_dup) {
-          Value new_out = newDiffOp.getOutputs()[out_idx];
+            for (auto eff : betweenEffects) {
+              // read before write
+              if (isa<MemoryEffects::Read>(eff.getEffect())) {
+                for (auto fneff : callerEffects) {
+                  if (isa<MemoryEffects::Write>(fneff.getEffect())) {
+                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                      stillOk = false;
+                      break;
+                    }
+                  }
+                }
+              }
+              // write before read
+              if (isa<MemoryEffects::Write>(eff.getEffect())) {
+                for (auto fneff : callerEffects) {
+                  if (isa<MemoryEffects::Read>(fneff.getEffect())) {
+                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                      stillOk = false;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+            if (!stillOk) {
+              break;
+            }
+
+            auto curFnOp = dyn_cast<enzyme::AutoDiffOp>(cur);
+            if (curFnOp && (std::find(pair.second.begin(), pair.second.end(),
+                                      curFnOp) != pair.second.end())) {
+              legalMerge.push_back(cast<enzyme::AutoDiffOp>(cur));
+            }
+          }
+        }
+
+        // go ahead and actually do the merge now
+        {
+
+          SmallVector<enzyme::AutoDiffOp> allOps = legalMerge;
+          int64_t width = allOps.size();
+
+          if (width < 2)
+            continue;
+
+          auto firstDiffOp = allOps.front();
+          IRRewriter::InsertionGuard insertGuard(builder);
+          builder.setInsertionPoint(firstDiffOp);
+          auto loc = firstDiffOp->getLoc();
+          auto context = builder.getContext();
+
+          // Prepare args for merged operation
+
+          SmallVector<mlir::Value> in_args;
+          SmallVector<ActivityAttr, 2> inActivityAttrs;
+          SmallVector<ActivityAttr, 2> retActivityAttrs;
+          SmallVector<mlir::Type, 2> out_ty;
+
+          // fill in_args using inputs
+          auto call_idx = 0;
+          for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
+            auto iattr = ActivityAttr::get(context, act);
+            inActivityAttrs.push_back(iattr);
+            in_args.push_back(key.inputs[call_idx]);
+            call_idx++;
+
+            if (act == Activity::enzyme_dup ||
+                act == Activity::enzyme_dupnoneed) {
+
+              SmallVector<mlir::Value> derivList;
+              for (auto uop : allOps) {
+                derivList.push_back(uop.getInputs()[call_idx]);
+              }
+
+              mlir::Value b_din =
+                  batchutils::tensorizeArg(builder, loc, derivList);
+
+              in_args.push_back(b_din);
+              call_idx++;
+            }
+          }
+
+          // Skip if function is non-differentiable
+          if (call_idx == firstDiffOp.getInputs().size()) {
+            continue;
+          }
+
+          // fill in_args using d<out>, fill out_ty using out
+          auto out_idx = 0;
+          for (auto ract : key.retActivity) {
+            auto iattr = ActivityAttr::get(context, ract);
+            retActivityAttrs.push_back(iattr);
+
+            // no effect on out or d<out>
+            if (ract == Activity::enzyme_constnoneed ||
+                ract == Activity::enzyme_dupnoneed) {
+              continue;
+            }
+
+            // handle d<out>
+            if (ract == Activity::enzyme_active ||
+                ract == Activity::enzyme_activenoneed) {
+              SmallVector<mlir::Value> derivList;
+              for (auto uop : allOps) {
+                derivList.push_back(uop.getInputs()[call_idx]);
+              }
+
+              Value batch_dout =
+                  batchutils::tensorizeArg(builder, loc, derivList);
+              in_args.push_back(batch_dout);
+              call_idx++;
+            }
+
+            // handle out
+            if (ract == Activity::enzyme_active ||
+                ract == Activity::enzyme_const ||
+                ract == Activity::enzyme_dup) {
+              Value out = firstDiffOp.getOutputs()[out_idx];
+              out_ty.push_back(out.getType());
+              ++out_idx;
+            }
+          }
+
+          // fill out_ty using d<in>
+          for (auto act : key.inActivity) {
+            if (act == Activity::enzyme_active) {
+              Value din = firstDiffOp.getOutputs()[out_idx];
+              auto dinTy = din.getType();
+              auto T = dyn_cast<TensorType>(dinTy);
+              if (!T) {
+                out_ty.push_back(RankedTensorType::get(width, dinTy));
+              } else {
+                SmallVector<int64_t> shape = {width};
+                shape.append(T.getShape().begin(), T.getShape().end());
+                out_ty.push_back(T.clone(shape));
+              }
+              ++out_idx;
+            }
+          }
+
+          ArrayAttr newInActivity = ArrayAttr::get(
+              context, llvm::ArrayRef<Attribute>(inActivityAttrs.begin(),
+                                                 inActivityAttrs.end()));
+
+          ArrayAttr newRetActivity = ArrayAttr::get(
+              context, llvm::ArrayRef<Attribute>(retActivityAttrs.begin(),
+                                                 retActivityAttrs.end()));
+
+          IntegerAttr newWidthAttr =
+              IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
+
+          auto newDiffOp = builder.create<AutoDiffOp>(
+              loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
+              newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
+
+          // Map old uses to new uses
+
+          out_idx = 0;
+          for (auto ract : key.retActivity) {
+            if (ract == Activity::enzyme_active ||
+                ract == Activity::enzyme_const ||
+                ract == Activity::enzyme_dup) {
+              Value new_out = newDiffOp.getOutputs()[out_idx];
+              for (auto dop : allOps) {
+                dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
+              }
+              ++out_idx;
+            }
+          }
+
+          for (auto act : key.inActivity) {
+            if (act == Activity::enzyme_active) {
+              Value batch_din = newDiffOp.getOutputs()[out_idx];
+              for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
+                Value old_din = dop.getOutputs()[out_idx];
+                auto dinTy = old_din.getType();
+                auto new_din = batchutils::extractArg(builder, loc, dinTy,
+                                                      batch_din, dop_idx);
+
+                old_din.replaceAllUsesWith(new_din);
+              }
+            }
+          }
+          // erase all old ops
           for (auto dop : allOps) {
-            dop.getOutputs()[out_idx].replaceAllUsesWith(new_out);
-          }
-          ++out_idx;
-        }
-      }
-
-      for (auto act : key.inActivity) {
-        if (act == Activity::enzyme_active) {
-          Value batch_din = newDiffOp.getOutputs()[out_idx];
-          for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
-            Value old_din = dop.getOutputs()[out_idx];
-            auto dinTy = old_din.getType();
-            auto new_din =
-                batchutils::extractArg(builder, loc, dinTy, batch_din, dop_idx);
-
-            old_din.replaceAllUsesWith(new_din);
+            dop->erase();
           }
         }
       }
-      // erase all old ops
-      for (auto dop : allOps) {
-        dop->erase();
-      }
-    }
+    }); // block walker
   }
 };
 
