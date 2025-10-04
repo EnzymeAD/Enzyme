@@ -541,4 +541,24 @@ def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
   }];
 }
 
+def ConcatenateOp : Enzyme_Op<"concatenate"> {
+  let summary = "Concatenate list of input arguments into a single batched value";
+  let description = [{
+    Concatenate list of input arguments into a generic value
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$inputs);
+  let results = (outs AnyType:$output)
+}
+
+def ExtractOp : Enzyme_Op<"extract"> {
+  let summary = "Extract value from batched operand at index";
+  let description = [{
+    Extract value from batched operand at index
+  }];
+
+  let arguments = (ins AnyType:$input, AnyType:$index);
+  let results = (outs AnyType:$output);
+
+}
 #endif // ENZYME_OPS
