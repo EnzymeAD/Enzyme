@@ -1,0 +1,84 @@
+name: Enzyme Rust CI
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+
+jobs:
+  rust-autodiff:
+    name: Rust Autodiff ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux-x86-n2-32]
+        commit: [51ff895062ba60a7cba53f57af928c3fb7b0f2f4]
+    
+    timeout-minutes: 90
+
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+    
+    steps:
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y ninja-build cmake ccache nodejs
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ matrix.os }}-${{ matrix.commit }}
+    - name: Install Rust toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . ~/.cargo/env
+        rustup toolchain install nightly
+        rustup default nightly
+    - uses: actions/checkout@v4
+      name: Checkout Enzyme
+    - uses: actions/checkout@v4
+      name: Checkout Rust compiler
+      with:
+        repository: rust-lang/rust
+        ref: ${{ matrix.commit }}
+        path: rust
+    - name: Configure Rust compiler
+      run: |
+        . ~/.cargo/env
+        cd rust
+        # Replace rustc's built-in Enzyme submodule with the Enzyme source code from this repository
+        rm -rf src/tools/enzyme/enzyme
+        ln -s "${GITHUB_WORKSPACE}/enzyme" src/tools/enzyme/enzyme
+        ./configure \
+          --enable-llvm-link-shared \
+          --enable-llvm-plugins \
+          --enable-llvm-enzyme \
+          --release-channel=nightly \
+          --enable-llvm-assertions \
+          --enable-clang \
+          --enable-lld \
+          --disable-optimize-llvm \
+          --enable-option-checking \
+          --enable-ninja \
+          --disable-docs \
+          --enable-ccache
+    - name: Build Rust compiler stage 1
+      working-directory: rust
+      run: |
+        . ~/.cargo/env
+        ./x build --stage 1 library
+    - name: Run Rust autodiff tests
+      working-directory: rust
+      run: |
+        . ~/.cargo/env
+        ./x test --stage 1 tests/codegen-llvm/autodiff
+        ./x test --stage 1 tests/pretty/autodiff
+        ./x test --stage 1 tests/ui/autodiff
+        ./x test --stage 1 tests/ui/feature-gates/feature-gate-autodiff.rs
