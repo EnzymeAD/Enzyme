@@ -110,26 +110,6 @@ Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
   return out;
 }
 
-bool mayAlias(MemoryEffects::EffectInstance &a,
-              MemoryEffects::EffectInstance &b,
-              mlir::AliasAnalysis &aliasAnalyzer) {
-  if (a.getResource()->getResourceID() != b.getResource()->getResourceID())
-    return false;
-  Value valA = a.getValue();
-  Value valB = b.getValue();
-
-  // unknown effects may always alias
-  if (!valA || !valB) {
-    return true;
-  }
-  auto valResult = oputils::mayAlias(valA, valB);
-
-  // query alias analysis and polygeist based alias analysis
-  auto aliasResult = aliasAnalyzer.alias(valA, valB);
-
-  return (!aliasResult.isNo() || valResult);
-}
-
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
@@ -140,12 +120,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
-
-    // list of values read/written to inside fn
+  // TODO: Use a modified version of inter-procedural DataFlowAliasAnalysis
+    // for mapping primal effects
     std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
         innerEffectCache;
-
-    mlir::AliasAnalysis aliasAnalysisHandle(op);
 
     OpBuilder builder(op);
 
@@ -298,7 +276,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               if (isa<MemoryEffects::Read>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Write>(fneff.getEffect())) {
-                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                    if (oputils::mayAlias(eff, fneff)) {
                       stillOk = false;
                       break;
                     }
@@ -309,7 +287,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               if (isa<MemoryEffects::Write>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Read>(fneff.getEffect())) {
-                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                    if (oputils::mayAlias(eff, fneff)) {
                       stillOk = false;
                       break;
                     }
@@ -397,7 +375,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               // derivative
 
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(dres,width));
+              out_ty.push_back(batchutils::getTensorizedType(dres, width));
               ++out_idx;
               break;
             }
@@ -410,7 +388,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
               // derivative
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(dres,width));
+              out_ty.push_back(batchutils::getTensorizedType(dres, width));
               ++out_idx;
               break;
             }
@@ -514,7 +492,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               out_idx++;
               break;
             }
-
             case Activity::enzyme_activenoneed: {
               // TODO: check later
               auto new_out = newDiffOp.getOutputs()[out_idx];
@@ -539,13 +516,13 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
   void mergeRevdiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
-    // TODO: run an alias analysis to handle aliased inputs to merge
+
+    // TODO: Use a modified version of inter-procedural DataFlowAliasAnalysis
+    // for mapping primal effects
 
     // list of values read/written to inside fn
     std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
         innerEffectCache;
-
-    mlir::AliasAnalysis aliasAnalysisHandle(op);
 
     OpBuilder builder(op);
 
@@ -581,7 +558,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
             innerEffectCache[key.function];
 
-        // TODO skip if known readonly from existing analyses
+        // TODO: skip if known readonly from existing analyses
 
         bool skipMergeEntry = false;
         // Map callee(primal function) memory effects to the calling
@@ -723,7 +700,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               if (isa<MemoryEffects::Read>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Write>(fneff.getEffect())) {
-                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                    if (oputils::mayAlias(eff, fneff)) {
                       stillOk = false;
                       break;
                     }
@@ -734,7 +711,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               if (isa<MemoryEffects::Write>(eff.getEffect())) {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Read>(fneff.getEffect())) {
-                    if (batchutils::mayAlias(eff, fneff, aliasAnalysisHandle)) {
+                    if (oputils::mayAlias(eff, fneff)) {
                       stillOk = false;
                       break;
                     }
@@ -845,7 +822,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           for (auto act : key.inActivity) {
             if (act == Activity::enzyme_active) {
               Value din = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(din,width));
+              out_ty.push_back(batchutils::getTensorizedType(din, width));
               ++out_idx;
             }
           }

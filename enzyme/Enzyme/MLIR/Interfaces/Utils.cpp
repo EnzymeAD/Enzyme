@@ -190,6 +190,22 @@ bool mayAlias(Value v1, Value v2) {
   return true;
 }
 
+bool mayAlias(MemoryEffects::EffectInstance &a,
+              MemoryEffects::EffectInstance &b) {
+  if (a.getResource()->getResourceID() != b.getResource()->getResourceID())
+    return false;
+  Value valA = a.getValue();
+  Value valB = b.getValue();
+
+  // unknown effects may always alias
+  if (!valA || !valB) {
+    return true;
+  }
+
+  auto valResult = oputils::mayAlias(valA, valB);
+  return valResult;
+}
+
 bool isReadOnly(Operation *op) {
   // If the op has memory effects, try to characterize them to see if the op
   // is trivially dead here.
@@ -235,6 +251,7 @@ collectFnEffects(FunctionOpInterface fnOp) {
 
   return innerEffects;
 }
+
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir
