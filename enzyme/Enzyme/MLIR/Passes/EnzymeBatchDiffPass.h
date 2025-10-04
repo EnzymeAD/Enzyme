@@ -93,13 +93,13 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   return key;
 }
 
-Value tensorizeArg(OpBuilder &builder, Location &loc,
-                   SmallVector<Value> &argList);
+Type getTensorizedType(Value val, int64_t width);
 
-Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
-                 int64_t index);
+Value getTensorizedValue(OpBuilder &builder, Location &loc,
+                         SmallVector<Value> &argList);
 
-bool isFnArg(FunctionOpInterface fnOp, Value val);
+Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
+                        Value &val, int64_t index);
 
 bool mayAlias(MemoryEffects::EffectInstance &a,
               MemoryEffects::EffectInstance &b,
