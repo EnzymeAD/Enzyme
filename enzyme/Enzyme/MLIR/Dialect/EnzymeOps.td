@@ -548,7 +548,7 @@ def ConcatenateOp : Enzyme_Op<"concatenate"> {
   }];
 
   let arguments = (ins Variadic<AnyType>:$inputs);
-  let results = (outs AnyType:$output)
+  let results = (outs AnyType:$output);
 }
 
 def ExtractOp : Enzyme_Op<"extract"> {

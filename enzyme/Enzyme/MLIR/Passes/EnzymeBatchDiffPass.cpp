@@ -302,12 +302,14 @@ bool mayAlias(MemoryEffects::EffectInstance &a,
   if (!valA || !valB) {
     return true;
   }
-  auto valResult = mayAlias(valA, valB);
+  auto valResult = oputils::mayAlias(valA, valB);
+  
   // query alias analysis and polygeist based alias analysis
   auto aliasResult = aliasAnalyzer.alias(valA, valB);
 
   return (!aliasResult.isNo() || valResult);
 }
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir

@@ -18,6 +18,7 @@ namespace oputils {
 // function doesnt modify memory operands)
 bool isReadOnly(Operation *op);
 
+bool mayAlias(Value v1, Value v2);
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir
