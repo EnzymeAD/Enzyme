@@ -16,13 +16,11 @@
 #include "Passes/Passes.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/DenseMap.h"
 
 #define DEBUG_TYPE "enzyme-diff-batch"
 #define ENZYME_DBGS llvm::dbgs() << "[" << DEBUG_TYPE << "]"
@@ -42,8 +40,24 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
-Value tensorizeArg(OpBuilder &builder, Location &loc,
-                   SmallVector<Value> &argList) {
+Type getTensorizedType(Value val, int64_t width) {
+  auto valTy = val.getType();
+  auto valTensorTy = dyn_cast<TensorType>(valTy);
+  if (!valTensorTy) {
+    // val is not a tensor
+    return RankedTensorType::get(width, valTy);
+  } else {
+    // val is a tensor, prepend batch width to shape
+    SmallVector<int64_t> out_shape = {width};
+    out_shape.append(valTensorTy.getShape().begin(),
+                     valTensorTy.getShape().end());
+    auto outTy = valTensorTy.clone(out_shape);
+    return outTy;
+  }
+}
+
+Value getTensorizedValue(OpBuilder &builder, Location &loc,
+                         SmallVector<Value> &argList) {
   auto argTy = argList.front().getType();
   auto T = dyn_cast<TensorType>(argTy);
   mlir::Value out;
@@ -57,8 +71,8 @@ Value tensorizeArg(OpBuilder &builder, Location &loc,
   return out;
 }
 
-Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
-                 int64_t index) {
+Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
+                        Value &val, int64_t index) {
   // Extract the original output from the tensorized output at the given index.
   auto T = dyn_cast<TensorType>(argTy);
   Value out;
@@ -351,7 +365,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               mlir::Value batchedDeriv =
-                  batchutils::tensorizeArg(builder, loc, derivList);
+                  batchutils::getTensorizedValue(builder, loc, derivList);
               in_args.push_back(batchedDeriv);
               in_idx++;
             }
@@ -383,17 +397,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               // derivative
 
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              auto dresTy = dres.getType();
-              auto T = dyn_cast<TensorType>(dresTy);
-              if (!T) {
-                out_ty.push_back(RankedTensorType::get(width, dresTy));
-              } else {
-                // prepend to shape
-                SmallVector<int64_t> shape = {width};
-                shape.append(T.getShape().begin(), T.getShape().end());
-                auto T2 = T.clone(shape);
-                out_ty.push_back(T2);
-              }
+              out_ty.push_back(batchutils::getTensorizedType(dres,width));
               ++out_idx;
               break;
             }
@@ -406,17 +410,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
               // derivative
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              auto dresTy = dres.getType();
-              auto T = dyn_cast<TensorType>(dresTy);
-              if (!T) {
-                out_ty.push_back(RankedTensorType::get(width, dresTy));
-              } else {
-                // prepend to shape
-                SmallVector<int64_t> shape = {width};
-                shape.append(T.getShape().begin(), T.getShape().end());
-                auto T2 = T.clone(shape);
-                out_ty.push_back(T2);
-              }
+              out_ty.push_back(batchutils::getTensorizedType(dres,width));
               ++out_idx;
               break;
             }
@@ -478,8 +472,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::extractArg(builder, loc, doutTy,
-                                                       batch_dout, dop_idx);
+                auto new_dout = batchutils::extractValueAtIdx(
+                    builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
               }
@@ -501,8 +495,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::extractArg(builder, loc, doutTy,
-                                                       batch_dout, dop_idx);
+                auto new_dout = batchutils::extractValueAtIdx(
+                    builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
               }
@@ -799,7 +793,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               mlir::Value b_din =
-                  batchutils::tensorizeArg(builder, loc, derivList);
+                  batchutils::getTensorizedValue(builder, loc, derivList);
 
               in_args.push_back(b_din);
               call_idx++;
@@ -832,7 +826,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               Value batch_dout =
-                  batchutils::tensorizeArg(builder, loc, derivList);
+                  batchutils::getTensorizedValue(builder, loc, derivList);
               in_args.push_back(batch_dout);
               call_idx++;
             }
@@ -851,15 +845,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           for (auto act : key.inActivity) {
             if (act == Activity::enzyme_active) {
               Value din = firstDiffOp.getOutputs()[out_idx];
-              auto dinTy = din.getType();
-              auto T = dyn_cast<TensorType>(dinTy);
-              if (!T) {
-                out_ty.push_back(RankedTensorType::get(width, dinTy));
-              } else {
-                SmallVector<int64_t> shape = {width};
-                shape.append(T.getShape().begin(), T.getShape().end());
-                out_ty.push_back(T.clone(shape));
-              }
+              out_ty.push_back(batchutils::getTensorizedType(din,width));
               ++out_idx;
             }
           }
@@ -900,8 +886,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 Value old_din = dop.getOutputs()[out_idx];
                 auto dinTy = old_din.getType();
-                auto new_din = batchutils::extractArg(builder, loc, dinTy,
-                                                      batch_din, dop_idx);
+                auto new_din = batchutils::extractValueAtIdx(
+                    builder, loc, dinTy, batch_din, dop_idx);
 
                 old_din.replaceAllUsesWith(new_din);
               }
