@@ -96,32 +96,6 @@ Value extractArg(OpBuilder &builder, Location &loc, Type &argTy, Value &val,
   return out;
 }
 
-SmallVector<MemoryEffects::EffectInstance> collectFnEffects(
-    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
-        &effectCache,
-    FunctionOpInterface fnOp) {
-
-  // even if the calling context changes, the inner effects of the primal
-  // function being differentiated will remain the same(as it depends only on
-  // the primal arguments local to the function definition itself). We thus try
-  // to cache the effects across multiple AD-calling contexts.
-
-  if (effectCache.find(fnOp) == effectCache.end()) {
-    SmallVector<MemoryEffects::EffectInstance> innerEffects;
-    for (auto &blk : fnOp.getBlocks()) {
-      for (auto &op : blk) {
-        auto opEffects = mlir::getEffectsRecursively(&op);
-        if (opEffects.has_value()) {
-          innerEffects.append(opEffects->begin(), opEffects->end());
-        }
-      }
-    }
-
-    effectCache[fnOp] = innerEffects;
-  }
-  return effectCache[fnOp];
-}
-
 bool mayAlias(MemoryEffects::EffectInstance &a,
               MemoryEffects::EffectInstance &b,
               mlir::AliasAnalysis &aliasAnalyzer) {
@@ -135,7 +109,7 @@ bool mayAlias(MemoryEffects::EffectInstance &a,
     return true;
   }
   auto valResult = oputils::mayAlias(valA, valB);
-  
+
   // query alias analysis and polygeist based alias analysis
   auto aliasResult = aliasAnalyzer.alias(valA, valB);
 
@@ -186,8 +160,12 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           continue;
 
         // Collect inner effects of function
-        SmallVector<MemoryEffects::EffectInstance> calleeEffects =
-            batchutils::collectFnEffects(innerEffectCache, key.function);
+        if (innerEffectCache.find(key.function) == innerEffectCache.end()) {
+          innerEffectCache[key.function] =
+              oputils::collectFnEffects(key.function);
+        }
+        SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
+            innerEffectCache[key.function];
 
         // TODO skip if known readnone from existing analyses
 
@@ -602,8 +580,12 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           continue;
 
         // Collect inner effects of function
-        SmallVector<MemoryEffects::EffectInstance> calleeEffects =
-            batchutils::collectFnEffects(innerEffectCache, key.function);
+        if (innerEffectCache.find(key.function) == innerEffectCache.end()) {
+          innerEffectCache[key.function] =
+              oputils::collectFnEffects(key.function);
+        }
+        SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
+            innerEffectCache[key.function];
 
         // TODO skip if known readonly from existing analyses
 

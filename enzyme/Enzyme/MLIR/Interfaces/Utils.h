@@ -9,6 +9,8 @@
 #pragma once
 
 #include "mlir/IR/Operation.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 namespace mlir {
 namespace enzyme {
@@ -18,7 +20,12 @@ namespace oputils {
 // function doesnt modify memory operands)
 bool isReadOnly(Operation *op);
 
+// Checks if 2 values v1 and v2 may alias with each other locally
 bool mayAlias(Value v1, Value v2);
+
+SmallVector<MemoryEffects::EffectInstance>
+collectFnEffects(FunctionOpInterface fnOp);
+
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir

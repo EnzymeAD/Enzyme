@@ -220,6 +220,21 @@ bool isReadOnly(Operation *op) {
 
   return true;
 }
+
+SmallVector<MemoryEffects::EffectInstance>
+collectFnEffects(FunctionOpInterface fnOp) {
+  SmallVector<MemoryEffects::EffectInstance> innerEffects;
+  for (auto &blk : fnOp.getBlocks()) {
+    for (auto &op : blk) {
+      auto opEffects = mlir::getEffectsRecursively(&op);
+      if (opEffects.has_value()) {
+        innerEffects.append(opEffects->begin(), opEffects->end());
+      }
+    }
+  }
+
+  return innerEffects;
+}
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir
