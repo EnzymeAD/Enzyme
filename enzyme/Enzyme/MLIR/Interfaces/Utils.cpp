@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Interfaces/OperationUtils.h"
+#include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 

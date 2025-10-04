@@ -11,7 +11,7 @@
 #include "Passes/EnzymeBatchDiffPass.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
-#include "Interfaces/OperationUtils.h"
+#include "Interfaces/Utils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 

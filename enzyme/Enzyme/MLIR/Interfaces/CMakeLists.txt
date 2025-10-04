@@ -14,7 +14,7 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
   ProbProgUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp
-  OperationUtils.cpp
+  Utils.cpp
 
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
