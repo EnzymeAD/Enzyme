@@ -101,9 +101,6 @@ Value getTensorizedValue(OpBuilder &builder, Location &loc,
 Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
                         Value &val, int64_t index);
 
-bool mayAlias(MemoryEffects::EffectInstance &a,
-              MemoryEffects::EffectInstance &b,
-              mlir::AliasAnalysis &aliasAnalyzer);
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
