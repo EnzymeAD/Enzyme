@@ -252,6 +252,21 @@ collectFnEffects(FunctionOpInterface fnOp) {
   return innerEffects;
 }
 
+MemoryEffects::EffectInstance getEffectOfVal(Value val,
+                                             MemoryEffects::Effect *effect,
+                                             SideEffects::Resource *resource) {
+
+  if (auto valOR = dyn_cast<OpResult>(val))
+    return MemoryEffects::EffectInstance(effect, valOR, resource);
+  else if (auto valBA = dyn_cast<BlockArgument>(val)) {
+    return MemoryEffects::EffectInstance(effect, valBA, resource);
+  } else {
+    llvm_unreachable("Provided Value is neither an argument nor a result of an "
+                     "op. This is not allowed by SSA");
+    return nullptr;
+  }
+}
+
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir
