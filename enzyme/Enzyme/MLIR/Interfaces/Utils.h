@@ -30,6 +30,9 @@ bool mayAlias(MemoryEffects::EffectInstance &A,
 SmallVector<MemoryEffects::EffectInstance>
 collectFnEffects(FunctionOpInterface fnOp);
 
+MemoryEffects::EffectInstance getEffectOfVal(Value val,
+                                             MemoryEffects::Effect *effect,
+                                             SideEffects::Resource *resource);
 } // namespace oputils
 } // namespace enzyme
 } // namespace mlir

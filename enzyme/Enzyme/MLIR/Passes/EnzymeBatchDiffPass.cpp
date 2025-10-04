@@ -120,7 +120,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
   void mergeFwddiffCalls(SymbolTableCollection &symbolTable,
                          FunctionOpInterface op) {
-  // TODO: Use a modified version of inter-procedural DataFlowAliasAnalysis
+    // TODO: Use a modified version of inter-procedural DataFlowAliasAnalysis
     // for mapping primal effects
     std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
         innerEffectCache;
@@ -197,17 +197,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 // Primal value as effect
                 Value primalVal = key.inputs[argnum];
-                if (auto primalOpResult = dyn_cast<OpResult>(primalVal))
-                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                      eff.getEffect(), primalOpResult, eff.getResource()));
-                else if (auto primalBlockArg =
-                             dyn_cast<BlockArgument>(primalVal)) {
-                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                      eff.getEffect(), primalBlockArg, eff.getResource()));
-                } else {
-                  llvm_unreachable("Value is neither an argument nor a result "
-                                   "of an op. This is not allowed by SSA");
-                }
+                callerEffects.push_back(oputils::getEffectOfVal(
+                    primalVal, eff.getEffect(), eff.getResource()));
 
                 // Derivative effects(remain the same for fwddiff)
                 for (auto dop : allDiffs) {
@@ -217,17 +208,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                       act_val == Activity::enzyme_dupnoneed) {
                     // derivative index is always argnum + 1
                     Value dVal = dop.getInputs()[argnum + 1];
-                    if (auto dOpResult = dyn_cast<OpResult>(dVal)) {
-                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                          eff.getEffect(), dOpResult, eff.getResource()));
-                    } else if (auto dBlockArg = dyn_cast<BlockArgument>(dVal)) {
-                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                          eff.getEffect(), dBlockArg, eff.getResource()));
-                    } else {
-                      llvm_unreachable(
-                          "Value is neither an argument nor a result "
-                          "of an op. This is not allowed by SSA");
-                    }
+                    callerEffects.emplace_back(oputils::getEffectOfVal(
+                        dVal, eff.getEffect(), eff.getResource()));
                   }
                 }
               } else {
@@ -596,17 +578,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 // Primal value as effect
                 Value primalVal = key.inputs[argnum];
-                if (auto primalOpResult = dyn_cast<OpResult>(primalVal))
-                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                      eff.getEffect(), primalOpResult, eff.getResource()));
-                else if (auto primalBlockArg =
-                             dyn_cast<BlockArgument>(primalVal)) {
-                  callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                      eff.getEffect(), primalBlockArg, eff.getResource()));
-                } else {
-                  llvm_unreachable("Value is neither an argument nor a result "
-                                   "of an op. This is not allowed by SSA");
-                }
+                callerEffects.push_back(oputils::getEffectOfVal(
+                    primalVal, eff.getEffect(), eff.getResource()));
 
                 auto deff_read =
                     isa<MemoryEffects::Read>(eff.getEffect()) ? true : false;
@@ -617,41 +590,20 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                       cast<ActivityAttr>(dop.getActivity()[argnum]).getValue();
                   if (act_val == Activity::enzyme_dup ||
                       act_val == Activity::enzyme_dupnoneed) {
+
                     // derivative index is always argnum + 1
                     Value dVal = dop.getInputs()[argnum + 1];
-                    if (auto dOpResult = dyn_cast<OpResult>(dVal)) {
-                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                          eff.getEffect(), dOpResult, eff.getResource()));
-                      if (deff_read) {
-                        callerEffects.emplace_back(
-                            MemoryEffects::EffectInstance(
-                                MemoryEffects::Write::get(), dOpResult,
-                                eff.getResource()));
-                      } else {
-                        callerEffects.emplace_back(
-                            MemoryEffects::EffectInstance(
-                                MemoryEffects::Read::get(), dOpResult,
-                                eff.getResource()));
-                      }
-                    } else if (auto dBlockArg = dyn_cast<BlockArgument>(dVal)) {
-                      callerEffects.emplace_back(MemoryEffects::EffectInstance(
-                          eff.getEffect(), dBlockArg, eff.getResource()));
-                      if (deff_read) {
-                        callerEffects.emplace_back(
-                            MemoryEffects::EffectInstance(
-                                MemoryEffects::Write::get(), dBlockArg,
-                                eff.getResource()));
-                      } else {
-                        callerEffects.emplace_back(
-                            MemoryEffects::EffectInstance(
-                                MemoryEffects::Read::get(), dBlockArg,
-                                eff.getResource()));
-                      }
-                    } else {
-                      llvm_unreachable(
-                          "Value is neither an argument nor a result "
-                          "of an op. This is not allowed by SSA");
-                    }
+                    callerEffects.emplace_back(oputils::getEffectOfVal(
+                        dVal, eff.getEffect(), eff.getResource()));
+
+                    // (for rev mode) reads <-> writes
+                    if (deff_read)
+                      callerEffects.emplace_back(oputils::getEffectOfVal(
+                          dVal, MemoryEffects::Write::get(),
+                          eff.getResource()));
+                    else
+                      callerEffects.emplace_back(oputils::getEffectOfVal(
+                          dVal, MemoryEffects::Read::get(), eff.getResource()));
                   }
                 }
               } else {
