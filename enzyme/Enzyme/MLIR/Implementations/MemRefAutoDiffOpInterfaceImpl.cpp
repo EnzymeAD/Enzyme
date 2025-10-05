@@ -52,14 +52,20 @@ struct LoadOpInterfaceReverse
           retrievedArguments.push_back(retrievedValue);
         }
 
-        Value loadedGradient =
-            builder.create<memref::LoadOp>(loadOp.getLoc(), memrefGradient,
-                                           ArrayRef<Value>(retrievedArguments));
-        Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                loadedGradient, gradient);
-        builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
-                                        memrefGradient,
-                                        ArrayRef<Value>(retrievedArguments));
+        if (!gutils->omp) {
+          Value loadedGradient = builder.create<memref::LoadOp>(
+              loadOp.getLoc(), memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                  loadedGradient, gradient);
+          builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                          memrefGradient,
+                                          ArrayRef<Value>(retrievedArguments));
+        } else {
+          builder.create<memref::AtomicRMWOp>(
+              loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
+              memrefGradient, ArrayRef<Value>(retrievedArguments));
+        }
       }
     }
     return success();
