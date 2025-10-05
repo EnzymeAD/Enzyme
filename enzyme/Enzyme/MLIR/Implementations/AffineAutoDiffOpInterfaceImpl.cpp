@@ -71,10 +71,11 @@ struct AffineForOpInterfaceReverse
     }
 
     SmallVector<bool> operandsActive;
-    for (auto [operand, result] :
-         llvm::zip_equal(op->getOperands().slice(forOp.getNumControlOperands(),
-                                                 forOp->getNumOperands() - forOp.getNumControlOperands()),
-                         op->getResults())) {
+    for (auto [operand, result] : llvm::zip_equal(
+             op->getOperands().slice(forOp.getNumControlOperands(),
+                                     forOp->getNumOperands() -
+                                         forOp.getNumControlOperands()),
+             op->getResults())) {
       operandsActive.push_back(!gutils->isConstantValue(operand) ||
                                !gutils->isConstantValue(result));
     }
