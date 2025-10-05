@@ -79,5 +79,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     registerInterfaces(context);
+    LLVM::UnreachableOp::template attachInterface<
+        detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
   });
 }
