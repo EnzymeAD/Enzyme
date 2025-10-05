@@ -141,7 +141,7 @@ static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
 // across different loops.
-void enzyme::mlir::minCutCache(Block *forward, Block *reverse,
+void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                SmallVector<CacheInfo> &caches,
                                PatternRewriter &rewriter) {
   if (caches.empty())
