@@ -381,7 +381,7 @@ public:
 
     forOp = FinalClass::replaceWithNewOperands(rewriter, forOp, newOperands);
     if (cacheType == LoopCacheType::TENSOR) {
-      for (int i = 0; i < numNewValuePushes; ++i)
+      for (size_t i = 0; i < numNewValuePushes; ++i)
         newPushValues.push_back(
             forOp->getResult(forOp->getNumResults() - numNewValuePushes + i));
     }

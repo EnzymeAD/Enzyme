@@ -14,29 +14,26 @@ module {
   }
 }
 
-// CHECK:  func.func @reduce(%[[X:.+]]: f32, %[[N:.+]]: index, %[[DR:.+]]: f32) -> f32 {
-// CHECK-NEXT:    %[[ONE:.+]] = arith.constant 1.000000e+00 : f32
-// CHECK-NEXT:    %[[ZERO:.+]] = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT:    %[[G:.+]] = "enzyme.init"() : () -> !enzyme.Gradient<f32>
-// CHECK-NEXT:    "enzyme.set"(%[[G]], %[[ZERO]]) : (!enzyme.Gradient<f32>, f32) -> ()
-// CHECK-NEXT:    %[[C1:.+]] = "enzyme.init"() : () -> !enzyme.Cache<f32>
-// CHECK-NEXT:    %[[C2:.+]] = "enzyme.init"() : () -> !enzyme.Cache<f32>
-// CHECK-NEXT:    %[[PRIMAL:.+]] = affine.for %[[arg2:.+]] = 0 to %[[N]] iter_args(%[[CARRIED:.+]] = %[[ONE]]) -> (f32) {
-// CHECK-NEXT:      "enzyme.push"(%[[C2]], %[[CARRIED]]) : (!enzyme.Cache<f32>, f32) -> ()
-// CHECK-NEXT:      "enzyme.push"(%[[C1]], %[[X]]) : (!enzyme.Cache<f32>, f32) -> ()
-// CHECK-NEXT:      %[[NEW:.+]] = arith.mulf %[[CARRIED]], %[[X]] : f32
-// CHECK-NEXT:      affine.yield %[[NEW]] : f32
+// CHECK:  func.func @reduce(%arg0: f32, %arg1: index, %arg2: f32) -> f32 {
+// CHECK-NEXT:    %c1 = arith.constant 1 : index
+// CHECK-NEXT:    %c0 = arith.constant 0 : index
+// CHECK-NEXT:    %cst = arith.constant 1.000000e+00 : f32
+// CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f32
+// CHECK-NEXT:    %alloc = memref.alloc(%arg1) : memref<?xf32>
+// CHECK-NEXT:    %0:2 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %cst, %arg5 = %c0) -> (f32, index) {
+// CHECK-NEXT:      memref.store %arg4, %alloc[%arg5] : memref<?xf32>
+// CHECK-NEXT:      %2 = arith.mulf %arg4, %arg0 : f32
+// CHECK-NEXT:      %3 = arith.addi %arg5, %c1 : index
+// CHECK-NEXT:      affine.yield %2, %3 : f32, index
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %4 = affine.for %[[arg2:.+]] = 0 to %[[N]] iter_args(%[[DIT:.+]] = %[[DR]]) -> (f32) {
-// CHECK-NEXT:      %[[V1:.+]] = "enzyme.pop"(%[[C2]]) : (!enzyme.Cache<f32>) -> f32
-// CHECK-NEXT:      %[[V2:.+]] = "enzyme.pop"(%[[C1]]) : (!enzyme.Cache<f32>) -> f32
-// CHECK-NEXT:      %[[NEW_DIT:.+]] = arith.mulf %[[DIT]], %[[V2]] : f32
-// CHECK-NEXT:      %[[NEW_D0:.+]] = arith.mulf %[[DIT]], %[[V1]] : f32
-// CHECK-NEXT:      %[[D0:.+]] = "enzyme.get"(%[[G]]) : (!enzyme.Gradient<f32>) -> f32
-// CHECK-NEXT:      %[[D_ACC:.+]] = arith.addf %[[D0]], %[[NEW_D0]] : f32
-// CHECK-NEXT:      "enzyme.set"(%[[G]], %[[D_ACC]]) : (!enzyme.Gradient<f32>, f32) -> ()
-// CHECK-NEXT:      affine.yield %[[NEW_DIT]] : f32
+// CHECK-NEXT:    %1:3 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %arg2, %arg5 = %cst_0, %arg6 = %arg1) -> (f32, f32, index) {
+// CHECK-NEXT:      %2 = memref.load %alloc[%arg6] : memref<?xf32>
+// CHECK-NEXT:      %3 = arith.mulf %arg4, %arg0 : f32
+// CHECK-NEXT:      %4 = arith.mulf %arg4, %2 : f32
+// CHECK-NEXT:      %5 = arith.addf %arg5, %4 : f32
+// CHECK-NEXT:      %6 = arith.subi %arg6, %c1 : index
+// CHECK-NEXT:      affine.yield %3, %5, %6 : f32, f32, index
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[G0:.+]] = "enzyme.get"(%[[G]]) : (!enzyme.Gradient<f32>) -> f32
-// CHECK-NEXT:    return %[[G0]] : f32
+// CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>
+// CHECK-NEXT:    return %1#1 : f32
 // CHECK-NEXT:  }

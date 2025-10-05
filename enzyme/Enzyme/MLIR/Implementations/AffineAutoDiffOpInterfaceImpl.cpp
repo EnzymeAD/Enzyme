@@ -18,7 +18,7 @@
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Passes/RemovalUtils.h"
+#include "Passes/RemovalUtils.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -462,7 +462,7 @@ static affine::AffineForOp replaceWithNewOperands(PatternRewriter &rewriter, aff
           otherForOp.getStepAsInt(), operands);
 
   newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
-  rewriter.replaceOp(otherForOp, newOtherForOp);
+  rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(0, otherForOp->getNumResults()));
   return newOtherForOp;
 }
 

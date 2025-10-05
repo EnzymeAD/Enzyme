@@ -80,7 +80,7 @@ public:
             otherForOp.getStep(), operands);
 
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
-    rewriter.replaceOp(otherForOp, newOtherForOp);
+    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(0, otherForOp->getNumResults()));
     return newOtherForOp;
   }
 
@@ -184,7 +184,7 @@ public:
           revOuter.getInductionVar());
 
       SmallVector<Value> initArgs(numIterArgs, nullptr);
-      for (int i = 0; i < numIterArgs; ++i) {
+      for (size_t i = 0; i < numIterArgs; ++i) {
         initArgs[i] = gutils->popCache(caches[i], builder);
       }
 
