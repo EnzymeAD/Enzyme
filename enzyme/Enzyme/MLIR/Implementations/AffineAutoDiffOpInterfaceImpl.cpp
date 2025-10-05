@@ -208,8 +208,8 @@ struct AffineForOpInterfaceReverse
 };
 
 struct AffineLoadOpInterfaceReverse
-    : public ReverseAutoDiffOpInterface::ExternalModel<AffineLoadOpInterfaceReverse,
-                                                       affine::AffineLoadOp> {
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtilsReverse *gutils,
                                          SmallVector<Value> caches) const {
@@ -252,7 +252,8 @@ struct AffineLoadOpInterfaceReverse
                 loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
           }
         } else {
-          auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+          auto idx = builder.create<affine::AffineApplyOp>(
+              loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
           builder.create<memref::AtomicRMWOp>(
               loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
               memrefGradient, idx->getResults());
@@ -292,8 +293,8 @@ struct AffineLoadOpInterfaceReverse
 };
 
 struct AffineStoreOpInterfaceReverse
-    : public ReverseAutoDiffOpInterface::ExternalModel<AffineStoreOpInterfaceReverse,
-                                                       affine::AffineStoreOp> {
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineStoreOpInterfaceReverse, affine::AffineStoreOp> {
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtilsReverse *gutils,
                                          SmallVector<Value> caches) const {
@@ -492,8 +493,10 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, affine::AffineDialect *) {
     registerInterfaces(context);
-    affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(*context);
-    affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(*context);
+    affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(
+        *context);
+    affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(
+        *context);
     affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
     affine::AffineForOp::attachInterface<AffineForOpEnzymeOpsRemover>(*context);
     affine::AffineForOp::attachInterface<AffineForOpADDataFlow>(*context);
