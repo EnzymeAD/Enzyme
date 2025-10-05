@@ -98,30 +98,8 @@ struct InlineEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffOp> {
   LogicalResult matchAndRewrite(enzyme::AutoDiffOp op,
                                 PatternRewriter &rewriter) const override {
     SymbolTableCollection symbolTable;
-    auto *symbol = symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr());
-    auto fn = cast<FunctionOpInterface>(symbol);
-    // Use a StringAttr rather than a SymbolRefAttr so the function can get
-    // symbol-DCE'd
-    auto fnAttr = StringAttr::get(op.getContext(), op.getFn());
-    auto regionOp = rewriter.replaceOpWithNewOp<enzyme::AutoDiffRegionOp>(
-        op, op.getResultTypes(), op.getInputs(), op.getActivity(),
-        op.getRetActivity(), op.getWidth(), op.getStrongZero(), fnAttr);
-    serializeFunctionAttributes(fn, regionOp);
-    rewriter.cloneRegionBefore(fn.getFunctionBody(), regionOp.getBody(),
-                               regionOp.getBody().begin());
-    SmallVector<Operation *> toErase;
-    for (Operation &bodyOp : regionOp.getBody().getOps()) {
-      if (bodyOp.hasTrait<OpTrait::ReturnLike>()) {
-        PatternRewriter::InsertionGuard insertionGuard(rewriter);
-        rewriter.setInsertionPoint(&bodyOp);
-        enzyme::YieldOp::create(rewriter, bodyOp.getLoc(),
-                                bodyOp.getOperands());
-        toErase.push_back(&bodyOp);
-      }
-    }
-
-    for (Operation *opToErase : toErase)
-      rewriter.eraseOp(opToErase);
+    if (!mlir::enzyme::inlineAutodiffOp(op, rewriter, symbolTable))
+      return failure();
 
     return success();
   }
@@ -266,3 +244,38 @@ struct OutlineEnzymeFromRegion
 };
 
 } // namespace
+
+bool mlir::enzyme::inlineAutodiffOp(enzyme::AutoDiffOp &op,
+                                    RewriterBase &rewriter,
+                                    SymbolTableCollection &symbolTable) {
+  FunctionOpInterface fn = dyn_cast_or_null<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+  if (!fn)
+    return false;
+  Region &targetRegion = fn.getFunctionBody();
+  if (targetRegion.empty())
+    return false;
+
+  // Use a StringAttr rather than a SymbolRefAttr so the function can get
+  // symbol-DCE'd
+  auto fnAttr = StringAttr::get(op.getContext(), op.getFn());
+  auto regionOp = rewriter.replaceOpWithNewOp<enzyme::AutoDiffRegionOp>(
+      op, op.getResultTypes(), op.getInputs(), op.getActivity(),
+      op.getRetActivity(), op.getWidth(), op.getStrongZero(), fnAttr);
+  serializeFunctionAttributes(fn, regionOp);
+  rewriter.cloneRegionBefore(targetRegion, regionOp.getBody(),
+                             regionOp.getBody().begin());
+  SmallVector<Operation *> toErase;
+  for (Operation &bodyOp : regionOp.getBody().getOps()) {
+    if (bodyOp.hasTrait<OpTrait::ReturnLike>()) {
+      PatternRewriter::InsertionGuard insertionGuard(rewriter);
+      rewriter.setInsertionPoint(&bodyOp);
+      enzyme::YieldOp::create(rewriter, bodyOp.getLoc(), bodyOp.getOperands());
+      toErase.push_back(&bodyOp);
+    }
+  }
+
+  for (Operation *opToErase : toErase)
+    rewriter.eraseOp(opToErase);
+  return true;
+}
