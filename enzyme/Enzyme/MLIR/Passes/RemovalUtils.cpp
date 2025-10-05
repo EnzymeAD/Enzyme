@@ -490,7 +490,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       OpBuilder::InsertionGuard guard(rewriter);
 
       Value lastVal = mapping.lookup(todo);
-      Operation *lastValOp = lastVal.getDefiningOp();
 
       rewriter.setInsertionPointAfterValue(lastVal);
       Operation *newO = rewriter.clone(*N.get<Operation *>(), mapping);
