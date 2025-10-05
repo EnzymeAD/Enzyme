@@ -138,6 +138,16 @@ static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
   return revGraph;
 }
 
+static int64_t computeSizeOfType(Value val) {
+  auto T = dyn_cast<AutoDiffTypeInterface>(val.getType());
+  return T ? T.getApproxSize() : INT64_MAX;
+};
+
+static int64_t computeRankOfType(Value val) {
+  auto TT = dyn_cast<RankedTensorType>(val.getType());
+  return TT ? TT.getRank() : 0;
+}
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
@@ -350,19 +360,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     worklist.clear();
     worklist.push_back(newCache);
 
-    auto computeSizeOfType = [](Value val) -> int64_t {
-      auto T = cast<RankedTensorType>(val.getType());
-      if (!T.getElementType().isIntOrFloat())
-        return INT64_MAX;
-      int64_t sz = T.getElementType().getIntOrFloatBitWidth();
-      for (auto sh : T.getShape())
-        sz *= sh;
-      return sz;
-    };
-
     Value picked = newCache;
     int64_t curSize = computeSizeOfType(picked),
-            curRank = cast<RankedTensorType>(picked.getType()).getRank();
+            curRank = computeRankOfType(picked);
 
     while (!worklist.empty()) {
       Value candidate = worklist.pop_back_val();
