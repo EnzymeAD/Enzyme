@@ -10,6 +10,10 @@
 #include "Dialect/Ops.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "Interfaces/AutoDiffOpInterface.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 namespace mlir {
 namespace enzyme {
@@ -52,6 +56,517 @@ struct CacheInfo {
 // using a mincut algorithm and heuristics based on the size of values.
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
                  PatternRewriter &rewriter);
+
+enum class LoopCacheType {
+  TENSOR,
+  MEMREF
+};
+
+static LoopCacheType getCacheType(Operation *op) {
+  LoopCacheType cacheType = LoopCacheType::MEMREF;
+  if (op->hasAttr("enzyme.cache_use_tensor")) {
+    cacheType = LoopCacheType::TENSOR;
+  }
+  return cacheType;
+}
+
+static bool hasMinCut(Operation *op) {
+  return op->hasAttr("enzyme.enable_mincut");
+}
+
+template<typename FinalClass, typename OpName>
+struct ForLikeEnzymeOpsRemover
+    : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass,
+                                                        OpName> {
+private:
+
+public:
+  LogicalResult removeEnzymeOps(Operation *op,
+                                PatternRewriter &rewriter) const {
+    auto forOp = cast<OpName>(op);
+    OpName otherForOp = nullptr; // where caches pops are
+
+    // There is support for two push/pop removal modes, one is using immutable
+    // tensors, the other uses memrefs. memref is the default, but tensor can be
+    // enabled with enzyme.cache_use_tensor
+    auto cacheType = getCacheType(op);
+
+    // Gradients whose values need to be passed as iteration variables.
+    llvm::SetVector<Value> updatedGradients;
+
+    llvm::MapVector<Value, CacheInfo> cachesMap;
+    SmallVector<CacheInfo> toDelete;
+
+    Block *body = forOp.getBody();
+
+    for (auto &it : *body) {
+      Operation *op = &it;
+
+      if (auto setOp = dyn_cast<enzyme::SetOp>(op))
+        updatedGradients.insert(setOp.getGradient());
+
+      if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
+        CacheInfo info(pushOp.getCache());
+
+        Value pushedValue = info.pushedValue();
+        if (cachesMap.contains(pushedValue)) {
+          info = info.merge(cachesMap.lookup(pushedValue), rewriter);
+        }
+
+        if (info.pushOp->getBlock() == body && info.popOp->getBlock() == body &&
+            info.pushOp->isBeforeInBlock(info.popOp)) {
+          toDelete.push_back(info);
+          continue;
+        }
+        cachesMap[pushedValue] = info;
+
+        otherForOp = cast<OpName>(info.popOp->getParentOp());
+      }
+    }
+
+    while (!toDelete.empty()) {
+      CacheInfo info = toDelete.pop_back_val();
+      rewriter.replaceAllUsesWith(info.popOp.getResult(),
+                                  info.pushOp.getValue());
+      rewriter.eraseOp(info.pushOp);
+      rewriter.eraseOp(info.popOp);
+      rewriter.eraseOp(info.initOp);
+    }
+
+    SmallVector<CacheInfo> caches =
+        llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
+
+    // nothing to do
+    if (updatedGradients.empty() && caches.empty())
+      return success();
+
+    DenseMap<Value, llvm::SmallVector<Operation *>> updatedGradientUsers;
+
+    for (auto &it : *body) {
+      Operation *op = &it;
+
+      auto getOp = dyn_cast<enzyme::GetOp>(op);
+
+      if (getOp && updatedGradients.contains(getOp.getGradient())) {
+        updatedGradientUsers[getOp.getGradient()].push_back(getOp);
+      } else if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
+        updatedGradientUsers[setOp.getGradient()].push_back(setOp);
+      }
+
+      if (!getOp || updatedGradients.contains(getOp.getGradient()))
+        continue;
+
+      auto outerGet = rewriter.create<enzyme::GetOp>(
+          getOp->getLoc(),
+          cast<enzyme::GradientType>(getOp.getResult().getType()).getBasetype(),
+          getOp.getGradient());
+
+      rewriter.replaceAllUsesWith(getOp.getResult(), outerGet.getResult());
+      rewriter.eraseOp(getOp);
+    }
+
+    auto term = body->getTerminator();
+
+    SmallVector<Value> newOperands(FinalClass::getInits(forOp));
+    for (auto grad : updatedGradients) {
+      auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
+      auto outerGet = rewriter.create<enzyme::GetOp>(grad.getLoc(), Ty, grad);
+
+      newOperands.push_back(outerGet.getResult());
+      auto newArg = body->addArgument(Ty, grad.getLoc());
+
+      {
+        OpBuilder::InsertionGuard guard(rewriter);
+        // here we do a primitive form of mem2reg within the loop. We have a
+        // sorted (by instruction number) list of all users of the instruction.
+        Value val = newArg;
+        for (auto user : updatedGradientUsers[grad]) {
+          if (auto getOp = dyn_cast<enzyme::GetOp>(user)) {
+            rewriter.replaceOp(getOp, val);
+          } else {
+            auto setOp = cast<enzyme::SetOp>(user);
+            val = setOp.getValue();
+            rewriter.eraseOp(setOp);
+          }
+        }
+        // rewriter.setInsertionPointToStart(body);
+        // rewriter.create<enzyme::SetOp>(grad.getLoc(), grad, newArg);
+
+        // rewriter.setInsertionPoint(term);
+
+        // auto outputVal =
+        //     rewriter.create<enzyme::GetOp>(grad.getLoc(), Ty,
+        //     grad).getResult();
+        term->insertOperands(term->getNumOperands(), ValueRange(val));
+      }
+    }
+
+    auto numIters = FinalClass::getConstantNumberOfIterations(forOp);
+    Value inductionVariable; // [0,..., N - 1] counter
+
+    if (FinalClass::isCanonicalLoop(forOp)) {
+      inductionVariable = body->getArgument(0);
+    }
+
+    if (hasMinCut(forOp)) {
+      mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
+                                rewriter);
+    }
+
+    SmallVector<Value> newPushValues;
+
+    unsigned numNewValuePushes = 0;
+
+    for (auto &info : caches) {
+      Value cache = info.initOp.getResult();
+
+      // push does not depend on a value inside the loop, we can hoist the
+      // push/pop before the for loops.
+      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
+        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
+                                                       info.pushedValue());
+        rewriter.eraseOp(info.pushOp);
+        info.pushOp = newPush;
+
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+          auto popVal = info.popOp.getResult();
+          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
+                                                       popVal.getType(), cache);
+          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+          rewriter.eraseOp(info.popOp);
+          info.popOp = newPop;
+        }
+
+        continue;
+      }
+
+      if (!inductionVariable) {
+        Value zero = rewriter.create<arith::ConstantOp>(
+            forOp->getLoc(), rewriter.getIndexAttr(0));
+        newOperands.push_back(zero);
+
+        inductionVariable = body->addArgument(zero.getType(), forOp->getLoc());
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(term);
+
+          auto one = rewriter.create<arith::ConstantOp>(
+              forOp->getLoc(), rewriter.getIndexAttr(1));
+          auto newInductionVar = rewriter.create<arith::AddIOp>(
+              forOp->getLoc(), inductionVariable, one);
+          term->insertOperands(term->getNumOperands(),
+                               ValueRange(newInductionVar));
+        }
+      }
+
+      SmallVector<int64_t> newShape;
+      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+
+      auto ET = info.cachedType();
+      ShapedType NT;
+
+      if (auto ST = dyn_cast<ShapedType>(ET)) {
+        newShape.append(ST.getShape().begin(), ST.getShape().end());
+        ET = ST.getElementType();
+      }
+
+      auto newType = cacheType == LoopCacheType::TENSOR
+                         ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
+                         : cast<ShapedType>(MemRefType::get(newShape, ET));
+
+      SmallVector<Value> dynamicDims;
+
+      for (auto it : llvm::enumerate(newType.getShape())) {
+        if (ShapedType::isDynamic(it.value())) {
+          if (it.index() == 0)
+            dynamicDims.push_back(FinalClass::getNumberOfIterations(rewriter, forOp));
+          else
+            return failure(); // TODO: find dynamic dims within the body.
+        }
+      }
+
+      if (cacheType == LoopCacheType::TENSOR) {
+        Value initValue = rewriter.create<tensor::EmptyOp>(
+            info.initOp->getLoc(), newType, dynamicDims);
+
+        newOperands.push_back(initValue);
+
+        auto cacheValue = body->addArgument(newType, info.pushOp->getLoc());
+
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.pushOp);
+
+          Value newCacheValue;
+          if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
+            auto shape = TT.getShape();
+
+            SmallVector<int64_t> offsets(shape.size() + 1, 0);
+            offsets[0] = ShapedType::kDynamic;
+
+            SmallVector<int64_t> sizes;
+            sizes.reserve(shape.size() + 1);
+            sizes.push_back(1);
+            sizes.append(shape.begin(), shape.end());
+
+            SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+            newCacheValue = rewriter.create<tensor::InsertSliceOp>(
+                info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+                ValueRange(inductionVariable), ValueRange(), ValueRange(),
+                rewriter.getDenseI64ArrayAttr(offsets),
+                rewriter.getDenseI64ArrayAttr(sizes),
+                rewriter.getDenseI64ArrayAttr(strides));
+          } else {
+            newCacheValue = rewriter.create<tensor::InsertOp>(
+                info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
+                inductionVariable);
+          }
+
+          term->insertOperands(term->getNumOperands(),
+                               ValueRange(newCacheValue));
+
+          numNewValuePushes++;
+        }
+      } else if (cacheType == LoopCacheType::MEMREF) {
+        Value initValue = rewriter.create<memref::AllocOp>(
+            info.initOp->getLoc(), cast<MemRefType>(newType), dynamicDims);
+        newPushValues.push_back(initValue);
+
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.pushOp);
+
+          if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+            auto memref = info.pushOp.getValue();
+            auto shape = MT.getShape();
+
+            SmallVector<int64_t> offsets(shape.size() + 1, 0);
+            offsets[0] = ShapedType::kDynamic;
+
+            SmallVector<int64_t> sizes;
+            sizes.push_back(1);
+            sizes.append(shape.begin(), shape.end());
+
+            SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+            auto RT = memref::SubViewOp::inferRankReducedResultType(
+                MT.getShape(), cast<MemRefType>(initValue.getType()), offsets,
+                sizes, strides);
+
+            rewriter.setInsertionPoint(memref.getDefiningOp());
+            rewriter.replaceOpWithNewOp<memref::SubViewOp>(
+                memref.getDefiningOp(), RT, initValue,
+                /*offsets*/ ValueRange(inductionVariable),
+                /*sizes*/ ValueRange(),
+                /*strides*/ ValueRange(),
+                /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+                /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+                /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+
+          } else {
+            rewriter.create<memref::StoreOp>(info.pushOp->getLoc(),
+                                             info.pushOp.getValue(), initValue,
+                                             ValueRange(inductionVariable));
+          }
+        }
+      }
+    }
+
+    auto numInitArgs = FinalClass::getInits(forOp).size();
+    rewriter.setInsertionPoint(forOp);
+
+    forOp = FinalClass::replaceWithNewOperands(rewriter, forOp, newOperands);
+    if (cacheType == LoopCacheType::TENSOR) {
+      for (int i = 0; i < numNewValuePushes; ++i)
+        newPushValues.push_back(
+            forOp->getResult(forOp->getNumResults() - numNewValuePushes + i));
+    }
+
+    rewriter.setInsertionPointAfter(forOp);
+
+    unsigned resultIdx = numInitArgs;
+    for (auto grad : updatedGradients) {
+      // set the updated gradient after the new for op.
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.create<enzyme::SetOp>(grad.getLoc(), grad,
+                                     forOp->getResult(resultIdx));
+      ++resultIdx;
+    }
+
+    if (inductionVariable && !caches.empty()) {
+      if (isa<BlockArgument>(inductionVariable) &&
+          cast<BlockArgument>(inductionVariable).getArgNumber() != 0)
+        resultIdx++;
+
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(otherForOp);
+      SmallVector<Value> operands = llvm::to_vector(FinalClass::getInits(otherForOp));
+      operands.push_back(numIters.has_value()
+                             ? rewriter.create<arith::ConstantOp>(
+                                   otherForOp->getLoc(),
+                                   rewriter.getIndexAttr(numIters.value() - 1))
+                             : FinalClass::getNumberOfIterations(rewriter, forOp));
+
+      Block *otherBody = otherForOp.getBody();
+      Value otherInductionVariable =
+          otherBody->addArgument(rewriter.getIndexType(), otherForOp->getLoc());
+      auto otherTerm = otherBody->getTerminator();
+
+      rewriter.setInsertionPoint(otherTerm);
+
+      otherInductionVariable =
+          rewriter
+              .create<arith::SubIOp>(
+                  otherForOp->getLoc(), otherInductionVariable,
+                  rewriter
+                      .create<arith::ConstantOp>(otherForOp->getLoc(),
+                                                 rewriter.getIndexAttr(1))
+                      .getResult())
+              .getResult();
+      otherTerm->insertOperands(otherTerm->getNumOperands(),
+                                ValueRange(otherInductionVariable));
+
+      rewriter.setInsertionPoint(otherForOp);
+      otherForOp = FinalClass::replaceWithNewOperands(rewriter, otherForOp, operands);
+    }
+
+    int pushedValueIdx = 0;
+    for (auto &info : caches) {
+      if (info.pushedValue().getParentRegion() != forOp.getRegion())
+        continue;
+
+      Value cache = info.initOp.getResult();
+
+      SmallVector<int64_t> newShape;
+      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+
+      auto ET = info.cachedType();
+      ShapedType NT;
+
+      if (auto ST = dyn_cast<ShapedType>(ET)) {
+        newShape.append(ST.getShape().begin(), ST.getShape().end());
+        ET = ST.getElementType();
+      }
+
+      auto newType = cacheType == LoopCacheType::TENSOR
+                         ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
+                         : cast<ShapedType>(MemRefType::get(newShape, ET));
+
+      enzyme::InitOp newInit = ({
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.initOp);
+
+        rewriter.create<enzyme::InitOp>(
+            info.initOp->getLoc(),
+            enzyme::CacheType::get(cache.getContext(), newType));
+      });
+      info.pushOp = ({
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointAfter(forOp);
+        auto newPush = rewriter.create<enzyme::PushOp>(
+            cache.getLoc(), newInit.getResult(), newPushValues[pushedValueIdx]);
+        rewriter.eraseOp(info.pushOp);
+        newPush;
+      });
+
+      pushedValueIdx++;
+
+      OpBuilder::InsertionGuard guard(rewriter);
+
+      rewriter.setInsertionPoint(otherForOp);
+
+      auto popNewValue = rewriter.create<enzyme::PopOp>(
+          info.popOp->getLoc(), newType, newInit.getResult());
+
+      Block *popBody = otherForOp.getBody();
+      rewriter.setInsertionPoint(info.popOp);
+
+      Value newInductionVariable =
+          popBody->getArgument(popBody->getNumArguments() - 1);
+
+      Value popValue;
+      if (cacheType == LoopCacheType::TENSOR) {
+        if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
+          auto shape = TT.getShape();
+          SmallVector<int64_t> offsets(shape.size() + 1, 0);
+          offsets[0] = ShapedType::kDynamic;
+
+          SmallVector<int64_t> sizes;
+          sizes.reserve(shape.size() + 1);
+          sizes.push_back(1);
+          sizes.append(shape.begin(), shape.end());
+
+          SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+          popValue =
+              rewriter
+                  .create<tensor::ExtractSliceOp>(
+                      info.popOp->getLoc(), TT, popNewValue,
+                      ValueRange(newInductionVariable), ValueRange(),
+                      ValueRange(), rewriter.getDenseI64ArrayAttr(offsets),
+                      rewriter.getDenseI64ArrayAttr(sizes),
+                      rewriter.getDenseI64ArrayAttr(strides))
+                  .getResult();
+        } else {
+          popValue =
+              rewriter
+                  .create<tensor::ExtractOp>(info.popOp->getLoc(), popNewValue,
+                                             newInductionVariable)
+                  .getResult();
+        }
+      } else if (cacheType == LoopCacheType::MEMREF) {
+
+        if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+          auto shape = MT.getShape();
+
+          SmallVector<int64_t> offsets(shape.size() + 1, 0);
+          offsets[0] = ShapedType::kDynamic;
+
+          SmallVector<int64_t> sizes;
+          sizes.reserve(shape.size() + 1);
+          sizes.push_back(1);
+          sizes.append(shape.begin(), shape.end());
+
+          SmallVector<int64_t> strides(shape.size() + 1, 1);
+
+          auto RT = memref::SubViewOp::inferRankReducedResultType(
+              MT.getShape(), cast<MemRefType>(popNewValue.getType()), offsets,
+              sizes, strides);
+
+          popValue = rewriter.create<memref::SubViewOp>(
+              info.popOp->getLoc(), RT, popNewValue,
+              /*offsets*/ ValueRange(newInductionVariable),
+              /*sizes*/ ValueRange(),
+              /*strides*/ ValueRange(),
+              /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
+              /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
+              /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
+
+          for (auto user : info.popOp.getResult().getUsers()) {
+            if (isa<memref::DeallocOp>(user))
+              rewriter.eraseOp(user);
+          }
+        } else {
+          popValue = rewriter.create<memref::LoadOp>(
+              info.popOp->getLoc(), popNewValue, newInductionVariable);
+        }
+
+        // this memref was allocated on push, dealloc it
+        rewriter.setInsertionPointAfter(otherForOp);
+        rewriter.create<memref::DeallocOp>(info.initOp->getLoc(), popNewValue);
+      }
+
+      rewriter.replaceAllUsesWith(info.popOp.getResult(), popValue);
+      rewriter.eraseOp(info.popOp);
+    }
+
+    return success();
+  }
+};
 
 } // namespace enzyme
 } // namespace mlir

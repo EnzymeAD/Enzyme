@@ -17,9 +17,12 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Passes/RemovalUtils.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
+using namespace mlir::affine;
 
 namespace {
 affine::AffineForOp
@@ -379,6 +382,96 @@ struct AffineStoreOpInterfaceReverse
   }
 };
 
+struct AffineForOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<AffineForOpADDataFlow, affine::AffineForOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    return {
+        forOp.getInits()[res.getResultNumber()],
+        forOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    if (arg.getArgNumber() < 1) {
+      return {};
+    }
+    auto idx = arg.getArgNumber() - 1;
+    return {forOp.getInits()[idx],
+            forOp.getBody()->getTerminator()->getOperand(idx)};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    SmallVector<Value> sv;
+
+    for (auto &&[res, arg, barg] :
+         llvm::zip_equal(forOp->getResults(), term->getOperands(),
+                         forOp.getRegionIterArgs())) {
+      if (arg == val) {
+        sv.push_back(res);
+        sv.push_back(barg);
+      }
+    }
+
+    return sv;
+  }
+};
+
+
+struct AffineForOpEnzymeOpsRemover : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover, affine::AffineForOp> {
+public:
+
+// TODO: support non constant number of iteration by using unknown dimensions
+static std::optional<int64_t> getConstantNumberOfIterations(affine::AffineForOp forOp) {
+  if (!forOp.hasConstantLowerBound()) return std::nullopt;
+  if (!forOp.hasConstantUpperBound()) return std::nullopt;
+  return (forOp.getConstantUpperBound() - forOp.getConstantLowerBound()) / forOp.getStepAsInt();
+}
+
+static Value getNumberOfIterations(OpBuilder &builder, affine::AffineForOp forOp) {
+  auto lb = builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
+                                    forOp.getLowerBoundOperands());
+  auto ub = builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getUpperBoundMap(),
+                                    forOp.getUpperBoundOperands());
+
+  Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+  if (forOp.getStepAsInt() != 1) {
+    auto step = builder.create<arith::ConstantIntOp>(forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
+    diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+  }
+  return diff;
+}
+
+static bool isCanonicalLoop(affine::AffineForOp forOp) {
+  if (!forOp.hasConstantLowerBound()) return false;
+  if (!forOp.hasConstantUpperBound()) return false;
+  if (forOp.getStepAsInt() != 1) return false;
+  if (forOp.getConstantLowerBound() != 0) return false;
+  return true;
+}
+
+static affine::AffineForOp replaceWithNewOperands(PatternRewriter &rewriter, affine::AffineForOp otherForOp, ArrayRef<Value> operands) {
+  auto newOtherForOp = rewriter.create<affine::AffineForOp>(
+          otherForOp->getLoc(),
+          otherForOp.getLowerBoundOperands(),
+          otherForOp.getLowerBoundMap(), 
+          otherForOp.getUpperBoundOperands(),
+          otherForOp.getUpperBoundMap(), 
+          otherForOp.getStepAsInt(), operands);
+
+  newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
+  rewriter.replaceOp(otherForOp, newOtherForOp);
+  return newOtherForOp;
+}
+
+static ValueRange getInits(affine::AffineForOp forOp) {
+  return forOp.getInits();
+}
+
+};
+
 #include "Implementations/AffineDerivatives.inc"
 } // namespace
 
@@ -389,5 +482,7 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(*context);
     affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(*context);
     affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
+    affine::AffineForOp::attachInterface<AffineForOpEnzymeOpsRemover>(*context);
+    affine::AffineForOp::attachInterface<AffineForOpADDataFlow>(*context);
   });
 }
