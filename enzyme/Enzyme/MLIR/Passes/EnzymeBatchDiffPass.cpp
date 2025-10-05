@@ -182,16 +182,16 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
               !isa<MemoryEffects::Write>(eff.getEffect())) {
-            // encountered allocate/load, skip this entry
+            // encountered allocate/load, skip merging
             skipMergeEntry = true;
             break;
           }
 
           Value eff_val = eff.getValue();
           if (!eff_val) {
-            // unknown effect which isnt a value
-            callerEffects.emplace_back(eff);
-            continue;
+            // unknown effect which isnt a value, skip merging
+            skipMergeEntry = true;
+            break;
           }
 
           // Find primal argument corresponding to effect value
@@ -546,21 +546,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             innerEffectCache[key.function];
 
         // TODO: skip if known readonly from existing analyses
-
         bool skipMergeEntry = false;
-        // Map callee(primal function) memory effects to the calling
-        // function's(autodiff op's) memory effects. This allows us to also
-        // reason about memory effects on the derivative argument potentially
-        // being passed in(if the primal argument has activity enzyme_dup)
-
-        // ForwardDiff read(primal) ?-> read(deriv);
-        // write(primal) ?-> write(deriv)
-        //
-        // ReverseDiff read(primal) ?-> read or write(deriv);
-        // write(primal) ?-> read or write(deriv);
-        //
-        // Unknown effects are retained in the caller, and will always alias to
-        // true with any other effect
 
         SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
@@ -568,16 +554,16 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
               !isa<MemoryEffects::Write>(eff.getEffect())) {
-            // encountered allocate/load, skip this entry
+            // encountered allocate/load, skip merging
             skipMergeEntry = true;
             break;
           }
 
           Value eff_val = eff.getValue();
           if (!eff_val) {
-            // unknown effect which isnt a value
-            callerEffects.emplace_back(eff);
-            continue;
+            // unknown effect which isn't tied to a value, skip merging
+            skipMergeEntry = true;
+            break;
           }
 
           // Find primal argument corresponding to effect value
@@ -594,9 +580,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           if (!foundPrimal) {
             // TODO: Handle this either as a global value, or a value which
             // is inside of the MLIR function(for inter-proc alias analysis)
-
-            // effect on some unknown mlir::Value which is not a primal
-            // function argument
             callerEffects.emplace_back(eff);
             continue;
           }
