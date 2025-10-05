@@ -159,9 +159,9 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
             innerEffectCache[key.function];
 
-        // TODO skip if known readnone from existing analyses
-
+        // TODO: skip if known readnone from existing analyses
         bool skipMergeEntry = false;
+
         // Map callee(primal function) memory effects to the calling
         // function's(autodiff op's) memory effects. This allows us to also
         // reason about memory effects on the derivative argument potentially
@@ -179,55 +179,60 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         for (auto &eff : calleeEffects) {
-          if (isa<MemoryEffects::Read>(eff.getEffect()) ||
-              isa<MemoryEffects::Write>(eff.getEffect())) {
-            if (Value resource = eff.getValue()) {
 
-              auto argnum = 0;
-              bool found = false;
-              for (auto fnArg : key.function.getArguments()) {
-                if (fnArg == resource) {
-                  argnum = fnArg.getArgNumber();
-                  found = true;
-                  break;
-                }
-              }
-              auto e = eff.getEffect();
-              if (found) {
-
-                // Primal value as effect
-                Value primalVal = key.inputs[argnum];
-                callerEffects.push_back(oputils::getEffectOfVal(
-                    primalVal, eff.getEffect(), eff.getResource()));
-
-                // Derivative effects(remain the same for fwddiff)
-                for (auto dop : allDiffs) {
-                  auto act_val =
-                      cast<ActivityAttr>(dop.getActivity()[argnum]).getValue();
-                  if (act_val == Activity::enzyme_dup ||
-                      act_val == Activity::enzyme_dupnoneed) {
-                    // derivative index is always argnum + 1
-                    Value dVal = dop.getInputs()[argnum + 1];
-                    callerEffects.emplace_back(oputils::getEffectOfVal(
-                        dVal, eff.getEffect(), eff.getResource()));
-                  }
-                }
-              } else {
-                // effect on some unknown mlir::Value which is not a primal
-                // function argument
-                // TODO: Handle this either as a global value, or a value which
-                // is inside of the MLIR function.
-                callerEffects.emplace_back(eff);
-              }
-
-            } else {
-              // unknown effect which isnt a value
-              callerEffects.emplace_back(eff);
-            }
-          } else {
-            // encountered an allocate / load effect. Skip to next map entry
+          if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
+              !isa<MemoryEffects::Write>(eff.getEffect())) {
+            // encountered allocate/load, skip this entry
             skipMergeEntry = true;
             break;
+          }
+
+          Value eff_val = eff.getValue();
+          if (!eff_val) {
+            // unknown effect which isnt a value
+            callerEffects.emplace_back(eff);
+            continue;
+          }
+
+          // Find primal argument corresponding to effect value
+          auto arg_pos = 0;
+          bool foundPrimal = false;
+          for (auto fn_arg_val : key.function.getArguments()) {
+            if (fn_arg_val == eff_val) {
+              arg_pos = fn_arg_val.getArgNumber();
+              foundPrimal = true;
+              break;
+            }
+          }
+
+          if (!foundPrimal) {
+            // TODO: Handle this either as a global value, or a value which
+            // is inside of the MLIR function(for inter-proc alias analysis)
+
+            // effect on some unknown mlir::Value which is not a primal
+            // function argument
+            callerEffects.emplace_back(eff);
+            continue;
+          }
+
+          // Add primal effect
+          Value primalVal = key.inputs[arg_pos];
+          callerEffects.push_back(oputils::getEffectOfVal(
+              primalVal, eff.getEffect(), eff.getResource()));
+
+          // Add derivative effects
+          // read(primal) -> read(derivative)
+          // write(primal) -> write(derivative)
+          for (auto dop : allDiffs) {
+            auto act_val =
+                cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
+            if (act_val == Activity::enzyme_dup ||
+                act_val == Activity::enzyme_dupnoneed) {
+              // TODO: fix derivative access(it is not arg_pos + 1)
+              Value dVal = dop.getInputs()[arg_pos + 1];
+              callerEffects.emplace_back(oputils::getEffectOfVal(
+                  dVal, eff.getEffect(), eff.getResource()));
+            }
           }
         }
 
@@ -291,7 +296,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
         // go ahead and actually do the merge now
         {
-          SmallVector<enzyme::ForwardDiffOp> allOps = legalMerge;
+          SmallVector<enzyme::ForwardDiffOp> &allOps = legalMerge;
           int64_t width = allOps.size();
 
           if (width < 2)
@@ -560,68 +565,62 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         for (auto &eff : calleeEffects) {
-          if (isa<MemoryEffects::Read>(eff.getEffect()) ||
-              isa<MemoryEffects::Write>(eff.getEffect())) {
-            if (Value resource = eff.getValue()) {
 
-              auto argnum = 0;
-              bool found = false;
-              for (auto fnArg : key.function.getArguments()) {
-                if (fnArg == resource) {
-                  argnum = fnArg.getArgNumber();
-                  found = true;
-                  break;
-                }
-              }
-
-              if (found) {
-
-                // Primal value as effect
-                Value primalVal = key.inputs[argnum];
-                callerEffects.push_back(oputils::getEffectOfVal(
-                    primalVal, eff.getEffect(), eff.getResource()));
-
-                auto deff_read =
-                    isa<MemoryEffects::Read>(eff.getEffect()) ? true : false;
-
-                // Derivative effects(flipped for revdiff)
-                for (auto dop : allDiffs) {
-                  auto act_val =
-                      cast<ActivityAttr>(dop.getActivity()[argnum]).getValue();
-                  if (act_val == Activity::enzyme_dup ||
-                      act_val == Activity::enzyme_dupnoneed) {
-
-                    // derivative index is always argnum + 1
-                    Value dVal = dop.getInputs()[argnum + 1];
-                    callerEffects.emplace_back(oputils::getEffectOfVal(
-                        dVal, eff.getEffect(), eff.getResource()));
-
-                    // (for rev mode) reads <-> writes
-                    if (deff_read)
-                      callerEffects.emplace_back(oputils::getEffectOfVal(
-                          dVal, MemoryEffects::Write::get(),
-                          eff.getResource()));
-                    else
-                      callerEffects.emplace_back(oputils::getEffectOfVal(
-                          dVal, MemoryEffects::Read::get(), eff.getResource()));
-                  }
-                }
-              } else {
-                // effect on some unknown mlir::Value which is not a primal
-                // function argument
-                // TODO: Handle this either as a global value, or a value which
-                // is inside of the MLIR function.
-                callerEffects.emplace_back(eff);
-              }
-
-            } else {
-              // unknown effect which isnt a value
-              callerEffects.emplace_back(eff);
-            }
-          } else {
-            // encountered an allocate / load effect. Skip to next map entry
+          if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
+              !isa<MemoryEffects::Write>(eff.getEffect())) {
+            // encountered allocate/load, skip this entry
             skipMergeEntry = true;
             break;
+          }
+
+          Value eff_val = eff.getValue();
+          if (!eff_val) {
+            // unknown effect which isnt a value
+            callerEffects.emplace_back(eff);
+            continue;
+          }
+
+          // Find primal argument corresponding to effect value
+          auto arg_pos = 0;
+          bool foundPrimal = false;
+          for (auto fn_arg_val : key.function.getArguments()) {
+            if (fn_arg_val == eff_val) {
+              arg_pos = fn_arg_val.getArgNumber();
+              foundPrimal = true;
+              break;
+            }
+          }
+
+          if (!foundPrimal) {
+            // TODO: Handle this either as a global value, or a value which
+            // is inside of the MLIR function(for inter-proc alias analysis)
+
+            // effect on some unknown mlir::Value which is not a primal
+            // function argument
+            callerEffects.emplace_back(eff);
+            continue;
+          }
+
+          // Add primal effect
+          Value primalVal = key.inputs[arg_pos];
+          callerEffects.push_back(oputils::getEffectOfVal(
+              primalVal, eff.getEffect(), eff.getResource()));
+
+          // Add derivative effects(conservative)
+          // read(primal) -> read+write(derivative)
+          // write(primal) -> write+read(derivative)
+          for (auto dop : allDiffs) {
+            auto act_val =
+                cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
+            if (act_val == Activity::enzyme_dup ||
+                act_val == Activity::enzyme_dupnoneed) {
+              // TODO: fix derivative access(it is not arg_pos + 1)
+              Value dVal = dop.getInputs()[arg_pos + 1];
+              callerEffects.emplace_back(oputils::getEffectOfVal(
+                  dVal, MemoryEffects::Write::get(), eff.getResource()));
+              callerEffects.emplace_back(oputils::getEffectOfVal(
+                  dVal, MemoryEffects::Read::get(), eff.getResource()));
+            }
           }
         }
 
