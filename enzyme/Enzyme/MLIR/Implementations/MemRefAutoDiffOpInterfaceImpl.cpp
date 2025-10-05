@@ -52,7 +52,7 @@ struct LoadOpInterfaceReverse
           retrievedArguments.push_back(retrievedValue);
         }
 
-        if (!gutils->omp) {
+        if (!gutils->AtomicAdd) {
           Value loadedGradient = builder.create<memref::LoadOp>(
               loadOp.getLoc(), memrefGradient,
               ArrayRef<Value>(retrievedArguments));
