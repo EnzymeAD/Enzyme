@@ -82,6 +82,11 @@ struct DifferentiateWrapperPass
         symbolOp = &op;
       }
     }
+    if (!symbolOp) {
+      llvm::errs() << " Could not find function '" << infn << "' to differentiate\n";
+      signalPassFailure();
+      return;
+    }
     auto fn = cast<FunctionOpInterface>(symbolOp);
     bool omp = false;
     std::string postpasses = "";

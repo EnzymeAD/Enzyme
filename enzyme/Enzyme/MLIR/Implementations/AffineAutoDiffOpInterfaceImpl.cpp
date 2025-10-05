@@ -226,7 +226,21 @@ struct AffineLoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient = builder.create<affine::AffineLoadOp>(
+	  bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+	  // if index had to be cached, the pop is not necessarily a valid index
+	  if (hasIndex) {
+          auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+          
+          Value loadedGradient = builder.create<memref::LoadOp>(
+              loadOp.getLoc(), memrefGradient,
+              idx->getResults());
+          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                  loadedGradient, gradient);
+          builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                          memrefGradient,
+					  idx->getResults());
+          } else {
+	  Value loadedGradient = builder.create<affine::AffineLoadOp>(
               loadOp.getLoc(), memrefGradient,
               loadOp.getAffineMap(),
               ArrayRef<Value>(retrievedArguments));
@@ -236,6 +250,7 @@ struct AffineLoadOpInterfaceReverse
                                           memrefGradient,
                                           loadOp.getAffineMap(),
                                           ArrayRef<Value>(retrievedArguments));
+	  }
         } else {
           auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
           builder.create<memref::AtomicRMWOp>(
@@ -300,11 +315,21 @@ struct AffineStoreOpInterfaceReverse
         retrievedArguments.push_back(retrievedValue);
       }
 
+      bool hasIndex = storeOp.getAffineMap().getNumDims() > 0;
+      
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient = builder.create<affine::AffineLoadOp>(
+          Value loadedGradient;
+	  if (hasIndex) {
+          auto idx = builder.create<affine::AffineApplyOp>(storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+		  loadedGradient = builder.create<memref::LoadOp>(
               storeOp.getLoc(), memrefGradient,
+              idx->getResults());
+	  } else {
+		  loadedGradient = builder.create<affine::AffineLoadOp>(
+              storeOp.getLoc(), memrefGradient, storeOp.getAffineMap(),
               ArrayRef<Value>(retrievedArguments));
+	  }
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -312,8 +337,14 @@ struct AffineStoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        builder.create<affine::AffineStoreOp>(storeOp.getLoc(), zero, memrefGradient,
+	// if index had to be cached, the pop is not necessarily a valid index
+	  if (hasIndex) {
+          auto idx = builder.create<affine::AffineApplyOp>(storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+        builder.create<memref::StoreOp>(storeOp.getLoc(), zero, memrefGradient, idx->getResults());
+	  } else {
+        builder.create<affine::AffineStoreOp>(storeOp.getLoc(), zero, memrefGradient, storeOp.getAffineMap(),
                                         ArrayRef<Value>(retrievedArguments));
+	  }
       }
     }
     return success();
