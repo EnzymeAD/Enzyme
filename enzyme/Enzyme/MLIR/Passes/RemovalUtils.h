@@ -8,12 +8,12 @@
 #pragma once
 
 #include "Dialect/Ops.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/IRMapping.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
 
 namespace mlir {
 namespace enzyme {
@@ -57,10 +57,7 @@ struct CacheInfo {
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
                  PatternRewriter &rewriter);
 
-enum class LoopCacheType {
-  TENSOR,
-  MEMREF
-};
+enum class LoopCacheType { TENSOR, MEMREF };
 
 static LoopCacheType getCacheType(Operation *op) {
   LoopCacheType cacheType = LoopCacheType::MEMREF;
@@ -74,12 +71,10 @@ static bool hasMinCut(Operation *op) {
   return op->hasAttr("enzyme.enable_mincut");
 }
 
-template<typename FinalClass, typename OpName>
+template <typename FinalClass, typename OpName>
 struct ForLikeEnzymeOpsRemover
-    : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass,
-                                                        OpName> {
+    : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
 private:
-
 public:
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
@@ -282,7 +277,8 @@ public:
       for (auto it : llvm::enumerate(newType.getShape())) {
         if (ShapedType::isDynamic(it.value())) {
           if (it.index() == 0)
-            dynamicDims.push_back(FinalClass::getNumberOfIterations(rewriter, forOp));
+            dynamicDims.push_back(
+                FinalClass::getNumberOfIterations(rewriter, forOp));
           else
             return failure(); // TODO: find dynamic dims within the body.
         }
@@ -404,12 +400,14 @@ public:
 
       OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPoint(otherForOp);
-      SmallVector<Value> operands = llvm::to_vector(FinalClass::getInits(otherForOp));
-      operands.push_back(numIters.has_value()
-                             ? rewriter.create<arith::ConstantOp>(
-                                   otherForOp->getLoc(),
-                                   rewriter.getIndexAttr(numIters.value() - 1))
-                             : FinalClass::getNumberOfIterations(rewriter, forOp));
+      SmallVector<Value> operands =
+          llvm::to_vector(FinalClass::getInits(otherForOp));
+      operands.push_back(
+          numIters.has_value()
+              ? rewriter.create<arith::ConstantOp>(
+                    otherForOp->getLoc(),
+                    rewriter.getIndexAttr(numIters.value() - 1))
+              : FinalClass::getNumberOfIterations(rewriter, forOp));
 
       Block *otherBody = otherForOp.getBody();
       Value otherInductionVariable =
@@ -431,7 +429,8 @@ public:
                                 ValueRange(otherInductionVariable));
 
       rewriter.setInsertionPoint(otherForOp);
-      otherForOp = FinalClass::replaceWithNewOperands(rewriter, otherForOp, operands);
+      otherForOp =
+          FinalClass::replaceWithNewOperands(rewriter, otherForOp, operands);
     }
 
     int pushedValueIdx = 0;

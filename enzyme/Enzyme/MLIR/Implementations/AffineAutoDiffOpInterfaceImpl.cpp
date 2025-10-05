@@ -14,11 +14,11 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/IR/IntegerSet.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "Passes/RemovalUtils.h"
+#include "mlir/IR/IntegerSet.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -229,31 +229,28 @@ struct AffineLoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-	  bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
-	  // if index had to be cached, the pop is not necessarily a valid index
-	  if (hasIndex) {
-          auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
-          
-          Value loadedGradient = builder.create<memref::LoadOp>(
-              loadOp.getLoc(), memrefGradient,
-              idx->getResults());
-          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                  loadedGradient, gradient);
-          builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
-                                          memrefGradient,
-					  idx->getResults());
+          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+          // if index had to be cached, the pop is not necessarily a valid index
+          if (hasIndex) {
+            auto idx = builder.create<affine::AffineApplyOp>(
+                loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+
+            Value loadedGradient = builder.create<memref::LoadOp>(
+                loadOp.getLoc(), memrefGradient, idx->getResults());
+            Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                    loadedGradient, gradient);
+            builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                            memrefGradient, idx->getResults());
           } else {
-	  Value loadedGradient = builder.create<affine::AffineLoadOp>(
-              loadOp.getLoc(), memrefGradient,
-              loadOp.getAffineMap(),
-              ArrayRef<Value>(retrievedArguments));
-          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                  loadedGradient, gradient);
-          builder.create<affine::AffineStoreOp>(loadOp.getLoc(), addedGradient,
-                                          memrefGradient,
-                                          loadOp.getAffineMap(),
-                                          ArrayRef<Value>(retrievedArguments));
-	  }
+            Value loadedGradient = builder.create<affine::AffineLoadOp>(
+                loadOp.getLoc(), memrefGradient, loadOp.getAffineMap(),
+                ArrayRef<Value>(retrievedArguments));
+            Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                    loadedGradient, gradient);
+            builder.create<affine::AffineStoreOp>(
+                loadOp.getLoc(), addedGradient, memrefGradient,
+                loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
+          }
         } else {
           auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
           builder.create<memref::AtomicRMWOp>(
@@ -319,20 +316,20 @@ struct AffineStoreOpInterfaceReverse
       }
 
       bool hasIndex = storeOp.getAffineMap().getNumDims() > 0;
-      
+
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
           Value loadedGradient;
-	  if (hasIndex) {
-          auto idx = builder.create<affine::AffineApplyOp>(storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
-		  loadedGradient = builder.create<memref::LoadOp>(
-              storeOp.getLoc(), memrefGradient,
-              idx->getResults());
-	  } else {
-		  loadedGradient = builder.create<affine::AffineLoadOp>(
-              storeOp.getLoc(), memrefGradient, storeOp.getAffineMap(),
-              ArrayRef<Value>(retrievedArguments));
-	  }
+          if (hasIndex) {
+            auto idx = builder.create<affine::AffineApplyOp>(
+                storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+            loadedGradient = builder.create<memref::LoadOp>(
+                storeOp.getLoc(), memrefGradient, idx->getResults());
+          } else {
+            loadedGradient = builder.create<affine::AffineLoadOp>(
+                storeOp.getLoc(), memrefGradient, storeOp.getAffineMap(),
+                ArrayRef<Value>(retrievedArguments));
+          }
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -340,14 +337,17 @@ struct AffineStoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-	// if index had to be cached, the pop is not necessarily a valid index
-	  if (hasIndex) {
-          auto idx = builder.create<affine::AffineApplyOp>(storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
-        builder.create<memref::StoreOp>(storeOp.getLoc(), zero, memrefGradient, idx->getResults());
-	  } else {
-        builder.create<affine::AffineStoreOp>(storeOp.getLoc(), zero, memrefGradient, storeOp.getAffineMap(),
-                                        ArrayRef<Value>(retrievedArguments));
-	  }
+        // if index had to be cached, the pop is not necessarily a valid index
+        if (hasIndex) {
+          auto idx = builder.create<affine::AffineApplyOp>(
+              storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+          builder.create<memref::StoreOp>(storeOp.getLoc(), zero,
+                                          memrefGradient, idx->getResults());
+        } else {
+          builder.create<affine::AffineStoreOp>(
+              storeOp.getLoc(), zero, memrefGradient, storeOp.getAffineMap(),
+              ArrayRef<Value>(retrievedArguments));
+        }
       }
     }
     return success();
@@ -383,7 +383,8 @@ struct AffineStoreOpInterfaceReverse
 };
 
 struct AffineForOpADDataFlow
-    : public ADDataFlowOpInterface::ExternalModel<AffineForOpADDataFlow, affine::AffineForOp> {
+    : public ADDataFlowOpInterface::ExternalModel<AffineForOpADDataFlow,
+                                                  affine::AffineForOp> {
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
                                                    OpResult res) const {
     auto forOp = cast<affine::AffineForOp>(op);
@@ -419,57 +420,69 @@ struct AffineForOpADDataFlow
   }
 };
 
-
-struct AffineForOpEnzymeOpsRemover : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover, affine::AffineForOp> {
+struct AffineForOpEnzymeOpsRemover
+    : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover,
+                                     affine::AffineForOp> {
 public:
-
-// TODO: support non constant number of iteration by using unknown dimensions
-static std::optional<int64_t> getConstantNumberOfIterations(affine::AffineForOp forOp) {
-  if (!forOp.hasConstantLowerBound()) return std::nullopt;
-  if (!forOp.hasConstantUpperBound()) return std::nullopt;
-  return (forOp.getConstantUpperBound() - forOp.getConstantLowerBound()) / forOp.getStepAsInt();
-}
-
-static Value getNumberOfIterations(OpBuilder &builder, affine::AffineForOp forOp) {
-  auto lb = builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
-                                    forOp.getLowerBoundOperands());
-  auto ub = builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getUpperBoundMap(),
-                                    forOp.getUpperBoundOperands());
-
-  Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
-  if (forOp.getStepAsInt() != 1) {
-    auto step = builder.create<arith::ConstantIntOp>(forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
-    diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+  // TODO: support non constant number of iteration by using unknown dimensions
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(affine::AffineForOp forOp) {
+    if (!forOp.hasConstantLowerBound())
+      return std::nullopt;
+    if (!forOp.hasConstantUpperBound())
+      return std::nullopt;
+    return (forOp.getConstantUpperBound() - forOp.getConstantLowerBound()) /
+           forOp.getStepAsInt();
   }
-  return diff;
-}
 
-static bool isCanonicalLoop(affine::AffineForOp forOp) {
-  if (!forOp.hasConstantLowerBound()) return false;
-  if (!forOp.hasConstantUpperBound()) return false;
-  if (forOp.getStepAsInt() != 1) return false;
-  if (forOp.getConstantLowerBound() != 0) return false;
-  return true;
-}
+  static Value getNumberOfIterations(OpBuilder &builder,
+                                     affine::AffineForOp forOp) {
+    auto lb =
+        builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
+                                      forOp.getLowerBoundOperands());
+    auto ub =
+        builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getUpperBoundMap(),
+                                      forOp.getUpperBoundOperands());
 
-static affine::AffineForOp replaceWithNewOperands(PatternRewriter &rewriter, affine::AffineForOp otherForOp, ArrayRef<Value> operands) {
-  auto newOtherForOp = rewriter.create<affine::AffineForOp>(
-          otherForOp->getLoc(),
-          otherForOp.getLowerBoundOperands(),
-          otherForOp.getLowerBoundMap(), 
-          otherForOp.getUpperBoundOperands(),
-          otherForOp.getUpperBoundMap(), 
-          otherForOp.getStepAsInt(), operands);
+    Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+    if (forOp.getStepAsInt() != 1) {
+      auto step = builder.create<arith::ConstantIntOp>(
+          forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
+      diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+    }
+    return diff;
+  }
 
-  newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
-  rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(0, otherForOp->getNumResults()));
-  return newOtherForOp;
-}
+  static bool isCanonicalLoop(affine::AffineForOp forOp) {
+    if (!forOp.hasConstantLowerBound())
+      return false;
+    if (!forOp.hasConstantUpperBound())
+      return false;
+    if (forOp.getStepAsInt() != 1)
+      return false;
+    if (forOp.getConstantLowerBound() != 0)
+      return false;
+    return true;
+  }
 
-static ValueRange getInits(affine::AffineForOp forOp) {
-  return forOp.getInits();
-}
+  static affine::AffineForOp
+  replaceWithNewOperands(PatternRewriter &rewriter,
+                         affine::AffineForOp otherForOp,
+                         ArrayRef<Value> operands) {
+    auto newOtherForOp = rewriter.create<affine::AffineForOp>(
+        otherForOp->getLoc(), otherForOp.getLowerBoundOperands(),
+        otherForOp.getLowerBoundMap(), otherForOp.getUpperBoundOperands(),
+        otherForOp.getUpperBoundMap(), otherForOp.getStepAsInt(), operands);
 
+    newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
+    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
+                                       0, otherForOp->getNumResults()));
+    return newOtherForOp;
+  }
+
+  static ValueRange getInits(affine::AffineForOp forOp) {
+    return forOp.getInits();
+  }
 };
 
 #include "Implementations/AffineDerivatives.inc"

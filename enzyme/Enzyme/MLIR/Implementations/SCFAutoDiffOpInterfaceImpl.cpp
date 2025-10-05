@@ -36,11 +36,12 @@ using namespace mlir::enzyme;
 namespace {
 #include "Implementations/SCFDerivatives.inc"
 
-
-struct ForOpEnzymeOpsRemover : public ForLikeEnzymeOpsRemover<ForOpEnzymeOpsRemover, scf::ForOp> {
+struct ForOpEnzymeOpsRemover
+    : public ForLikeEnzymeOpsRemover<ForOpEnzymeOpsRemover, scf::ForOp> {
 public:
   // TODO: support non constant number of iteration by using unknown dimensions
-  static std::optional<int64_t> getConstantNumberOfIterations(scf::ForOp forOp) {
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(scf::ForOp forOp) {
     auto lb = forOp.getLowerBound();
     auto ub = forOp.getUpperBound();
     auto step = forOp.getStep();
@@ -69,25 +70,23 @@ public:
 
   static bool isCanonicalLoop(scf::ForOp forOp) {
     return matchPattern(forOp.getLowerBound(), m_Zero()) &&
-          matchPattern(forOp.getStep(), m_One());
+           matchPattern(forOp.getStep(), m_One());
   }
 
-  static scf::ForOp replaceWithNewOperands(PatternRewriter &rewriter, scf::ForOp otherForOp, ArrayRef<Value> operands) {
+  static scf::ForOp replaceWithNewOperands(PatternRewriter &rewriter,
+                                           scf::ForOp otherForOp,
+                                           ArrayRef<Value> operands) {
     auto newOtherForOp = rewriter.create<scf::ForOp>(
-            otherForOp->getLoc(),
-            otherForOp.getLowerBound(), 
-            otherForOp.getUpperBound(), 
-            otherForOp.getStep(), operands);
+        otherForOp->getLoc(), otherForOp.getLowerBound(),
+        otherForOp.getUpperBound(), otherForOp.getStep(), operands);
 
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
-    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(0, otherForOp->getNumResults()));
+    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
+                                       0, otherForOp->getNumResults()));
     return newOtherForOp;
   }
 
-  static ValueRange getInits(scf::ForOp forOp) {
-    return forOp.getInitArgs();
-  }
-
+  static ValueRange getInits(scf::ForOp forOp) { return forOp.getInitArgs(); }
 };
 
 struct ForOpInterfaceReverse
@@ -112,7 +111,8 @@ private:
     return forOp->hasAttrOfType<BoolAttr>("enzyme.enable_checkpointing") &&
            forOp->getAttrOfType<BoolAttr>("enzyme.enable_checkpointing")
                .getValue() &&
-           ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).has_value();
+           ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp)
+               .has_value();
   }
 
 public:
@@ -142,7 +142,8 @@ public:
     }
 
     if (needsCheckpointing(forOp)) {
-      int64_t numIters = ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
+      int64_t numIters =
+          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
       int64_t nInner = std::sqrt(numIters), nOuter = nInner;
       int64_t trailingIters = numIters - nInner * nOuter;
 
@@ -418,7 +419,8 @@ public:
     OpBuilder cacheBuilder(newOp);
 
     if (needsCheckpointing(forOp)) {
-      int64_t numIters = ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
+      int64_t numIters =
+          ForOpEnzymeOpsRemover::getConstantNumberOfIterations(forOp).value();
       int64_t nInner = std::sqrt(numIters), nOuter = nInner;
       int64_t trailingIters = numIters - nInner * nOuter;
       bool hasTrailing = trailingIters > 0;
@@ -625,7 +627,6 @@ struct IfOpInterfaceReverse
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {}
 };
-
 
 struct ForOpADDataFlow
     : public ADDataFlowOpInterface::ExternalModel<ForOpADDataFlow, scf::ForOp> {

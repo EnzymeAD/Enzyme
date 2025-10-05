@@ -83,7 +83,8 @@ struct DifferentiateWrapperPass
       }
     }
     if (!symbolOp) {
-      llvm::errs() << " Could not find function '" << infn << "' to differentiate\n";
+      llvm::errs() << " Could not find function '" << infn
+                   << "' to differentiate\n";
       signalPassFailure();
       return;
     }
