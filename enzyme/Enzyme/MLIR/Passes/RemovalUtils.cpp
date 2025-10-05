@@ -10,6 +10,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Utils.h"
+#include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include <cassert>
 #include <deque>
@@ -19,84 +20,69 @@ using namespace mlir::enzyme;
 
 #define DEBUG_TYPE "enzyme-mincut"
 
-// A node in the compute graph.
-// Operation nodes have outgoing edges to value nodes that they produce and
-// incoming nodes from values they take as operands.
-struct Node {
-  Operation *O;
-  Value V;
-  enum Type {
-    NONE,
-    VAL,
-    OP,
-  } type;
+typedef llvm::PointerUnion<Operation *, Value> Node;
 
-  Node(Operation *O) : O(O), type(OP){};
-  Node(Value V) : V(V), type(VAL){};
-  Node() : type(NONE){};
+void dump(const Node &n) {
+  if (n.is<Value>())
+    llvm::errs() << "[" << n.get<Value>() << ", "
+                 << "Value"
+                 << "]\n";
+  else if (n.is<Operation *>())
+    llvm::errs() << "[" << *n.get<Operation *>() << ", "
+                 << "Operation"
+                 << "]\n";
+  else
+    llvm::errs() << "["
+                 << "NULL"
+                 << ", "
+                 << "None"
+                 << "]\n";
+}
 
-  bool operator<(const Node N) const {
-    if (type != N.type)
-      return type < N.type;
-    else if (type == OP)
-      return O < N.O;
-    else if (type == VAL)
-      return V.getAsOpaquePointer() < N.V.getAsOpaquePointer();
-    else
-      return true;
-  }
-  void dump() const {
-    if (type == VAL)
-      llvm::errs() << "[" << V << ", "
-                   << "Value"
-                   << "]\n";
-    else if (type == OP)
-      llvm::errs() << "[" << *O << ", "
-                   << "Operation"
-                   << "]\n";
-    else
-      llvm::errs() << "["
-                   << "NULL"
-                   << ", "
-                   << "None"
-                   << "]\n";
-  }
-};
-
-typedef std::map<Node, std::set<Node>> Graph;
+typedef DenseMap<Node, SmallPtrSet<Node, 2>> Graph;
 
 static void dump(Graph &G) {
   for (auto &pair : G) {
-    pair.first.dump();
+    dump(pair.first);
     for (const auto &N : pair.second) {
       llvm::errs() << "\t";
-      N.dump();
+      dump(N);
     }
   }
 }
 
+// A node in the compute graph.
+// Operation nodes have outgoing edges to value nodes that they produce and
+// incoming nodes from values they take as operands.
+
 // parent is populated with a path from each connected leaf node of G to one
 // of the Value in Source.
 static inline void bfs(const Graph &G, const llvm::SetVector<Value> &Sources,
-                       std::map<Node, Node> &parent) {
+                       DenseMap<Node, Node> &parent) {
   std::deque<Node> q;
-  for (auto V : Sources) {
+  for (const auto &V : Sources) {
     Node N(V);
-    parent.emplace(N, Node());
+    parent.try_emplace(N, Node());
     q.push_back(N);
   }
 
   // Standard BFS Loop
+
+  SmallPtrSet<Node, 2> done;
+
   while (!q.empty()) {
     auto u = q.front();
     q.pop_front();
     auto found = G.find(u);
     if (found == G.end())
       continue;
-    for (auto v : found->second) {
-      if (parent.find(v) == parent.end()) {
+
+    if (!done.insert(u).second)
+      continue;
+
+    for (const auto &v : found->second) {
+      if (parent.try_emplace(v, u).second) {
         q.push_back(v);
-        parent.emplace(v, u);
       }
     }
   }
@@ -105,7 +91,7 @@ static inline void bfs(const Graph &G, const llvm::SetVector<Value> &Sources,
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(Operation *op) {
-  return mlir::isPure(op) && op->getNumRegions() == 0;
+  return op->getNumRegions() == 0 && mlir::isPure(op);
 }
 
 static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
@@ -119,24 +105,32 @@ static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
     }
   }
 
-  SmallVector<Value> worklist(sinks.getArrayRef().begin(),
-                              sinks.getArrayRef().end());
-  while (!worklist.empty()) {
-    Value todo = worklist.pop_back_val();
+  std::deque<Node> worklist;
+  for (auto snk : sinks) {
+    worklist.emplace_back(snk);
+  }
 
-    if (sources.contains(todo))
+  SmallPtrSet<Node, 2> done;
+  for (auto src : sources) {
+    done.insert(src);
+  }
+
+  while (!worklist.empty()) {
+    Node N = worklist.front();
+    worklist.pop_front();
+
+    if (!done.insert(N).second)
       continue;
 
-    Node N(todo);
     auto pair = inverted.find(N);
-    for (auto NN : pair->second) {
-      assert(NN.type == Node::OP);
+    if (pair == inverted.end()) {
+      continue;
+    }
+    for (const auto &NN : pair->second) {
 
       revGraph[NN].insert(N);
-
-      for (auto NNN : inverted.find(NN)->second) {
-        revGraph[NNN].insert(NN);
-        worklist.push_back(NNN.V);
+      if (!done.contains(NN)) {
+        worklist.push_back(NN);
       }
     }
   }
@@ -144,6 +138,20 @@ static Graph reverseGraph(const Graph &Orig, const SetVector<Value> &sources,
   return revGraph;
 }
 
+static int64_t computeSizeOfType(Value val) {
+  auto T = dyn_cast<AutoDiffTypeInterface>(val.getType());
+  return T ? T.getApproxSize() : INT64_MAX;
+};
+
+static int64_t computeRankOfType(Value val) {
+  auto TT = dyn_cast<RankedTensorType>(val.getType());
+  return TT ? TT.getRank() : 0;
+}
+
+// Given the full forward/backward compute graph, the push/pop can be seen
+// as a special cut of this graph. This function tries to modifies the
+// boundary of the push/pop to minimize the amount of memory that is live
+// across different loops.
 void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                SmallVector<CacheInfo> &caches,
                                PatternRewriter &rewriter) {
@@ -265,7 +273,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   // Augment the flow while there is a path from source to sink
   while (1) {
-    std::map<Node, Node> parent;
+    DenseMap<Node, Node> parent;
     bfs(G, roots, parent);
     Node end;
     for (auto req : Required) {
@@ -274,7 +282,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         break;
       }
     }
-    if (end.type == Node::NONE)
+    if (end.isNull())
       break;
     // update residual capacities of the edges and reverse edges
     // along the path
@@ -282,19 +290,19 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     while (1) {
       assert(parent.find(v) != parent.end());
       Node u = parent.find(v)->second;
-      assert(u.type != Node::NONE);
+      assert(!u.isNull());
       assert(G[u].count(v) == 1);
       assert(G[v].count(u) == 0);
       G[u].erase(v);
       G[v].insert(u);
-      if (u.type == Node::VAL && roots.contains(u.V))
+      if (u.is<Value>() && roots.contains(u.get<Value>()))
         break;
       v = u;
     }
   }
   // Flow is maximum now, find vertices reachable from s
 
-  std::map<Node, Node> parent;
+  DenseMap<Node, Node> parent;
   bfs(G, roots, parent);
 
   LLVM_DEBUG(llvm::dbgs() << "residual graph: \n";);
@@ -303,12 +311,13 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // Those are the new values to cache
   SetVector<Value> newCaches;
 
-  // All edges that are from a reachable vertex to non-reachable vertex in the
-  // original graph are edges for the minimum cut. The set of values to cache
-  // are the values transported along those edges (either. Value -> Operation
-  // or Operation -> Value).
+  // All edges that are from a reachable vertex to non-reachable vertex in
+  // the original graph are edges for the minimum cut. The set of values to
+  // cache are the values transported along those edges (either. Value ->
+  // Operation or Operation -> Value).
   //
-  // Note: we could use more heuristics here to select the actual cached value
+  // Note: we could use more heuristics here to select the actual cached
+  // value
   //       based on sizes, existing caches, number of users in the fwd as to
   //       not duplicate work, etc...
   for (auto &pair : Orig) {
@@ -316,13 +325,13 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       for (auto N : pair.second) {
         if (parent.find(N) == parent.end()) {
           Value newCache;
-          if (pair.first.type == Node::VAL) {
-            assert(N.type == Node::OP);
-            newCache = pair.first.V;
+          if (pair.first.is<Value>()) {
+            assert(N.is<Operation *>());
+            newCache = pair.first.get<Value>();
           } else {
-            assert(pair.first.type == Node::OP);
-            assert(N.type == Node::VAL);
-            newCache = N.V;
+            assert(pair.first.is<Operation *>());
+            assert(N.is<Value>());
+            newCache = N.get<Value>();
           }
           newCaches.insert(newCache);
         }
@@ -344,21 +353,12 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // Refine cached values based on some heuristics
   auto newCacheVec = newCaches.takeVector();
 
+  // sort caches to provide determinism.
   llvm::sort(newCacheVec.begin(), newCacheVec.end(), mlir::enzyme::valueCmp);
 
   for (Value newCache : newCacheVec) {
     worklist.clear();
     worklist.push_back(newCache);
-
-    auto computeSizeOfType = [](Value val) -> int64_t {
-      auto T = dyn_cast<AutoDiffTypeInterface>(val.getType());
-      return T ? T.getApproxSize() : INT64_MAX;
-    };
-
-    auto computeRankOfType = [](Value val) -> int64_t {
-      auto TT = dyn_cast<RankedTensorType>(val.getType());
-      return TT ? TT.getRank() : 0;
-    };
 
     Value picked = newCache;
     int64_t curSize = computeSizeOfType(picked),
@@ -378,7 +378,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue; // TODO: support this
 
       int64_t newSize = computeSizeOfType(candidate),
-              newRank = computeRankOfType(candidate);
+              newRank = cast<RankedTensorType>(candidate.getType()).getRank();
       if (newSize < curSize || (newSize == curSize && newRank < curRank) ||
           candidate.getDefiningOp<enzyme::PopOp>() != nullptr) {
         curSize = newSize;
@@ -388,10 +388,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       for (auto &N : C->second) {
         // not eligible
-        if (N.O->getNumResults() > 1)
+        if (N.get<Operation *>()->getNumResults() > 1)
           continue;
 
-        worklist.append(N.O->getResults().begin(), N.O->getResults().end());
+        worklist.append(N.get<Operation *>()->getResults().begin(),
+                        N.get<Operation *>()->getResults().end());
       }
     }
 
@@ -430,7 +431,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointAfterValue(newCache);
 
-    // TODO: This newCache value might not be available here since it might be
+    // TODO: This newCache value might not be available here since it might
+    // be
     //       a part of the reverse. The operations needed to create newCache
     //       in the forward should be cloned from forward to reverse.
     assert(newCache.getParentBlock() != reverse && "todo");
@@ -454,6 +456,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   worklist.clear();
   worklist.assign(newCaches.begin(), newCaches.end());
 
+  SetVector<Operation *> cloned;
+
   // Clone ops in the reverse graph to make sure all edges have been mapped.
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
@@ -467,49 +471,32 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     assert(found != revGraph.end());
 
     for (auto N : found->second) {
-      assert(N.type == Node::OP);
+      assert(N.is<Operation *>());
 
       // Special case for across forward/reverse boundary.
-      if (isa<enzyme::PopOp>(N.O)) {
-        rewriter.replaceAllOpUsesWith(N.O, mapping.lookup(todo));
+      if (isa<enzyme::PopOp>(N.get<Operation *>())) {
+        rewriter.replaceAllOpUsesWith(N.get<Operation *>(),
+                                      mapping.lookup(todo));
         continue;
       }
 
-      if (!llvm::all_of(N.O->getOperands(), [&mapping](Value operand) {
-            return mapping.contains(operand);
-          })) {
+      if (!llvm::all_of(N.get<Operation *>()->getOperands(),
+                        [&mapping](Value operand) {
+                          return mapping.contains(operand);
+                        })) {
         continue;
       }
 
       OpBuilder::InsertionGuard guard(rewriter);
 
       Value lastVal = mapping.lookup(todo);
-      Operation *lastValOp = lastVal.getDefiningOp();
-
-      for (Value operand : N.O->getOperands()) {
-        Value mapped = mapping.lookup(operand);
-        Operation *mappedOp = mapped.getDefiningOp();
-        if (!mappedOp)
-          continue;
-
-        if (!lastValOp) {
-          lastValOp = mappedOp;
-          lastVal = mapped;
-          continue;
-        }
-
-        if (lastValOp->isBeforeInBlock(mappedOp)) {
-          lastValOp = mappedOp;
-          lastVal = mapped;
-          continue;
-        }
-      }
 
       rewriter.setInsertionPointAfterValue(lastVal);
-      Operation *newO = rewriter.clone(*N.O, mapping);
+      Operation *newO = rewriter.clone(*N.get<Operation *>(), mapping);
+      cloned.insert(newO);
 
-      for (auto [oldRes, newRes] :
-           llvm::zip_equal(N.O->getResults(), newO->getResults()))
+      for (auto [oldRes, newRes] : llvm::zip_equal(
+               N.get<Operation *>()->getResults(), newO->getResults()))
         mapping.map(oldRes, newRes);
 
       auto pair = revGraph.find(N);
@@ -517,11 +504,18 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue;
 
       for (auto NN : pair->second) {
-        assert(NN.type == Node::VAL);
-        worklist.push_back(NN.V);
+        assert(NN.is<Value>());
+        worklist.push_back(NN.get<Value>());
       }
     }
   }
+
+  if (cloned.size()) {
+    mlir::sortTopologically(cloned[0]->getBlock());
+  }
+
+  // TODO do all the moves for existing ops, then do the ones within
+  // dependencies here
 
   // Remove old caches
   for (auto &info : caches) {
