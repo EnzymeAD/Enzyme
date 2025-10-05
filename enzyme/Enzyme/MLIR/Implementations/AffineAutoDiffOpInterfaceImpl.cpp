@@ -16,6 +16,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/IntegerSet.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -203,6 +204,150 @@ struct AffineForOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct AffineLoadOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<AffineLoadOpInterfaceReverse,
+                                                       affine::AffineLoadOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto loadOp = cast<affine::AffineLoadOp>(op);
+    Value memref = loadOp.getMemref();
+
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
+        Value gradient = gutils->diffe(loadOp, builder);
+        Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+        SmallVector<Value> retrievedArguments;
+        for (Value cache : caches) {
+          Value retrievedValue = gutils->popCache(cache, builder);
+          retrievedArguments.push_back(retrievedValue);
+        }
+
+        if (!gutils->AtomicAdd) {
+          Value loadedGradient = builder.create<affine::AffineLoadOp>(
+              loadOp.getLoc(), memrefGradient,
+              loadOp.getAffineMap(),
+              ArrayRef<Value>(retrievedArguments));
+          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                  loadedGradient, gradient);
+          builder.create<affine::AffineStoreOp>(loadOp.getLoc(), addedGradient,
+                                          memrefGradient,
+                                          loadOp.getAffineMap(),
+                                          ArrayRef<Value>(retrievedArguments));
+        } else {
+          auto idx = builder.create<affine::AffineApplyOp>(loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+          builder.create<memref::AtomicRMWOp>(
+              loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
+              memrefGradient, idx->getResults());
+        }
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<affine::AffineLoadOp>(op);
+    Value memref = loadOp.getMemref();
+    ValueRange indices = loadOp.getIndices();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return caches;
+      }
+    }
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    // auto loadOp = cast<memref::LoadOp>(op);
+    // Value memref = loadOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
+  }
+};
+
+struct AffineStoreOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<AffineStoreOpInterfaceReverse,
+                                                       affine::AffineStoreOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto storeOp = cast<affine::AffineStoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    // ValueRange indices = storeOp.getIndices();
+
+    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+
+    if (!gutils->isConstantValue(memref)) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+
+      Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+      SmallVector<Value> retrievedArguments;
+      for (Value cache : caches) {
+        Value retrievedValue = gutils->popCache(cache, builder);
+        retrievedArguments.push_back(retrievedValue);
+      }
+
+      if (!iface.isMutable()) {
+        if (!gutils->isConstantValue(val)) {
+          Value loadedGradient = builder.create<affine::AffineLoadOp>(
+              storeOp.getLoc(), memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          gutils->addToDiffe(val, loadedGradient, builder);
+        }
+
+        auto zero =
+            cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
+                .createNullValue(builder, op->getLoc());
+
+        builder.create<affine::AffineStoreOp>(storeOp.getLoc(), zero, memrefGradient,
+                                        ArrayRef<Value>(retrievedArguments));
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<affine::AffineStoreOp>(op);
+    Value memref = storeOp.getMemref();
+    ValueRange indices = storeOp.getIndices();
+    Value val = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (!gutils->isConstantValue(memref)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return caches;
+      }
+    }
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    // auto storeOp = cast<memref::StoreOp>(op);
+    // Value memref = storeOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
+  }
+};
+
 #include "Implementations/AffineDerivatives.inc"
 } // namespace
 
@@ -210,6 +355,8 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, affine::AffineDialect *) {
     registerInterfaces(context);
+    affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(*context);
+    affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(*context);
     affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
   });
 }
