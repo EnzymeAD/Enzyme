@@ -46,7 +46,7 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 
 
 // CHECK-NEXT:      %subview = memref.subview %alloc[%[[idx1]], 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %c4 step %c1 iter_args(%[[arg8:.+]] = %arg4, %[[arg9:.+]] = %arg5) -> (f32, f32, index) {
+// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %c4 step %c1 iter_args(%[[arg8:.+]] = %arg4, %[[arg9:.+]] = %arg5) -> (f32, f32) {
 
 // CHECK-NEXT:        %[[idx2:.+]] = arith.subi %c3, %[[arg7]] : index 
 

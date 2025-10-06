@@ -75,8 +75,6 @@ public:
     }
   }
 
-  static Value getNumberOfIterations(OpBuilder &builder, scf::ForOp forOp) {}
-
   static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
                                                 scf::ForOp forOp) {
 

@@ -15,6 +15,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 
+#include "mlir/Interfaces/FunctionInterfaces.h"
+
 namespace mlir {
 namespace enzyme {
 
@@ -115,6 +117,7 @@ public:
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
     auto forOp = cast<OpName>(op);
+
     OpName otherForOp = nullptr; // where caches pops are
 
     // There is support for two push/pop removal modes, one is using immutable
@@ -244,8 +247,7 @@ public:
     // [0,..., N - 1] counter
     SmallVector<Value> inductionVariable;
 
-    bool insertedIdx = false;
-
+    SmallVector<IntOrValue> fwdNumIters;
     for (auto &info : caches) {
       Value cache = info.initOp.getResult();
 
@@ -281,7 +283,6 @@ public:
 
       // Otherwise, add a new variable to keep track.
       if (!inductionVariable.size()) {
-        insertedIdx = true;
         Value zero = rewriter.create<arith::ConstantOp>(
             forOp->getLoc(), rewriter.getIndexAttr(0));
         newOperands.push_back(zero);
@@ -302,8 +303,10 @@ public:
       }
 
       SmallVector<int64_t> newShape;
-      auto numIters = FinalClass::getDimensionBounds(rewriter, forOp);
-      for (const auto &dim : numIters) {
+      if (!fwdNumIters.size()) {
+        fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
+      }
+      for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
         } else {
@@ -324,15 +327,17 @@ public:
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
 
       SmallVector<Value> dynamicDims;
-      for (const auto &dim : numIters) {
+      for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
           dynamicDims.push_back(dim.vval);
         }
       }
 
-      for (size_t i = numIters.size(); i < newShape.size(); i++) {
+      for (size_t i = fwdNumIters.size(); i < newShape.size(); i++) {
         if (newShape[i] == mlir::ShapedType::kDynamic) {
-          return failure(); // TODO: find dynamic dims within the body.
+          return info.initOp->emitError()
+                 << "Cached type uses dynamic index, unsupported presently "
+                    "from forhandler";
         }
       }
 
@@ -450,13 +455,25 @@ public:
     SmallVector<Value> otherInductionVariable;
     SmallVector<Value> reversedIndex;
 
+    SmallVector<IntOrValue> revNumIters;
+
     for (auto &info : caches) {
       if (info.pushedValue().getParentRegion() != forOp.getRegion())
         continue;
 
       Value cache = info.initOp.getResult();
 
-      auto numIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+      // The reverse iteration count may not be known at this point, as it may
+      // be cached via a push/pop, use the fwd count in that case.
+      if (!revNumIters.size()) {
+        revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+        for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
+          if (!fwd.vval && rev.vval) {
+            rev.vval = nullptr;
+            rev.ival = fwd.ival;
+          }
+        }
+      }
 
       // First, try to get canonical vars from looking up directly
       if (!otherInductionVariable.size()) {
@@ -465,7 +482,7 @@ public:
         otherInductionVariable =
             FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
         reversedIndex = FinalClass::computeReversedIndices(
-            rewriter, otherForOp, otherInductionVariable, numIters);
+            rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
 
       // Otherwise, add a new variable to keep track.
@@ -494,12 +511,12 @@ public:
                                                         newOperands);
         rewriter.setInsertionPointToStart(otherForOp.getBody());
         reversedIndex = FinalClass::computeReversedIndices(
-            rewriter, otherForOp, otherInductionVariable, numIters);
+            rewriter, otherForOp, otherInductionVariable, revNumIters);
         rewriter.setInsertionPoint(otherForOp);
       }
 
       SmallVector<int64_t> newShape;
-      for (const auto &dim : numIters) {
+      for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
         } else {
@@ -518,7 +535,6 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
-
       enzyme::InitOp newInit = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
@@ -545,7 +561,6 @@ public:
       auto popNewValue = rewriter.create<enzyme::PopOp>(
           info.popOp->getLoc(), newType, newInit.getResult());
 
-      Block *popBody = otherForOp.getBody();
       rewriter.setInsertionPoint(info.popOp);
 
       Value popValue;
