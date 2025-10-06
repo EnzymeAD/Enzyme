@@ -425,7 +425,6 @@ struct AffineForOpEnzymeOpsRemover
     : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover,
                                      affine::AffineForOp> {
 public:
-
   // TODO: support non constant number of iteration by using unknown dimensions
   static std::optional<int64_t>
   getConstantNumberOfIterations(affine::AffineForOp forOp) {
@@ -437,18 +436,18 @@ public:
            forOp.getStepAsInt();
   }
 
-  static SmallVector<IntOrValue, 1> getDimensionBounds(OpBuilder &builder,
-                                     affine::AffineForOp forOp) {
+  static SmallVector<IntOrValue, 1>
+  getDimensionBounds(OpBuilder &builder, affine::AffineForOp forOp) {
     auto iters = getConstantNumberOfIterations(forOp);
     if (iters) {
-      return { IntOrValue(*iters) };
+      return {IntOrValue(*iters)};
     } else {
-      auto lb =
-          builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
-                                        forOp.getLowerBoundOperands());
-      auto ub =
-          builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getUpperBoundMap(),
-                                        forOp.getUpperBoundOperands());
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
+      auto ub = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getUpperBoundMap(),
+                                              forOp.getUpperBoundOperands());
 
       Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
       if (forOp.getStepAsInt() != 1) {
@@ -456,16 +455,17 @@ public:
             forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
         diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
       }
-      return { IntOrValue(diff) };
+      return {IntOrValue(diff)};
     }
   }
 
-  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder, affine::AffineForOp forOp) {
+  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
+                                                affine::AffineForOp forOp) {
     Value val = forOp.getBody()->getArgument(0);
     if (!forOp.hasConstantLowerBound() || forOp.getConstantLowerBound() != 0) {
-      auto lb =
-          builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
-                                        forOp.getLowerBoundOperands());
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
       val = builder.create<arith::SubIOp>(forOp->getLoc(), val, lb);
     }
 
@@ -474,7 +474,7 @@ public:
           forOp->getLoc(), val.getType(), forOp.getStepAsInt());
       val = builder.create<arith::DivUIOp>(forOp->getLoc(), val, step);
     }
-    return { val };
+    return {val};
   }
 
   static affine::AffineForOp
