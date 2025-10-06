@@ -29,8 +29,11 @@ module {
 // CHECK-NEXT:      %[[v4:.+]] = math.cos %[[v3]] : f32
 // CHECK-NEXT:      scf.yield %[[v4]], %[[cache]] : f32, tensor<10xf32>
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[revFor:.+]]:2 = scf.for %arg2 = %c0 to %c10 step %c1 iter_args(%arg3 = %arg1, %arg4 = %c9) -> (f32, index) {
-// CHECK-NEXT:      %[[cache:.+]] = tensor.extract %[[for]]#1[%arg4] : tensor<10xf32>
+// CHECK-NEXT:    %[[revFor:.+]] = scf.for %arg2 = %c0 to %c10 step %c1 iter_args(%arg3 = %arg1) -> (f32) {
+
+// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c9, %arg2 : index 
+
+// CHECK-NEXT:      %[[cache:.+]] = tensor.extract %[[for]]#1[%[[ridx]]] : tensor<10xf32>
 // CHECK-NEXT:      %[[v3:.+]] = arith.mulf %[[cache]], %[[cache]] : f32
 // CHECK-NEXT:      %[[v4:.+]] = math.sin %[[v3]] : f32
 // CHECK-NEXT:      %[[v5:.+]] = arith.negf %[[v4]] : f32
@@ -38,8 +41,7 @@ module {
 // CHECK-NEXT:      %[[v7:.+]] = arith.mulf %[[v6]], %extracted : f32
 // CHECK-NEXT:      %[[v8:.+]] = arith.mulf %[[v6]], %extracted : f32
 // CHECK-NEXT:      %[[v9:.+]] = arith.addf %[[v7]], %[[v8]] : f32
-// CHECK-NEXT:      %[[v10:.+]] = arith.subi %arg4, %c1 : index
-// CHECK-NEXT:      scf.yield %[[v9]], %[[v10]] : f32, index
+// CHECK-NEXT:      scf.yield %[[v9]] : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    return %[[revFor:.+]]#0 : f32
+// CHECK-NEXT:    return %[[revFor:.+]] : f32
 // CHECK-NEXT:  }

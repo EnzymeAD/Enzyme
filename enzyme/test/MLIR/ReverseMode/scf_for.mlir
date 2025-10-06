@@ -29,14 +29,16 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 // CHECK-NEXT:      scf.yield %4, %inserted : f32, tensor<?xf32>
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %2 = arith.addf %arg2, %cst_0 : f32
-// CHECK-NEXT:    %3:3 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %2, %arg5 = %cst_0, %arg6 = %arg1) -> (f32, f32, index) {
-// CHECK-NEXT:      %extracted = tensor.extract %1#1[%arg6] : tensor<?xf32>
-// CHECK-NEXT:      %4 = arith.mulf %arg4, %arg0 : f32
-// CHECK-NEXT:      %5 = arith.addf %4, %cst_0 : f32
-// CHECK-NEXT:      %6 = arith.mulf %arg4, %extracted : f32
-// CHECK-NEXT:      %7 = arith.addf %arg5, %6 : f32
-// CHECK-NEXT:      %8 = arith.subi %arg6, %c1 : index
-// CHECK-NEXT:      scf.yield %5, %7, %8 : f32, f32, index
+// CHECK-NEXT:    %3:2 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %2, %arg5 = %cst_0) -> (f32, f32) { 
+// CHECK-NEXT:      %[[nm1:.+]] = arith.subi %arg1, %c1 : index 
+// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %[[nm1]], %arg3 : index 
+
+// CHECK-NEXT:      %extracted = tensor.extract %1#1[%[[ridx]]] : tensor<?xf32>
+// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %arg0 : f32
+// CHECK-NEXT:      %[[a5:.+]] = arith.addf %[[a4]], %cst_0 : f32
+// CHECK-NEXT:      %[[a6:.+]] = arith.mulf %arg4, %extracted : f32
+// CHECK-NEXT:      %[[a7:.+]] = arith.addf %arg5, %[[a6]] : f32
+// CHECK-NEXT:      scf.yield %[[a5]], %[[a7]] : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return %3#1 : f32
 // CHECK-NEXT:  }

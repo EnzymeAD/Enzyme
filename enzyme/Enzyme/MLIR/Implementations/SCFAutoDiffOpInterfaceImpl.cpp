@@ -60,17 +60,35 @@ public:
     return (ubI - lbI) / stepI;
   }
 
-  static Value getNumberOfIterations(OpBuilder &builder, scf::ForOp forOp) {
-    Value lb = forOp.getLowerBound(), ub = forOp.getUpperBound(),
-          step = forOp.getStep();
-    Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
-    Value nSteps = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
-    return nSteps;
+  static SmallVector<IntOrValue, 1> getDimensionBounds(OpBuilder &builder,
+                                                       scf::ForOp forOp) {
+    auto iters = getConstantNumberOfIterations(forOp);
+    if (iters) {
+      return {IntOrValue(*iters)};
+    } else {
+      Value lb = forOp.getLowerBound(), ub = forOp.getUpperBound(),
+            step = forOp.getStep();
+      Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+      Value nSteps =
+          builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+      return {IntOrValue(nSteps)};
+    }
   }
 
-  static bool isCanonicalLoop(scf::ForOp forOp) {
-    return matchPattern(forOp.getLowerBound(), m_Zero()) &&
-           matchPattern(forOp.getStep(), m_One());
+  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
+                                                scf::ForOp forOp) {
+
+    Value val = forOp.getBody()->getArgument(0);
+    if (!matchPattern(forOp.getLowerBound(), m_Zero())) {
+      val = builder.create<arith::SubIOp>(forOp->getLoc(), val,
+                                          forOp.getLowerBound());
+    }
+
+    if (!matchPattern(forOp.getStep(), m_One())) {
+      val =
+          builder.create<arith::DivUIOp>(forOp->getLoc(), val, forOp.getStep());
+    }
+    return {val};
   }
 
   static scf::ForOp replaceWithNewOperands(PatternRewriter &rewriter,
