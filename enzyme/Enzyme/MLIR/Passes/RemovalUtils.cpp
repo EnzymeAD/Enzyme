@@ -154,7 +154,7 @@ static int64_t computeRankOfType(Value val) {
 // across different loops.
 void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                SmallVector<CacheInfo> &caches,
-                               PatternRewriter &rewriter) {
+                               PatternRewriter &rewriter, const IRMapping &fwdrevmap) {
   if (caches.empty())
     return;
 
@@ -174,6 +174,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // nodes that cannot be recomputed
   SetVector<Value> roots;
 
+  // nodes that cannot be recomputed
+  SetVector<Value> outsideroots;
+
   // Walk Backward
   //
   // Roots (sources) are either block arguments or values which are defined
@@ -181,8 +184,13 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
 
+    // This ia block argument (or other value) we have the reverse value for already
+    if (fwdrevmap.contains(todo)) continue;
+
     if (todo.getParentBlock() != forward) {
       roots.insert(todo);
+      continue;
+      outsideroots.insert(todo);
       continue;
     }
 
@@ -413,7 +421,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   });
 
   SmallVector<CacheInfo> newCacheInfos;
-  IRMapping mapping;
+  IRMapping mapping = fwdrevmap;
 
   // For all new caches, materialize the path either by moving ops from
   // forward to reverse or reverse to forward.
@@ -462,9 +470,41 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
 
-    if (Required.count(todo)) {
+    if (mapping.contains(todo)) {
       rewriter.replaceAllUsesWith(todo, mapping.lookup(todo));
       continue;
+    }
+
+    assert(!Required.count(todo));
+
+    if (outsideroots.contains(todo)) {
+	    enzyme::InitOp initOp = ({
+	      OpBuilder::InsertionGuard guard(rewriter);
+	      rewriter.setInsertionPoint(entry);
+	      rewriter.create<enzyme::InitOp>(
+		  todo.getLoc(),
+		  enzyme::CacheType::get(todo.getContext(), todo.getType()));
+	    });
+	    enzyme::PushOp pushOp;
+	    enzyme::PopOp popOp;
+
+	    OpBuilder::InsertionGuard guard(rewriter);
+	    rewriter.setInsertionPoint(forward->getParentOp());
+
+	    pushOp = rewriter.create<enzyme::PushOp>(todo.getLoc(),
+						     initOp.getResult(), todo);
+
+	    rewriter.setInsertionPoint(reverse->getParentOp());
+	    popOp = rewriter.create<enzyme::PopOp>(
+		todo.getLoc(), todo.getType(), initOp.getResult());
+
+	    mapping.map(todo, popOp.getResult());
+
+	    CacheInfo info;
+	    info.initOp = initOp;
+	    info.pushOp = pushOp;
+	    info.popOp = popOp;
+	    //newCacheInfos.push_back(info);
     }
 
     auto found = revGraph.find(Node(todo));

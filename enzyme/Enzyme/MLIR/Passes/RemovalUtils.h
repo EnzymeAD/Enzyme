@@ -57,7 +57,7 @@ struct CacheInfo {
 // Tries to limit the amount of values cache from block `forward` to `reverse`
 // using a mincut algorithm and heuristics based on the size of values.
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
-                 PatternRewriter &rewriter);
+                 PatternRewriter &rewriter, const IRMapping &fwdrevmap);
 
 enum class LoopCacheType { TENSOR, MEMREF };
 
@@ -84,6 +84,11 @@ public:
     IntOrValue(mlir::Value vval) : ival(0), vval(vval) {}
     IntOrValue(size_t ival) : ival(ival), vval(nullptr) {}
   };
+
+  // TODO create mapping between fwd/rev induction vars. Must correspond with compute reversed indices
+  static IRMapping createArgumentMap(PatternRewriter &rewriter, OpName forOp, OpName otherForOp) {
+    return {};
+  }
 
   static llvm::SmallVector<mlir::Value>
   computeReversedIndices(PatternRewriter &rewriter, OpName op,
@@ -167,7 +172,51 @@ public:
       rewriter.eraseOp(info.initOp);
     }
 
-    SmallVector<CacheInfo> caches =
+    SmallVector<CacheInfo> caches0 =
+        llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
+    
+    SmallVector<CacheInfo> caches = caches0;
+
+    IRMapping fwdrevmap = FinalClass::createArgumentMap(rewriter, forOp, otherForOp);
+/*
+    for (auto &info : caches0) {
+
+      // push does not depend on a value inside the loop, we can hoist the
+      // push/pop before the for loops.
+      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
+        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
+                                                       info.pushedValue());
+        rewriter.eraseOp(info.pushOp);
+        info.pushOp = newPush;
+
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+          auto popVal = info.popOp.getResult();
+          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
+                                                       popVal.getType(), cache);
+          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+          rewriter.eraseOp(info.popOp);
+          info.popOp = newPop;
+        }
+
+        continue;
+      }
+      
+      // push does not depend on a value inside the loop, we can hoist the
+      // push/pop before the for loops.
+      if (fwdrevmap.contains(info.pushedValue()) {
+        rewriter.eraseOp(info.pushOp);
+	rewriter.replaceOp(info.popOp, fewdrevmap.lookup(info.pushedValue));
+	rewriter.eraseOp(info.initOp);
+	continue;
+      }
+    
+      caches.push_back(cache);
+    }
+    */
+
         llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
 
     // nothing to do
@@ -237,7 +286,7 @@ public:
 
     if (hasMinCut(forOp)) {
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
-                                rewriter);
+                                rewriter, fwdrevmap);
     }
 
     SmallVector<Value> newPushValues;
@@ -249,30 +298,8 @@ public:
 
     SmallVector<IntOrValue> fwdNumIters;
     for (auto &info : caches) {
-      Value cache = info.initOp.getResult();
 
-      // push does not depend on a value inside the loop, we can hoist the
-      // push/pop before the for loops.
-      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
-        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
-                                                       info.pushedValue());
-        rewriter.eraseOp(info.pushOp);
-        info.pushOp = newPush;
-
-        {
-          OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPoint(info.popOp->getParentOp());
-
-          auto popVal = info.popOp.getResult();
-          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
-                                                       popVal.getType(), cache);
-          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
-          rewriter.eraseOp(info.popOp);
-          info.popOp = newPop;
-        }
-
-        continue;
-      }
+      assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       // First, try to get canonical vars from looking up directly
       if (!inductionVariable.size()) {
@@ -458,8 +485,7 @@ public:
     SmallVector<IntOrValue> revNumIters;
 
     for (auto &info : caches) {
-      if (info.pushedValue().getParentRegion() != forOp.getRegion())
-        continue;
+      assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       Value cache = info.initOp.getResult();
 
