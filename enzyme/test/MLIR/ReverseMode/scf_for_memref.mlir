@@ -39,18 +39,24 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 // CHECK-NEXT:      }
 // CHECK-NEXT:      scf.yield %[[v2]] : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[v1:.+]]:3 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %arg2, %arg5 = %cst_0, %arg6 = %arg1) -> (f32, f32, index) {
-// CHECK-NEXT:      %subview = memref.subview %alloc[%arg6, 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:      %[[v2:.+]]:3 = scf.for %arg7 = %c0 to %c4 step %c1 iter_args(%arg8 = %arg4, %arg9 = %arg5, %arg10 = %c3) -> (f32, f32, index) {
-// CHECK-NEXT:        %[[v4:.+]] = memref.load %subview[%arg10] : memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %arg8, %arg0 : f32
-// CHECK-NEXT:        %[[v6:.+]] = arith.mulf %arg8, %[[v4]] : f32
-// CHECK-NEXT:        %[[v7:.+]] = arith.addf %arg9, %[[v6]] : f32
-// CHECK-NEXT:        %[[v8:.+]] = arith.subi %arg10, %c1 : index
-// CHECK-NEXT:        scf.yield %[[v5]], %[[v7]], %[[v8]] : f32, f32, index
+// CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %arg2, %arg5 = %cst_0) -> (f32, f32) {
+
+// CHECK-NEXT:      %[[nm1:.+]] = arith.subi %arg1, %c1 : index 
+// CHECK-NEXT:      %[[idx1:.+]] = arith.subi %[[nm1]], %arg3 : index 
+
+
+// CHECK-NEXT:      %subview = memref.subview %alloc[%[[idx1]], 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %c4 step %c1 iter_args(%[[arg8:.+]] = %arg4, %[[arg9:.+]] = %arg5) -> (f32, f32, index) {
+
+// CHECK-NEXT:        %[[idx2:.+]] = arith.subi %c3, %[[arg7]] : index 
+
+// CHECK-NEXT:        %[[v4:.+]] = memref.load %subview[%[[idx2]]] : memref<4xf32, strided<[1], offset: ?>>
+// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %[[arg8]], %arg0 : f32
+// CHECK-NEXT:        %[[v6:.+]] = arith.mulf %[[arg8]], %[[v4]] : f32
+// CHECK-NEXT:        %[[v7:.+]] = arith.addf %[[arg9]], %[[v6]] : f32
+// CHECK-NEXT:        scf.yield %[[v5]], %[[v7]] : f32, f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      %[[v3:.+]] = arith.subi %arg6, %c1 : index
-// CHECK-NEXT:      scf.yield %[[v2]]#0, %[[v2]]#1, %[[v3]] : f32, f32, index
+// CHECK-NEXT:      scf.yield %[[v2]]#0, %[[v2]]#1 : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?x4xf32>
 // CHECK-NEXT:    return %[[v1]]#1 : f32

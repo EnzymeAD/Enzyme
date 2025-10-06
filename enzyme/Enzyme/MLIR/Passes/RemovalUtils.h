@@ -76,6 +76,39 @@ struct ForLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
 private:
 public:
+  struct IntOrValue {
+    size_t ival;
+    mlir::Value vval;
+    IntOrValue(mlir::Value vval) : ival(0), vval(vval) {}
+    IntOrValue(size_t ival) : ival(ival), vval(nullptr) {}
+  };
+
+  static llvm::SmallVector<mlir::Value> computeReversedIndices(PatternRewriter &rewriter, OpName op, llvm::ArrayRef<mlir::Value> otherInductionVariable, llvm::ArrayRef<IntOrValue> bounds) {
+    llvm::SmallVector<mlir::Value> results;
+    for (auto &&[bound, iv] : llvm::zip_equal(bounds, otherInductionVariable)) {
+      Value boundv;
+      if (bound.vval) {
+        Value c1;
+        if (iv.getType().isIndex())
+          c1 = rewriter.create<arith::ConstantIndexOp>(op->getLoc(), 1);
+        else
+          c1 = rewriter.create<arith::ConstantIntOp>(op->getLoc(), iv.getType(), 1);
+        boundv = rewriter.create<arith::SubIOp>(op->getLoc(), bound.vval, c1);
+      } else {
+        if (iv.getType().isIndex())
+          boundv = rewriter.create<arith::ConstantIndexOp>(op->getLoc(), bound.ival - 1);
+        else
+          boundv = rewriter.create<arith::ConstantIntOp>(op->getLoc(), iv.getType(), bound.ival - 1);
+
+      }
+      Value result = rewriter.create<arith::SubIOp>(op->getLoc(),
+        boundv, iv
+        );
+      results.push_back(result);
+    }
+    return results;
+  }
+
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
     auto forOp = cast<OpName>(op);
@@ -195,14 +228,7 @@ public:
         term->insertOperands(term->getNumOperands(), ValueRange(val));
       }
     }
-
-    auto numIters = FinalClass::getConstantNumberOfIterations(forOp);
-    Value inductionVariable; // [0,..., N - 1] counter
-
-    if (FinalClass::isCanonicalLoop(forOp)) {
-      inductionVariable = body->getArgument(0);
-    }
-
+    
     if (hasMinCut(forOp)) {
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter);
@@ -211,6 +237,11 @@ public:
     SmallVector<Value> newPushValues;
 
     unsigned numNewValuePushes = 0;
+
+    // [0,..., N - 1] counter
+    SmallVector<Value> inductionVariable;
+
+    bool insertedIdx = false;
 
     for (auto &info : caches) {
       Value cache = info.initOp.getResult();
@@ -238,12 +269,21 @@ public:
         continue;
       }
 
-      if (!inductionVariable) {
+      // First, try to get canonical vars from looking up directly
+      if (!inductionVariable.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(forOp.getBody());
+        inductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, forOp);
+      }
+
+      // Otherwise, add a new variable to keep track.
+      if (!inductionVariable.size()) {
+        insertedIdx = true;
         Value zero = rewriter.create<arith::ConstantOp>(
             forOp->getLoc(), rewriter.getIndexAttr(0));
         newOperands.push_back(zero);
 
-        inductionVariable = body->addArgument(zero.getType(), forOp->getLoc());
+        inductionVariable = { body->addArgument(zero.getType(), forOp->getLoc()) };
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(term);
@@ -251,14 +291,21 @@ public:
           auto one = rewriter.create<arith::ConstantOp>(
               forOp->getLoc(), rewriter.getIndexAttr(1));
           auto newInductionVar = rewriter.create<arith::AddIOp>(
-              forOp->getLoc(), inductionVariable, one);
+              forOp->getLoc(), inductionVariable[0], one);
           term->insertOperands(term->getNumOperands(),
                                ValueRange(newInductionVar));
         }
       }
 
       SmallVector<int64_t> newShape;
-      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+      auto numIters = FinalClass::getDimensionBounds(rewriter, forOp);
+      for (const auto &dim : numIters) {
+        if (dim.vval) {
+          newShape.push_back(mlir::ShapedType::kDynamic);
+        } else {
+          newShape.push_back(dim.ival);
+        }
+      }
 
       auto ET = info.cachedType();
       ShapedType NT;
@@ -273,14 +320,15 @@ public:
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
 
       SmallVector<Value> dynamicDims;
+      for (const auto &dim : numIters) {
+        if (dim.vval) {
+          dynamicDims.push_back(dim.vval);
+        }
+      }
 
-      for (auto it : llvm::enumerate(newType.getShape())) {
-        if (ShapedType::isDynamic(it.value())) {
-          if (it.index() == 0)
-            dynamicDims.push_back(
-                FinalClass::getNumberOfIterations(rewriter, forOp));
-          else
-            return failure(); // TODO: find dynamic dims within the body.
+      for (size_t i=numIters.size(); i<newShape.size(); i++) {
+        if (newShape[i] == mlir::ShapedType::kDynamic) {          
+          return failure(); // TODO: find dynamic dims within the body.
         }
       }
 
@@ -312,7 +360,7 @@ public:
 
             newCacheValue = rewriter.create<tensor::InsertSliceOp>(
                 info.pushOp->getLoc(), info.pushOp.getValue(), cacheValue,
-                ValueRange(inductionVariable), ValueRange(), ValueRange(),
+                inductionVariable, ValueRange(), ValueRange(),
                 rewriter.getDenseI64ArrayAttr(offsets),
                 rewriter.getDenseI64ArrayAttr(sizes),
                 rewriter.getDenseI64ArrayAttr(strides));
@@ -356,7 +404,7 @@ public:
             rewriter.setInsertionPoint(memref.getDefiningOp());
             rewriter.replaceOpWithNewOp<memref::SubViewOp>(
                 memref.getDefiningOp(), RT, initValue,
-                /*offsets*/ ValueRange(inductionVariable),
+                /*offsets*/ inductionVariable,
                 /*sizes*/ ValueRange(),
                 /*strides*/ ValueRange(),
                 /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
@@ -366,7 +414,7 @@ public:
           } else {
             rewriter.create<memref::StoreOp>(info.pushOp->getLoc(),
                                              info.pushOp.getValue(), initValue,
-                                             ValueRange(inductionVariable));
+                                             inductionVariable);
           }
         }
       }
@@ -393,55 +441,62 @@ public:
       ++resultIdx;
     }
 
-    if (inductionVariable && !caches.empty()) {
-      if (isa<BlockArgument>(inductionVariable) &&
-          cast<BlockArgument>(inductionVariable).getArgNumber() != 0)
-        resultIdx++;
-
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPoint(otherForOp);
-      SmallVector<Value> operands =
-          llvm::to_vector(FinalClass::getInits(otherForOp));
-      operands.push_back(
-          numIters.has_value()
-              ? rewriter.create<arith::ConstantOp>(
-                    otherForOp->getLoc(),
-                    rewriter.getIndexAttr(numIters.value() - 1))
-              : FinalClass::getNumberOfIterations(rewriter, forOp));
-
-      Block *otherBody = otherForOp.getBody();
-      Value otherInductionVariable =
-          otherBody->addArgument(rewriter.getIndexType(), otherForOp->getLoc());
-      auto otherTerm = otherBody->getTerminator();
-
-      rewriter.setInsertionPoint(otherTerm);
-
-      otherInductionVariable =
-          rewriter
-              .create<arith::SubIOp>(
-                  otherForOp->getLoc(), otherInductionVariable,
-                  rewriter
-                      .create<arith::ConstantOp>(otherForOp->getLoc(),
-                                                 rewriter.getIndexAttr(1))
-                      .getResult())
-              .getResult();
-      otherTerm->insertOperands(otherTerm->getNumOperands(),
-                                ValueRange(otherInductionVariable));
-
-      rewriter.setInsertionPoint(otherForOp);
-      otherForOp =
-          FinalClass::replaceWithNewOperands(rewriter, otherForOp, operands);
-    }
-
     int pushedValueIdx = 0;
+    
+    SmallVector<Value> otherInductionVariable;
+    SmallVector<Value> reversedIndex;
+
     for (auto &info : caches) {
       if (info.pushedValue().getParentRegion() != forOp.getRegion())
         continue;
 
       Value cache = info.initOp.getResult();
 
-      SmallVector<int64_t> newShape;
-      newShape.push_back(numIters.value_or(mlir::ShapedType::kDynamic));
+      auto numIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+
+      // First, try to get canonical vars from looking up directly
+      if (!otherInductionVariable.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(otherForOp.getBody());
+        otherInductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
+        reversedIndex = FinalClass::computeReversedIndices(rewriter, otherForOp, otherInductionVariable, numIters);
+      }
+
+      // Otherwise, add a new variable to keep track.
+      if (!otherInductionVariable.size()) {
+        Value zero = rewriter.create<arith::ConstantOp>(
+            otherForOp->getLoc(), rewriter.getIndexAttr(0));
+        SmallVector<Value> newOperands = llvm::to_vector(FinalClass::getInits(otherForOp));
+        newOperands.push_back(zero);
+
+        otherInductionVariable = { body->addArgument(zero.getType(), otherForOp->getLoc()) };
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(term);
+
+          auto one = rewriter.create<arith::ConstantOp>(
+              forOp->getLoc(), rewriter.getIndexAttr(1));
+          auto newInductionVar = rewriter.create<arith::AddIOp>(
+              forOp->getLoc(), otherInductionVariable[0], one);
+          term->insertOperands(term->getNumOperands(),
+                               ValueRange(newInductionVar));
+        }
+        rewriter.setInsertionPoint(otherForOp);
+        otherForOp =
+            FinalClass::replaceWithNewOperands(rewriter, otherForOp, newOperands);
+        rewriter.setInsertionPointToStart(otherForOp.getBody());
+        reversedIndex = FinalClass::computeReversedIndices(rewriter, otherForOp, otherInductionVariable, numIters);
+        rewriter.setInsertionPoint(otherForOp);
+      }
+
+      SmallVector<int64_t> newShape;      
+      for (const auto &dim : numIters) {
+        if (dim.vval) {
+          newShape.push_back(mlir::ShapedType::kDynamic);
+        } else {
+          newShape.push_back(dim.ival);
+        }
+      }
 
       auto ET = info.cachedType();
       ShapedType NT;
@@ -484,9 +539,6 @@ public:
       Block *popBody = otherForOp.getBody();
       rewriter.setInsertionPoint(info.popOp);
 
-      Value newInductionVariable =
-          popBody->getArgument(popBody->getNumArguments() - 1);
-
       Value popValue;
       if (cacheType == LoopCacheType::TENSOR) {
         if (auto TT = dyn_cast<TensorType>(info.cachedType())) {
@@ -505,7 +557,7 @@ public:
               rewriter
                   .create<tensor::ExtractSliceOp>(
                       info.popOp->getLoc(), TT, popNewValue,
-                      ValueRange(newInductionVariable), ValueRange(),
+                      reversedIndex, ValueRange(),
                       ValueRange(), rewriter.getDenseI64ArrayAttr(offsets),
                       rewriter.getDenseI64ArrayAttr(sizes),
                       rewriter.getDenseI64ArrayAttr(strides))
@@ -514,7 +566,7 @@ public:
           popValue =
               rewriter
                   .create<tensor::ExtractOp>(info.popOp->getLoc(), popNewValue,
-                                             newInductionVariable)
+                                             reversedIndex)
                   .getResult();
         }
       } else if (cacheType == LoopCacheType::MEMREF) {
@@ -538,7 +590,7 @@ public:
 
           popValue = rewriter.create<memref::SubViewOp>(
               info.popOp->getLoc(), RT, popNewValue,
-              /*offsets*/ ValueRange(newInductionVariable),
+              /*offsets*/ reversedIndex,
               /*sizes*/ ValueRange(),
               /*strides*/ ValueRange(),
               /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
@@ -551,7 +603,7 @@ public:
           }
         } else {
           popValue = rewriter.create<memref::LoadOp>(
-              info.popOp->getLoc(), popNewValue, newInductionVariable);
+              info.popOp->getLoc(), popNewValue, reversedIndex);
         }
 
         // this memref was allocated on push, dealloc it
