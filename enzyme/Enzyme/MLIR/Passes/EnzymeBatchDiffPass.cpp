@@ -223,15 +223,37 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           // Add derivative effects
           // read(primal) -> read(derivative)
           // write(primal) -> write(derivative)
-          for (auto dop : allDiffs) {
-            auto act_val =
-                cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
-            if (act_val == Activity::enzyme_dup ||
-                act_val == Activity::enzyme_dupnoneed) {
-              // TODO: fix derivative access(it is not arg_pos + 1)
-              Value dVal = dop.getInputs()[arg_pos + 1];
-              callerEffects.emplace_back(oputils::getEffectOfVal(
-                  dVal, eff.getEffect(), eff.getResource()));
+
+          // find position of dup arg for primal
+          auto d_pos = 0;
+          bool has_dupentry = false;
+          for (auto act : key.inActivity) {
+            if ((arg_pos == d_pos) && (act == Activity::enzyme_dup ||
+                                       act == Activity::enzyme_dupnoneed)) {
+              has_dupentry = true;
+              ++d_pos;
+              break;
+            }
+            // update position
+            ++d_pos;
+            if (act == Activity::enzyme_dup ||
+                act == Activity::enzyme_dupnoneed) {
+              ++d_pos;
+            }
+          }
+
+          if (has_dupentry) {
+            for (auto dop : allDiffs) {
+              auto act_val =
+                  cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
+              if (act_val == Activity::enzyme_dup ||
+                  act_val == Activity::enzyme_dupnoneed) {
+                // TODO: fix derivative access(it is not arg_pos + 1)
+
+                Value dVal = dop.getInputs()[d_pos];
+                callerEffects.emplace_back(oputils::getEffectOfVal(
+                    dVal, eff.getEffect(), eff.getResource()));
+              }
             }
           }
         }
@@ -592,17 +614,39 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           // Add derivative effects(conservative)
           // read(primal) -> read+write(derivative)
           // write(primal) -> write+read(derivative)
-          for (auto dop : allDiffs) {
-            auto act_val =
-                cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
-            if (act_val == Activity::enzyme_dup ||
-                act_val == Activity::enzyme_dupnoneed) {
-              // TODO: fix derivative access(it is not arg_pos + 1)
-              Value dVal = dop.getInputs()[arg_pos + 1];
-              callerEffects.emplace_back(oputils::getEffectOfVal(
-                  dVal, MemoryEffects::Write::get(), eff.getResource()));
-              callerEffects.emplace_back(oputils::getEffectOfVal(
-                  dVal, MemoryEffects::Read::get(), eff.getResource()));
+
+          // find position of dup arg for primal
+          auto d_pos = 0;
+          bool has_dupentry = false;
+          for (auto act : key.inActivity) {
+            if ((arg_pos == d_pos) && (act == Activity::enzyme_dup ||
+                                       act == Activity::enzyme_dupnoneed)) {
+              has_dupentry = true;
+              ++d_pos;
+              break;
+            }
+            // update position
+            ++d_pos;
+            if (act == Activity::enzyme_dup ||
+                act == Activity::enzyme_dupnoneed) {
+              ++d_pos;
+            }
+          }
+
+          if (has_dupentry) {
+            for (auto dop : allDiffs) {
+              auto act_val =
+                  cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
+              if (act_val == Activity::enzyme_dup ||
+                  act_val == Activity::enzyme_dupnoneed) {
+                // TODO: fix derivative access(it is not arg_pos + 1)
+
+                Value dVal = dop.getInputs()[d_pos];
+                callerEffects.emplace_back(oputils::getEffectOfVal(
+                    dVal, MemoryEffects::Write::get(), eff.getResource()));
+                callerEffects.emplace_back(oputils::getEffectOfVal(
+                    dVal, MemoryEffects::Read::get(), eff.getResource()));
+              }
             }
           }
         }
