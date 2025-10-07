@@ -236,7 +236,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
                cur = cur->getNextNode()) {
-            auto curOpEffects = mlir::getEffectsRecursively(cur);
+            auto curOpEffects = oputils::collectOpEffects(cur);
             if (curOpEffects.has_value()) {
               betweenEffects.clear();
               betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
@@ -628,7 +628,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
           for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
                cur = cur->getNextNode()) {
-            auto curOpEffects = mlir::getEffectsRecursively(cur);
+            auto curOpEffects = oputils::collectOpEffects(cur);
             if (curOpEffects.has_value()) {
               betweenEffects.clear();
               betweenEffects.append(curOpEffects->begin(), curOpEffects->end());

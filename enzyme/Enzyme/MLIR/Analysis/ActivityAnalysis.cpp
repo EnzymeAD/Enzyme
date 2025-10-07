@@ -668,7 +668,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   // doesn't write to any memory
   bool noActiveWrite = false;
 
-  if (oputils::isReadOnly(I))
+  if (isReadOnly(I))
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallOpInterface>(I)) {
     // if (AA.onlyReadsMemory(CI)) {
@@ -3381,7 +3381,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
         continue;
       }
 
-      if (oputils::isReadOnly(I)) {
+      if (isReadOnly(I)) {
         // if (TR.query(I)[{-1}].isIntegral()) {
         //  continue;
         //}

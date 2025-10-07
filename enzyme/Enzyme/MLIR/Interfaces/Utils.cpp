@@ -15,6 +15,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include <optional>
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -210,8 +211,7 @@ bool isReadOnly(Operation *op) {
   // If the op has memory effects, try to characterize them to see if the op
   // is trivially dead here.
   if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-    // Check to see if this op either has no effects, or only allocates/read
-    // memory.
+    // Check to see if this op either has no effects, or only reads from memory.
     SmallVector<MemoryEffects::EffectInstance, 1> effects;
     effectInterface.getEffects(effects);
     if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
@@ -222,8 +222,7 @@ bool isReadOnly(Operation *op) {
   }
 
   bool isRecursiveContainer =
-      op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
-      isa<FunctionOpInterface>(op);
+      op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
   if (isRecursiveContainer) {
     for (Region &region : op->getRegions()) {
       for (auto &block : region) {
@@ -237,12 +236,115 @@ bool isReadOnly(Operation *op) {
   return true;
 }
 
+std::optional<SmallVector<MemoryEffects::EffectInstance>>
+collectOpEffects(Operation *rootOp) {
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  SmallVector<Operation *> effectingOps(1, rootOp);
+  while (!effectingOps.empty()) {
+    Operation *op = effectingOps.pop_back_val();
+    bool isRecursiveContainer =
+        op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+    if (isRecursiveContainer) {
+      for (Region &region : op->getRegions()) {
+        for (Block &block : region) {
+          for (Operation &nestedOp : block) {
+            effectingOps.push_back(&nestedOp);
+          }
+        }
+      }
+    }
+
+    if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+      effectInterface.getEffects(effects);
+    } else if (!isRecursiveContainer) {
+      // Handle specific operations which are not recursive containers, but
+      // still may have memory effects(eg. autodiff calls, llvm calls to libc
+      // functions). If it's none of these, then the operation may not have any
+      // memory effects
+      if (auto cop = dyn_cast<LLVM::CallOp>(op)) {
+        if (auto callee = cop.getCallee()) {
+          if (*callee == "scanf" || *callee == "__isoc99_scanf") {
+            // Global read
+            effects.emplace_back(
+                MemoryEffects::Effect::get<MemoryEffects::Read>());
+
+            bool first = true;
+            for (auto &arg : cop.getArgOperandsMutable()) {
+              if (first)
+                effects.emplace_back(MemoryEffects::Read::get(), &arg);
+              else
+                effects.emplace_back(MemoryEffects::Write::get(), &arg,
+                                     SideEffects::DefaultResource::get());
+              first = false;
+            }
+          }
+          if (*callee == "fscanf" || *callee == "__isoc99_fscanf") {
+            // Global read
+            effects.emplace_back(
+                MemoryEffects::Effect::get<MemoryEffects::Read>());
+
+            for (auto &&[idx, arg] :
+                 llvm::enumerate(cop.getArgOperandsMutable())) {
+              if (idx == 0) {
+                effects.emplace_back(MemoryEffects::Read::get(), &arg,
+                                     SideEffects::DefaultResource::get());
+                effects.emplace_back(MemoryEffects::Write::get(), &arg,
+                                     SideEffects::DefaultResource::get());
+              } else if (idx == 1) {
+                effects.emplace_back(MemoryEffects::Read::get(), &arg,
+                                     SideEffects::DefaultResource::get());
+              } else
+                effects.emplace_back(MemoryEffects::Write::get(), &arg,
+                                     SideEffects::DefaultResource::get());
+            }
+          }
+          if (*callee == "printf") {
+            // Global read
+            effects.emplace_back(
+                MemoryEffects::Effect::get<MemoryEffects::Write>());
+            for (auto &arg : cop.getArgOperandsMutable()) {
+              effects.emplace_back(MemoryEffects::Read::get(), &arg,
+                                   SideEffects::DefaultResource::get());
+            }
+          }
+          if (*callee == "free") {
+            for (auto &arg : cop.getArgOperandsMutable()) {
+              effects.emplace_back(MemoryEffects::Free::get(), &arg,
+                                   SideEffects::DefaultResource::get());
+            }
+          }
+          if (*callee == "strlen") {
+            for (auto &arg : cop.getArgOperandsMutable()) {
+              effects.emplace_back(MemoryEffects::Read::get(), &arg,
+                                   SideEffects::DefaultResource::get());
+            }
+          }
+        }
+      } else if (auto dop = dyn_cast<AutoDiffOp>(op)) {
+        // TODO: handle inter-procedural AutoDiffOp effects. Just skip for now.
+      } else if (auto dop = dyn_cast<ForwardDiffOp>(op)) {
+        // TODO: handle inter-procedural ForwardDiffOp effects. Just skip for
+        // now.
+      } else if (auto dop = dyn_cast<AutoDiffRegionOp>(op)) {
+        // TODO: handle intra-procedural AutoDiffRegionOp effects. Just skip for
+        // now.
+      } else {
+        // The operation does not have a memory effect interface, and we cannot
+        // obtain any result(consistent with the definition of
+        // `mlir::getEffectsRecursively`)
+        return std::nullopt;
+      }
+    }
+  }
+  return effects;
+}
+
 SmallVector<MemoryEffects::EffectInstance>
 collectFnEffects(FunctionOpInterface fnOp) {
   SmallVector<MemoryEffects::EffectInstance> innerEffects;
   for (auto &blk : fnOp.getBlocks()) {
     for (auto &op : blk) {
-      auto opEffects = mlir::getEffectsRecursively(&op);
+      auto opEffects = collectOpEffects(&op);
       if (opEffects.has_value()) {
         innerEffects.append(opEffects->begin(), opEffects->end());
       }
