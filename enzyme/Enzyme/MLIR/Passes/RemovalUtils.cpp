@@ -150,9 +150,6 @@ static Graph filterGraph(const Graph &Orig, const SetVector<Value> &Roots,
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "inverted graph: \n";);
-  LLVM_DEBUG(dump(inverted));
-
   std::deque<Node> worklist;
   for (auto snk : Required) {
     worklist.emplace_back(snk);
@@ -421,9 +418,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   // Augment the flow while there is a path from source to sink
   while (1) {
-    LLVM_DEBUG(llvm::dbgs() << "cur graph: \n";);
-    LLVM_DEBUG(dump(G));
-
     DenseMap<Node, Node> parent;
     bfs(G, roots, parent);
     Node end;
@@ -564,11 +558,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     });
 
     SetVector<Value> reverseCaches;
-    LLVM_DEBUG(llvm::dbgs() << "pre nc\n");
-    LLVM_DEBUG(
-        findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-            ->dump());
-    assert(rewriter.getInsertionPoint()->getBlock() == reverse);
     for (Value newCache : newCaches) {
       if (newCache.getParentBlock() != forward) {
         reverseCaches.insert(newCache);
@@ -603,20 +592,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       info.popOp = popOp;
       newCacheInfos.push_back(info);
     }
-    LLVM_DEBUG(llvm::dbgs() << "post nc\n");
-    LLVM_DEBUG(
-        findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-            ->dump());
 
     if (reverseCaches.size()) {
       Graph fwdGraph = filterGraph(Orig, roots, newCaches);
-      LLVM_DEBUG(llvm::dbgs() << "fwdGraph:\n");
-      LLVM_DEBUG(dump(fwdGraph));
-
-      LLVM_DEBUG(llvm::dbgs() << "pre rev del\n");
-      LLVM_DEBUG(
-          findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-              ->dump());
 
       IRMapping fwdmap;
       for (auto &info : caches) {
@@ -730,14 +708,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     rewriter.clone(op, mapping);
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "post min/cut pre rm\n");
-  LLVM_DEBUG(
-      findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-          ->dump());
-
   // Remove old caches
   for (auto &info : caches) {
-    LLVM_DEBUG(llvm::dbgs() << "removing : " << info.initOp << "\n");
     if (mapping.contains(info.pushedValue())) {
       rewriter.replaceOp(info.popOp, mapping.lookup(info.pushedValue()));
     } else {
