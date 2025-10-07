@@ -59,54 +59,18 @@ Type getTensorizedType(Value val, int64_t width) {
 Value getTensorizedValue(OpBuilder &builder, Location &loc,
                          SmallVector<Value> &argList) {
   auto argTy = argList.front().getType();
-  auto T = dyn_cast<TensorType>(argTy);
-  mlir::Value out;
-  if (!T) {
-    // use tensor.from_elements
-    out = builder.create<tensor::FromElementsOp>(loc, argList);
-  } else {
-    // use tensor.concat on dim 0
-    out = builder.create<tensor::ConcatOp>(loc, /*dim*/ 0, argList);
-  }
+  int64_t width = argList.size();
+  Type out_type = getTensorizedType(argList.front(), width);
+  mlir::Value out =
+      builder.create<enzyme::ConcatenateOp>(loc, out_type, argList);
   return out;
 }
 
 Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
                         Value &val, int64_t index) {
   // Extract the original output from the tensorized output at the given index.
-  auto T = dyn_cast<TensorType>(argTy);
-  Value out;
-  if (!T) {
-    Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
-    out = builder.create<tensor::ExtractOp>(loc, val, indexOp);
-  } else {
-    auto valRTy = cast<RankedTensorType>(val.getType());
-    SmallVector<OpFoldResult> offsets, sizes, strides;
-
-    // Offsets: [index, 0, 0, ...]
-    offsets.push_back(builder.getI64IntegerAttr(index));
-    for (auto i = 1; i < valRTy.getRank(); ++i) {
-      offsets.push_back(builder.getI64IntegerAttr(0));
-    }
-
-    // Sizes: [1, original_dim1, original_dim2, ...]
-    sizes.push_back(builder.getI64IntegerAttr(1));
-    for (auto dim : cast<RankedTensorType>(T).getShape()) {
-      sizes.push_back(builder.getI64IntegerAttr(dim));
-    }
-
-    // Strides: [1, 1, 1, ...]
-    for (int i = 0; i < valRTy.getRank(); ++i) {
-      strides.push_back(builder.getI64IntegerAttr(1));
-    }
-
-    // reduce rank
-    auto out_ty = RankedTensorType::get(valRTy.getShape().drop_front(),
-                                        valRTy.getElementType());
-    out = builder.create<tensor::ExtractSliceOp>(loc, out_ty, val, offsets,
-                                                 sizes, strides);
-  }
-
+  Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
+  Value out = builder.create<enzyme::ExtractOp>(loc, argTy, val, indexOp);
   return out;
 }
 
