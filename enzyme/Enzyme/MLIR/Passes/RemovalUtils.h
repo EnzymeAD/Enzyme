@@ -57,7 +57,7 @@ struct CacheInfo {
 // Tries to limit the amount of values cache from block `forward` to `reverse`
 // using a mincut algorithm and heuristics based on the size of values.
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
-                 PatternRewriter &rewriter);
+                 PatternRewriter &rewriter, const IRMapping &fwdrevmap);
 
 enum class LoopCacheType { TENSOR, MEMREF };
 
@@ -70,7 +70,7 @@ static LoopCacheType getCacheType(Operation *op) {
 }
 
 static bool hasMinCut(Operation *op) {
-  return op->hasAttr("enzyme.enable_mincut");
+  return !op->hasAttr("enzyme.disable_mincut");
 }
 
 template <typename FinalClass, typename OpName>
@@ -84,6 +84,13 @@ public:
     IntOrValue(mlir::Value vval) : ival(0), vval(vval) {}
     IntOrValue(size_t ival) : ival(ival), vval(nullptr) {}
   };
+
+  // TODO create mapping between fwd/rev induction vars. Must correspond with
+  // compute reversed indices
+  static IRMapping createArgumentMap(PatternRewriter &rewriter, OpName forOp,
+                                     OpName otherForOp) {
+    return {};
+  }
 
   static llvm::SmallVector<mlir::Value>
   computeReversedIndices(PatternRewriter &rewriter, OpName op,
@@ -167,8 +174,52 @@ public:
       rewriter.eraseOp(info.initOp);
     }
 
-    SmallVector<CacheInfo> caches =
+    SmallVector<CacheInfo> caches0 =
         llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
+
+    SmallVector<CacheInfo> caches = caches0;
+
+    IRMapping fwdrevmap =
+        FinalClass::createArgumentMap(rewriter, forOp, otherForOp);
+    /*
+        for (auto &info : caches0) {
+
+          // push does not depend on a value inside the loop, we can hoist the
+          // push/pop before the for loops.
+          if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
+            auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(),
+       cache, info.pushedValue()); rewriter.eraseOp(info.pushOp); info.pushOp =
+       newPush;
+
+            {
+              OpBuilder::InsertionGuard guard(rewriter);
+              rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+              auto popVal = info.popOp.getResult();
+              auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
+                                                           popVal.getType(),
+       cache); rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+              rewriter.eraseOp(info.popOp);
+              info.popOp = newPop;
+            }
+
+            continue;
+          }
+
+          // push does not depend on a value inside the loop, we can hoist the
+          // push/pop before the for loops.
+          if (fwdrevmap.contains(info.pushedValue()) {
+            rewriter.eraseOp(info.pushOp);
+            rewriter.replaceOp(info.popOp, fewdrevmap.lookup(info.pushedValue));
+            rewriter.eraseOp(info.initOp);
+            continue;
+          }
+
+          caches.push_back(cache);
+        }
+        */
+
+    llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
 
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
@@ -235,9 +286,13 @@ public:
       }
     }
 
-    if (hasMinCut(forOp)) {
+    bool mincut = false;
+    if (hasMinCut(forOp) && caches.size()) {
+      mincut = true;
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(otherForOp.getBody());
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
-                                rewriter);
+                                rewriter, fwdrevmap);
     }
 
     SmallVector<Value> newPushValues;
@@ -249,30 +304,9 @@ public:
 
     SmallVector<IntOrValue> fwdNumIters;
     for (auto &info : caches) {
-      Value cache = info.initOp.getResult();
 
-      // push does not depend on a value inside the loop, we can hoist the
-      // push/pop before the for loops.
-      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
-        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
-                                                       info.pushedValue());
-        rewriter.eraseOp(info.pushOp);
-        info.pushOp = newPush;
-
-        {
-          OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPoint(info.popOp->getParentOp());
-
-          auto popVal = info.popOp.getResult();
-          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
-                                                       popVal.getType(), cache);
-          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
-          rewriter.eraseOp(info.popOp);
-          info.popOp = newPop;
-        }
-
-        continue;
-      }
+      if (mincut)
+        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       // First, try to get canonical vars from looking up directly
       if (!inductionVariable.size()) {
@@ -304,6 +338,8 @@ public:
 
       SmallVector<int64_t> newShape;
       if (!fwdNumIters.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(forOp);
         fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
       }
       for (const auto &dim : fwdNumIters) {
@@ -458,14 +494,16 @@ public:
     SmallVector<IntOrValue> revNumIters;
 
     for (auto &info : caches) {
-      if (info.pushedValue().getParentRegion() != forOp.getRegion())
-        continue;
+      if (mincut)
+        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       Value cache = info.initOp.getResult();
 
       // The reverse iteration count may not be known at this point, as it may
       // be cached via a push/pop, use the fwd count in that case.
       if (!revNumIters.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(otherForOp);
         revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
         for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
           if (!fwd.vval && rev.vval) {
