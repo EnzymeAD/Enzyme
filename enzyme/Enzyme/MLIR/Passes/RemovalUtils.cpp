@@ -26,9 +26,12 @@ typedef llvm::PointerUnion<Operation *, Value> Node;
 
 void dump(const Node &n) {
   if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", " << "Value" << "]\n";
+    llvm::errs() << "[" << cast<Value>(n) << ", "
+                 << "Value"
+                 << "]\n";
   else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", " << "Operation"
+    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
+                 << "Operation"
                  << "]\n";
   else
     llvm::errs() << "["
