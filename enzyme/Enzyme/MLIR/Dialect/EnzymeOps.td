@@ -529,6 +529,10 @@ def ConcatenateOp : Enzyme_Op<"concatenate"> {
 
   let arguments = (ins Variadic<AnyType>:$inputs);
   let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+    `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
 }
 
 def ExtractOp : Enzyme_Op<"extract"> {
@@ -537,8 +541,11 @@ def ExtractOp : Enzyme_Op<"extract"> {
     Extract value from batched operand at index
   }];
 
-  let arguments = (ins AnyType:$input, AnyType:$index);
+  let arguments = (ins AnyType:$input, Index:$index);
   let results = (outs AnyType:$output);
-
+  
+  let assemblyFormat = [{
+     $input `[` $index `]` attr-dict `:` functional-type($input, results)
+  }];
 }
 #endif // ENZYME_OPS
