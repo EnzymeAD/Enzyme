@@ -85,8 +85,10 @@ public:
     IntOrValue(size_t ival) : ival(ival), vval(nullptr) {}
   };
 
-  // TODO create mapping between fwd/rev induction vars. Must correspond with compute reversed indices
-  static IRMapping createArgumentMap(PatternRewriter &rewriter, OpName forOp, OpName otherForOp) {
+  // TODO create mapping between fwd/rev induction vars. Must correspond with
+  // compute reversed indices
+  static IRMapping createArgumentMap(PatternRewriter &rewriter, OpName forOp,
+                                     OpName otherForOp) {
     return {};
   }
 
@@ -174,50 +176,50 @@ public:
 
     SmallVector<CacheInfo> caches0 =
         llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
-    
+
     SmallVector<CacheInfo> caches = caches0;
 
-    IRMapping fwdrevmap = FinalClass::createArgumentMap(rewriter, forOp, otherForOp);
-/*
-    for (auto &info : caches0) {
+    IRMapping fwdrevmap =
+        FinalClass::createArgumentMap(rewriter, forOp, otherForOp);
+    /*
+        for (auto &info : caches0) {
 
-      // push does not depend on a value inside the loop, we can hoist the
-      // push/pop before the for loops.
-      if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
-        auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(), cache,
-                                                       info.pushedValue());
-        rewriter.eraseOp(info.pushOp);
-        info.pushOp = newPush;
+          // push does not depend on a value inside the loop, we can hoist the
+          // push/pop before the for loops.
+          if (info.pushedValue().getParentRegion() != forOp.getRegion()) {
+            auto newPush = rewriter.create<enzyme::PushOp>(cache.getLoc(),
+       cache, info.pushedValue()); rewriter.eraseOp(info.pushOp); info.pushOp =
+       newPush;
 
-        {
-          OpBuilder::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPoint(info.popOp->getParentOp());
+            {
+              OpBuilder::InsertionGuard guard(rewriter);
+              rewriter.setInsertionPoint(info.popOp->getParentOp());
 
-          auto popVal = info.popOp.getResult();
-          auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
-                                                       popVal.getType(), cache);
-          rewriter.replaceAllUsesWith(popVal, newPop.getResult());
-          rewriter.eraseOp(info.popOp);
-          info.popOp = newPop;
+              auto popVal = info.popOp.getResult();
+              auto newPop = rewriter.create<enzyme::PopOp>(cache.getLoc(),
+                                                           popVal.getType(),
+       cache); rewriter.replaceAllUsesWith(popVal, newPop.getResult());
+              rewriter.eraseOp(info.popOp);
+              info.popOp = newPop;
+            }
+
+            continue;
+          }
+
+          // push does not depend on a value inside the loop, we can hoist the
+          // push/pop before the for loops.
+          if (fwdrevmap.contains(info.pushedValue()) {
+            rewriter.eraseOp(info.pushOp);
+            rewriter.replaceOp(info.popOp, fewdrevmap.lookup(info.pushedValue));
+            rewriter.eraseOp(info.initOp);
+            continue;
+          }
+
+          caches.push_back(cache);
         }
+        */
 
-        continue;
-      }
-      
-      // push does not depend on a value inside the loop, we can hoist the
-      // push/pop before the for loops.
-      if (fwdrevmap.contains(info.pushedValue()) {
-        rewriter.eraseOp(info.pushOp);
-	rewriter.replaceOp(info.popOp, fewdrevmap.lookup(info.pushedValue));
-	rewriter.eraseOp(info.initOp);
-	continue;
-      }
-    
-      caches.push_back(cache);
-    }
-    */
-
-        llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
+    llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
 
     // nothing to do
     if (updatedGradients.empty() && caches.empty())

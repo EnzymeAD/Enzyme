@@ -26,9 +26,12 @@ typedef llvm::PointerUnion<Operation *, Value> Node;
 
 void dump(const Node &n) {
   if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", " << "Value" << "]\n";
+    llvm::errs() << "[" << cast<Value>(n) << ", "
+                 << "Value"
+                 << "]\n";
   else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", " << "Operation"
+    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
+                 << "Operation"
                  << "]\n";
   else
     llvm::errs() << "["
@@ -617,8 +620,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
              llvm::zip_equal(op.getResults(), newO->getResults())) {
           if (newCaches.contains(res)) {
             enzyme::InitOp initOp = ({
-	      OpBuilder::InsertionGuard guard(rewriter);
-	      rewriter.setInsertionPoint(entry);
+              OpBuilder::InsertionGuard guard(rewriter);
+              rewriter.setInsertionPoint(entry);
               rewriter.create<enzyme::InitOp>(
                   newRes.getLoc(), enzyme::CacheType::get(newRes.getContext(),
                                                           newRes.getType()));
@@ -641,9 +644,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
             rewriter.replaceAllUsesWith(res, popOp->getResult(0));
 
             CacheInfo info;
-	    info.initOp = initOp;
-	    info.pushOp = pushOp;
-	    info.popOp = popOp;
+            info.initOp = initOp;
+            info.pushOp = pushOp;
+            info.popOp = popOp;
             newCacheInfos.push_back(info);
           }
           if (!hasUse) {
