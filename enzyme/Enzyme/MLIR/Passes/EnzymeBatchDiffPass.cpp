@@ -309,8 +309,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             }
 
             auto curFnOp = dyn_cast<enzyme::ForwardDiffOp>(cur);
-            if (curFnOp && (std::find(pair.second.begin(), pair.second.end(),
-                                      curFnOp) != pair.second.end())) {
+            if (curFnOp && llvm::is_contained(pair.second, curFnOp)) {
               legalMerge.push_back(cast<enzyme::ForwardDiffOp>(cur));
             }
           }
@@ -702,8 +701,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             }
 
             auto curFnOp = dyn_cast<enzyme::AutoDiffOp>(cur);
-            if (curFnOp && (std::find(pair.second.begin(), pair.second.end(),
-                                      curFnOp) != pair.second.end())) {
+            if (curFnOp && llvm::is_contained(pair.second, curFnOp)) {
               legalMerge.push_back(cast<enzyme::AutoDiffOp>(cur));
             }
           }
