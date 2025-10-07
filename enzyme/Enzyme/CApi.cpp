@@ -274,8 +274,8 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules) {
-  EnzymeLogic &logic = eunwrap(Log);
-  TypeAnalysis *TA = new TypeAnalysis(logic.PPC.FAM, logic.ExternalContext);
+  EnzymeLogic &Logic = eunwrap(Log);
+  TypeAnalysis *TA = new TypeAnalysis(Logic);
   for (size_t i = 0; i < numRules; i++) {
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
@@ -315,8 +315,8 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
   delete TA;
 }
 
-void *EnzymeGetExternalContextTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
-  return ((TypeAnalysis *)TAR)->ExternalContext;
+EnzymeLogicRef EnzymeTypeAnalysisGetLogic(EnzymeTypeAnalysisRef TAR) {
+  return (EnzymeLogicRef) *((TypeAnalysis *)TAR)->Logic;
 }
 
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
@@ -330,7 +330,7 @@ void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
 }
 
 EnzymeTypeAnalysisRef EnzymeGetTypeAnalysisFromTypeAnalyzer(void *TAR) {
-  return wrap(&((TypeAnalyzer *)TAR)->interprocedural);
+  return ewrap(&((TypeAnalyzer *)TAR)->interprocedural);
 }
 
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {

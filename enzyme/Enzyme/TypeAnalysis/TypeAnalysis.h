@@ -413,9 +413,9 @@ public:
 class TypeAnalysis {
 public:
   llvm::FunctionAnalysisManager &FAM;
-  void *ExternalContext;
-  TypeAnalysis(llvm::FunctionAnalysisManager &FAM, void *ExternalContext)
-      : FAM(FAM), ExternalContext(ExternalContext) {}
+  EnzymeLogic &Logic;
+  TypeAnalysis(EnzymeLogic &Logic)
+      : FAM(Logic.PPC.FAM), Logic(Logic) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
