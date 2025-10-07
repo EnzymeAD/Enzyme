@@ -477,8 +477,10 @@ public:
     return {val};
   }
 
-  static IRMapping createArgumentMap(PatternRewriter &rewriter, affine::AffineForOp forOp,
-                                     ArrayRef<Value> indFor, affine::AffineForOp otherForOp,
+  static IRMapping createArgumentMap(PatternRewriter &rewriter,
+                                     affine::AffineForOp forOp,
+                                     ArrayRef<Value> indFor,
+                                     affine::AffineForOp otherForOp,
                                      ArrayRef<Value> indOther) {
     IRMapping map;
     for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))

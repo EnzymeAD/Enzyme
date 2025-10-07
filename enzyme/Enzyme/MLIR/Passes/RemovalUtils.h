@@ -60,7 +60,8 @@ struct CacheInfo {
 // using a mincut algorithm and heuristics based on the size of values.
 // All pushes must go after `lastFwd`, if non null
 void minCutCache(Block *forward, Block *reverse, SmallVector<CacheInfo> &caches,
-                 PatternRewriter &rewriter, const IRMapping &fwdrevmap, Operation *lastFwd=nullptr);
+                 PatternRewriter &rewriter, const IRMapping &fwdrevmap,
+                 Operation *lastFwd = nullptr);
 
 enum class LoopCacheType { TENSOR, MEMREF };
 
@@ -92,8 +93,9 @@ public:
     if (lhs == rhs)
       return true;
     Attribute la, ra;
-    if (matchPattern(lhs, m_Constant(&la)) && matchPattern(rhs, m_Constant(&ra)))
-		    return true;
+    if (matchPattern(lhs, m_Constant(&la)) &&
+        matchPattern(rhs, m_Constant(&ra)))
+      return true;
     auto pop = rhs.getDefiningOp<enzyme::PopOp>();
     if (!pop)
       return false;
@@ -264,7 +266,7 @@ public:
         term->insertOperands(term->getNumOperands(), ValueRange(val));
       }
     }
-    
+
     IRMapping fwdrevmap;
     bool mincut = false;
 
@@ -274,29 +276,28 @@ public:
 
     Operation *lastFwd = nullptr;
     if (caches.size()) {
-        rewriter.setInsertionPointToStart(forOp.getBody());
-        inductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, forOp);
-        if (rewriter.getInsertionPoint() != forOp.getBody()->begin()) {
-	  lastFwd = rewriter.getInsertionPoint()->getPrevNode();
-	}
+      rewriter.setInsertionPointToStart(forOp.getBody());
+      inductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, forOp);
+      if (rewriter.getInsertionPoint() != forOp.getBody()->begin()) {
+        lastFwd = rewriter.getInsertionPoint()->getPrevNode();
+      }
 
-	rewriter.setInsertionPointToStart(otherForOp.getBody());
-        otherInductionVariable =
-            FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
+      rewriter.setInsertionPointToStart(otherForOp.getBody());
+      otherInductionVariable =
+          FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
       fwdrevmap =
           FinalClass::createArgumentMap(rewriter, forOp, inductionVariable,
                                         otherForOp, otherInductionVariable);
       for (auto v : inductionVariable) {
         if (auto op = v.getDefiningOp()) {
-	  op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
-	}
+          op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
+        }
       }
       for (auto v : otherInductionVariable) {
         if (auto op = v.getDefiningOp()) {
-	  op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
-	}
+          op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
+        }
       }
-	     
     }
 
     if (hasMinCut(forOp) && caches.size()) {
@@ -304,16 +305,16 @@ public:
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter, fwdrevmap, lastFwd);
     }
-      for (auto v : inductionVariable) {
-        if (auto op = v.getDefiningOp()) {
-	  op->removeAttr("enzyme.no_erase");
-	}
+    for (auto v : inductionVariable) {
+      if (auto op = v.getDefiningOp()) {
+        op->removeAttr("enzyme.no_erase");
       }
-      for (auto v : otherInductionVariable) {
-        if (auto op = v.getDefiningOp()) {
-	  op->removeAttr("enzyme.no_erase");
-	}
+    }
+    for (auto v : otherInductionVariable) {
+      if (auto op = v.getDefiningOp()) {
+        op->removeAttr("enzyme.no_erase");
       }
+    }
     auto revIP = rewriter.saveInsertionPoint();
 
     SmallVector<Value> newPushValues;
@@ -394,14 +395,14 @@ public:
       }
 
       if (cacheType == LoopCacheType::TENSOR) {
-	      {
+        {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-        Value initValue = rewriter.create<tensor::EmptyOp>(
-            info.initOp->getLoc(), newType, dynamicDims);
+          Value initValue = rewriter.create<tensor::EmptyOp>(
+              info.initOp->getLoc(), newType, dynamicDims);
 
-        newOperands.push_back(initValue);
-	      }
+          newOperands.push_back(initValue);
+        }
 
         auto cacheValue = body->addArgument(newType, info.pushOp->getLoc());
 
@@ -441,14 +442,14 @@ public:
           numNewValuePushes++;
         }
       } else if (cacheType == LoopCacheType::MEMREF) {
-	      Value initValue;
-	      {
+        Value initValue;
+        {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-        initValue = rewriter.create<memref::AllocOp>(
-            info.initOp->getLoc(), cast<MemRefType>(newType), dynamicDims);
-        newPushValues.push_back(initValue);
-	      }
+          initValue = rewriter.create<memref::AllocOp>(
+              info.initOp->getLoc(), cast<MemRefType>(newType), dynamicDims);
+          newPushValues.push_back(initValue);
+        }
 
         {
           OpBuilder::InsertionGuard guard(rewriter);
@@ -518,15 +519,17 @@ public:
     SmallVector<IntOrValue> revNumIters;
 
     if (caches.size()) {
-    if (otherInductionVariable.size()) {
-      // We move before any pops that might have been created by mincut, since we need
-      // the reversedIdx to come right after other induction var computations.
-      while (revIP.getBlock()->begin() != revIP.getPoint() && isa<enzyme::PopOp>(--revIP.getPoint())) {
-        revIP = OpBuilder::InsertPoint(revIP.getBlock(), --revIP.getPoint());
-      }
-      rewriter.restoreInsertionPoint(revIP);
-    } else
-      rewriter.setInsertionPointToStart(otherForOp.getBody());
+      if (otherInductionVariable.size()) {
+        // We move before any pops that might have been created by mincut, since
+        // we need the reversedIdx to come right after other induction var
+        // computations.
+        while (revIP.getBlock()->begin() != revIP.getPoint() &&
+               isa<enzyme::PopOp>(--revIP.getPoint())) {
+          revIP = OpBuilder::InsertPoint(revIP.getBlock(), --revIP.getPoint());
+        }
+        rewriter.restoreInsertionPoint(revIP);
+      } else
+        rewriter.setInsertionPointToStart(otherForOp.getBody());
     }
     for (auto &info : caches) {
       if (mincut)
@@ -575,15 +578,15 @@ public:
           term->insertOperands(term->getNumOperands(),
                                ValueRange(newInductionVar));
         }
-        
-	{	
-	OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(otherForOp);
-        otherForOp = FinalClass::replaceWithNewOperands(rewriter, otherForOp,
-                                                        newOperands);
-	}
 
-	reversedIndex = FinalClass::computeReversedIndices(
+        {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(otherForOp);
+          otherForOp = FinalClass::replaceWithNewOperands(rewriter, otherForOp,
+                                                          newOperands);
+        }
+
+        reversedIndex = FinalClass::computeReversedIndices(
             rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
 

@@ -91,8 +91,9 @@ public:
     return {val};
   }
 
-  static IRMapping createArgumentMap(PatternRewriter &rewriter, scf::ForOp forOp,
-                                     ArrayRef<Value> indFor, scf::ForOp otherForOp,
+  static IRMapping createArgumentMap(PatternRewriter &rewriter,
+                                     scf::ForOp forOp, ArrayRef<Value> indFor,
+                                     scf::ForOp otherForOp,
                                      ArrayRef<Value> indOther) {
     IRMapping map;
     for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))

@@ -26,12 +26,9 @@ typedef llvm::PointerUnion<Operation *, Value> Node;
 
 void dump(const Node &n) {
   if (isa<Value>(n))
-    llvm::errs() << "[" << cast<Value>(n) << ", "
-                 << "Value"
-                 << "]\n";
+    llvm::errs() << "[" << cast<Value>(n) << ", " << "Value" << "]\n";
   else if (isa<Operation *>(n))
-    llvm::errs() << "[" << *cast<Operation *>(n) << ", "
-                 << "Operation"
+    llvm::errs() << "[" << *cast<Operation *>(n) << ", " << "Operation"
                  << "]\n";
   else
     llvm::errs() << "["
@@ -242,8 +239,7 @@ static Operation *findCommonAncestor(ArrayRef<Operation *> ops) {
 void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                SmallVector<CacheInfo> &caches0,
                                PatternRewriter &rewriter,
-                               const IRMapping &fwdrevmap,
-			       Operation *lastFwd) {
+                               const IRMapping &fwdrevmap, Operation *lastFwd) {
   assert(rewriter.getInsertionBlock() == reverse);
   assert(rewriter.getInsertionPoint()->getBlock() == reverse);
   if (caches0.empty())
@@ -503,7 +499,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   LLVM_DEBUG(dump(cacheGraph));
 
   SmallVector<CacheInfo> newCacheInfos;
-    
+
   // We guard here so then the IP after this is immediately before the new pop's
   Operation *firstClone = nullptr;
 
@@ -577,11 +573,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       enzyme::PushOp pushOp = ({
         OpBuilder::InsertionGuard guard(rewriter);
-	if (lastFwd && isa<BlockArgument>(newCache)) {
-	  rewriter.setInsertionPointAfter(lastFwd);
-	} else {
+        if (lastFwd && isa<BlockArgument>(newCache)) {
+          rewriter.setInsertionPointAfter(lastFwd);
+        } else {
           rewriter.setInsertionPointAfterValue(newCache);
-	}
+        }
         rewriter.create<enzyme::PushOp>(newCache.getLoc(), initOp.getResult(),
                                         newCache);
       });
@@ -590,7 +586,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       assert(rewriter.getInsertionPoint()->getBlock() == reverse);
       enzyme::PopOp popOp = rewriter.create<enzyme::PopOp>(
           newCache.getLoc(), newCache.getType(), initOp.getResult());
-      if (!firstClone) firstClone = popOp;
+      if (!firstClone)
+        firstClone = popOp;
       mapping.map(newCache, popOp.getResult());
 
       CacheInfo info;
@@ -713,7 +710,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       mapping.map(v, popOp->getResult(0));
     }
     auto cop = rewriter.clone(op, mapping);
-    if (!firstClone) firstClone = cop;
+    if (!firstClone)
+      firstClone = cop;
   }
   if (firstClone)
     rewriter.setInsertionPoint(firstClone);
