@@ -301,7 +301,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
 
-    if (todo.getParentBlock() != forward) {
+    if (todo.getParentBlock() != forward || fwdrevmap.contains(todo)) {
       continue;
     }
 
