@@ -70,7 +70,7 @@ static LoopCacheType getCacheType(Operation *op) {
 }
 
 static bool hasMinCut(Operation *op) {
-  return op->hasAttr("enzyme.enable_mincut");
+  return !op->hasAttr("enzyme.disable_mincut");
 }
 
 template <typename FinalClass, typename OpName>
@@ -284,7 +284,11 @@ public:
       }
     }
 
-    if (hasMinCut(forOp)) {
+    bool mincut = false;
+    if (hasMinCut(forOp) && caches.size()) {
+      mincut = true;
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(otherForOp.getBody());
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter, fwdrevmap);
     }
@@ -299,6 +303,7 @@ public:
     SmallVector<IntOrValue> fwdNumIters;
     for (auto &info : caches) {
 
+      if (mincut)
       assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       // First, try to get canonical vars from looking up directly
@@ -331,6 +336,8 @@ public:
 
       SmallVector<int64_t> newShape;
       if (!fwdNumIters.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(forOp);
         fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
       }
       for (const auto &dim : fwdNumIters) {
@@ -485,6 +492,7 @@ public:
     SmallVector<IntOrValue> revNumIters;
 
     for (auto &info : caches) {
+      if (mincut)
       assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       Value cache = info.initOp.getResult();
@@ -492,6 +500,8 @@ public:
       // The reverse iteration count may not be known at this point, as it may
       // be cached via a push/pop, use the fwd count in that case.
       if (!revNumIters.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+	rewriter.setInsertionPoint(otherForOp);
         revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
         for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
           if (!fwd.vval && rev.vval) {
