@@ -27,6 +27,16 @@ bool mayAlias(Value v1, Value v2);
 bool mayAlias(MemoryEffects::EffectInstance &A,
               MemoryEffects::EffectInstance &B);
 
+/// Returns the side effects of an operation(similar to
+/// `mlir::getEffectsRecursively`). If the operation has RecursiveMemoryEffects,
+/// include all side effects of child operations.
+///
+/// Also accounts for LLVM and autodiff-specific memory effects which are not
+/// captured by the default `mlir::getEffectsRecursively`
+std::optional<SmallVector<MemoryEffects::EffectInstance>>
+collectOpEffects(Operation *rootOp);
+
+// Specialize memory effect collection for a FunctionOpInterface
 SmallVector<MemoryEffects::EffectInstance>
 collectFnEffects(FunctionOpInterface fnOp);
 
