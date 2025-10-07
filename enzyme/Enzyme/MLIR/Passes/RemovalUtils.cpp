@@ -242,7 +242,7 @@ static Operation *findCommonAncestor(ArrayRef<Operation *> ops) {
 void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                SmallVector<CacheInfo> &caches0,
                                PatternRewriter &rewriter,
-                               const IRMapping &fwdrevmap) {
+                               const IRMapping &fwdrevmap, Operation *lastFwd) {
   assert(rewriter.getInsertionBlock() == reverse);
   assert(rewriter.getInsertionPoint()->getBlock() == reverse);
   if (caches0.empty())
@@ -295,9 +295,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   }
 
   // nodes that cannot be recomputed
-  SetVector<Value> outsideroots;
-
-  // nodes that cannot be recomputed
   SetVector<Value> roots;
 
   // Walk Backward
@@ -307,8 +304,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
 
-    if (todo.getParentBlock() != forward) {
-      outsideroots.insert(todo);
+    if (todo.getParentBlock() != forward || fwdrevmap.contains(todo)) {
       continue;
     }
 
@@ -392,7 +388,6 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         continue;
       for (auto v : op->getOperands()) {
         if (v.getParentBlock() != reverse) {
-          outsideroots.insert(v);
           continue;
         }
         if (G.contains(Node(v))) {
@@ -508,6 +503,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
   SmallVector<CacheInfo> newCacheInfos;
 
+  // We guard here so then the IP after this is immediately before the new pop's
+  Operation *firstClone = nullptr;
+
   // Refine cached values based on some heuristics
   if (newCaches.size()) {
 
@@ -578,7 +576,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       enzyme::PushOp pushOp = ({
         OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPointAfterValue(newCache);
+        if (lastFwd && isa<BlockArgument>(newCache)) {
+          rewriter.setInsertionPointAfter(lastFwd);
+        } else {
+          rewriter.setInsertionPointAfterValue(newCache);
+        }
         rewriter.create<enzyme::PushOp>(newCache.getLoc(), initOp.getResult(),
                                         newCache);
       });
@@ -587,6 +589,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       assert(rewriter.getInsertionPoint()->getBlock() == reverse);
       enzyme::PopOp popOp = rewriter.create<enzyme::PopOp>(
           newCache.getLoc(), newCache.getType(), initOp.getResult());
+      if (!firstClone)
+        firstClone = popOp;
       mapping.map(newCache, popOp.getResult());
 
       CacheInfo info;
@@ -659,7 +663,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
           }
         }
 
-        if (!hasUse) {
+        if (!hasUse && !op.hasAttr("enzyme.no_erase")) {
           toErase.push_back(&op);
         }
       }
@@ -708,8 +712,12 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       });
       mapping.map(v, popOp->getResult(0));
     }
-    rewriter.clone(op, mapping);
+    auto cop = rewriter.clone(op, mapping);
+    if (!firstClone)
+      firstClone = cop;
   }
+  if (firstClone)
+    rewriter.setInsertionPoint(firstClone);
 
   // Remove old caches
   for (auto &info : caches) {
