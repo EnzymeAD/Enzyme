@@ -122,7 +122,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                          FunctionOpInterface op) {
     // TODO: Use a modified version of inter-procedural DataFlowAliasAnalysis
     // for mapping primal effects
-    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+    llvm::DenseMap<FunctionOpInterface,
+                   SmallVector<MemoryEffects::EffectInstance>>
         innerEffectCache;
 
     OpBuilder builder(op);
@@ -248,7 +249,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                   cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
               if (act_val == Activity::enzyme_dup ||
                   act_val == Activity::enzyme_dupnoneed) {
-                // TODO: fix derivative access(it is not arg_pos + 1)
 
                 Value dVal = dop.getInputs()[d_pos];
                 callerEffects.emplace_back(oputils::getEffectOfVal(
@@ -530,7 +530,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
     // for mapping primal effects
 
     // list of values read/written to inside fn
-    std::map<FunctionOpInterface, SmallVector<MemoryEffects::EffectInstance>>
+    llvm::DenseMap<FunctionOpInterface,
+                   SmallVector<MemoryEffects::EffectInstance>>
         innerEffectCache;
 
     OpBuilder builder(op);
@@ -639,7 +640,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                   cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
               if (act_val == Activity::enzyme_dup ||
                   act_val == Activity::enzyme_dupnoneed) {
-                // TODO: fix derivative access(it is not arg_pos + 1)
 
                 Value dVal = dop.getInputs()[d_pos];
                 callerEffects.emplace_back(oputils::getEffectOfVal(
