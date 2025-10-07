@@ -55,7 +55,7 @@
 
 #include "../Utils.h"
 #include "TypeTree.h"
-#include "EnzymeLogic.h"
+#include "../EnzymeLogic.h"
 
 extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
