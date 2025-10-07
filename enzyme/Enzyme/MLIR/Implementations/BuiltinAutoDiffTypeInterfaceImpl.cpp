@@ -232,7 +232,8 @@ public:
 
   int64_t getApproxSize(Type self) const {
     // Assume index is 64-bit for ease
-    if (self.isIndex()) return 64;
+    if (self.isIndex())
+      return 64;
 
     return self.getIntOrFloatBitWidth();
   }

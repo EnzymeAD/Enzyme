@@ -304,7 +304,7 @@ public:
     for (auto &info : caches) {
 
       if (mincut)
-      assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
+        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       // First, try to get canonical vars from looking up directly
       if (!inductionVariable.size()) {
@@ -493,7 +493,7 @@ public:
 
     for (auto &info : caches) {
       if (mincut)
-      assert (info.pushedValue().getParentRegion() == &forOp.getRegion());
+        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
 
       Value cache = info.initOp.getResult();
 
@@ -501,7 +501,7 @@ public:
       // be cached via a push/pop, use the fwd count in that case.
       if (!revNumIters.size()) {
         OpBuilder::InsertionGuard guard(rewriter);
-	rewriter.setInsertionPoint(otherForOp);
+        rewriter.setInsertionPoint(otherForOp);
         revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
         for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
           if (!fwd.vval && rev.vval) {
