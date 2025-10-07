@@ -520,13 +520,6 @@ public:
 
     if (caches.size()) {
       if (otherInductionVariable.size()) {
-        // We move before any pops that might have been created by mincut, since
-        // we need the reversedIdx to come right after other induction var
-        // computations.
-        while (revIP.getBlock()->begin() != revIP.getPoint() &&
-               isa<enzyme::PopOp>(--revIP.getPoint())) {
-          revIP = OpBuilder::InsertPoint(revIP.getBlock(), --revIP.getPoint());
-        }
         rewriter.restoreInsertionPoint(revIP);
       } else
         rewriter.setInsertionPointToStart(otherForOp.getBody());
