@@ -413,7 +413,9 @@ public:
 class TypeAnalysis {
 public:
   llvm::FunctionAnalysisManager &FAM;
-  TypeAnalysis(llvm::FunctionAnalysisManager &FAM) : FAM(FAM) {}
+  void *ExternalContext;
+  TypeAnalysis(llvm::FunctionAnalysisManager &FAM, void *ExternalContext)
+      : FAM(FAM), ExternalContext(ExternalContext) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
