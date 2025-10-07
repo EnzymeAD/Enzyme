@@ -731,6 +731,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
 
+      Value prevTrace = NewF.getArgument(0);
+
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
@@ -806,7 +808,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             }
 
             auto gsftOp = rewriter.create<enzyme::GetSampleFromTraceOp>(
-                sampleOp.getLoc(), sampledValueTypes, currTrace,
+                sampleOp.getLoc(), sampledValueTypes, prevTrace,
                 sampleOp.getSymbolAttr());
 
             // Pass along the RNG state.
@@ -870,7 +872,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           auto getSubtraceOp = rewriter.create<enzyme::GetSubtraceOp>(
               sampleOp.getLoc(),
               /*subtrace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*trace*/ currTrace,
+              /*trace*/ prevTrace,
               /*symbol*/ sampleOp.getSymbolAttr());
           auto recursiveOp = rewriter.create<enzyme::RegenerateOp>(
               sampleOp.getLoc(),
@@ -972,8 +974,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       });
 
       rewriter.setInsertionPoint(CI);
+      SmallVector<Value> operands;
+      operands.push_back(CI.getOriginalTrace());
+      operands.append(CI.getInputs().begin(), CI.getInputs().end());
       auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getInputs());
+          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
 
