@@ -477,6 +477,26 @@ public:
     return {val};
   }
 
+  static IRMapping createArgumentMap(PatternRewriter &rewriter, affine::AffineForOp forOp,
+                                     ArrayRef<Value> indFor, affine::AffineForOp otherForOp,
+                                     ArrayRef<Value> indOther) {
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+      map.map(f, o);
+
+    Value canIdx = forOp.getBody()->getArgument(0);
+    if (!map.contains(canIdx)) {
+      assert(forOp.getLowerBoundMap() == otherForOp.getLowerBoundMap());
+      for (auto &&[f, o] : llvm::zip_equal(forOp.getLowerBoundOperands(),
+                                           otherForOp.getLowerBoundOperands()))
+        assert(Equivalent(f, o));
+      assert(forOp.getStep() == otherForOp.getStep());
+      map.map(forOp.getBody()->getArgument(0),
+              otherForOp.getBody()->getArgument(0));
+    }
+    return map;
+  }
+
   static affine::AffineForOp
   replaceWithNewOperands(PatternRewriter &rewriter,
                          affine::AffineForOp otherForOp,

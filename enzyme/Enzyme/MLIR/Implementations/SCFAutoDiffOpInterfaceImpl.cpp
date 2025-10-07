@@ -91,6 +91,23 @@ public:
     return {val};
   }
 
+  static IRMapping createArgumentMap(PatternRewriter &rewriter, scf::ForOp forOp,
+                                     ArrayRef<Value> indFor, scf::ForOp otherForOp,
+                                     ArrayRef<Value> indOther) {
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+      map.map(f, o);
+
+    Value canIdx = forOp.getBody()->getArgument(0);
+    if (!map.contains(canIdx)) {
+      assert(Equivalent(forOp.getLowerBound(), otherForOp.getLowerBound()));
+      assert(Equivalent(forOp.getStep(), otherForOp.getStep()));
+      map.map(forOp.getBody()->getArgument(0),
+              otherForOp.getBody()->getArgument(0));
+    }
+    return map;
+  }
+
   static scf::ForOp replaceWithNewOperands(PatternRewriter &rewriter,
                                            scf::ForOp otherForOp,
                                            ArrayRef<Value> operands) {
