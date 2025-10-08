@@ -174,6 +174,7 @@ static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
 
 class TypeAnalyzer;
 class TypeAnalysis;
+class EnzymeLogic;
 
 /// A holder class representing the results of running TypeAnalysis
 /// on a given function
@@ -413,7 +414,9 @@ public:
 class TypeAnalysis {
 public:
   llvm::FunctionAnalysisManager &FAM;
-  TypeAnalysis(llvm::FunctionAnalysisManager &FAM) : FAM(FAM) {}
+  EnzymeLogic &Logic;
+  TypeAnalysis(EnzymeLogic &Logic)
+      : FAM(Logic.PPC.FAM), Logic(Logic) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,

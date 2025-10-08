@@ -1710,7 +1710,7 @@ public:
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
                      Arch == Triple::amdgcn;
 
-    TypeAnalysis TA(Logic.PPC.FAM);
+    TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
 
     IRBuilder Builder(CI);
@@ -2850,7 +2850,7 @@ public:
                     *CI->getArgOperand(0));
         return false;
       }
-      TypeAnalysis TA(Logic.PPC.FAM);
+      TypeAnalysis TA(Logic);
 
       auto Arch =
           llvm::Triple(
