@@ -14,11 +14,15 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IntegerSet.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
+using namespace mlir::affine;
 
 namespace {
 affine::AffineForOp
@@ -71,10 +75,11 @@ struct AffineForOpInterfaceReverse
     }
 
     SmallVector<bool> operandsActive;
-    for (auto [operand, result] :
-         llvm::zip_equal(op->getOperands().slice(forOp.getNumControlOperands(),
-                                                 forOp->getNumOperands()),
-                         op->getResults())) {
+    for (auto [operand, result] : llvm::zip_equal(
+             op->getOperands().slice(forOp.getNumControlOperands(),
+                                     forOp->getNumOperands() -
+                                         forOp.getNumControlOperands()),
+             op->getResults())) {
       operandsActive.push_back(!gutils->isConstantValue(operand) ||
                                !gutils->isConstantValue(result));
     }
@@ -181,7 +186,7 @@ struct AffineForOpInterfaceReverse
       }
     }
 
-    return success();
+    return success(valid);
   }
 
   SmallVector<Value> cacheValues(Operation *op,
@@ -202,6 +207,318 @@ struct AffineForOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct AffineLoadOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto loadOp = cast<affine::AffineLoadOp>(op);
+    Value memref = loadOp.getMemref();
+
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
+        Value gradient = gutils->diffe(loadOp, builder);
+        Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+        SmallVector<Value> retrievedArguments;
+        for (Value cache : caches) {
+          Value retrievedValue = gutils->popCache(cache, builder);
+          retrievedArguments.push_back(retrievedValue);
+        }
+
+        if (!gutils->AtomicAdd) {
+          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+          // if index had to be cached, the pop is not necessarily a valid index
+          if (hasIndex) {
+            auto idx = builder.create<affine::AffineApplyOp>(
+                loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+
+            Value loadedGradient = builder.create<memref::LoadOp>(
+                loadOp.getLoc(), memrefGradient, idx->getResults());
+            Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                    loadedGradient, gradient);
+            builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                            memrefGradient, idx->getResults());
+          } else {
+            Value loadedGradient = builder.create<affine::AffineLoadOp>(
+                loadOp.getLoc(), memrefGradient, loadOp.getAffineMap(),
+                ArrayRef<Value>(retrievedArguments));
+            Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                    loadedGradient, gradient);
+            builder.create<affine::AffineStoreOp>(
+                loadOp.getLoc(), addedGradient, memrefGradient,
+                loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
+          }
+        } else {
+          auto idx = builder.create<affine::AffineApplyOp>(
+              loadOp.getLoc(), loadOp.getAffineMap(), retrievedArguments);
+          builder.create<memref::AtomicRMWOp>(
+              loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
+              memrefGradient, idx->getResults());
+        }
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<affine::AffineLoadOp>(op);
+    Value memref = loadOp.getMemref();
+    ValueRange indices = loadOp.getIndices();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (!gutils->isConstantValue(loadOp) &&
+          !gutils->isConstantValue(memref)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return caches;
+      }
+    }
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    // auto loadOp = cast<memref::LoadOp>(op);
+    // Value memref = loadOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
+  }
+};
+
+struct AffineStoreOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AffineStoreOpInterfaceReverse, affine::AffineStoreOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto storeOp = cast<affine::AffineStoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    // ValueRange indices = storeOp.getIndices();
+
+    auto iface = cast<AutoDiffTypeInterface>(val.getType());
+
+    if (!gutils->isConstantValue(memref)) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+
+      Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+      SmallVector<Value> retrievedArguments;
+      for (Value cache : caches) {
+        Value retrievedValue = gutils->popCache(cache, builder);
+        retrievedArguments.push_back(retrievedValue);
+      }
+
+      bool hasIndex = storeOp.getAffineMap().getNumDims() > 0;
+
+      if (!iface.isMutable()) {
+        if (!gutils->isConstantValue(val)) {
+          Value loadedGradient;
+          if (hasIndex) {
+            auto idx = builder.create<affine::AffineApplyOp>(
+                storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+            loadedGradient = builder.create<memref::LoadOp>(
+                storeOp.getLoc(), memrefGradient, idx->getResults());
+          } else {
+            loadedGradient = builder.create<affine::AffineLoadOp>(
+                storeOp.getLoc(), memrefGradient, storeOp.getAffineMap(),
+                ArrayRef<Value>(retrievedArguments));
+          }
+          gutils->addToDiffe(val, loadedGradient, builder);
+        }
+
+        auto zero =
+            cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
+                .createNullValue(builder, op->getLoc());
+
+        // if index had to be cached, the pop is not necessarily a valid index
+        if (hasIndex) {
+          auto idx = builder.create<affine::AffineApplyOp>(
+              storeOp.getLoc(), storeOp.getAffineMap(), retrievedArguments);
+          builder.create<memref::StoreOp>(storeOp.getLoc(), zero,
+                                          memrefGradient, idx->getResults());
+        } else {
+          builder.create<affine::AffineStoreOp>(
+              storeOp.getLoc(), zero, memrefGradient, storeOp.getAffineMap(),
+              ArrayRef<Value>(retrievedArguments));
+        }
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<affine::AffineStoreOp>(op);
+    Value memref = storeOp.getMemref();
+    ValueRange indices = storeOp.getIndices();
+    Value val = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (!gutils->isConstantValue(memref)) {
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return caches;
+      }
+    }
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    // auto storeOp = cast<memref::StoreOp>(op);
+    // Value memref = storeOp.getMemref();
+    // Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
+  }
+};
+
+struct AffineForOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<AffineForOpADDataFlow,
+                                                  affine::AffineForOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    return {
+        forOp.getInits()[res.getResultNumber()],
+        forOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    if (arg.getArgNumber() < 1) {
+      return {};
+    }
+    auto idx = arg.getArgNumber() - 1;
+    return {forOp.getInits()[idx],
+            forOp.getBody()->getTerminator()->getOperand(idx)};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto forOp = cast<affine::AffineForOp>(op);
+    SmallVector<Value> sv;
+
+    for (auto &&[res, arg, barg] :
+         llvm::zip_equal(forOp->getResults(), term->getOperands(),
+                         forOp.getRegionIterArgs())) {
+      if (arg == val) {
+        sv.push_back(res);
+        sv.push_back(barg);
+      }
+    }
+
+    return sv;
+  }
+};
+
+struct AffineForOpEnzymeOpsRemover
+    : public ForLikeEnzymeOpsRemover<AffineForOpEnzymeOpsRemover,
+                                     affine::AffineForOp> {
+public:
+  // TODO: support non constant number of iteration by using unknown dimensions
+  static std::optional<int64_t>
+  getConstantNumberOfIterations(affine::AffineForOp forOp) {
+    if (!forOp.hasConstantLowerBound())
+      return std::nullopt;
+    if (!forOp.hasConstantUpperBound())
+      return std::nullopt;
+    return (forOp.getConstantUpperBound() - forOp.getConstantLowerBound()) /
+           forOp.getStepAsInt();
+  }
+
+  static SmallVector<IntOrValue, 1>
+  getDimensionBounds(OpBuilder &builder, affine::AffineForOp forOp) {
+    auto iters = getConstantNumberOfIterations(forOp);
+    if (iters) {
+      return {IntOrValue(*iters)};
+    } else {
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
+      auto ub = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getUpperBoundMap(),
+                                              forOp.getUpperBoundOperands());
+
+      Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+      if (forOp.getStepAsInt() != 1) {
+        auto step = builder.create<arith::ConstantIntOp>(
+            forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
+        diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+      }
+      return {IntOrValue(diff)};
+    }
+  }
+
+  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
+                                                affine::AffineForOp forOp) {
+    Value val = forOp.getBody()->getArgument(0);
+    if (!forOp.hasConstantLowerBound() || forOp.getConstantLowerBound() != 0) {
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
+      val = builder.create<arith::SubIOp>(forOp->getLoc(), val, lb);
+    }
+
+    if (forOp.getStepAsInt() != 1) {
+      auto step = builder.create<arith::ConstantIntOp>(
+          forOp->getLoc(), val.getType(), forOp.getStepAsInt());
+      val = builder.create<arith::DivUIOp>(forOp->getLoc(), val, step);
+    }
+    return {val};
+  }
+
+  static IRMapping createArgumentMap(PatternRewriter &rewriter,
+                                     affine::AffineForOp forOp,
+                                     ArrayRef<Value> indFor,
+                                     affine::AffineForOp otherForOp,
+                                     ArrayRef<Value> indOther) {
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+      map.map(f, o);
+
+    Value canIdx = forOp.getBody()->getArgument(0);
+    if (!map.contains(canIdx)) {
+      assert(forOp.getLowerBoundMap() == otherForOp.getLowerBoundMap());
+      for (auto &&[f, o] : llvm::zip_equal(forOp.getLowerBoundOperands(),
+                                           otherForOp.getLowerBoundOperands()))
+        assert(Equivalent(f, o));
+      assert(forOp.getStep() == otherForOp.getStep());
+      map.map(forOp.getBody()->getArgument(0),
+              otherForOp.getBody()->getArgument(0));
+    }
+    return map;
+  }
+
+  static affine::AffineForOp
+  replaceWithNewOperands(PatternRewriter &rewriter,
+                         affine::AffineForOp otherForOp,
+                         ArrayRef<Value> operands) {
+    auto newOtherForOp = rewriter.create<affine::AffineForOp>(
+        otherForOp->getLoc(), otherForOp.getLowerBoundOperands(),
+        otherForOp.getLowerBoundMap(), otherForOp.getUpperBoundOperands(),
+        otherForOp.getUpperBoundMap(), otherForOp.getStepAsInt(), operands);
+
+    newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
+    rewriter.replaceOp(otherForOp, newOtherForOp->getResults().slice(
+                                       0, otherForOp->getNumResults()));
+    return newOtherForOp;
+  }
+
+  static ValueRange getInits(affine::AffineForOp forOp) {
+    return forOp.getInits();
+  }
+};
+
 #include "Implementations/AffineDerivatives.inc"
 } // namespace
 
@@ -209,6 +526,12 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, affine::AffineDialect *) {
     registerInterfaces(context);
+    affine::AffineLoadOp::attachInterface<AffineLoadOpInterfaceReverse>(
+        *context);
+    affine::AffineStoreOp::attachInterface<AffineStoreOpInterfaceReverse>(
+        *context);
     affine::AffineForOp::attachInterface<AffineForOpInterfaceReverse>(*context);
+    affine::AffineForOp::attachInterface<AffineForOpEnzymeOpsRemover>(*context);
+    affine::AffineForOp::attachInterface<AffineForOpADDataFlow>(*context);
   });
 }

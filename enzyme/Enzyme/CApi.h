@@ -237,6 +237,9 @@ void EnzymeRegisterCallHandler(const char *Name,
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val);
 
+// TODO: Other API functions that are defined in CApi.cpp for GradientUtils
+void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils);
+
 #ifdef __cplusplus
 }
 #endif

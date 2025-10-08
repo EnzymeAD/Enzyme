@@ -39,8 +39,9 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses,
     bool verifyPostPasses, bool strongZero)
-    : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
-      invertedPointers(invertedPointers_), originalToNewFn(originalToNewFn_),
+    : newFunc(newFunc_), Logic(Logic), AtomicAdd(false), mode(mode),
+      oldFunc(oldFunc_), invertedPointers(invertedPointers_),
+      originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,

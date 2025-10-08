@@ -425,7 +425,28 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     if (auto PN = dyn_cast<PHINode>(&I)) {
       if (PN->getType() != val->getType())
         continue;
-      Value *ival = PN->getIncomingValueForBlock(lc.preheader);
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
+        continue;
+
+      int Idx = PN->getBasicBlockIndex(lc.preheader);
+      if (Idx < 0) {
+
+        std::string str;
+        raw_string_ostream ss(str);
+
+        ss << " Could not find block for index, PN: " << *PN << "\n";
+        ss << " preheader: " << *lc.preheader << "\n";
+        ss << " header: " << *lc.header << "\n";
+        ss << " fn: " << *lc.header->getParent() << "\n";
+
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
+        } else {
+          EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
+        }
+      }
+      Value *ival = PN->getIncomingValue(Idx);
       if (auto CDV = dyn_cast<ConstantDataVector>(ival)) {
         if (CDV->isSplat())
           ival = CDV->getSplatValue();
@@ -486,6 +507,8 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
       if (PN->getNumIncomingValues() == 0)
         continue;
       if (PN->getType() != lc.incvar->getType())
+        continue;
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
         continue;
       Value *ival = PN->getIncomingValueForBlock(lc.preheader);
       if (auto C = dyn_cast<Constant>(ival)) {
@@ -2504,7 +2527,22 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
 
   // TODO replace forwardBlock with the first block dominated by inst,
   // that dominates (or is) forwardBlock to ensuring maximum reuse
-  IRBuilder<> lcssa(&forwardBlock->front());
+  auto inspos = forwardBlock->front().getIterator();
+#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 21
+#else
+  if (forwardBlock->IsNewDbgInfoFormat)
+#endif
+  {
+    if (!inspos.getHeadBit()) {
+      auto srcmarker = forwardBlock->getMarker(inspos);
+      if (srcmarker && !srcmarker->empty()) {
+        inspos.setHeadBit(true);
+      }
+    }
+  }
+#endif
+  IRBuilder<> lcssa(forwardBlock, inspos);
   auto lcssaPHI =
       lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
   lcssaFixes[inst][forwardBlock] = lcssaPHI;
