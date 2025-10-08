@@ -55,7 +55,6 @@
 
 #include "../Utils.h"
 #include "TypeTree.h"
-#include "../EnzymeLogic.h"
 
 extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
@@ -175,6 +174,7 @@ static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
 
 class TypeAnalyzer;
 class TypeAnalysis;
+class EnzymeLogic;
 
 /// A holder class representing the results of running TypeAnalysis
 /// on a given function
