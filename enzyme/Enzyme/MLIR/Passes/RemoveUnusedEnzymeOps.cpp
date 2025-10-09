@@ -417,8 +417,9 @@ protected:
                                OpBuilder::InsertPoint previous) override;
   void notifyOperationErased(Operation *op) override;
 
-  void notifyMatchFailure(Location loc,
-                          function_ref<void(Diagnostic &)> reasonCallback);
+  void
+  notifyMatchFailure(Location loc,
+                     function_ref<void(Diagnostic &)> reasonCallback) override;
 
 private:
   void addToWorklist(Operation *op);
