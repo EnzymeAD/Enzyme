@@ -1,6 +1,6 @@
 use crate::Wishart;
 use std::f64::consts::PI;
-use std::autodiff::autodiff;
+use std::autodiff::*;
 
 #[cfg(feature = "libm")]
 use libm::lgamma;
@@ -129,9 +129,8 @@ fn get_workspace(d: usize, k: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>,
     (qdiags, sum_qs, xcentered, qxcentered, main_term)
 }
 
-#[autodiff(
+#[autodiff_reverse(
     dgmm_objective,
-    Reverse,
     Const,
     Const,
     Const,

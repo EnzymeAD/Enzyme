@@ -1,4 +1,4 @@
-use std::autodiff::autodiff;
+use std::autodiff::*;
 use std::f64::consts::PI;
 
 unsafe fn bitreversal_perm(data: *mut f64, len: usize) {
@@ -71,7 +71,7 @@ unsafe fn ifft(data: *mut f64, n: usize) {
     rescale(data, n);
 }
 
-#[autodiff(unsafe_dfoobar, Reverse, Const, DuplicatedOnly)]
+#[autodiff_reverse(unsafe_dfoobar, Const, DuplicatedOnly)]
 pub unsafe fn unsafe_foobar(n: usize, data: *mut f64) {
     fft(data, n);
     ifft(data, n);

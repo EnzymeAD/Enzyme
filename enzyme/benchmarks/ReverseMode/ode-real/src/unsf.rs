@@ -1,4 +1,4 @@
-use std::autodiff::autodiff;
+use std::autodiff::*;
 
 const N: usize = 32;
 const xmin: f64 = 0.;
@@ -34,7 +34,7 @@ unsafe fn init_brusselator(u: *mut f64, v: *mut f64) {
 }
 
 #[no_mangle]
-#[autodiff(dbrusselator_2d_loop_unsf, Reverse, Duplicated, Duplicated, Duplicated, Duplicated, Duplicated, Const)]
+#[autodiff_reverse(dbrusselator_2d_loop_unsf, Duplicated, Duplicated, Duplicated, Duplicated, Duplicated, Const)]
 pub unsafe fn brusselator_2d_loop_unsf(d_u: *mut f64, d_v: *mut f64, u: *const f64, v: *const f64, p: *const f64, t: f64) {
     let A = *p.add(0);
     let B = *p.add(1);

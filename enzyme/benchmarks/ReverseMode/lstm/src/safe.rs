@@ -1,5 +1,5 @@
 use std::slice;
-use std::autodiff::autodiff;
+use std::autodiff::*;
 use std::hint::assert_unchecked;
 
 // Sigmoid on scalar
@@ -104,9 +104,8 @@ fn lstm_predict(
 }
 
 // LSTM objective (loss function)
-#[autodiff(
+#[autodiff_reverse(
     d_lstm_objective,
-    Reverse,
     Const,
     Const,
     Const,

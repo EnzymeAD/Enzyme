@@ -22,4 +22,9 @@ lto = "fat"
 [dependencies]
 libm = { version = "0.2.8", optional = true }
 
+[features]
+default = []          # no feature on by default
+safe = []
+unsf = []
+
 [workspace]

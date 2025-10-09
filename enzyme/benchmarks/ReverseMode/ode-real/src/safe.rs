@@ -1,4 +1,4 @@
-use std::autodiff::autodiff;
+use std::autodiff::*;
 
 const N: usize = 32;
 const xmin: f64 = 0.;
@@ -36,7 +36,7 @@ fn init_brusselator(u: &mut [f64], v: &mut [f64]) {
 }
 
 #[no_mangle]
-#[autodiff(dbrusselator_2d_loop, Reverse, Duplicated, Duplicated, Duplicated, Duplicated, Duplicated, Const)]
+#[autodiff_reverse(dbrusselator_2d_loop, Duplicated, Duplicated, Duplicated, Duplicated, Duplicated, Const)]
 pub fn brusselator_2d_loop(d_u: &mut [f64;N*N], d_v: &mut [f64;N*N], u: &[f64;N*N], v: &[f64;N*N], p: &[f64;3], t: f64) {
     let A = p[0];
     let B = p[1];

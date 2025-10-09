@@ -1,6 +1,5 @@
-use crate::BA_NCAMPARAMS;
-use crate::compute_zach_weight_error;
-use std::autodiff::autodiff;
+use std::autodiff::*;
+static BA_NCAMPARAMS: usize = 11;
 
 unsafe fn sqsum(x: *const f64, n: usize) -> f64 {
     let mut sum = 0.;
@@ -10,6 +9,23 @@ unsafe fn sqsum(x: *const f64, n: usize) -> f64 {
     }
     sum
 }
+
+#[no_mangle]
+pub extern "C" fn rust_unsafe_dcompute_zach_weight_error(
+    w: *const f64,
+    dw: *mut f64,
+    err: *mut f64,
+    derr: *mut f64,
+) {
+    dcompute_zach_weight_error(w, dw, err, derr);
+}
+
+#[autodiff_reverse(dcompute_zach_weight_error, Duplicated, Duplicated)]
+pub fn compute_zach_weight_error(w: *const f64, err: *mut f64) {
+    let w = unsafe { *w };
+    unsafe { *err = 1. - w * w; }
+}
+
 
 #[inline]
 unsafe fn cross(a: *const f64, b: *const f64, out: *mut f64) {
@@ -86,9 +102,8 @@ pub unsafe extern "C" fn rust_unsafe_dcompute_reproj_error(
 }
 
 
-#[autodiff(
+#[autodiff_reverse(
     dcompute_reproj_error,
-    Reverse,
     Duplicated,
     Duplicated,
     Duplicated,
@@ -121,8 +136,8 @@ unsafe extern "C" fn rust2_unsafe_ba_objective(
     reproj_err: *mut f64,
     w_err: *mut f64,
 ) {
-    let n = n as usize;
-    let m = m as usize;
+    let _n = n as usize;
+    let _m = m as usize;
     let p = p as usize;
     for i in 0..p {
         let cam_idx = *obs.add(i * 2 + 0) as usize;

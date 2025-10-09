@@ -1,12 +1,16 @@
 #![feature(autodiff)]
-#![feature(slice_as_chunks)]
 #![feature(iter_next_chunk)]
 #![feature(array_ptr_get)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
 
+#[cfg(not(any(feature = "safe", feature = "unsf")))]
+compile_error!("Enable at least one of: features `safe` or `unsf`");
+
+#[cfg(all(feature = "safe"))]
 pub mod safe;
+#[cfg(all(feature = "unsf"))]
 pub mod unsf;
 
 type StateType = [f64; 2 * N * N];
@@ -14,6 +18,7 @@ type StateType = [f64; 2 * N * N];
 const N: usize = 32;
 
 
+#[cfg(all(feature = "unsf"))]
 #[no_mangle]
 pub extern "C" fn rust_lorenz_unsf(x: *const StateType, dxdt: *mut StateType, t: f64) {
     let x: &StateType = unsafe { &*x };
@@ -22,6 +27,7 @@ pub extern "C" fn rust_lorenz_unsf(x: *const StateType, dxdt: *mut StateType, t:
 }
 
 
+#[cfg(all(feature = "safe"))]
 #[no_mangle]
 pub extern "C" fn rust_lorenz_safe(x: *const StateType, dxdt: *mut StateType, t: f64) {
     let x: &StateType = unsafe { &*x };
@@ -29,6 +35,7 @@ pub extern "C" fn rust_lorenz_safe(x: *const StateType, dxdt: *mut StateType, t:
     safe::lorenz(x, dxdt, t);
 }
 
+#[cfg(all(feature = "unsf"))]
 #[no_mangle]
 pub extern "C" fn rust_dbrusselator_2d_loop_unsf(adjoint: *mut StateType, x: *const StateType, dx: *mut StateType, p: *const [f64;3], dp: *mut [f64;3], t: f64) {
     let mut null1 = [0.; 1 * N * N];
@@ -47,6 +54,7 @@ pub extern "C" fn rust_dbrusselator_2d_loop_unsf(adjoint: *mut StateType, x: *co
                          p as *mut f64, dp as *mut f64, t)};
 }
 
+#[cfg(all(feature = "safe"))]
 #[no_mangle]
 pub extern "C" fn rust_dbrusselator_2d_loop_safe(adjoint: *mut StateType, x: *const StateType, dx: *mut StateType, p: *const [f64;3], dp: *mut [f64;3], t: f64) {
     let x: &StateType = unsafe { &*x };

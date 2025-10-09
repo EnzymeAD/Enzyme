@@ -8,9 +8,6 @@ edition = "2021"
 [lib]
 crate-type = ["lib"]
 
-[features]
-libm = ["dep:libm"]
-
 [profile.release]
 lto = "fat"
 opt-level = 3
@@ -24,5 +21,11 @@ lto = "fat"
 
 [dependencies]
 libm = { version = "0.2.8", optional = true }
+
+[features]
+libm = ["dep:libm"]
+default = []          # no feature on by default
+safe = []
+unsf = []
 
 [workspace]

@@ -1,4 +1,4 @@
-use std::autodiff::autodiff;
+use std::autodiff::*;
 use std::f64::consts::PI;
 use std::slice;
 
@@ -79,7 +79,7 @@ fn ifft(data: &mut [f64]) {
     rescale(data, data.len() / 2);
 }
 
-#[autodiff(dfoobar, Reverse, DuplicatedOnly)]
+#[autodiff_reverse(dfoobar, DuplicatedOnly)]
 pub fn foobar(data: &mut [f64]) {
     fft(data);
     ifft(data);

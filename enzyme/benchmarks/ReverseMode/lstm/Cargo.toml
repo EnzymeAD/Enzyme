@@ -3,12 +3,10 @@ name = "lstm"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-
 [lib]
-crate-type = ["lib"]
+crate-type = ["cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [profile.release]
 lto = "fat"
@@ -20,5 +18,13 @@ strip = true
 
 [profile.dev]
 lto = "fat"
+
+[dependencies]
+
+
+[features]
+default = []          # no feature on by default
+safe = []
+unsf = []
 
 [workspace]

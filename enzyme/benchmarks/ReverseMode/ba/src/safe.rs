@@ -1,6 +1,5 @@
-use crate::BA_NCAMPARAMS;
-use crate::compute_zach_weight_error;
-use std::autodiff::autodiff;
+use std::autodiff::*;
+static BA_NCAMPARAMS: usize = 11;
 
 fn sqsum(x: &[f64]) -> f64 {
     x.iter().map(|&v| v * v).sum()
@@ -81,9 +80,8 @@ pub extern "C" fn rust_dcompute_reproj_error(
     unsafe {dcompute_reproj_error(cam, dcam, x, dx, w, wb, feat, err, derr)};
 }
 
-#[autodiff(
+#[autodiff_reverse(
     dcompute_reproj_error,
-    Reverse,
     Duplicated,
     Duplicated,
     Duplicated,
@@ -176,8 +174,13 @@ fn rust_ba_objective(
 
     for i in 0..p {
         let w_err: &mut f64 = unsafe { w_err.get_unchecked_mut(i) };
-        compute_zach_weight_error(w[i..].as_ptr(), w_err as *mut f64);
+        let w: &f64 = unsafe { w.get_unchecked(i) };
+        compute_zach_weight_error(w, w_err);
     }
+}
+#[autodiff_reverse(dcompute_zach_weight_error, Duplicated, Duplicated)]
+pub fn compute_zach_weight_error(w: &f64, err: &mut f64) {
+    *err = 1. - w * w;
 }
 
 #[no_mangle]
