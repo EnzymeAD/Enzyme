@@ -151,14 +151,11 @@ public:
               : DIFFE_TYPE::OUT_DIFF);
     }
 
-    if (llvm::any_of(ArgActivity,
-                     [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; }) ||
-        llvm::any_of(RetActivity,
+    if (llvm::any_of(RetActivity,
                      [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
-      // NOTE: this current approach fails when the function is not read only.
-      //       i.e. it can modify its arguments.
-      orig->emitError() << "could not emit adjoint with mutable types in: "
-                        << *orig << "\n";
+      orig->emitError()
+          << "could not emit adjoint with mutable return types in: " << *orig
+          << "\n";
       return failure();
     }
 
@@ -179,8 +176,11 @@ public:
 
     SmallVector<Value> revArguments;
 
-    for (auto cache : caches) {
+    for (auto [arg, act, cache] :
+         llvm::zip_equal(callOp.getOperands(), ArgActivity, caches)) {
       revArguments.push_back(gutils->popCache(cache, builder));
+      if (act == DIFFE_TYPE::DUP_ARG)
+        revArguments.push_back(gutils->invertPointerM(arg, builder));
     }
 
     for (auto result : callOp.getResults()) {
@@ -192,13 +192,22 @@ public:
     auto revCallOp = builder.create<func::CallOp>(
         orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
 
-    int revIndex = 0;
-    for (auto arg : callOp.getOperands()) {
+    int revIndex = 0, fwdIndex = 0;
+    for (auto [arg, act] : llvm::zip_equal(callOp.getOperands(), ArgActivity)) {
+      fwdIndex++;
+
       if (gutils->isConstantValue(arg))
         continue;
-      auto diffe = revCallOp.getResult(revIndex);
-      gutils->addToDiffe(arg, diffe, builder);
-      revIndex++;
+
+      if (act == DIFFE_TYPE::DUP_ARG) {
+        cast<CachableTypeInterface>(arg.getType())
+            .deletePoppedValue(builder, revArguments[fwdIndex - 1]);
+        fwdIndex++;
+      } else {
+        auto diffe = revCallOp.getResult(revIndex);
+        gutils->addToDiffe(arg, diffe, builder);
+        revIndex++;
+      }
     }
 
     return success();
