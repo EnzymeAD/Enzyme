@@ -114,8 +114,6 @@ struct StoreOpInterfaceReverse
     auto iface = cast<AutoDiffTypeInterface>(val.getType());
 
     if (!gutils->isConstantValue(memref)) {
-      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-
       Value memrefGradient = gutils->invertPointerM(memref, builder);
 
       SmallVector<Value> retrievedArguments;

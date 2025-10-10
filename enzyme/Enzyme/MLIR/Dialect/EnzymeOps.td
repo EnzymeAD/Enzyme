@@ -179,9 +179,8 @@ def BatchOp : Enzyme_Op<"batch",
 }
 
 def PushOp : Enzyme_Op<"push"> {
-  let summary = "Push value to cache or ShadowedGradient";
+  let summary = "Push value to cache";
   let arguments = (ins AnyType : $cache, AnyType : $value);
-  let results = (outs );
   let hasVerifier = 1;
 }
 
@@ -217,6 +216,27 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let parameters = (ins "Type":$basetype);
   let mnemonic = "Gradient";
   let assemblyFormat = "`<` $basetype `>`";
+}
+
+def LoadOp : Enzyme_Op<"load",
+    [TypesMatchWith<"type of 'result' matches element type of 'cache'",
+                    "cache", "result",
+                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
+  let summary = "Load a value from a cache at the specified indices";
+  let arguments = (ins Cache:$cache, Variadic<Index>:$indices);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$cache `[` $indices `]` attr-dict `:` type($cache)";
+}
+
+def StoreOp : Enzyme_Op<"store",
+    [TypesMatchWith<"type of 'value' matches element type of 'cache'",
+                     "cache", "value",
+                     "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
+  let summary = "Store a value to a cache at the specific indices";
+  let arguments = (ins AnyType:$value, Cache:$cache, Variadic<Index>:$indices);
+  let assemblyFormat = [{
+    $value `,` $cache `[` $indices `]` attr-dict `:` type($cache)
+  }];
 }
 
 def SetOp : Enzyme_Op<"set",
