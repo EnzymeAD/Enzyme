@@ -15,6 +15,9 @@
 namespace mlir {
 namespace enzyme {
 namespace oputils {
+
+const std::set<std::string> &getNonCapturingFunctions(); 
+
 // Checks if the operation/function has any memory write effects. This enables
 // batching specific AD optimiziations(which are triggered only if the primal
 // function doesnt modify memory operands)

@@ -129,6 +129,16 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
 
   // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
@@ -143,6 +153,16 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
 
   // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
@@ -156,6 +176,16 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   }];
   // activity optimization for region op
   let hasCanonicalizer=1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true>(*this);
+  }
+  }];
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
