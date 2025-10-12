@@ -127,7 +127,6 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
@@ -151,7 +150,6 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
   
   let extraClassDeclaration = [{
@@ -174,7 +172,7 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   let assemblyFormat = [{
     `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-  // activity optimization for region op
+
   let hasCanonicalizer=1;
   
   let extraClassDeclaration = [{

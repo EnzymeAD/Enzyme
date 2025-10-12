@@ -40,34 +40,41 @@ namespace mlir {
 namespace enzyme {
 namespace batchutils {
 
-Type getTensorizedType(Value val, int64_t width) {
+Type getConcatType(Value val, int64_t width) {
   auto valTy = val.getType();
-  auto valTensorTy = dyn_cast<TensorType>(valTy);
-  if (!valTensorTy) {
-    // val is not a tensor
-    return RankedTensorType::get(width, valTy);
-  } else {
+  auto valMemrefTy = dyn_cast<MemRefType>(valTy);
+  if (auto valTensorTy = dyn_cast<TensorType>(valTy)) {
     // val is a tensor, prepend batch width to shape
     SmallVector<int64_t> out_shape = {width};
     out_shape.append(valTensorTy.getShape().begin(),
                      valTensorTy.getShape().end());
     auto outTy = valTensorTy.clone(out_shape);
     return outTy;
+  } else if (auto valMemrefTy = dyn_cast<MemRefType>(valTy)) {
+    // val is a memref, prepend batch width
+    SmallVector<int64_t> out_shape = {width};
+    out_shape.append(valMemrefTy.getShape().begin(),
+                     valMemrefTy.getShape().end());
+    auto outTy = valMemrefTy.clone(out_shape);
+    return outTy;
+  } else {
+    // val is a scalar
+    return RankedTensorType::get(width, valTy);
   }
 }
 
-Value getTensorizedValue(OpBuilder &builder, Location &loc,
-                         SmallVector<Value> &argList) {
+Value getConcatValue(OpBuilder &builder, Location &loc,
+                     SmallVector<Value> &argList) {
   auto argTy = argList.front().getType();
   int64_t width = argList.size();
-  Type out_type = getTensorizedType(argList.front(), width);
+  Type out_type = getConcatType(argList.front(), width);
   mlir::Value out =
       builder.create<enzyme::ConcatenateOp>(loc, out_type, argList);
   return out;
 }
 
-Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
-                        Value &val, int64_t index) {
+Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
+                      Value &val, int64_t index) {
   // Extract the original output from the tensorized output at the given index.
   Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
   Value out = builder.create<enzyme::ExtractOp>(loc, argTy, val, indexOp);
@@ -225,7 +232,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         if (skipMergeEntry)
           continue;
 
-        SmallVector<enzyme::ForwardDiffOp> legalMerge;
+        SmallVector<ForwardDiffOp> legalMerge;
         if (callerEffects.size() == 0) {
           // legal to merge since there is no effect overwrite
           legalMerge = allDiffs;
@@ -242,7 +249,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
             }
 
-            bool stillOk = true;
+            bool foundConflict = false;
 
             for (auto eff : betweenEffects) {
               // read before write
@@ -250,7 +257,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Write>(fneff.getEffect())) {
                     if (oputils::mayAlias(eff, fneff)) {
-                      stillOk = false;
+                      foundConflict = true;
                       break;
                     }
                   }
@@ -261,14 +268,15 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 for (auto fneff : callerEffects) {
                   if (isa<MemoryEffects::Read>(fneff.getEffect())) {
                     if (oputils::mayAlias(eff, fneff)) {
-                      stillOk = false;
+                      foundConflict = true;
                       break;
                     }
                   }
                 }
               }
             }
-            if (!stillOk) {
+
+            if (foundConflict) {
               break;
             }
 
@@ -315,7 +323,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               mlir::Value batchedDeriv =
-                  batchutils::getTensorizedValue(builder, loc, derivList);
+                  batchutils::getConcatValue(builder, loc, derivList);
               in_args.push_back(batchedDeriv);
               in_idx++;
             }
@@ -347,7 +355,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               // derivative
 
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(dres, width));
+              out_ty.push_back(batchutils::getConcatType(dres, width));
               ++out_idx;
               break;
             }
@@ -360,7 +368,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
               // derivative
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(dres, width));
+              out_ty.push_back(batchutils::getConcatType(dres, width));
               ++out_idx;
               break;
             }
@@ -422,7 +430,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::extractValueAtIdx(
+                auto new_dout = batchutils::getExtractValue(
                     builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
@@ -445,7 +453,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::extractValueAtIdx(
+                auto new_dout = batchutils::getExtractValue(
                     builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
@@ -455,7 +463,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               break;
             }
             case Activity::enzyme_active: {
-              // TODO: check later
               auto new_out = newDiffOp.getOutputs()[out_idx];
 
               for (ForwardDiffOp dop : allOps) {
@@ -465,7 +472,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               break;
             }
             case Activity::enzyme_activenoneed: {
-              // TODO: check later
               auto new_out = newDiffOp.getOutputs()[out_idx];
 
               for (ForwardDiffOp dop : allOps) {
@@ -710,7 +716,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               mlir::Value b_din =
-                  batchutils::getTensorizedValue(builder, loc, derivList);
+                  batchutils::getConcatValue(builder, loc, derivList);
 
               in_args.push_back(b_din);
               call_idx++;
@@ -743,7 +749,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               Value batch_dout =
-                  batchutils::getTensorizedValue(builder, loc, derivList);
+                  batchutils::getConcatValue(builder, loc, derivList);
               in_args.push_back(batch_dout);
               call_idx++;
             }
@@ -762,7 +768,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           for (auto act : key.inActivity) {
             if (act == Activity::enzyme_active) {
               Value din = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getTensorizedType(din, width));
+              out_ty.push_back(batchutils::getConcatType(din, width));
               ++out_idx;
             }
           }
@@ -803,8 +809,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 Value old_din = dop.getOutputs()[out_idx];
                 auto dinTy = old_din.getType();
-                auto new_din = batchutils::extractValueAtIdx(
-                    builder, loc, dinTy, batch_din, dop_idx);
+                auto new_din = batchutils::getExtractValue(builder, loc, dinTy,
+                                                           batch_din, dop_idx);
 
                 old_din.replaceAllUsesWith(new_din);
               }

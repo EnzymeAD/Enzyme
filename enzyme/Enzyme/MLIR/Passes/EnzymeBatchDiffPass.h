@@ -3,6 +3,7 @@
 
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
@@ -93,13 +94,101 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   return key;
 }
 
-Type getTensorizedType(Value val, int64_t width);
+Type getConcatType(Value val, int64_t width);
 
-Value getTensorizedValue(OpBuilder &builder, Location &loc,
+Value getConcatValue(OpBuilder &builder, Location &loc,
                          SmallVector<Value> &argList);
 
-Value extractValueAtIdx(OpBuilder &builder, Location &loc, Type &argTy,
+Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
                         Value &val, int64_t index);
+
+template <typename SourceOp>
+SmallVector<SourceOp>
+pruneDiffs(SmallVector<SourceOp> &allDiffs,
+           SmallVector<MemoryEffects::EffectInstance> &callerEffects) {
+  SmallVector<SourceOp, 2> prunedSources;
+
+  // We first prune and check that all derivative arguments are defined before
+  // the first diff in the same block. (ops in allDiffs are guaranteed to belong
+  // to the same basic block)
+  auto firstDiffOp = allDiffs[0];
+  for (auto uop : allDiffs) {
+    auto diffArgs = uop.getGradArgs();
+    bool definedBeforeFirst = true;
+
+    for (auto diffVal : diffArgs) {
+      if (auto diffValOR = dyn_cast<OpResult>(diffVal)) {
+        // check that defining op appears before the current op
+        auto parentOp = diffValOR.getOwner();
+        if (!parentOp->isBeforeInBlock(firstDiffOp.getOperation())) {
+          definedBeforeFirst = false;
+          break;
+        }
+      }
+    }
+
+    if (definedBeforeFirst) {
+      prunedSources.push_back(uop);
+    }
+  }
+
+  // Account for betweenEffects
+  if (callerEffects.size() == 0) {
+    // legal to merge since there is no effect overwrite
+    return prunedSources;
+  } else {
+
+    SmallVector<SourceOp, 2> legalMerge;
+    legalMerge.emplace_back(prunedSources[0]);
+    SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
+
+    for (Operation *cur = prunedSources[0].getOperation();
+         cur != prunedSources.back(); cur = cur->getNextNode()) {
+      auto curOpEffects = oputils::collectOpEffects(cur);
+      if (curOpEffects.has_value()) {
+        betweenEffects.clear();
+        betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
+      }
+
+      bool foundConflict = false;
+
+      for (auto eff : betweenEffects) {
+        // read before write
+        if (isa<MemoryEffects::Read>(eff.getEffect())) {
+          for (auto fneff : callerEffects) {
+            if (isa<MemoryEffects::Write>(fneff.getEffect())) {
+              if (oputils::mayAlias(eff, fneff)) {
+                foundConflict = true;
+                break;
+              }
+            }
+          }
+        }
+        // write before read
+        if (isa<MemoryEffects::Write>(eff.getEffect())) {
+          for (auto fneff : callerEffects) {
+            if (isa<MemoryEffects::Read>(fneff.getEffect())) {
+              if (oputils::mayAlias(eff, fneff)) {
+                foundConflict = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (foundConflict) {
+        break;
+      }
+
+      auto curFnOp = dyn_cast<SourceOp>(cur);
+      if (curFnOp && llvm::is_contained(allDiffs, curFnOp)) {
+        legalMerge.push_back(cast<SourceOp>(cur));
+      }
+    }
+    return legalMerge;
+  }
+}
 
 } // namespace batchutils
 } // namespace enzyme
