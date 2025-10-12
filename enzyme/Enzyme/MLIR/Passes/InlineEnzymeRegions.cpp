@@ -189,12 +189,23 @@ LogicalResult outlineEnzymeAutoDiffRegion(enzyme::AutoDiffRegionOp op,
   SmallVector<enzyme::Activity> argActivities =
       llvm::map_to_vector(op.getActivity().getAsRange<enzyme::ActivityAttr>(),
                           [](auto attr) { return attr.getValue(); });
-  SmallVector<Value> inputs(op.getInputs());
+
+  size_t numPrimalArgs = op.getActivity().size();
+  SmallVector<Value> primalInputs(op.getInputs().begin(),
+                                  op.getInputs().begin() + numPrimalArgs);
+  SmallVector<Value> seedInputs(op.getInputs().begin() + numPrimalArgs,
+                                op.getInputs().end());
 
   FailureOr<func::FuncOp> outlinedFunc =
-      outlineAutoDiffFunc(op, funcName, inputs, argActivities, builder);
+      outlineAutoDiffFunc(op, funcName, primalInputs, argActivities, builder);
   if (failed(outlinedFunc))
     return failure();
+
+  // [primals (+ free vars...), seeds]
+  SmallVector<Value> allInputs;
+  allInputs.append(primalInputs);
+  allInputs.append(seedInputs);
+
   builder.setInsertionPoint(op);
   ArrayAttr argActivityAttr = builder.getArrayAttr(llvm::map_to_vector(
       argActivities, [&op](enzyme::Activity actv) -> Attribute {
@@ -202,7 +213,7 @@ LogicalResult outlineEnzymeAutoDiffRegion(enzyme::AutoDiffRegionOp op,
       }));
   auto newOp = enzyme::AutoDiffOp::create(
       builder, op.getLoc(), op.getResultTypes(), outlinedFunc->getName(),
-      inputs, argActivityAttr, op.getRetActivity(), op.getWidth(),
+      allInputs, argActivityAttr, op.getRetActivity(), op.getWidth(),
       op.getStrongZero());
   op.replaceAllUsesWith(newOp.getResults());
   op.erase();

@@ -98,3 +98,33 @@ func.func @outline_multi(%x: f64, %dr: f64) -> (f64, f64) {
 // CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @free_var_ordering(%x: f64) -> f64 {
+  %const = arith.constant 2.0 : f64
+  %seed = arith.constant 1.0 : f64
+
+  %grad = enzyme.autodiff_region(%x, %seed) {
+  ^bb0(%arg0: f64):
+    %mul = arith.mulf %arg0, %const : f64
+    enzyme.yield %mul : f64
+  } attributes {
+    activity = [#enzyme<activity enzyme_active>],
+    ret_activity = [#enzyme<activity enzyme_activenoneed>]
+  } : (f64, f64) -> f64
+
+  return %grad : f64
+}
+
+// CHECK: func.func @free_var_ordering(%arg0: f64) -> f64 {
+// CHECK-NEXT:    %[[CONST:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %[[SEED:.*]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[GRAD:.*]] = enzyme.autodiff @free_var_ordering_to_diff0(%arg0, %[[CONST]], %[[SEED]]) {activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64, f64) -> f64
+// CHECK-NEXT:    return %[[GRAD]] : f64
+// CHECK-NEXT:  }
+
+// CHECK: func.func @free_var_ordering_to_diff0(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %arg0, %arg1 : f64
+// CHECK-NEXT:    return %[[MUL]] : f64
+// CHECK-NEXT:  }
