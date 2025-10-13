@@ -97,15 +97,100 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
 Type getConcatType(Value val, int64_t width);
 
 Value getConcatValue(OpBuilder &builder, Location &loc,
-                         SmallVector<Value> &argList);
+                     SmallVector<Value> &argList);
 
 Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
-                        Value &val, int64_t index);
+                      Value &val, int64_t index);
 
-template <typename SourceOp>
-SmallVector<SourceOp>
-pruneDiffs(SmallVector<SourceOp> &allDiffs,
-           SmallVector<MemoryEffects::EffectInstance> &callerEffects) {
+template <typename SourceOp,
+          std::enable_if_t<
+              llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
+              bool> = true>
+SmallVector<MemoryEffects::EffectInstance> findCallerEffects(
+    SourceOp callerOp, FunctionOpInterface innerFnOp,
+    const SmallVector<MemoryEffects::EffectInstance> &innerEffects) {
+  SmallVector<MemoryEffects::EffectInstance> outerEffects;
+  for (auto &eff : innerEffects) {
+
+    Value effVal = eff.getValue();
+    if (!effVal) {
+      // unknown effect which isn't tied to a value, just add to result
+      outerEffects.push_back(eff);
+      continue;
+    }
+
+    // Find primal argument corresponding to effect value
+    auto primalArgPos = 0;
+    bool foundPrimal = false;
+    if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
+      if (llvm::is_contained(innerFnOp.getArguments(), effBA)) {
+        foundPrimal = true;
+        primalArgPos = effBA.getArgNumber();
+      }
+    }
+
+    if (!foundPrimal) {
+      // TODO: Handle this either as a global value, or a value which
+      // is inside of the MLIR function(for inter-proc alias analysis) -
+      // Just skip for now, since we don't have interprocedural alias-analysis
+      // implemented yet.
+      continue;
+    }
+
+    // Add primal effects to caller effect map for all ops
+    Value primalVal = callerOp.getPrimalArgs()[primalArgPos];
+    outerEffects.push_back(
+        oputils::getEffectOfVal(primalVal, eff.getEffect(), eff.getResource()));
+
+    // Add derivative effects(only if primal arg is dup)
+    // read(primal) -> read(derivative)
+    // write(primal) -> write(derivative)
+
+    // find position of dup arg for primal
+    bool primalIsDup =
+        (cast<ActivityAttr>(callerOp.getActivity()[primalArgPos]).getValue() ==
+         Activity::enzyme_dup) ||
+        (cast<ActivityAttr>(callerOp.getActivity()[primalArgPos]).getValue() ==
+         Activity::enzyme_dupnoneed);
+
+    if (primalIsDup) {
+      auto gradArgPos = 0;
+      for (auto [idx, act] : llvm::enumerate(callerOp.getActivity())) {
+        auto iattr = cast<ActivityAttr>(act);
+        auto act_val = iattr.getValue();
+        ++gradArgPos;
+
+        if (idx == primalArgPos)
+          break;
+
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          ++gradArgPos;
+        }
+      }
+
+      Value dVal = callerOp.getInputs()[gradArgPos];
+      // specialze effects based on callerOp type
+      if constexpr (std::is_same_v<SourceOp, ForwardDiffOp>) {
+        outerEffects.push_back(
+            oputils::getEffectOfVal(dVal, eff.getEffect(), eff.getResource()));
+      } else {
+        outerEffects.push_back(oputils::getEffectOfVal(
+            dVal, MemoryEffects::Write::get(), eff.getResource()));
+        outerEffects.push_back(oputils::getEffectOfVal(
+            dVal, MemoryEffects::Read::get(), eff.getResource()));
+      }
+    }
+  }
+  return outerEffects;
+}
+
+template <typename SourceOp,
+          std::enable_if_t<
+              llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
+              bool> = true>
+llvm::SmallVector<SourceOp> pruneGradDefs(BatchDiffCacheKey &key,
+                                          SmallVector<SourceOp> &allDiffs) {
   SmallVector<SourceOp, 2> prunedSources;
 
   // We first prune and check that all derivative arguments are defined before
@@ -132,62 +217,124 @@ pruneDiffs(SmallVector<SourceOp> &allDiffs,
     }
   }
 
-  // Account for betweenEffects
-  if (callerEffects.size() == 0) {
-    // legal to merge since there is no effect overwrite
+  return prunedSources;
+}
+
+template <typename SourceOp,
+          std::enable_if_t<
+              llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
+              bool> = true>
+llvm::SmallVector<SourceOp> pruneMemoryEffects(
+    SymbolTableCollection &symbolTable, BatchDiffCacheKey &key,
+    SmallVector<SourceOp> &prunedSources,
+    DenseMap<SourceOp, SmallVector<MemoryEffects::EffectInstance>>
+        &callerEffectMap,
+    llvm::DenseMap<FunctionOpInterface,
+                   SmallVector<MemoryEffects::EffectInstance>>
+        &innerEffectCache) {
+  // Find a mergeable subset of diff operations, which do not violate memory
+  // effects wrt reads and writes. Note that callerEffects only contains the
+  // aliased set of primal effects, so we have to first map these primal effects
+  // to corresponding derivative effects in `prunedSources`
+  // TODO: Also handle global values, and non-primal values inside callerEffects
+  // through inter-procedural alias analysis. Skip for now
+
+  if (callerEffectMap.empty()) {
+    // legal to merge since there is no effect overwrite in mergeable ops
     return prunedSources;
-  } else {
+  }
 
-    SmallVector<SourceOp, 2> legalMerge;
-    legalMerge.emplace_back(prunedSources[0]);
-    SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
+  SmallVector<SourceOp, 2> legalMerge;
+  auto lastOp = prunedSources[0];
 
-    for (Operation *cur = prunedSources[0].getOperation();
-         cur != prunedSources.back(); cur = cur->getNextNode()) {
-      auto curOpEffects = oputils::collectOpEffects(cur);
-      if (curOpEffects.has_value()) {
-        betweenEffects.clear();
-        betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
-      }
+  SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
+  for (auto candidateOp : prunedSources) {
+    // Update betweenEffects to include memory effects from lastOp to
+    // candidateOp
+    for (Operation *curr = lastOp.getOperation();
+         curr != candidateOp.getOperation(); curr = curr->getNextNode()) {
+      auto currSourceOp = dyn_cast<SourceOp>(curr);
+      if (currSourceOp && callerEffectMap.contains(currSourceOp)) {
+        // curr is/was a mergeable candidate, and we would have already computed
+        // its memory effects in the effect map
+        betweenEffects.append(callerEffectMap[currSourceOp]);
+      } else if (auto currFwdOp = dyn_cast<ForwardDiffOp>(curr)) {
+        // curr is a previously un-encountered fwddiff op
+        auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(currFwdOp,
+                                                currFwdOp.getFnAttr()));
+        if (!fnOp)
+          continue;
 
-      bool foundConflict = false;
-
-      for (auto eff : betweenEffects) {
-        // read before write
-        if (isa<MemoryEffects::Read>(eff.getEffect())) {
-          for (auto fneff : callerEffects) {
-            if (isa<MemoryEffects::Write>(fneff.getEffect())) {
-              if (oputils::mayAlias(eff, fneff)) {
-                foundConflict = true;
-                break;
-              }
-            }
-          }
+        if (!innerEffectCache.contains(fnOp)) {
+          innerEffectCache[fnOp] = oputils::collectFnEffects(fnOp);
         }
-        // write before read
-        if (isa<MemoryEffects::Write>(eff.getEffect())) {
-          for (auto fneff : callerEffects) {
-            if (isa<MemoryEffects::Read>(fneff.getEffect())) {
-              if (oputils::mayAlias(eff, fneff)) {
-                foundConflict = true;
-                break;
-              }
-            }
-          }
+
+        // map to outerEffects
+        betweenEffects.append(batchutils::findCallerEffects(
+            currFwdOp, fnOp, innerEffectCache[fnOp]));
+      } else if (auto currBwdOp = dyn_cast<AutoDiffOp>(curr)) {
+        // curr is a previously un-encountered revdiff op
+        auto fnOp = dyn_cast_or_null<FunctionOpInterface>(
+            symbolTable.lookupNearestSymbolFrom(currBwdOp,
+                                                currBwdOp.getFnAttr()));
+        if (!fnOp)
+          continue;
+
+        if (!innerEffectCache.contains(fnOp)) {
+          innerEffectCache[fnOp] = oputils::collectFnEffects(fnOp);
         }
-      }
 
-      if (foundConflict) {
-        break;
-      }
-
-      auto curFnOp = dyn_cast<SourceOp>(cur);
-      if (curFnOp && llvm::is_contained(allDiffs, curFnOp)) {
-        legalMerge.push_back(cast<SourceOp>(cur));
+        // map to outerEffects
+        betweenEffects.append(batchutils::findCallerEffects(
+            currBwdOp, fnOp, innerEffectCache[fnOp]));
+      } else {
+        // TODO: move forwarddiff and revdiff effect collection specialization
+        // from `findCallerEffects` into collectOpEffects(), accounting for
+        // inter-procedural alias analysis
+        auto currOpEffects = oputils::collectOpEffects(curr);
+        if (currOpEffects.has_value()) {
+          betweenEffects.append(currOpEffects.value());
+        }
       }
     }
-    return legalMerge;
+
+    // Check conflicts between betweenEffects and candidateOp. Since the batched
+    // version essentially "pushes up" the candidateOp, we ideally want to stop
+    // this if it violates the final order of writes to the candidate op owned
+    // value
+    bool foundConflict = false;
+    for (auto candidateEffect : callerEffectMap[candidateOp]) {
+      for (auto prevEffect : betweenEffects) {
+        // We will disable batching any candidiate operation which re-orders the
+        // relative order of writes to the primal and derivative arguments. For
+        // this, we alias the underlying effects in the preceding effects and
+        // the current  candidate operation.
+        if ((isa<MemoryEffects::Write>(prevEffect.getEffect()) &&
+             isa<MemoryEffects::Read>(candidateEffect.getEffect())) ||
+            (isa<MemoryEffects::Read>(prevEffect.getEffect()) &&
+             isa<MemoryEffects::Write>(candidateEffect.getEffect())) ||
+            (isa<MemoryEffects::Write>(prevEffect.getEffect()) &&
+             isa<MemoryEffects::Write>(candidateEffect.getEffect()))) {
+
+          // if the effects alias each other, then this is not a candidate for
+          // merging
+          if (oputils::mayAlias(candidateEffect, prevEffect)) {
+            foundConflict = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!foundConflict)
+      legalMerge.push_back(candidateOp);
+
+    // mark start of next range
+    lastOp = candidateOp;
   }
+
+  return legalMerge;
 }
 
 } // namespace batchutils

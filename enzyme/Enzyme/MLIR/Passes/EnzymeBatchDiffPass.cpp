@@ -124,10 +124,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           continue;
 
         // Collect inner effects of function
-        if (innerEffectCache.find(key.function) == innerEffectCache.end()) {
+        if (!innerEffectCache.contains(key.function)) {
           innerEffectCache[key.function] =
               oputils::collectFnEffects(key.function);
         }
+
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
             innerEffectCache[key.function];
 
@@ -147,11 +148,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         //
         // Unknown effects are retained in the caller, and will always alias to
         // true with any other effect
-
-        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
+        llvm::DenseMap<ForwardDiffOp,
+                       SmallVector<MemoryEffects::EffectInstance>>
+            callerEffectMap;
 
         for (auto &eff : calleeEffects) {
-
           if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
               !isa<MemoryEffects::Write>(eff.getEffect())) {
             // encountered allocate/load, skip merging
@@ -159,72 +160,65 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             break;
           }
 
-          Value eff_val = eff.getValue();
-          if (!eff_val) {
+          Value effVal = eff.getValue();
+          if (!effVal) {
             // unknown effect which isnt a value, skip merging
             skipMergeEntry = true;
             break;
           }
 
           // Find primal argument corresponding to effect value
-          auto arg_pos = 0;
+          auto primalArgPos = 0;
           bool foundPrimal = false;
-          for (auto fn_arg_val : key.function.getArguments()) {
-            if (fn_arg_val == eff_val) {
-              arg_pos = fn_arg_val.getArgNumber();
+          if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
+            if (llvm::is_contained(key.function.getArguments(), effBA)) {
               foundPrimal = true;
-              break;
+              primalArgPos = effBA.getArgNumber();
             }
           }
 
           if (!foundPrimal) {
             // TODO: Handle this either as a global value, or a value which
-            // is inside of the MLIR function(for inter-proc alias analysis)
-
-            // effect on some unknown mlir::Value which is not a primal
-            // function argument
-            callerEffects.emplace_back(eff);
-            continue;
+            // is inside of the MLIR function(for inter-proc alias analysis) -
+            // skip for now
+            skipMergeEntry = true;
+            break;
           }
 
-          // Add primal effect
-          Value primalVal = key.inputs[arg_pos];
-          callerEffects.push_back(oputils::getEffectOfVal(
-              primalVal, eff.getEffect(), eff.getResource()));
+          // Add primal effects to caller effect map for all ops
+          Value primalVal = key.inputs[primalArgPos];
+          for (auto dop : allDiffs) {
+            callerEffectMap[dop].push_back(oputils::getEffectOfVal(
+                primalVal, eff.getEffect(), eff.getResource()));
+          }
 
-          // Add derivative effects
+          // Add derivative effects(only if primal arg is dup)
           // read(primal) -> read(derivative)
           // write(primal) -> write(derivative)
 
           // find position of dup arg for primal
-          auto d_pos = 0;
-          bool has_dupentry = false;
-          for (auto act : key.inActivity) {
-            if ((arg_pos == d_pos) && (act == Activity::enzyme_dup ||
-                                       act == Activity::enzyme_dupnoneed)) {
-              has_dupentry = true;
-              ++d_pos;
-              break;
-            }
-            // update position
-            ++d_pos;
-            if (act == Activity::enzyme_dup ||
-                act == Activity::enzyme_dupnoneed) {
-              ++d_pos;
-            }
-          }
+          bool primalIsDup =
+              (key.inActivity[primalArgPos] == Activity::enzyme_dup) ||
+              (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
-          if (has_dupentry) {
-            for (auto dop : allDiffs) {
-              auto act_val =
-                  cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
-              if (act_val == Activity::enzyme_dup ||
-                  act_val == Activity::enzyme_dupnoneed) {
+          if (primalIsDup) {
+            auto gradArgPos = 0;
+            for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
+              ++gradArgPos;
 
-                Value dVal = dop.getInputs()[d_pos];
-                callerEffects.emplace_back(oputils::getEffectOfVal(
-                    dVal, eff.getEffect(), eff.getResource()));
+              if (idx == primalArgPos)
+                break;
+
+              if (act == Activity::enzyme_dup ||
+                  act == Activity::enzyme_dupnoneed) {
+                ++gradArgPos;
               }
+            }
+
+            for (auto dop : allDiffs) {
+              Value dVal = dop.getInputs()[gradArgPos];
+              callerEffectMap[dop].push_back(oputils::getEffectOfVal(
+                  dVal, eff.getEffect(), eff.getResource()));
             }
           }
         }
@@ -232,60 +226,11 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         if (skipMergeEntry)
           continue;
 
-        SmallVector<ForwardDiffOp> legalMerge;
-        if (callerEffects.size() == 0) {
-          // legal to merge since there is no effect overwrite
-          legalMerge = allDiffs;
-        } else {
+        SmallVector<ForwardDiffOp> prunedSources =
+            batchutils::pruneGradDefs(key, allDiffs);
 
-          legalMerge.emplace_back(allDiffs[0]);
-          SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
-
-          for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
-               cur = cur->getNextNode()) {
-            auto curOpEffects = oputils::collectOpEffects(cur);
-            if (curOpEffects.has_value()) {
-              betweenEffects.clear();
-              betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
-            }
-
-            bool foundConflict = false;
-
-            for (auto eff : betweenEffects) {
-              // read before write
-              if (isa<MemoryEffects::Read>(eff.getEffect())) {
-                for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Write>(fneff.getEffect())) {
-                    if (oputils::mayAlias(eff, fneff)) {
-                      foundConflict = true;
-                      break;
-                    }
-                  }
-                }
-              }
-              // write before read
-              if (isa<MemoryEffects::Write>(eff.getEffect())) {
-                for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Read>(fneff.getEffect())) {
-                    if (oputils::mayAlias(eff, fneff)) {
-                      foundConflict = true;
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-
-            if (foundConflict) {
-              break;
-            }
-
-            auto curFnOp = dyn_cast<enzyme::ForwardDiffOp>(cur);
-            if (curFnOp && llvm::is_contained(pair.second, curFnOp)) {
-              legalMerge.push_back(cast<enzyme::ForwardDiffOp>(cur));
-            }
-          }
-        }
+        SmallVector<ForwardDiffOp> legalMerge = batchutils::pruneMemoryEffects(
+            symbolTable, key, prunedSources, callerEffectMap, innerEffectCache);
 
         // go ahead and actually do the merge now
         {
@@ -530,20 +475,21 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           continue;
 
         // Collect inner effects of function
-        if (innerEffectCache.find(key.function) == innerEffectCache.end()) {
+        if (!innerEffectCache.contains(key.function)) {
           innerEffectCache[key.function] =
               oputils::collectFnEffects(key.function);
         }
+
         SmallVector<MemoryEffects::EffectInstance> &calleeEffects =
             innerEffectCache[key.function];
 
         // TODO: skip if known readonly from existing analyses
         bool skipMergeEntry = false;
 
-        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
+        llvm::DenseMap<AutoDiffOp, SmallVector<MemoryEffects::EffectInstance>>
+            callerEffectMap;
 
         for (auto &eff : calleeEffects) {
-
           if (!isa<MemoryEffects::Read>(eff.getEffect()) &&
               !isa<MemoryEffects::Write>(eff.getEffect())) {
             // encountered allocate/load, skip merging
@@ -551,71 +497,67 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
             break;
           }
 
-          Value eff_val = eff.getValue();
-          if (!eff_val) {
-            // unknown effect which isn't tied to a value, skip merging
+          Value effVal = eff.getValue();
+          if (!effVal) {
+            // unknown effect which isnt a value, skip merging
             skipMergeEntry = true;
             break;
           }
 
           // Find primal argument corresponding to effect value
-          auto arg_pos = 0;
+          auto primalArgPos = 0;
           bool foundPrimal = false;
-          for (auto fn_arg_val : key.function.getArguments()) {
-            if (fn_arg_val == eff_val) {
-              arg_pos = fn_arg_val.getArgNumber();
+          if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
+            if (llvm::is_contained(key.function.getArguments(), effBA)) {
               foundPrimal = true;
-              break;
+              primalArgPos = effBA.getArgNumber();
             }
           }
 
           if (!foundPrimal) {
             // TODO: Handle this either as a global value, or a value which
-            // is inside of the MLIR function(for inter-proc alias analysis)
-            callerEffects.emplace_back(eff);
-            continue;
+            // is inside of the MLIR function(for inter-proc alias analysis) -
+            // skip for now
+            skipMergeEntry = true;
+            break;
           }
 
-          // Add primal effect
-          Value primalVal = key.inputs[arg_pos];
-          callerEffects.push_back(oputils::getEffectOfVal(
-              primalVal, eff.getEffect(), eff.getResource()));
+          // Add primal effects to caller effect map for all ops
+          Value primalVal = key.inputs[primalArgPos];
+          for (auto dop : allDiffs) {
+            callerEffectMap[dop].push_back(oputils::getEffectOfVal(
+                primalVal, eff.getEffect(), eff.getResource()));
+          }
 
-          // Add derivative effects(conservative)
-          // read(primal) -> read+write(derivative)
-          // write(primal) -> write+read(derivative)
+          // Add derivative effects(only if primal arg is dup)
+          // read(primal) -> read(derivative)
+          // write(primal) -> write(derivative)
 
           // find position of dup arg for primal
-          auto d_pos = 0;
-          bool has_dupentry = false;
-          for (auto act : key.inActivity) {
-            if ((arg_pos == d_pos) && (act == Activity::enzyme_dup ||
-                                       act == Activity::enzyme_dupnoneed)) {
-              has_dupentry = true;
-              ++d_pos;
-              break;
-            }
-            // update position
-            ++d_pos;
-            if (act == Activity::enzyme_dup ||
-                act == Activity::enzyme_dupnoneed) {
-              ++d_pos;
-            }
-          }
+          bool primalIsDup =
+              (key.inActivity[primalArgPos] == Activity::enzyme_dup) ||
+              (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
-          if (has_dupentry) {
-            for (auto dop : allDiffs) {
-              auto act_val =
-                  cast<ActivityAttr>(dop.getActivity()[arg_pos]).getValue();
-              if (act_val == Activity::enzyme_dup ||
-                  act_val == Activity::enzyme_dupnoneed) {
+          if (primalIsDup) {
+            auto gradArgPos = 0;
+            for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
+              ++gradArgPos;
 
-                Value dVal = dop.getInputs()[d_pos];
-                callerEffects.emplace_back(oputils::getEffectOfVal(
-                    dVal, MemoryEffects::Write::get(), eff.getResource()));
-                callerEffects.emplace_back(oputils::getEffectOfVal(
-                    dVal, MemoryEffects::Read::get(), eff.getResource()));
+              if (idx == primalArgPos)
+                break;
+
+              if (act == Activity::enzyme_dup ||
+                  act == Activity::enzyme_dupnoneed) {
+                ++gradArgPos;
               }
+            }
+
+            for (auto dop : allDiffs) {
+              Value dVal = dop.getInputs()[gradArgPos];
+              callerEffectMap[dop].emplace_back(oputils::getEffectOfVal(
+                  dVal, MemoryEffects::Write::get(), eff.getResource()));
+              callerEffectMap[dop].emplace_back(oputils::getEffectOfVal(
+                  dVal, MemoryEffects::Read::get(), eff.getResource()));
             }
           }
         }
@@ -623,59 +565,13 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
         if (skipMergeEntry)
           continue;
 
-        SmallVector<enzyme::AutoDiffOp> legalMerge;
-        if (callerEffects.size() == 0) {
-          // legal to merge since there is no effect overwrite
-          legalMerge = allDiffs;
-        } else {
+        SmallVector<AutoDiffOp> prunedSources =
+            batchutils::pruneGradDefs(key, allDiffs);
 
-          legalMerge.emplace_back(allDiffs[0]);
-          SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;
+        SmallVector<AutoDiffOp> legalMerge = batchutils::pruneMemoryEffects(
+            symbolTable, key, prunedSources, callerEffectMap, innerEffectCache);
 
-          for (auto *cur = allDiffs[0]->getNextNode(); cur != allDiffs.back();
-               cur = cur->getNextNode()) {
-            auto curOpEffects = oputils::collectOpEffects(cur);
-            if (curOpEffects.has_value()) {
-              betweenEffects.clear();
-              betweenEffects.append(curOpEffects->begin(), curOpEffects->end());
-            }
-
-            bool stillOk = true;
-
-            for (auto eff : betweenEffects) {
-              // read before write
-              if (isa<MemoryEffects::Read>(eff.getEffect())) {
-                for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Write>(fneff.getEffect())) {
-                    if (oputils::mayAlias(eff, fneff)) {
-                      stillOk = false;
-                      break;
-                    }
-                  }
-                }
-              }
-              // write before read
-              if (isa<MemoryEffects::Write>(eff.getEffect())) {
-                for (auto fneff : callerEffects) {
-                  if (isa<MemoryEffects::Read>(fneff.getEffect())) {
-                    if (oputils::mayAlias(eff, fneff)) {
-                      stillOk = false;
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-            if (!stillOk) {
-              break;
-            }
-
-            auto curFnOp = dyn_cast<enzyme::AutoDiffOp>(cur);
-            if (curFnOp && llvm::is_contained(pair.second, curFnOp)) {
-              legalMerge.push_back(cast<enzyme::AutoDiffOp>(cur));
-            }
-          }
-        }
+        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         // go ahead and actually do the merge now
         {
