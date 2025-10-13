@@ -530,8 +530,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // Add derivative effects(only if primal arg is dup)
-          // read(primal) -> read(derivative)
-          // write(primal) -> write(derivative)
+          // read(primal) -> read(derivative) + write(derivative)
+          // write(primal) -> write(derivative) + read(derivative)
 
           // find position of dup arg for primal
           bool primalIsDup =
@@ -570,8 +570,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
         SmallVector<AutoDiffOp> legalMerge = batchutils::pruneMemoryEffects(
             symbolTable, key, prunedSources, callerEffectMap, innerEffectCache);
-
-        SmallVector<MemoryEffects::EffectInstance, 4> callerEffects;
 
         // go ahead and actually do the merge now
         {
@@ -685,7 +683,6 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
 
           // Map old uses to new uses
-
           out_idx = 0;
           for (auto ract : key.retActivity) {
             if (ract == Activity::enzyme_active ||
