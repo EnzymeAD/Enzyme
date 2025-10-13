@@ -42,7 +42,6 @@ namespace batchutils {
 
 Type getConcatType(Value val, int64_t width) {
   auto valTy = val.getType();
-  auto valMemrefTy = dyn_cast<MemRefType>(valTy);
   if (auto valTensorTy = dyn_cast<TensorType>(valTy)) {
     // val is a tensor, prepend batch width to shape
     SmallVector<int64_t> out_shape = {width};
@@ -65,7 +64,6 @@ Type getConcatType(Value val, int64_t width) {
 
 Value getConcatValue(OpBuilder &builder, Location &loc,
                      SmallVector<Value> &argList) {
-  auto argTy = argList.front().getType();
   int64_t width = argList.size();
   Type out_type = getConcatType(argList.front(), width);
   mlir::Value out =
