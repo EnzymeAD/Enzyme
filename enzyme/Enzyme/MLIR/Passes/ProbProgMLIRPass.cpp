@@ -366,12 +366,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 3. Check if proposal is accepted: log(rand()) < log_alpha
       auto accepted = rewriter.create<arith::CmpFOp>(
           mhOp.getLoc(), arith::CmpFPredicate::OLT, logRand, logAlpha);
-      auto acceptedExtract = rewriter.create<tensor::ExtractOp>(
-          mhOp.getLoc(), accepted, ValueRange{});
 
       // 4. Select between new and original trace based on acceptance
-      auto selectedTrace = rewriter.create<arith::SelectOp>(
-          mhOp.getLoc(), acceptedExtract, regenerateOp.getTrace(),
+      auto selectedTrace = rewriter.create<enzyme::SelectTraceOp>(
+          mhOp.getLoc(), traceType, accepted, regenerateOp.getTrace(),
           mhOp.getOriginalTrace());
 
       rewriter.replaceOp(
