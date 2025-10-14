@@ -38,6 +38,95 @@ namespace enzyme {
 } // namespace mlir
 
 namespace {
+
+static bool computePositionSizeForAddress(Operation *op,
+                                          FunctionOpInterface func,
+                                          ArrayRef<Attribute> address,
+                                          SymbolTableCollection &symbolTable,
+                                          int64_t &positionSize) {
+  if (address.empty())
+    return false;
+
+  auto targetSymbol = address[0];
+  bool found = false;
+
+  func.walk([&](enzyme::SampleOp sampleOp) {
+    if (found)
+      return WalkResult::interrupt();
+
+    auto sampleSymbol = sampleOp.getSymbolAttr();
+    if (!sampleSymbol || sampleSymbol != targetSymbol)
+      return WalkResult::advance();
+
+    found = true;
+
+    if (address.size() > 1) {
+      if (sampleOp.getLogpdfAttr()) {
+        op->emitError("Cannot select nested address in distribution function");
+        return WalkResult::interrupt();
+      }
+
+      auto genFn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+      if (!genFn || genFn.getFunctionBody().empty()) {
+        op->emitError("Cannot find generative function for nested address");
+        return WalkResult::interrupt();
+      }
+
+      if (!computePositionSizeForAddress(op, genFn, address.drop_front(),
+                                         symbolTable, positionSize))
+        return WalkResult::interrupt();
+
+      return WalkResult::interrupt();
+    }
+
+    for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+      auto resultType = sampleOp.getResult(i).getType();
+      if (auto tensorType = dyn_cast<RankedTensorType>(resultType)) {
+        int64_t elemCount = 1;
+        for (auto dim : tensorType.getShape()) {
+          if (dim == ShapedType::kDynamic) {
+            op->emitError("Dynamic tensor dimensions not supported");
+            return WalkResult::interrupt();
+          }
+          elemCount *= dim;
+        }
+        positionSize += elemCount;
+      } else {
+        op->emitError("Expected ranked tensor type for sample result");
+        return WalkResult::interrupt();
+      }
+    }
+
+    return WalkResult::interrupt();
+  });
+
+  return found;
+}
+
+static int64_t
+computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
+                                ArrayAttr selection,
+                                SymbolTableCollection &symbolTable) {
+  int64_t positionSize = 0;
+
+  for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty()) {
+      op->emitError("Empty address in selection");
+      return -1;
+    }
+
+    if (!computePositionSizeForAddress(op, fn, address, symbolTable,
+                                       positionSize)) {
+      op->emitError("Could not find sample with symbol in address chain");
+      return -1;
+    }
+  }
+
+  return positionSize;
+}
+
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   using ProbProgPassBase::ProbProgPassBase;
 
@@ -974,6 +1063,243 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       rewriter.setInsertionPoint(CI);
       SmallVector<Value> operands;
       operands.push_back(CI.getOriginalTrace());
+      operands.append(CI.getInputs().begin(), CI.getInputs().end());
+      auto newCI = rewriter.create<func::CallOp>(
+          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
+
+      rewriter.replaceOp(CI, newCI.getResults());
+
+      delete putils;
+
+      return success();
+    }
+  };
+
+  struct LowerUpdatePattern : public mlir::OpRewritePattern<enzyme::UpdateOp> {
+    using mlir::OpRewritePattern<enzyme::UpdateOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(enzyme::UpdateOp CI,
+                                  PatternRewriter &rewriter) const override {
+      SymbolTableCollection symbolTable;
+
+      auto fn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
+
+      if (fn.getFunctionBody().empty()) {
+        CI.emitError("ProbProg: calling `update` on an empty function");
+        return failure();
+      }
+
+      int64_t positionSize = computePositionSizeForSelection(
+          CI, fn, CI.getSelectionAttr(), symbolTable);
+      if (positionSize <= 0) {
+        CI.emitError("ProbProg: failed to compute position size for update");
+        return failure();
+      }
+
+      auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Update,
+                                                    positionSize);
+      FunctionOpInterface NewF = putils->newFunc;
+
+      OpBuilder entryBuilder(putils->initializationBlock,
+                             putils->initializationBlock->begin());
+      auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
+      auto zeroWeight = entryBuilder.create<arith::ConstantOp>(
+          putils->initializationBlock->begin()->getLoc(), tensorType,
+          DenseElementsAttr::get(tensorType, 0.0));
+      Value weightAccumulator = zeroWeight;
+      Value currTrace = putils->getTrace();
+
+      Value originalTrace = NewF.getArgument(0);
+      Value position = NewF.getArgument(1);
+
+      size_t positionOffset = 0;
+
+      SmallVector<Operation *> toErase;
+      auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(sampleOp);
+
+        SmallVector<Value> sampledValues;
+        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
+
+        if (isDistribution) {
+          bool isSelected = false;
+          for (auto addr : CI.getSelectionAttr()) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              if (address.size() != 1) {
+                sampleOp.emitError(
+                    "ProbProg: distribution function cannot have composite "
+                    "selected address");
+                return WalkResult::interrupt();
+              }
+              isSelected = true;
+              break;
+            }
+          }
+
+          if (isSelected) {
+            sampledValues.resize(sampleOp.getNumResults());
+            sampledValues[0] = sampleOp.getOperand(0); // RNG state
+
+            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+              auto resultType =
+                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
+              auto shape = resultType.getShape();
+
+              int64_t numElements = 1;
+              for (auto dim : shape) {
+                if (dim == ShapedType::kDynamic) {
+                  sampleOp.emitError(
+                      "ProbProg: dynamic tensor dimensions not supported in "
+                      "update");
+                  return WalkResult::interrupt();
+                }
+                numElements *= dim;
+              }
+
+              // Reconstruct multi-dimensional tensor from position vector
+              auto unflattenOp = rewriter.create<enzyme::UnflattenSliceOp>(
+                  sampleOp.getLoc(), resultType, position,
+                  rewriter.getI64IntegerAttr(positionOffset));
+
+              sampledValues[i] = unflattenOp.getResult();
+              positionOffset += numElements;
+            }
+
+            auto logpdfFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getLogpdfAttr()));
+
+            SmallVector<Value> logpdfOperands;
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              logpdfOperands.push_back(sampledValues[i]);
+            }
+            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+              logpdfOperands.push_back(sampleOp.getOperand(i));
+            }
+
+            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
+              sampleOp.emitError(
+                  "ProbProg: failed to construct logpdf call; "
+                  "logpdf function has wrong number of arguments");
+              return WalkResult::interrupt();
+            }
+
+            auto logpdf = rewriter.create<func::CallOp>(
+                sampleOp.getLoc(), logpdfFn.getName(),
+                logpdfFn.getResultTypes(), logpdfOperands);
+            weightAccumulator = rewriter.create<arith::AddFOp>(
+                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+          } else {
+            sampledValues.resize(sampleOp.getNumResults());
+
+            SmallVector<Type> sampledValueTypes;
+            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+              sampledValueTypes.push_back(sampleOp->getResultTypes()[i]);
+            }
+
+            auto gsftOp = rewriter.create<enzyme::GetSampleFromTraceOp>(
+                sampleOp.getLoc(), sampledValueTypes, originalTrace,
+                sampleOp.getSymbolAttr());
+
+            sampledValues[0] = sampleOp.getOperand(0); // RNG state
+            for (unsigned i = 0; i < gsftOp->getNumResults(); ++i) {
+              sampledValues[i + 1] = gsftOp->getResult(i);
+            }
+
+            auto logpdfFn =
+                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                    sampleOp, sampleOp.getLogpdfAttr()));
+
+            SmallVector<Value> logpdfOperands;
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              logpdfOperands.push_back(sampledValues[i]);
+            }
+            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+              logpdfOperands.push_back(sampleOp.getOperand(i));
+            }
+
+            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
+              sampleOp.emitError(
+                  "ProbProg: failed to construct logpdf call; "
+                  "logpdf function has wrong number of arguments");
+              return WalkResult::interrupt();
+            }
+
+            auto logpdf = rewriter.create<func::CallOp>(
+                sampleOp.getLoc(), logpdfFn.getName(),
+                logpdfFn.getResultTypes(), logpdfOperands);
+            weightAccumulator = rewriter.create<arith::AddFOp>(
+                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+          }
+        } else {
+          // TODO
+          sampleOp.emitError(
+              "ProbProg: update on generative functions not implemented");
+          return WalkResult::interrupt();
+        }
+
+        SmallVector<Value> valuesToTrace;
+        for (unsigned i = 1; i < sampledValues.size(); ++i) {
+          valuesToTrace.push_back(sampledValues[i]);
+        }
+
+        if (!valuesToTrace.empty()) {
+          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
+              sampleOp.getLoc(), enzyme::TraceType::get(sampleOp.getContext()),
+              currTrace, sampleOp.getSymbolAttr(), valuesToTrace);
+          currTrace = addSampleToTraceOp.getUpdatedTrace();
+        }
+
+        sampleOp.replaceAllUsesWith(sampledValues);
+        toErase.push_back(sampleOp);
+        return WalkResult::advance();
+      });
+
+      for (Operation *op : toErase)
+        rewriter.eraseOp(op);
+
+      if (result.wasInterrupted()) {
+        CI.emitError("ProbProg: failed to walk sample ops");
+        return failure();
+      }
+
+      NewF.walk([&](func::ReturnOp retOp) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(retOp);
+
+        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
+            retOp.getLoc(), enzyme::TraceType::get(retOp.getContext()),
+            currTrace, weightAccumulator);
+        currTrace = addWeightOp.getUpdatedTrace();
+
+        SmallVector<Value> retvals;
+        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
+          retvals.push_back(retOp.getOperand(i));
+        }
+
+        if (!retvals.empty()) {
+          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
+              retOp.getLoc(), enzyme::TraceType::get(retOp.getContext()),
+              currTrace, retvals);
+          currTrace = addRetvalOp.getUpdatedTrace();
+        }
+
+        SmallVector<Value> newRetVals;
+        newRetVals.push_back(currTrace);
+        newRetVals.push_back(weightAccumulator);
+        newRetVals.push_back(retOp.getOperand(0));
+
+        rewriter.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+        rewriter.eraseOp(retOp);
+      });
+
+      rewriter.setInsertionPoint(CI);
+      SmallVector<Value> operands;
+      operands.push_back(CI.getOriginalTrace());
+      operands.push_back(CI.getPosition());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
       auto newCI = rewriter.create<func::CallOp>(
           CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
