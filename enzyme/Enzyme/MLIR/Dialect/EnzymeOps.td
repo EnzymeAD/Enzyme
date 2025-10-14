@@ -570,7 +570,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   }];
 }
 
-def InitTraceOp : Enzyme_Op<"initTrace"> {
+def InitTraceOp : Enzyme_Op<"initTrace", [Pure]> {
   let summary = "Initialize an execution trace for a probabilistic function";
   let description = [{
     Initialize an execution trace for a probabilistic function.
@@ -580,7 +580,7 @@ def InitTraceOp : Enzyme_Op<"initTrace"> {
   let assemblyFormat = "attr-dict `:` type($trace)";
 }
 
-def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
+def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
   let summary = "Add a sampled value into the execution trace";
   let description = [{
   Add a sampled value into the execution trace.
@@ -599,7 +599,7 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace"> {
   }];
 }
 
-def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
+def AddSubtraceOp : Enzyme_Op<"addSubtrace", [Pure]> {
   let summary = "Insert a subtrace into a parent trace";
   let description = [{
   Insert a subtrace into a parent trace.
@@ -618,7 +618,7 @@ def AddSubtraceOp : Enzyme_Op<"addSubtrace"> {
   }];
 }
 
-def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace"> {
+def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace", [Pure]> {
   let summary = "Add the aggregated weight into the execution trace";
   let description = [{
   Add the aggregated log-probability weight to the execution trace.
@@ -636,7 +636,7 @@ def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace"> {
   }];
 }
 
-def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace"> {
+def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace", [Pure]> {
   let summary = "Add the function's return value(s) into the execution trace";
   let description = [{
   Add the function's return value(s) into the execution trace.
@@ -717,7 +717,7 @@ def RandomOp : Enzyme_Op<"random"> {
   }];
 }
 
-def GetSubtraceOp : Enzyme_Op<"getSubtrace"> {
+def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
   let summary = "Get a subtrace from a trace for a given symbol";
   let description = [{
     Get a subtrace from a trace for a given symbol.
@@ -731,7 +731,7 @@ def GetSubtraceOp : Enzyme_Op<"getSubtrace"> {
   }];
 }
 
-def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace"> {
+def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace", [Pure]> {
   let summary = "Get the sampled value for a given symbol from an execution trace";
   let description = [{
     Get the sampled value for a given symbol from an execution trace.
@@ -745,7 +745,7 @@ def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace"> {
   }];
 }
 
-def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace"> {
+def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace", [Pure]> {
   let summary = "Get the accumulated weight from an execution trace";
   let description = [{
     Get the accumulated log-probability weight from an execution trace.
