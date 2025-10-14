@@ -523,8 +523,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^{-1} * p
       Value K0;
       if (mass) {
-        auto MInvP0 =
-            rewriter.create<enzyme::LinearSolveOp>(loc, positionType, mass, p0);
+        auto MInvP0 = rewriter.create<enzyme::CholeskySolveOp>(
+            loc, positionType, mass, p0);
         auto p0DotMInvP =
             rewriter.create<enzyme::DotOp>(loc, tensorType, p0, MInvP0);
         K0 = rewriter.create<arith::MulFOp>(loc, halfConst, p0DotMInvP);
@@ -643,8 +643,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 6.2 Full step on position: q += eps * M^{-1} * p1
       Value v1;
       if (mass) {
-        v1 =
-            rewriter.create<enzyme::LinearSolveOp>(loc, positionType, mass, p1);
+        v1 = rewriter.create<enzyme::CholeskySolveOp>(loc, positionType, mass,
+                                                      p1);
       } else {
         v1 = p1;
       }
@@ -737,8 +737,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // K1 = 0.5 * pL^T * M^{-1} * pL
       Value K1;
       if (mass) {
-        auto MInvPL =
-            rewriter.create<enzyme::LinearSolveOp>(loc, positionType, mass, pL);
+        auto MInvPL = rewriter.create<enzyme::CholeskySolveOp>(
+            loc, positionType, mass, pL);
         auto pLDotMInvPL =
             rewriter.create<enzyme::DotOp>(loc, tensorType, pL, MInvPL);
         K1 = rewriter.create<arith::MulFOp>(loc, halfConst, pLDotMInvPL);

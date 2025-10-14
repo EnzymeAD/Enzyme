@@ -918,10 +918,11 @@ def DotOp : Enzyme_Op<"dot", [Pure]> {
   }];
 }
 
-def LinearSolveOp : Enzyme_Op<"linear_solve", [Pure]> {
-  let summary = "Solve linear system Ax = b";
+def CholeskySolveOp : Enzyme_Op<"cholesky_solve", [Pure]> {
+  let summary = "Solve linear system Ax = b using Cholesky decomposition";
   let description = [{
-    Solves the linear system Ax = b for x.
+    Solves the linear system Ax = b for x using Cholesky decomposition.
+    Assuming A is symmetric positive definite!
   }];
 
   let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
