@@ -117,7 +117,8 @@ computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
       return -1;
     }
 
-    if (!computePositionSizeForAddress(op, fn, address, symbolTable,
+    SmallVector<Attribute> tailAddresses(address.begin(), address.end());
+    if (!computePositionSizeForAddress(op, fn, tailAddresses, symbolTable,
                                        positionSize)) {
       op->emitError("Could not find sample with symbol in address chain");
       return -1;
