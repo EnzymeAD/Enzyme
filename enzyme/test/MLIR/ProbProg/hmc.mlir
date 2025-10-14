@@ -41,7 +41,7 @@ module {
 // CHECK-NEXT:    %2 = enzyme.getWeightFromTrace %0 : tensor<f64>
 // CHECK-NEXT:    %3 = arith.negf %2 : tensor<f64>
 // CHECK-NEXT:    %output_rng_state, %result = enzyme.random %arg0, %cst_4, %cst_7 {rng_distribution = #enzyme<rng_distribution MULTINORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<2x2xf64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT:    %4 = enzyme.linear_solve %cst_7, %result : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %4 = enzyme.cholesky_solve %cst_7, %result : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
 // CHECK-NEXT:    %5 = enzyme.dot %result, %4 : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
 // CHECK-NEXT:    %6 = arith.mulf %5, %cst_2 : tensor<f64>
 // CHECK-NEXT:    %7 = arith.addf %3, %6 : tensor<f64>
@@ -57,7 +57,7 @@ module {
 // CHECK-NEXT:    ^bb0(%arg3: tensor<i64>, %arg4: tensor<2xf64>, %arg5: tensor<2xf64>, %arg6: tensor<2xf64>, %arg7: !enzyme.Trace, %arg8: tensor<2xui64>):
 // CHECK-NEXT:      %23 = arith.mulf %10, %arg6 : tensor<2xf64>
 // CHECK-NEXT:      %24 = arith.subf %arg5, %23 : tensor<2xf64>
-// CHECK-NEXT:      %25 = enzyme.linear_solve %cst_7, %24 : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:      %25 = enzyme.cholesky_solve %cst_7, %24 : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
 // CHECK-NEXT:      %26 = arith.mulf %9, %25 : tensor<2xf64>
 // CHECK-NEXT:      %27 = arith.addf %arg4, %26 : tensor<2xf64>
 // CHECK-NEXT:      %28:3 = enzyme.autodiff_region(%27, %cst_3) {
@@ -72,7 +72,7 @@ module {
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %12 = enzyme.getWeightFromTrace %11#3 : tensor<f64>
 // CHECK-NEXT:    %13 = arith.negf %12 : tensor<f64>
-// CHECK-NEXT:    %14 = enzyme.linear_solve %cst_7, %11#1 : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %14 = enzyme.cholesky_solve %cst_7, %11#1 : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
 // CHECK-NEXT:    %15 = enzyme.dot %11#1, %14 : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
 // CHECK-NEXT:    %16 = arith.mulf %15, %cst_2 : tensor<f64>
 // CHECK-NEXT:    %17 = arith.addf %13, %16 : tensor<f64>
