@@ -206,6 +206,28 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
+def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Runs an augmented primal that can later be used to generate reverse with enzyme.autodiff_deferred_reverse";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let results = (outs Variadic<AnyType>:$results, AnyType:$tape);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def AutoDiffDeferredReverseOp : Enzyme_Op<"autodiff_deferred_reverse",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Runs the reverse from an enzyme.autodiff_deferred_primal result";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
@@ -316,6 +338,15 @@ def Cache : Enzyme_Type<"Cache"> {
   let parameters = (ins "Type":$type);
   let mnemonic = "Cache";
   let assemblyFormat = "`<` $type `>`";
+}
+
+def Tape : Enzyme_Type<"Tape"> {
+  let summary = "Tape for reverse deferred";
+  let description = [{
+    "Tape for reverse deferred"
+  }];
+  let parameters = (ins);
+  let mnemonic = "Tape";
 }
 
 def Gradient : Enzyme_Type<"Gradient"> {

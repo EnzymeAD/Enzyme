@@ -527,6 +527,36 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 //===----------------------------------------------------------------------===//
+// AutoDiffDeferredOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+AutoDiffDeferredPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+LogicalResult
+AutoDiffDeferredReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // BroadcastOp
 //===----------------------------------------------------------------------===//
 
