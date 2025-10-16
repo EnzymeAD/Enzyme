@@ -36,8 +36,8 @@ bool mayAlias(MemoryEffects::EffectInstance &A,
 ///
 /// Also accounts for LLVM and autodiff-specific memory effects which are not
 /// captured by the default `mlir::getEffectsRecursively`
-bool 
-collectOpEffects(Operation *rootOp, SmallVector<MemoryEffects::EffectInstance> &effects);
+bool collectOpEffects(Operation *rootOp,
+                      SmallVector<MemoryEffects::EffectInstance> &effects);
 
 // Specialize memory effect collection for a FunctionOpInterface
 SmallVector<MemoryEffects::EffectInstance>
