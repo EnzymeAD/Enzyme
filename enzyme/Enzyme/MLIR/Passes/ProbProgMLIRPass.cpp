@@ -396,7 +396,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerMCMCPattern : public mlir::OpRewritePattern<enzyme::MCMCOp> {
-    using mlir::OpRewritePattern<enzyme::MCMCOp>::OpRewritePattern;
+    bool debug;
+
+    LowerMCMCPattern(MLIRContext *context, bool debug,
+                     PatternBenefit benefit = 1)
+        : OpRewritePattern(context, benefit), debug(debug) {}
 
     LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
@@ -415,6 +419,17 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
     }
 
   private:
+    Value conditionalDump(OpBuilder &builder, Location loc, Value value,
+                          StringRef label) const {
+      if (debug) {
+        return builder
+            .create<enzyme::DumpOp>(loc, value.getType(), value,
+                                    builder.getStringAttr(label))
+            .getOutput();
+      }
+      return value;
+    }
+
     LogicalResult lowerHMC(enzyme::MCMCOp mcmcOp,
                            PatternRewriter &rewriter) const {
       SymbolTableCollection symbolTable;
@@ -470,13 +485,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 2. Compute initial potential energy U0 = -weight
       auto weight0 = rewriter.create<enzyme::GetWeightFromTraceOp>(
           loc, tensorType, originalTrace);
-      Value U0 = rewriter.create<arith::NegFOp>(loc, weight0);
-
-      U0 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, U0.getType(), U0,
-                   rewriter.getStringAttr("HMC: initial potential energy U0"))
-               .getOutput();
+      Value U0 = conditionalDump(rewriter, loc,
+                                 rewriter.create<arith::NegFOp>(loc, weight0),
+                                 "HMC: initial potential energy U0");
 
       auto zeroConst = rewriter.create<arith::ConstantOp>(
           loc, tensorType,
@@ -519,25 +530,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             loc, positionType, mass, p0);
         auto p0DotMInvP =
             rewriter.create<enzyme::DotOp>(loc, tensorType, p0, MInvP0);
-        K0 = rewriter.create<arith::MulFOp>(loc, halfConst, p0DotMInvP);
+        K0 = conditionalDump(
+            rewriter, loc,
+            rewriter.create<arith::MulFOp>(loc, halfConst, p0DotMInvP),
+            "HMC: initial kinetic energy K0");
       } else {
         auto p0DotP0 = rewriter.create<enzyme::DotOp>(loc, tensorType, p0, p0);
-        K0 = rewriter.create<arith::MulFOp>(loc, halfConst, p0DotP0);
+        K0 = conditionalDump(
+            rewriter, loc,
+            rewriter.create<arith::MulFOp>(loc, halfConst, p0DotP0),
+            "HMC: initial kinetic energy K0");
       }
 
-      K0 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, K0.getType(), K0,
-                   rewriter.getStringAttr("HMC: initial kinetic energy K0"))
-               .getOutput();
-
-      Value H0 = rewriter.create<arith::AddFOp>(loc, U0, K0);
-
-      H0 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, H0.getType(), H0,
-                   rewriter.getStringAttr("HMC: initial Hamiltonian H0"))
-               .getOutput();
+      Value H0 = conditionalDump(rewriter, loc,
+                                 rewriter.create<arith::AddFOp>(loc, U0, K0),
+                                 "HMC: initial Hamiltonian H0");
 
       // 5. Compute initial gradient at q0
       auto gradSeedInit = rewriter.create<arith::ConstantOp>(
@@ -595,11 +602,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       ArrayRef<int64_t> positionShape = positionType.getShape();
 
-      stepSize = rewriter
-                     .create<enzyme::DumpOp>(
-                         loc, stepSize.getType(), stepSize,
-                         rewriter.getStringAttr("HMC: step_size (eps)"))
-                     .getOutput();
+      stepSize =
+          conditionalDump(rewriter, loc, stepSize, "HMC: step_size (eps)");
 
       auto stepSizeBroadcast = rewriter.create<enzyme::BroadcastOp>(
           loc, positionType, stepSize,
@@ -626,37 +630,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       loopBody->addArgument(rng0_final.getType(), loc); // rng
 
       rewriter.setInsertionPointToStart(loopBody);
-      Value q = loopBody->getArgument(1);
-      Value p = loopBody->getArgument(2);
-      Value gradient = loopBody->getArgument(3);
+      Value q = conditionalDump(rewriter, loc, loopBody->getArgument(1),
+                                "Leapfrog: position q(t)");
+      Value p = conditionalDump(rewriter, loc, loopBody->getArgument(2),
+                                "Leapfrog: momentum p(t)");
+      Value gradient = conditionalDump(rewriter, loc, loopBody->getArgument(3),
+                                       "Leapfrog: gradient dU/dq(t)");
       Value loopTrace = loopBody->getArgument(4);
       Value loopRng = loopBody->getArgument(5);
-
-      q = rewriter
-              .create<enzyme::DumpOp>(
-                  loc, q.getType(), q,
-                  rewriter.getStringAttr("Leapfrog: position q(t)"))
-              .getOutput();
-      p = rewriter
-              .create<enzyme::DumpOp>(
-                  loc, p.getType(), p,
-                  rewriter.getStringAttr("Leapfrog: momentum p(t)"))
-              .getOutput();
-      gradient = rewriter
-                     .create<enzyme::DumpOp>(
-                         loc, gradient.getType(), gradient,
-                         rewriter.getStringAttr("Leapfrog: gradient dU/dq(t)"))
-                     .getOutput();
 
       // 6.1 Half step on momentum: p -= (eps/2) * gradient
       auto deltaP1 =
           rewriter.create<arith::MulFOp>(loc, halfStepSizeBroadcast, gradient);
-      Value p1 = rewriter.create<arith::SubFOp>(loc, p, deltaP1);
-      p1 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, p1.getType(), p1,
-                   rewriter.getStringAttr("Leapfrog: momentum p(t + eps/2)"))
-               .getOutput();
+      Value p1 = conditionalDump(
+          rewriter, loc, rewriter.create<arith::SubFOp>(loc, p, deltaP1),
+          "Leapfrog: momentum p(t + eps/2)");
 
       // 6.2 Full step on position: q += eps * M^{-1} * p1
       Value v1;
@@ -668,12 +656,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       }
 
       auto deltaQ = rewriter.create<arith::MulFOp>(loc, stepSizeBroadcast, v1);
-      Value q1 = rewriter.create<arith::AddFOp>(loc, q, deltaQ);
-      q1 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, q1.getType(), q1,
-                   rewriter.getStringAttr("Leapfrog: position q(t + eps)"))
-               .getOutput();
+      Value q1 = conditionalDump(rewriter, loc,
+                                 rewriter.create<arith::AddFOp>(loc, q, deltaQ),
+                                 "Leapfrog: position q(t + eps)");
 
       // Compute new gradient at q1
       auto gradSeedLoop = rewriter.create<arith::ConstantOp>(
@@ -719,23 +704,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       Value newTrace = autodiffOp.getResult(0);
       Value newRng = autodiffOp.getResult(1);
-      Value newGradient = autodiffOp.getResult(2);
-      newGradient =
-          rewriter
-              .create<enzyme::DumpOp>(
-                  loc, newGradient.getType(), newGradient,
-                  rewriter.getStringAttr("Leapfrog: gradient dU/dq(t + eps)"))
-              .getOutput();
+      Value newGradient =
+          conditionalDump(rewriter, loc, autodiffOp.getResult(2),
+                          "Leapfrog: gradient dU/dq(t + eps)");
 
       // 6.3 Another half step on momentum: p -= (eps/2) * gradient (new)
       auto deltaP2 = rewriter.create<arith::MulFOp>(loc, halfStepSizeBroadcast,
                                                     newGradient);
-      Value p2 = rewriter.create<arith::SubFOp>(loc, p1, deltaP2);
-      p2 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, p2.getType(), p2,
-                   rewriter.getStringAttr("Leapfrog: momentum p(t + eps)"))
-               .getOutput();
+      Value p2 = conditionalDump(
+          rewriter, loc, rewriter.create<arith::SubFOp>(loc, p1, deltaP2),
+          "Leapfrog: momentum p(t + eps)");
 
       // Yield [position, momentum, gradient (new), trace, RNG]
       rewriter.create<enzyme::YieldOp>(
@@ -750,14 +728,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 7. Compute new Hamiltonian H1
       auto weight1 = rewriter.create<enzyme::GetWeightFromTraceOp>(
           loc, tensorType, finalTrace);
-      Value U1_final = rewriter.create<arith::NegFOp>(loc, weight1);
-
-      U1_final =
-          rewriter
-              .create<enzyme::DumpOp>(
-                  loc, U1_final.getType(), U1_final,
-                  rewriter.getStringAttr("HMC: final potential energy U1"))
-              .getOutput();
+      Value U1_final = conditionalDump(
+          rewriter, loc, rewriter.create<arith::NegFOp>(loc, weight1),
+          "HMC: final potential energy U1");
 
       // K1 = 0.5 * pL^T * M^{-1} * pL
       Value K1;
@@ -766,36 +739,30 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             loc, positionType, mass, pL);
         auto pLDotMInvPL =
             rewriter.create<enzyme::DotOp>(loc, tensorType, pL, MInvPL);
-        K1 = rewriter.create<arith::MulFOp>(loc, halfConst, pLDotMInvPL);
+        K1 = conditionalDump(
+            rewriter, loc,
+            rewriter.create<arith::MulFOp>(loc, halfConst, pLDotMInvPL),
+            "HMC: final kinetic energy K1");
       } else {
         auto pLDotPL = rewriter.create<enzyme::DotOp>(loc, tensorType, pL, pL);
-        K1 = rewriter.create<arith::MulFOp>(loc, halfConst, pLDotPL);
+        K1 = conditionalDump(
+            rewriter, loc,
+            rewriter.create<arith::MulFOp>(loc, halfConst, pLDotPL),
+            "HMC: final kinetic energy K1");
       }
 
-      K1 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, K1.getType(), K1,
-                   rewriter.getStringAttr("HMC: final kinetic energy K1"))
-               .getOutput();
-
-      Value H1 = rewriter.create<arith::AddFOp>(loc, U1_final, K1);
-
-      H1 = rewriter
-               .create<enzyme::DumpOp>(
-                   loc, H1.getType(), H1,
-                   rewriter.getStringAttr("HMC: final Hamiltonian H1"))
-               .getOutput();
+      Value H1 = conditionalDump(
+          rewriter, loc, rewriter.create<arith::AddFOp>(loc, U1_final, K1),
+          "HMC: final Hamiltonian H1");
 
       // 8. Metropolis-Hastings accept/reject step
       // with acceptance probability: α = min(1, exp(H0 - H1))
       auto dH = rewriter.create<arith::SubFOp>(loc, H0, H1);
       auto expDH = rewriter.create<math::ExpOp>(loc, dH);
-      Value accProb = rewriter.create<arith::MinimumFOp>(loc, oneConst, expDH);
-      accProb = rewriter
-                    .create<enzyme::DumpOp>(
-                        loc, accProb.getType(), accProb,
-                        rewriter.getStringAttr("HMC: acceptance probability α"))
-                    .getOutput();
+      Value accProb = conditionalDump(
+          rewriter, loc,
+          rewriter.create<arith::MinimumFOp>(loc, oneConst, expDH),
+          "HMC: acceptance probability α");
 
       auto randomOp2 = rewriter.create<enzyme::RandomOp>(
           loc, TypeRange{rngAfterLeapfrog.getType(), tensorType},
@@ -1742,9 +1709,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
 void ProbProgPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
-               LowerGeneratePattern, LowerMCMCPattern, LowerMHPattern,
-               LowerRegeneratePattern, LowerUpdatePattern>(&getContext());
+  patterns
+      .add<LowerUntracedCallPattern, LowerSimulatePattern, LowerGeneratePattern,
+           LowerMHPattern, LowerRegeneratePattern, LowerUpdatePattern>(
+          &getContext());
+  patterns.add<LowerMCMCPattern>(&getContext(), debugMCMC);
 
   mlir::GreedyRewriteConfig config;
 
