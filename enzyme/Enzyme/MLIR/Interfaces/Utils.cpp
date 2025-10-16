@@ -255,7 +255,9 @@ collectOpEffects(Operation *rootOp) {
     }
 
     if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
-      effectInterface.getEffects(effects);
+      SmallVector<MemoryEffects::EffectInstance> localEffects;
+      effectInterface.getEffects(localEffects);
+      llvm::append_range(effects, localEffects);
     } else if (!isRecursiveContainer) {
       // Handle specific operations which are not recursive containers, but
       // still may have memory effects(eg. autodiff calls, llvm calls to libc
@@ -332,7 +334,14 @@ collectOpEffects(Operation *rootOp) {
         // The operation does not have a memory effect interface, and we cannot
         // obtain any result(consistent with the definition of
         // `mlir::getEffectsRecursively`)
-        return std::nullopt;
+        // We need to be conservative here in case the op doesn't have the
+        // interface and assume it can have any possible effect.
+        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Read>());
+        effects.emplace_back(
+            MemoryEffects::Effect::get<MemoryEffects::Write>());
+        effects.emplace_back(
+            MemoryEffects::Effect::get<MemoryEffects::Allocate>());
+        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Free>());
       }
     }
   }
