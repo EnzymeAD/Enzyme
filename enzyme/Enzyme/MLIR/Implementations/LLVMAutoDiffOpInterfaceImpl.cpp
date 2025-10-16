@@ -160,12 +160,67 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+std::optional<Value> findPtrSize(Value ptr, OpBuilder &builder) {
+  if (auto ba = dyn_cast<BlockArgument>(ptr)) {
+    Block *owner = ba.getOwner();
+    Operation *op = owner->getParentOp();
+
+    FunctionOpInterface fn = dyn_cast<FunctionOpInterface>(op);
+    if (!fn)
+      fn = op->getParentOfType<FunctionOpInterface>();
+
+    if (&fn.front() != owner)
+      return std::nullopt;
+
+    auto argAttrs = fn.getArgAttrs(ba.getArgNumber());
+    for (auto nattr : argAttrs) {
+      if (nattr.getName() == "enzyme.ptr_size_hint") {
+        auto attr = cast<IntegerAttr>(nattr.getValue());
+        return builder.create<LLVM::ConstantOp>(ptr.getLoc(), attr.getType(),
+                                                attr);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+struct PointerCachableTypeInterface
+    : public CachableTypeInterface::ExternalModel<PointerCachableTypeInterface,
+                                                  LLVM::LLVMPointerType> {
+  mlir::Operation *createPush(Type self, OpBuilder &builder, Value cache,
+                              Value value) const {
+    auto ptrSize = findPtrSize(value, builder);
+    if (!ptrSize) {
+      llvm::errs() << "cannot find size of ptr: " << value << "\n";
+      return nullptr;
+    }
+
+    auto clone = builder.create<enzyme::AllocOp>(
+        cache.getLoc(), LLVM::LLVMPointerType::get(cache.getContext()),
+        *ptrSize);
+    builder.create<LLVM::MemcpyOp>(cache.getLoc(), clone, value, *ptrSize,
+                                   /*isVolatile*/ false);
+
+    return builder.create<enzyme::PushOp>(cache.getLoc(), cache, clone);
+  }
+
+  Value createPop(Type self, OpBuilder &builder, Value cache) const {
+    return builder.create<enzyme::PopOp>(cache.getLoc(), self, cache);
+  }
+
+  void deletePoppedValue(Type self, OpBuilder &builder, Value value) const {
+    builder.create<enzyme::FreeOp>(value.getLoc(), value);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    LLVM::LLVMPointerType::attachInterface<PointerCachableTypeInterface>(
+        *context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     registerInterfaces(context);
