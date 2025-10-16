@@ -371,7 +371,8 @@ collectFnEffects(FunctionOpInterface fnOp) {
   for (auto &blk : fnOp.getBlocks()) {
     for (auto &op : blk) {
       SmallVector<MemoryEffects::EffectInstance> opEffects;
-      bool couldCollectEffects = collectOpEffects(&op, opEffects);
+      [[maybe_unused]] bool couldCollectEffects =
+          collectOpEffects(&op, opEffects);
       innerEffects.append(opEffects.begin(), opEffects.end());
     }
   }
