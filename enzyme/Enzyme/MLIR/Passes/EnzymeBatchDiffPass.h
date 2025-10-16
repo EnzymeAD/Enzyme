@@ -292,10 +292,10 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         // TODO: move forwarddiff and revdiff effect collection specialization
         // from `findCallerEffects` into collectOpEffects(), accounting for
         // inter-procedural alias analysis
-        auto currOpEffects = oputils::collectOpEffects(curr);
-        if (currOpEffects.has_value()) {
-          betweenEffects.append(currOpEffects.value());
-        }
+        SmallVector<MemoryEffects::EffectInstance> currOpEffects;
+        bool couldCollectEffects =
+            oputils::collectOpEffects(curr, currOpEffects);
+        betweenEffects.append(currOpEffects);
       }
     }
 

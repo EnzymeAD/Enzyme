@@ -1,4 +1,4 @@
-//===- OperationUtils.h - Utilities for gradient interfaces -------* C++
+//===- Utils.h - Utilities for gradient interfaces -------* C++
 //-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -36,8 +36,8 @@ bool mayAlias(MemoryEffects::EffectInstance &A,
 ///
 /// Also accounts for LLVM and autodiff-specific memory effects which are not
 /// captured by the default `mlir::getEffectsRecursively`
-std::optional<SmallVector<MemoryEffects::EffectInstance>>
-collectOpEffects(Operation *rootOp);
+bool 
+collectOpEffects(Operation *rootOp, SmallVector<MemoryEffects::EffectInstance> &effects);
 
 // Specialize memory effect collection for a FunctionOpInterface
 SmallVector<MemoryEffects::EffectInstance>

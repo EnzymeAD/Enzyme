@@ -1,4 +1,4 @@
-//===- OperationUtils.cpp - Utilities for operation interfaces
+//===- Utils.cpp - Utilities for operation interfaces
 //--------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -9,6 +9,7 @@
 
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -236,14 +237,26 @@ bool isReadOnly(Operation *op) {
   return true;
 }
 
-std::optional<SmallVector<MemoryEffects::EffectInstance>>
-collectOpEffects(Operation *rootOp) {
-  SmallVector<MemoryEffects::EffectInstance> effects;
+bool collectOpEffects(Operation *rootOp,
+                      SmallVector<MemoryEffects::EffectInstance> &effects) {
   SmallVector<Operation *> effectingOps(1, rootOp);
+  bool couldCollectEffects = true;
+
+  SmallVector<MemoryEffects::EffectInstance> conservativeSet;
+  conservativeSet.emplace_back(
+      MemoryEffects::Effect::get<MemoryEffects::Read>());
+  conservativeSet.emplace_back(
+      MemoryEffects::Effect::get<MemoryEffects::Write>());
+  conservativeSet.emplace_back(
+      MemoryEffects::Effect::get<MemoryEffects::Allocate>());
+  conservativeSet.emplace_back(
+      MemoryEffects::Effect::get<MemoryEffects::Free>());
+
   while (!effectingOps.empty()) {
     Operation *op = effectingOps.pop_back_val();
     bool isRecursiveContainer =
         op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+
     if (isRecursiveContainer) {
       for (Region &region : op->getRegions()) {
         for (Block &block : region) {
@@ -323,29 +336,33 @@ collectOpEffects(Operation *rootOp) {
           }
         }
       } else if (auto dop = dyn_cast<AutoDiffOp>(op)) {
-        // TODO: handle inter-procedural AutoDiffOp effects. Just skip for now.
+        // TODO: handle inter-procedural AutoDiffOp effects. Just
+        // conservatively add all effects for now
+        effects.append(conservativeSet);
+
       } else if (auto dop = dyn_cast<ForwardDiffOp>(op)) {
-        // TODO: handle inter-procedural ForwardDiffOp effects. Just skip for
-        // now.
+        // TODO: handle inter-procedural ForwardDiffOp effects. Just
+        // conservatively add all effects if there's any mutable arg
+        effects.append(conservativeSet);
       } else if (auto dop = dyn_cast<AutoDiffRegionOp>(op)) {
-        // TODO: handle intra-procedural AutoDiffRegionOp effects. Just skip for
-        // now.
+        // TODO: handle intra-procedural AutoDiffRegionOp effects. Just
+        // conservatively add all effects if there's any mutable arg now.
+        effects.append(conservativeSet);
       } else {
         // The operation does not have a memory effect interface, and we cannot
-        // obtain any result(consistent with the definition of
-        // `mlir::getEffectsRecursively`)
+        // obtain any result
+
         // We need to be conservative here in case the op doesn't have the
         // interface and assume it can have any possible effect.
-        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Read>());
-        effects.emplace_back(
-            MemoryEffects::Effect::get<MemoryEffects::Write>());
-        effects.emplace_back(
-            MemoryEffects::Effect::get<MemoryEffects::Allocate>());
-        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Free>());
+        effects.append(conservativeSet);
+        couldCollectEffects = false;
+
+        // no use in exploring other ops so break
+        break;
       }
     }
   }
-  return effects;
+  return couldCollectEffects;
 }
 
 SmallVector<MemoryEffects::EffectInstance>
@@ -353,10 +370,9 @@ collectFnEffects(FunctionOpInterface fnOp) {
   SmallVector<MemoryEffects::EffectInstance> innerEffects;
   for (auto &blk : fnOp.getBlocks()) {
     for (auto &op : blk) {
-      auto opEffects = collectOpEffects(&op);
-      if (opEffects.has_value()) {
-        innerEffects.append(opEffects->begin(), opEffects->end());
-      }
+      SmallVector<MemoryEffects::EffectInstance> opEffects;
+      bool couldCollectEffects = collectOpEffects(&op, opEffects);
+      innerEffects.append(opEffects.begin(), opEffects.end());
     }
   }
 
