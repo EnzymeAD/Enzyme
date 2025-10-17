@@ -97,7 +97,7 @@ struct DifferentiateWrapperPass
     std::vector<DIFFE_TYPE> ArgActivity =
         parseActivityString(argTys.getValue());
 
-    if (ArgActivity.size() != fn.getFunctionBody().front().getNumArguments()) {
+    if (ArgActivity.size() != fn.getNumArguments()) {
       fn->emitError()
           << "Incorrect number of arg activity states for function, found "
           << ArgActivity.size() << " expected "
@@ -107,12 +107,10 @@ struct DifferentiateWrapperPass
 
     std::vector<DIFFE_TYPE> RetActivity =
         parseActivityString(retTys.getValue());
-    if (RetActivity.size() !=
-        cast<FunctionType>(fn.getFunctionType()).getNumResults()) {
+    if (RetActivity.size() != fn.getNumResults()) {
       fn->emitError()
           << "Incorrect number of ret activity states for function, found "
-          << RetActivity.size() << " expected "
-          << cast<FunctionType>(fn.getFunctionType()).getNumResults();
+          << RetActivity.size() << " expected " << fn.getNumResults();
       return;
     }
     std::vector<bool> returnPrimal;

@@ -16,23 +16,22 @@ module {
 
 // CHECK:  func.func @reduce(%arg0: f32, %arg1: index, %arg2: f32) -> f32 {
 // CHECK-NEXT:    %c1 = arith.constant 1 : index
-// CHECK-NEXT:    %c0 = arith.constant 0 : index
 // CHECK-NEXT:    %cst = arith.constant 1.000000e+00 : f32
 // CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc(%arg1) : memref<?xf32>
-// CHECK-NEXT:    %0:2 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %cst, %arg5 = %c0) -> (f32, index) {
-// CHECK-NEXT:      memref.store %arg4, %alloc[%arg5] : memref<?xf32>
+// CHECK-NEXT:    %0 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %cst) -> (f32) {
+// CHECK-NEXT:      memref.store %arg4, %alloc[%arg3] : memref<?xf32>
 // CHECK-NEXT:      %2 = arith.mulf %arg4, %arg0 : f32
-// CHECK-NEXT:      %3 = arith.addi %arg5, %c1 : index
-// CHECK-NEXT:      affine.yield %2, %3 : f32, index
+// CHECK-NEXT:      affine.yield %2 : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %1:3 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %arg2, %arg5 = %cst_0, %arg6 = %arg1) -> (f32, f32, index) {
-// CHECK-NEXT:      %2 = memref.load %alloc[%arg6] : memref<?xf32>
-// CHECK-NEXT:      %3 = arith.mulf %arg4, %arg0 : f32
-// CHECK-NEXT:      %4 = arith.mulf %arg4, %2 : f32
-// CHECK-NEXT:      %5 = arith.addf %arg5, %4 : f32
-// CHECK-NEXT:      %6 = arith.subi %arg6, %c1 : index
-// CHECK-NEXT:      affine.yield %3, %5, %6 : f32, f32, index
+// CHECK-NEXT:    %1:2 = affine.for %arg3 = 0 to %arg1 iter_args(%arg4 = %arg2, %arg5 = %cst_0) -> (f32, f32) {
+// CHECK-NEXT:      %[[nm1:.+]] = arith.subi %arg1, %c1 : index
+// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %[[nm1]], %arg3 : index
+// CHECK-NEXT:      %[[a2:.+]] = memref.load %alloc[%[[ridx]]] : memref<?xf32>
+// CHECK-NEXT:      %[[a3:.+]] = arith.mulf %arg4, %arg0 : f32
+// CHECK-NEXT:      %[[a4:.+]] = arith.mulf %arg4, %[[a2]] : f32
+// CHECK-NEXT:      %[[a5:.+]] = arith.addf %arg5, %[[a4]] : f32
+// CHECK-NEXT:      affine.yield %[[a3]], %[[a5]] : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?xf32>
 // CHECK-NEXT:    return %1#1 : f32

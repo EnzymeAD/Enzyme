@@ -111,8 +111,13 @@ protected:
   IRMapping differentials;
 
   Block *initializationBlock;
+  SmallVector<std::function<Value(Location, Type)>> gradientCreatorHook;
 
 public:
+  void registerGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  void deregisterGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  Value getNewGradient(Location loc, Type t);
+
   mlir::Value getDifferential(mlir::Value origv);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);

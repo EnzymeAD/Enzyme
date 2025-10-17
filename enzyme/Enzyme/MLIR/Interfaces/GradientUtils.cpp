@@ -140,22 +140,42 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
   llvm_unreachable("could not invert pointer");
 }
 
+void MDiffeGradientUtils::registerGradientCreatorHook(
+    std::function<Value(Location, Type)> hook) {
+  if (hook != nullptr)
+    gradientCreatorHook.push_back(hook);
+}
+
+void MDiffeGradientUtils::deregisterGradientCreatorHook(
+    std::function<Value(Location, Type)> hook) {
+  if (hook != nullptr)
+    gradientCreatorHook.pop_back();
+}
+
+Value MDiffeGradientUtils::getNewGradient(Location loc, Type t) {
+  if (gradientCreatorHook.empty()) {
+    auto shadowty = getShadowType(t);
+    OpBuilder builder(t.getContext());
+    builder.setInsertionPointToStart(initializationBlock);
+
+    auto shadow = builder.create<enzyme::InitOp>(
+        loc, enzyme::GradientType::get(t.getContext(), shadowty));
+    auto toset =
+        cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
+    builder.create<enzyme::SetOp>(loc, shadow, toset);
+    return shadow;
+  } else {
+    return gradientCreatorHook.back()(loc, t);
+  }
+}
+
 mlir::Value
 mlir::enzyme::MDiffeGradientUtils::getDifferential(mlir::Value oval) {
   auto found = differentials.lookupOrNull(oval);
   if (found != nullptr)
     return found;
 
-  auto shadowty = getShadowType(oval.getType());
-  OpBuilder builder(oval.getContext());
-  builder.setInsertionPointToStart(initializationBlock);
-
-  auto shadow = builder.create<enzyme::InitOp>(
-      oval.getLoc(), enzyme::GradientType::get(oval.getContext(), shadowty));
-  auto toset = cast<AutoDiffTypeInterface>(shadowty).createNullValue(
-      builder, oval.getLoc());
-  builder.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
-
+  Value shadow = getNewGradient(oval.getLoc(), oval.getType());
   differentials.map(oval, shadow);
   return shadow;
 }

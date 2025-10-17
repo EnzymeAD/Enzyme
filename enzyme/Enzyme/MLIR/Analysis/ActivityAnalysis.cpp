@@ -1,5 +1,6 @@
 #include "ActivityAnalysis.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"

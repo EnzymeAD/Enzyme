@@ -152,8 +152,17 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
@@ -166,8 +175,17 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
@@ -179,8 +197,18 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   let assemblyFormat = [{
     `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-  // activity optimization for region op
+
   let hasCanonicalizer=1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true>(*this);
+  }
+  }];
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
@@ -231,9 +259,8 @@ def BatchOp : Enzyme_Op<"batch",
 }
 
 def PushOp : Enzyme_Op<"push"> {
-  let summary = "Push value to cache or ShadowedGradient";
+  let summary = "Push value to cache";
   let arguments = (ins AnyType : $cache, AnyType : $value);
-  let results = (outs );
 }
 
 def PopOp : Enzyme_Op<"pop"> {
@@ -267,6 +294,27 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let parameters = (ins "Type":$basetype);
   let mnemonic = "Gradient";
   let assemblyFormat = "`<` $basetype `>`";
+}
+
+def LoadOp : Enzyme_Op<"load",
+    [TypesMatchWith<"type of 'result' matches element type of 'cache'",
+                    "cache", "result",
+                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
+  let summary = "Load a value from a cache at the specified indices";
+  let arguments = (ins Cache:$cache, Variadic<Index>:$indices);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$cache `[` $indices `]` attr-dict `:` type($cache)";
+}
+
+def StoreOp : Enzyme_Op<"store",
+    [TypesMatchWith<"type of 'value' matches element type of 'cache'",
+                     "cache", "value",
+                     "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
+  let summary = "Store a value to a cache at the specific indices";
+  let arguments = (ins AnyType:$value, Cache:$cache, Variadic<Index>:$indices);
+  let assemblyFormat = [{
+    $value `,` $cache `[` $indices `]` attr-dict `:` type($cache)
+  }];
 }
 
 def SetOp : Enzyme_Op<"set",
@@ -865,4 +913,31 @@ def DumpOp : Enzyme_Op<"dump"> {
   }];
 }
 
+def ConcatenateOp : Enzyme_Op<"concatenate"> {
+  let summary = "Concatenate list of input arguments into a single batched value";
+  let description = [{
+    Concatenate list of input arguments into a generic value
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$inputs);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+    `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def ExtractOp : Enzyme_Op<"extract"> {
+  let summary = "Extract value from batched operand at index";
+  let description = [{
+    Extract value from batched operand at index
+  }];
+
+  let arguments = (ins AnyType:$input, Index:$index);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+     $input `[` $index `]` attr-dict `:` functional-type($input, results)
+  }];
+}
 #endif // ENZYME_OPS

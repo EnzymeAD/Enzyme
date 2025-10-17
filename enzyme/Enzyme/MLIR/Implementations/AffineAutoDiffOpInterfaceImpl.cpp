@@ -436,34 +436,67 @@ public:
            forOp.getStepAsInt();
   }
 
-  static Value getNumberOfIterations(OpBuilder &builder,
-                                     affine::AffineForOp forOp) {
-    auto lb =
-        builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getLowerBoundMap(),
-                                      forOp.getLowerBoundOperands());
-    auto ub =
-        builder.create<AffineApplyOp>(forOp.getLoc(), forOp.getUpperBoundMap(),
-                                      forOp.getUpperBoundOperands());
+  static SmallVector<IntOrValue, 1>
+  getDimensionBounds(OpBuilder &builder, affine::AffineForOp forOp) {
+    auto iters = getConstantNumberOfIterations(forOp);
+    if (iters) {
+      return {IntOrValue(*iters)};
+    } else {
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
+      auto ub = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getUpperBoundMap(),
+                                              forOp.getUpperBoundOperands());
 
-    Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
-    if (forOp.getStepAsInt() != 1) {
-      auto step = builder.create<arith::ConstantIntOp>(
-          forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
-      diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+      Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+      if (forOp.getStepAsInt() != 1) {
+        auto step = builder.create<arith::ConstantIntOp>(
+            forOp->getLoc(), diff.getType(), forOp.getStepAsInt());
+        diff = builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+      }
+      return {IntOrValue(diff)};
     }
-    return diff;
   }
 
-  static bool isCanonicalLoop(affine::AffineForOp forOp) {
-    if (!forOp.hasConstantLowerBound())
-      return false;
-    if (!forOp.hasConstantUpperBound())
-      return false;
-    if (forOp.getStepAsInt() != 1)
-      return false;
-    if (forOp.getConstantLowerBound() != 0)
-      return false;
-    return true;
+  static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
+                                                affine::AffineForOp forOp) {
+    Value val = forOp.getBody()->getArgument(0);
+    if (!forOp.hasConstantLowerBound() || forOp.getConstantLowerBound() != 0) {
+      auto lb = builder.create<AffineApplyOp>(forOp.getLoc(),
+                                              forOp.getLowerBoundMap(),
+                                              forOp.getLowerBoundOperands());
+      val = builder.create<arith::SubIOp>(forOp->getLoc(), val, lb);
+    }
+
+    if (forOp.getStepAsInt() != 1) {
+      auto step = builder.create<arith::ConstantIntOp>(
+          forOp->getLoc(), val.getType(), forOp.getStepAsInt());
+      val = builder.create<arith::DivUIOp>(forOp->getLoc(), val, step);
+    }
+    return {val};
+  }
+
+  static IRMapping createArgumentMap(PatternRewriter &rewriter,
+                                     affine::AffineForOp forOp,
+                                     ArrayRef<Value> indFor,
+                                     affine::AffineForOp otherForOp,
+                                     ArrayRef<Value> indOther) {
+    IRMapping map;
+    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+      map.map(f, o);
+
+    Value canIdx = forOp.getBody()->getArgument(0);
+    if (!map.contains(canIdx)) {
+      assert(forOp.getLowerBoundMap() == otherForOp.getLowerBoundMap());
+      for (auto &&[f, o] : llvm::zip_equal(forOp.getLowerBoundOperands(),
+                                           otherForOp.getLowerBoundOperands()))
+        assert(Equivalent(f, o));
+      assert(forOp.getStep() == otherForOp.getStep());
+      map.map(forOp.getBody()->getArgument(0),
+              otherForOp.getBody()->getArgument(0));
+    }
+    return map;
   }
 
   static affine::AffineForOp

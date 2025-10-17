@@ -11,7 +11,7 @@ repo = "https://github.com/EnzymeAD/Enzyme.git"
 auto_version = "%ENZYME_VERSION%"
 version = VersionNumber(split(auto_version, "/")[end])
 
-llvm_versions = [v"15.0.7", v"16.0.6", v"17.0.6", v"18.1.7", v"19.1.1"]
+llvm_versions = [v"15.0.7", v"16.0.6", v"18.1.7", v"20.1.8"]
 
 # Collection of sources required to build attr
 sources = [
@@ -29,12 +29,18 @@ filter!(p -> !(Sys.isfreebsd(p) && arch(p) == "aarch64"), platforms)
 # Disable riscv for now
 platforms = filter!(p -> arch(p) != "riscv64", platforms)
 
+# Exclude i686-linux-musl.
+platforms = filter!(p -> !(arch(p) == "i686" && libc(p) == "musl"), platforms)
+
+# skip CXX03 string ABI to reduce number of platforms
+platforms = filter!(p -> cxxstring_abi(p) != "cxx03", platforms)
+
 # Bash recipe for building across all platforms
 script = raw"""
 cd Enzyme
 install_license LICENSE
 
-if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+16* ]]; then
+if [[ "${bb_full_target}" == x86_64-apple-darwin* &&  "${LLVM_MAJ_VER}" -ge "15" ]]; then
     # LLVM 15 requires macOS SDK 10.14.
     rm -rf /opt/${target}/${target}/sys-root/System
     tar --extract --file=${WORKSPACE}/srcdir/MacOSX10.14.sdk.tar.xz --directory="/opt/${target}/${target}/sys-root/." --strip-components=1 MacOSX10.14.sdk/System MacOSX10.14.sdk/usr
@@ -56,11 +62,32 @@ if [[ "${target}" == *mingw* ]]; then
     NATIVE_CMAKE_FLAGS+=(-DCMAKE_CPP_FLAGS=-pthread)
     NATIVE_CMAKE_FLAGS+=(-DCMAKE_C_FLAGS=-pthread)
 fi
+# Force the specific libzstd and libz to use.
+NATIVE_CMAKE_FLAGS+=(-DZLIB_LIBRARY_RELEASE="${host_libdir}/libz.so")
+if [[ "${LLVM_MAJ_VER}" -ge "20" ]]; then
+    NATIVE_CMAKE_FLAGS+=(-Dzstd_LIBRARY="${host_libdir}/libzstd.so")
+fi
 
 cmake -B build-native -S enzyme -GNinja "${NATIVE_CMAKE_FLAGS[@]}"
 
 # Only build blasheaders and tblgen
 ninja -C build-native -j ${nproc} blasheaders enzyme-tblgen
+
+# On aarch64-apple we build the host tools with GCC 12 and we need to set the library path
+# to include the host compilers libstc++ instead of the CSL default.
+if [[ "${target}" == aarch64-apple* ]]; then
+    mv build-native/tools/enzyme-tblgen/enzyme-tblgen build-native/tools/enzyme-tblgen/enzyme-tblgen_actual
+    cat > build-native/tools/enzyme-tblgen/enzyme-tblgen << EOF
+#!/bin/bash
+export LD_LIBRARY_PATH=/opt/x86_64-linux-musl/x86_64-linux-musl/lib64:\$LD_LIBRARY_PATH
+`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen_actual "\$@"
+EOF
+    chmod +x build-native/tools/enzyme-tblgen/enzyme-tblgen
+fi
+
+# Check that we can execute enzyme-tblgen
+build-native/tools/enzyme-tblgen/enzyme-tblgen --version
+
 # 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
@@ -73,7 +100,7 @@ CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
 # Install things into $prefix
 CMAKE_FLAGS+=(-DCMAKE_INSTALL_PREFIX=${prefix})
 # Explicitly use our cmake toolchain file and tell CMake we're cross-compiling
-if [[ "${target}" == *mingw* && "${bb_full_target}" == *llvm_version+16* ]]; then
+if [[ "${target}" == *mingw* && "${LLVM_MAJ_VER}" -ge "16" ]]; then
     CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN%.*}_clang.cmake)
 else
     CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TARGET_TOOLCHAIN})
@@ -86,7 +113,7 @@ CMAKE_FLAGS+=(-DLLVM_LINK_LLVM_DYLIB=ON)
 # Build the library
 CMAKE_FLAGS+=(-DBUILD_SHARED_LIBS=ON)
 
-if [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+15* ]] || [[ "${bb_full_target}" == x86_64-apple-darwin*llvm_version+16* ]]; then
+if [[ "${bb_full_target}" == x86_64-apple-darwin* && "${LLVM_MAJ_VER}" -ge "15" ]]; then
 if [[ "${target}" == x86_64-apple* ]]; then
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.14)
 fi
@@ -128,24 +155,21 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
         BuildDependency(PackageSpec(name=llvm_name, version=llvm_version))
     ]
 
+    # enzyme-tblgen
+    if llvm_version >= v"20"
+        push!(dependencies, HostBuildDependency("Zstd_jll")) # for debuginfo
+    end
+
     # The products that we will ensure are always built
     products = Product[
         LibraryProduct(["libEnzyme-$(llvm_version.major)", "libEnzyme"], :libEnzyme, dont_dlopen=true),
         LibraryProduct(["libEnzymeBCLoad-$(llvm_version.major)", "libEnzymeBCLoad"], :libEnzymeBCLoad, dont_dlopen=true),
     ]
 
-    if llvm_version >= v"15"
-        # We don't build LLVM 15 for i686-linux-musl.
-        filter!(p -> !(arch(p) == "i686" && libc(p) == "musl"), platforms)
-    end
-    if llvm_version >= v"17"
-        # Windows is broken for LLVM16_jll see https://github.com/JuliaPackaging/Yggdrasil/pull/8017#issuecomment-1930838052
-        filter!(p -> !(os(p) == "windows"), platforms)
-    end
-    if llvm_version >= v"17" && llvm_assertions
-        # Windows is broken for LLVM16_jll see https://github.com/JuliaPackaging/Yggdrasil/pull/8017#issuecomment-1930838052
-        filter!(p -> !Sys.isapple(p), platforms)
-    end 
+    prefix = """
+    LLVM_MAJ_VER=$(llvm_version.major)
+    """
+
     for platform in platforms
         augmented_platform = deepcopy(platform)
         augmented_platform[LLVM.platform_name] = LLVM.platform(llvm_version, llvm_assertions)
@@ -155,6 +179,7 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
             dependencies, products,
             platforms=[augmented_platform],
             gcc_version,
+            script=prefix*script,
         ))
     end
 end
@@ -168,7 +193,7 @@ non_reg_ARGS = filter(arg -> arg != "--register", non_platform_ARGS)
 
 for (i,build) in enumerate(builds)
     build_tarballs(i == lastindex(builds) ? non_platform_ARGS : non_reg_ARGS,
-                   name, version, sources, script,
+                   name, version, sources, build.script,
                    build.platforms, build.products, build.dependencies;
                    preferred_gcc_version=build.gcc_version, julia_compat="1.10",
                    augment_platform_block, lazy_artifacts=true) # drop when julia_compat >= 1.7
