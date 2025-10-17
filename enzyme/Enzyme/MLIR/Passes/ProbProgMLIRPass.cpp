@@ -557,15 +557,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
       auto autodiffInit = rewriter.create<enzyme::AutoDiffRegionOp>(
-          loc, TypeRange{traceType, rng1.getType(), positionType},
+          loc, TypeRange{rng1.getType(), positionType},
           ValueRange{q0, gradSeedInit},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
           rewriter.getArrayAttr(
               {enzyme::ActivityAttr::get(rewriter.getContext(),
                                          enzyme::Activity::enzyme_activenoneed),
-               enzyme::ActivityAttr::get(rewriter.getContext(),
-                                         enzyme::Activity::enzyme_const),
                enzyme::ActivityAttr::get(rewriter.getContext(),
                                          enzyme::Activity::enzyme_const)}),
           rewriter.getI64IntegerAttr(1), rewriter.getBoolAttr(false), nullptr);
@@ -585,17 +583,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           loc, TypeRange{traceType, tensorType, rng1.getType()},
           mcmcOp.getFnAttr(), updateInputsInit, originalTrace, q0Arg, selection,
           rewriter.getStringAttr(""));
-      Value trace0 = updateOpInit.getUpdatedTrace();
       Value w0 = updateOpInit.getWeight();
       Value rng0_out = updateOpInit.getOutputRngState();
       Value U0_init = rewriter.create<arith::NegFOp>(loc, w0);
 
-      rewriter.create<enzyme::YieldOp>(loc,
-                                       ValueRange{U0_init, trace0, rng0_out});
+      rewriter.create<enzyme::YieldOp>(loc, ValueRange{U0_init, rng0_out});
 
       rewriter.setInsertionPointAfter(autodiffInit);
-      Value rng0_final = autodiffInit.getResult(1);
-      Value grad0 = autodiffInit.getResult(2);
+      Value rng0_final = autodiffInit.getResult(0);
+      Value grad0 = autodiffInit.getResult(1);
 
       // 6. Leapfrog integration
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
@@ -621,18 +617,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter.getDenseI64ArrayAttr(positionShape));
 
       SmallVector<Type> loopResultTypes = {positionType, positionType,
-                                           positionType, traceType,
-                                           rng0_final.getType()};
+                                           positionType, rng0_final.getType()};
       auto loopOp = rewriter.create<enzyme::LoopOp>(
           loc, loopResultTypes, c0, numSteps, c1,
-          ValueRange{q0, p0, grad0, originalTrace, rng0_final});
+          ValueRange{q0, p0, grad0, rng0_final});
 
       Block *loopBody = rewriter.createBlock(&loopOp.getRegion());
       loopBody->addArgument(i64TensorType, loc);        // iv
       loopBody->addArgument(positionType, loc);         // q
       loopBody->addArgument(positionType, loc);         // p
       loopBody->addArgument(positionType, loc);         // gradient
-      loopBody->addArgument(traceType, loc);            // trace
       loopBody->addArgument(rng0_final.getType(), loc); // rng
 
       rewriter.setInsertionPointToStart(loopBody);
@@ -642,8 +636,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                 "Leapfrog: momentum p(t)");
       Value gradient = conditionalDump(rewriter, loc, loopBody->getArgument(3),
                                        "Leapfrog: gradient dU/dq(t)");
-      Value loopTrace = loopBody->getArgument(4);
-      Value loopRng = loopBody->getArgument(5);
+      Value loopRng = loopBody->getArgument(4);
 
       // 6.1 Half step on momentum: p -= (eps/2) * gradient
       auto deltaP1 =
@@ -671,15 +664,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
       auto autodiffOp = rewriter.create<enzyme::AutoDiffRegionOp>(
-          loc, TypeRange{traceType, loopRng.getType(), positionType},
+          loc, TypeRange{loopRng.getType(), positionType},
           ValueRange{q1, gradSeedLoop},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
           rewriter.getArrayAttr(
               {enzyme::ActivityAttr::get(rewriter.getContext(),
                                          enzyme::Activity::enzyme_activenoneed),
-               enzyme::ActivityAttr::get(rewriter.getContext(),
-                                         enzyme::Activity::enzyme_const),
                enzyme::ActivityAttr::get(rewriter.getContext(),
                                          enzyme::Activity::enzyme_const)}),
           rewriter.getI64IntegerAttr(1), rewriter.getBoolAttr(false), nullptr);
@@ -694,24 +685,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       updateInputs.push_back(loopRng);
       updateInputs.append(fnInputs.begin(), fnInputs.end());
 
-      // Update the loop-carried trace
       auto updateOp = rewriter.create<enzyme::UpdateOp>(
           loc, TypeRange{traceType, tensorType, loopRng.getType()},
-          mcmcOp.getFnAttr(), updateInputs, loopTrace, q1Arg, selection,
+          mcmcOp.getFnAttr(), updateInputs, originalTrace, q1Arg, selection,
           rewriter.getStringAttr(""));
-      Value trace1 = updateOp.getUpdatedTrace();
       Value w1 = updateOp.getWeight();
       Value rng1_inner = updateOp.getOutputRngState();
       Value U1 = rewriter.create<arith::NegFOp>(loc, w1);
 
-      rewriter.create<enzyme::YieldOp>(loc, ValueRange{U1, trace1, rng1_inner});
+      rewriter.create<enzyme::YieldOp>(loc, ValueRange{U1, rng1_inner});
 
       rewriter.setInsertionPointAfter(autodiffOp);
 
-      Value newTrace = autodiffOp.getResult(0);
-      Value newRng = autodiffOp.getResult(1);
+      Value newRng = autodiffOp.getResult(0);
       Value newGradient =
-          conditionalDump(rewriter, loc, autodiffOp.getResult(2),
+          conditionalDump(rewriter, loc, autodiffOp.getResult(1),
                           "Leapfrog: gradient dU/dq(t + eps)");
 
       // 6.3 Another half step on momentum: p -= (eps/2) * gradient (new)
@@ -721,19 +709,28 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc, rewriter.create<arith::SubFOp>(loc, p1, deltaP2),
           "Leapfrog: momentum p(t + eps)");
 
-      // Yield [position, momentum, gradient (new), trace, RNG]
-      rewriter.create<enzyme::YieldOp>(
-          loc, ValueRange{q1, p2, newGradient, newTrace, newRng});
+      // Yield [position, momentum, gradient (new), RNG]
+      rewriter.create<enzyme::YieldOp>(loc,
+                                       ValueRange{q1, p2, newGradient, newRng});
 
       rewriter.setInsertionPointAfter(loopOp);
       Value qL = loopOp.getResult(0);
       Value pL = loopOp.getResult(1);
-      Value finalTrace = loopOp.getResult(3);
-      Value rngAfterLeapfrog = loopOp.getResult(4);
+      Value rngAfterLeapfrog = loopOp.getResult(3);
 
-      // 7. Compute new Hamiltonian H1
-      auto weight1 = rewriter.create<enzyme::GetWeightFromTraceOp>(
-          loc, tensorType, finalTrace);
+      // 7. Generate final trace with final position qL
+      SmallVector<Value> finalUpdateInputs;
+      finalUpdateInputs.push_back(rngAfterLeapfrog);
+      finalUpdateInputs.append(fnInputs.begin(), fnInputs.end());
+
+      auto finalUpdateOp = rewriter.create<enzyme::UpdateOp>(
+          loc, TypeRange{traceType, tensorType, rngAfterLeapfrog.getType()},
+          mcmcOp.getFnAttr(), finalUpdateInputs, originalTrace, qL, selection,
+          rewriter.getStringAttr(""));
+      Value finalTrace = finalUpdateOp.getUpdatedTrace();
+      Value weight1 = finalUpdateOp.getWeight();
+      Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
+
       Value U1_final = conditionalDump(
           rewriter, loc, rewriter.create<arith::NegFOp>(loc, weight1),
           "HMC: final potential energy U1");
@@ -771,8 +768,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           "HMC: acceptance probability α");
 
       auto randomOp2 = rewriter.create<enzyme::RandomOp>(
-          loc, TypeRange{rngAfterLeapfrog.getType(), tensorType},
-          rngAfterLeapfrog, zeroConst, oneConst,
+          loc, TypeRange{rngAfterUpdate.getType(), tensorType}, rngAfterUpdate,
+          zeroConst, oneConst,
           enzyme::RngDistributionAttr::get(rewriter.getContext(),
                                            enzyme::RngDistribution::UNIFORM));
       Value rngFinal = randomOp2.getOutputRngState();
