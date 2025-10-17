@@ -198,7 +198,7 @@ llvm::SmallVector<SourceOp> pruneGradDefs(BatchDiffCacheKey &key,
   // to the same basic block)
   auto firstDiffOp = allDiffs[0];
   for (auto uop : allDiffs) {
-    auto diffArgs = uop.getGradArgs();
+    auto diffArgs = uop.getShadowArgs();
     bool definedBeforeFirst = true;
 
     for (auto diffVal : diffArgs) {

@@ -134,8 +134,19 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
     return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(*this);
   }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true>(*this);
+  ::llvm::SmallVector<::mlir::Value> getInShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true, true, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getOutShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true, false, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getShadowArgs() {
+    auto shadows = getInShadows();
+    auto outShadows = getOutShadows();
+    shadows.append(outShadows.begin(), outShadows.end());
+    return shadows;
   }
   }];
 }
@@ -157,8 +168,19 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
     return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
   }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true>(*this);
+  ::llvm::SmallVector<::mlir::Value> getInShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, true, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getOutShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, false, true>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getShadowArgs() {
+    auto shadows = getInShadows();
+    auto outShadows = getOutShadows();
+    shadows.append(outShadows.begin(), outShadows.end());
+    return shadows;
   }
   }];
 }
@@ -180,8 +202,19 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
     return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(*this);
   }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true>(*this);
+  ::llvm::SmallVector<::mlir::Value> getInShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true, true, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getOutShadows() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true, false, true>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getShadowArgs() {
+    auto shadows = getInShadows();
+    auto outShadows = getOutShadows();
+    shadows.append(outShadows.begin(), outShadows.end());
+    return shadows;
   }
   }];
 }
