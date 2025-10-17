@@ -7,7 +7,7 @@ def LLVMPtr : Type<CPred<"::llvm::isa<::mlir::LLVM::LLVMPointerType>($_self)">>;
 
 def AllocOp : LLVMExtOp<"alloc", []> {
   let summary = "allocate memory";
-  let arguments = (ins AnyInteger : $size);
+  let arguments = (ins I64 : $size);
   let results = (outs LLVMPtr : $result);
 
   let assemblyFormat = [{

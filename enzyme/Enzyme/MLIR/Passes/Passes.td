@@ -241,4 +241,16 @@ def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
 }
 
+def LowerLLVMExtPass : Pass<"lower-llvm-ext"> {
+  let summary = "Lower LLVM ext operations to the LLVM dialect.";
+  let dependentDialects = [
+    "mlir::enzyme::llvm_ext::LLVMExtDialect",
+  ];
+  let options = [
+    Option<"promoteToAllocaThreshold", "promote-to-alloca-threshold", "uint64_t",
+           /*default=*/"static_cast<uint64_t>(-1)",
+           "Maximum static size at which an alloc/free is promoted to an alloca (default -1: promotion disabled)">,
+  ];
+}
+
 #endif // ENZYME_PASSES

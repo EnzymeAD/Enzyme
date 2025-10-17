@@ -1,7 +1,9 @@
-#ifndef ENZYME_AD_JAX_DIALECT_LLVMEXT_OPS_H
-#define ENZYME_AD_JAX_DIALECT_LLVMEXT_OPS_H
+#ifndef ENZYME_DIALECT_LLVMEXT_OPS_H
+#define ENZYME_DIALECT_LLVMEXT_OPS_H
+
+#include "mlir/IR/OpDefinition.h"
 
 #define GET_OP_CLASSES
-#include "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.h.inc"
+#include "Enzyme/MLIR/Dialect/LLVMExt/Ops.h.inc"
 
 #endif
