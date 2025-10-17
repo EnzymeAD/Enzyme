@@ -74,7 +74,7 @@ llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
   if constexpr ((std::is_same_v<SourceOp, AutoDiffOp> ||
                  std::is_same_v<SourceOp, AutoDiffRegionOp>) &&
                 filterGrad && includeOutShadows) {
-  // clang-format on
+    // clang-format on
     if (in_idx != uop.getInputs().size()) {
       for (auto act : uop.getRetActivity()) {
         auto iattr = cast<ActivityAttr>(act);
