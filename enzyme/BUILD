@@ -296,11 +296,11 @@ gentbl_cc_library(
     tbl_outs = [
         (
             ["-gen-op-decls"],
-            "Enzyme/MLIR/Dialect/LLVMExt/Ops.h.inc",
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.h.inc",
         ),
         (
             ["-gen-op-defs"],
-            "Enzyme/MLIR/Dialect/LLVMExt/Ops.cpp.inc",
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.cpp.inc",
         ),
         (
             [

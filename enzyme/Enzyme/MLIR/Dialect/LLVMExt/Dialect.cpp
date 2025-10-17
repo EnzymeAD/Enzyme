@@ -6,6 +6,6 @@
 void mlir::enzyme::llvm_ext::LLVMExtDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "Enzyme/MLIR/Dialect/LLVMExt/Ops.cpp.inc"
+#include "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.cpp.inc"
       >();
 }

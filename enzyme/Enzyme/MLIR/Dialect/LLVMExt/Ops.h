@@ -4,6 +4,6 @@
 #include "mlir/IR/OpDefinition.h"
 
 #define GET_OP_CLASSES
-#include "Enzyme/MLIR/Dialect/LLVMExt/Ops.h.inc"
+#include "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.h.inc"
 
 #endif
