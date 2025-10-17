@@ -36,6 +36,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "Dialect/Dialect.h"
+#include "Dialect/LLVMExt/Dialect.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
 
@@ -73,6 +74,7 @@ int main(int argc, char **argv) {
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
+  registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
 
   mlir::enzyme::registerenzymePasses();
 
