@@ -879,6 +879,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     - mass: Mass matrix (identity assumed if not provided)
     - step_size: Leapfrong integration step size
     - num_steps: Number of leapfrog steps
+    - initial_momentum: deterministic initial momentum (debug)
   }];
 
   let arguments = (ins
@@ -890,6 +891,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Optional<AnyType>:$mass,
     Optional<AnyType>:$step_size,
     Optional<AnyType>:$num_steps,
+    Optional<AnyType>:$initial_momentum,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -900,6 +902,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     (`mass` `=` $mass^ `:` type($mass))?
     (`step_size` `=` $step_size^ `:` type($step_size))?
     (`num_steps` `=` $num_steps^ `:` type($num_steps))?
+    (`initial_momentum` `=` $initial_momentum^ `:` type($initial_momentum))?
     attr-dict `:` functional-type($inputs, results)
   }];
 }

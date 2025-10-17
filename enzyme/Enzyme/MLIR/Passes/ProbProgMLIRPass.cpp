@@ -501,22 +501,28 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       // 3. Sample initial momentum p0 ~ N(0, M) if M is provided,
       //    otherwise p0 ~ N(0, I)
-      if (mass) {
-        auto randomOp = rewriter.create<enzyme::RandomOp>(
-            loc, TypeRange{rngState.getType(), positionType}, rngState,
-            zeroConst, mass,
-            enzyme::RngDistributionAttr::get(
-                rewriter.getContext(), enzyme::RngDistribution::MULTINORMAL));
-        rng1 = randomOp.getOutputRngState();
-        p0 = randomOp.getResult();
+      Value initialMomentum = mcmcOp.getInitialMomentum();
+      if (initialMomentum) {
+        p0 = initialMomentum;
+        rng1 = rngState;
       } else {
-        auto randomOp = rewriter.create<enzyme::RandomOp>(
-            loc, TypeRange{rngState.getType(), positionType}, rngState,
-            zeroConst, oneConst,
-            enzyme::RngDistributionAttr::get(rewriter.getContext(),
-                                             enzyme::RngDistribution::NORMAL));
-        rng1 = randomOp.getOutputRngState();
-        p0 = randomOp.getResult();
+        if (mass) {
+          auto randomOp = rewriter.create<enzyme::RandomOp>(
+              loc, TypeRange{rngState.getType(), positionType}, rngState,
+              zeroConst, mass,
+              enzyme::RngDistributionAttr::get(
+                  rewriter.getContext(), enzyme::RngDistribution::MULTINORMAL));
+          rng1 = randomOp.getOutputRngState();
+          p0 = randomOp.getResult();
+        } else {
+          auto randomOp = rewriter.create<enzyme::RandomOp>(
+              loc, TypeRange{rngState.getType(), positionType}, rngState,
+              zeroConst, oneConst,
+              enzyme::RngDistributionAttr::get(
+                  rewriter.getContext(), enzyme::RngDistribution::NORMAL));
+          rng1 = randomOp.getOutputRngState();
+          p0 = randomOp.getResult();
+        }
       }
 
       auto halfConst = rewriter.create<arith::ConstantOp>(
