@@ -68,8 +68,6 @@ def BatchDiffPass : Pass<"enzyme-diff-batch">{
   let summary = "Batching enzyme.fwddiff and enzyme.autodiff calls";
   let dependentDialects = [
     "arith::ArithDialect",
-    "complex::ComplexDialect",
-    "cf::ControlFlowDialect",
     "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
   ];

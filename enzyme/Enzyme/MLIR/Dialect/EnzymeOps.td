@@ -127,8 +127,17 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffOp : Enzyme_Op<"autodiff",
@@ -141,8 +150,17 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 
-  // Define activity optimizations as canonicalization 
   let hasCanonicalizer = 1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true>(*this);
+  }
+  }];
 }
 
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
@@ -154,8 +172,18 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   let assemblyFormat = [{
     `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-  // activity optimization for region op
+
   let hasCanonicalizer=1;
+  
+  let extraClassDeclaration = [{
+  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(*this);
+  }
+
+  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
+    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true>(*this);
+  }
+  }];
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
@@ -541,4 +569,31 @@ def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
   }];
 }
 
+def ConcatenateOp : Enzyme_Op<"concatenate"> {
+  let summary = "Concatenate list of input arguments into a single batched value";
+  let description = [{
+    Concatenate list of input arguments into a generic value
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$inputs);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+    `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def ExtractOp : Enzyme_Op<"extract"> {
+  let summary = "Extract value from batched operand at index";
+  let description = [{
+    Extract value from batched operand at index
+  }];
+
+  let arguments = (ins AnyType:$input, Index:$index);
+  let results = (outs AnyType:$output);
+  
+  let assemblyFormat = [{
+     $input `[` $index `]` attr-dict `:` functional-type($input, results)
+  }];
+}
 #endif // ENZYME_OPS
