@@ -293,8 +293,7 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
         // from `findCallerEffects` into collectOpEffects(), accounting for
         // inter-procedural alias analysis
         SmallVector<MemoryEffects::EffectInstance> currOpEffects;
-        [[maybe_unused]] bool couldCollectEffects =
-            oputils::collectOpEffects(curr, currOpEffects);
+        (void)oputils::collectOpEffects(curr, currOpEffects);
         betweenEffects.append(currOpEffects);
       }
     }

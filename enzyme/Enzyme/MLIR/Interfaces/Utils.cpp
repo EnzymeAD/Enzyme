@@ -242,16 +242,6 @@ bool collectOpEffects(Operation *rootOp,
   SmallVector<Operation *> effectingOps(1, rootOp);
   bool couldCollectEffects = true;
 
-  SmallVector<MemoryEffects::EffectInstance> conservativeSet;
-  conservativeSet.emplace_back(
-      MemoryEffects::Effect::get<MemoryEffects::Read>());
-  conservativeSet.emplace_back(
-      MemoryEffects::Effect::get<MemoryEffects::Write>());
-  conservativeSet.emplace_back(
-      MemoryEffects::Effect::get<MemoryEffects::Allocate>());
-  conservativeSet.emplace_back(
-      MemoryEffects::Effect::get<MemoryEffects::Free>());
-
   while (!effectingOps.empty()) {
     Operation *op = effectingOps.pop_back_val();
     bool isRecursiveContainer =
@@ -335,26 +325,19 @@ bool collectOpEffects(Operation *rootOp,
             }
           }
         }
-      } else if (auto dop = dyn_cast<AutoDiffOp>(op)) {
-        // TODO: handle inter-procedural AutoDiffOp effects. Just
-        // conservatively add all effects for now
-        effects.append(conservativeSet);
-
-      } else if (auto dop = dyn_cast<ForwardDiffOp>(op)) {
-        // TODO: handle inter-procedural ForwardDiffOp effects. Just
-        // conservatively add all effects if there's any mutable arg
-        effects.append(conservativeSet);
-      } else if (auto dop = dyn_cast<AutoDiffRegionOp>(op)) {
-        // TODO: handle intra-procedural AutoDiffRegionOp effects. Just
-        // conservatively add all effects if there's any mutable arg now.
-        effects.append(conservativeSet);
       } else {
-        // The operation does not have a memory effect interface, and we cannot
-        // obtain any result
+        // TODO: handle AutoDiffOp, ForwardDiffOp and AutoDiffRegionOp effects.
+        // Just conservatively add all effects for now
 
         // We need to be conservative here in case the op doesn't have the
         // interface and assume it can have any possible effect.
-        effects.append(conservativeSet);
+
+        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Read>());
+        effects.emplace_back(
+            MemoryEffects::Effect::get<MemoryEffects::Write>());
+        effects.emplace_back(
+            MemoryEffects::Effect::get<MemoryEffects::Allocate>());
+        effects.emplace_back(MemoryEffects::Effect::get<MemoryEffects::Free>());
         couldCollectEffects = false;
 
         // no use in exploring other ops so break
@@ -371,8 +354,7 @@ collectFnEffects(FunctionOpInterface fnOp) {
   for (auto &blk : fnOp.getBlocks()) {
     for (auto &op : blk) {
       SmallVector<MemoryEffects::EffectInstance> opEffects;
-      [[maybe_unused]] bool couldCollectEffects =
-          collectOpEffects(&op, opEffects);
+      (void)collectOpEffects(&op, opEffects);
       innerEffects.append(opEffects.begin(), opEffects.end());
     }
   }
