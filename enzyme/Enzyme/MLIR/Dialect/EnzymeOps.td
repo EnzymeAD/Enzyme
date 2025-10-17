@@ -130,13 +130,19 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   let hasCanonicalizer = 1;
 
   let extraClassDeclaration = [{
-  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(*this);
-  }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true>(*this);
-  }
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffOp, true, true,
+                                                      false>(*this);
+    }
   }];
 }
 
@@ -151,15 +157,27 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 
   let hasCanonicalizer = 1;
-  
-  let extraClassDeclaration = [{
-  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
-  }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true>(*this);
-  }
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, false>(*this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, true,
+                                                      false>(*this);
+    }
+
+    /// Collect all output co-tangent values(for outputs with ret_activity
+    /// marked as `enzyme_active`/`enzyme_activenoneed`
+    ::llvm::SmallVector<::mlir::Value> getDifferentialReturns() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, false,
+                                                      true>(*this);
+    }
   }];
 }
 
@@ -174,15 +192,29 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   }];
 
   let hasCanonicalizer=1;
-  
-  let extraClassDeclaration = [{
-  ::llvm::SmallVector<::mlir::Value> getPrimalArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(*this);
-  }
 
-  ::llvm::SmallVector<::mlir::Value> getGradArgs() {
-    return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true>(*this);
-  }
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true,
+                                                      true, false>(*this);
+    }
+
+    /// Collect all output co-tangent values(for outputs with ret_activity
+    /// marked as `enzyme_active`/`enzyme_activenoneed`
+    ::llvm::SmallVector<::mlir::Value> getDifferentialReturns() {
+      return ::mlir::enzyme::detail::filterGradInputs<AutoDiffRegionOp, true,
+                                                      false, true>(*this);
+    }
+
   }];
 }
 
