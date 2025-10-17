@@ -72,20 +72,20 @@ llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
   // For reverse mode AD, add derivative values corresponding to active outputs
   if constexpr ((std::is_same_v<SourceOp, AutoDiffOp> ||
                  std::is_same_v<SourceOp, AutoDiffRegionOp>) &&
-                filterGrad && includeOutShadows)) {
-      if (in_idx != uop.getInputs().size()) {
-        for (auto act : uop.getRetActivity()) {
-          auto iattr = cast<ActivityAttr>(act);
-          auto act_val = iattr.getValue();
+                filterGrad && includeOutShadows) {
+    if (in_idx != uop.getInputs().size()) {
+      for (auto act : uop.getRetActivity()) {
+        auto iattr = cast<ActivityAttr>(act);
+        auto act_val = iattr.getValue();
 
-          if (act_val == Activity::enzyme_active ||
-              act_val == Activity::enzyme_activenoneed) {
-            outs.push_back(uop.getInputs()[in_idx]);
-            in_idx++;
-          }
+        if (act_val == Activity::enzyme_active ||
+            act_val == Activity::enzyme_activenoneed) {
+          outs.push_back(uop.getInputs()[in_idx]);
+          in_idx++;
         }
       }
     }
+  }
 
   return outs;
 }
