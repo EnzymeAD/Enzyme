@@ -71,8 +71,8 @@ llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
 
   // For reverse mode AD, add derivative values corresponding to active outputs
   if constexpr ((std::is_same_v<SourceOp, AutoDiffOp> ||
-                 std::is_same_v<SourceOp, AutoDiffRegionOp>) &&
-                filterGrad && includeOutShadows) {
+                 std::is_same_v<SourceOp, AutoDiffRegionOp>)&&filterGrad &&
+                includeOutShadows)) {
     if (in_idx != uop.getInputs().size()) {
       for (auto act : uop.getRetActivity()) {
         auto iattr = cast<ActivityAttr>(act);
