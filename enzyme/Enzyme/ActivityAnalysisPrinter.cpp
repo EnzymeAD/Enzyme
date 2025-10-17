@@ -124,8 +124,8 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   }
   type_args.Return = dt.Only(-1, nullptr);
 
-  PreProcessCache PPC;
-  TypeAnalysis TA(PPC.FAM);
+  EnzymeLogic Logic(false);
+  TypeAnalysis TA(Logic);
   TypeResults TR = TA.analyzeFunction(type_args);
 
   llvm::SmallPtrSet<llvm::Value *, 4> ConstantValues;
