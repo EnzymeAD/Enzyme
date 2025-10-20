@@ -61,8 +61,10 @@ struct RaiseLLVMExtPass
           for (auto use : *uses) {
             auto call = dyn_cast<LLVM::CallOp>(use.getUser());
             if (!call) {
+              failed = true;
               use.getUser()->emitError()
                   << "user of __enzyme_ptr_size_hint is not a llvm.call";
+              return;
             }
 
             OpBuilder builder(call);
