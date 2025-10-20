@@ -66,8 +66,7 @@ Value getConcatValue(OpBuilder &builder, Location &loc,
                      SmallVector<Value> &argList) {
   int64_t width = argList.size();
   Type out_type = getConcatType(argList.front(), width);
-  mlir::Value out =
-      builder.create<enzyme::ConcatenateOp>(loc, out_type, argList);
+  mlir::Value out = builder.create<enzyme::ConcatOp>(loc, out_type, argList);
   return out;
 }
 

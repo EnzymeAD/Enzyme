@@ -569,10 +569,10 @@ def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
   }];
 }
 
-def ConcatenateOp : Enzyme_Op<"concatenate"> {
+def ConcatOp : Enzyme_Op<"concat"> {
   let summary = "Concatenate list of input arguments into a single batched value";
   let description = [{
-    Concatenate list of input arguments into a generic value
+    Concat list of input arguments into a generic value
   }];
 
   let arguments = (ins Variadic<AnyType>:$inputs);
