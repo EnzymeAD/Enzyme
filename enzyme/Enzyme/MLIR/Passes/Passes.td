@@ -245,11 +245,20 @@ def LowerLLVMExtPass : Pass<"lower-llvm-ext"> {
   let summary = "Lower LLVM ext operations to the LLVM dialect.";
   let dependentDialects = [
     "mlir::enzyme::llvm_ext::LLVMExtDialect",
+    "LLVM::LLVMDialect",
   ];
   let options = [
     Option<"lowerToAllocaThreshold", "lower-to-alloca-threshold", "uint64_t",
            /*default=*/"0",
            "Maximum static size at which an alloc/free is promoted to an alloca (default -1: promotion disabled)">,
+  ];
+}
+
+def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
+  let summary = "Raise LLVM operations to the LLVM Ext dialect.";
+  let dependentDialects = [
+    "mlir::enzyme::llvm_ext::LLVMExtDialect",
+    "LLVM::LLVMDialect",
   ];
 }
 
