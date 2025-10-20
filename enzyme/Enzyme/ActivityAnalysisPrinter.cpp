@@ -50,6 +50,7 @@
 
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
+#include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"

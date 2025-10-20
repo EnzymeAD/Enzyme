@@ -413,10 +413,8 @@ public:
 /// Full interprocedural TypeAnalysis
 class TypeAnalysis {
 public:
-  llvm::FunctionAnalysisManager &FAM;
   EnzymeLogic &Logic;
-  TypeAnalysis(EnzymeLogic &Logic)
-      : FAM(Logic.PPC.FAM), Logic(Logic) {}
+  TypeAnalysis(EnzymeLogic &Logic) : Logic(Logic) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,

@@ -53,6 +53,7 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "../EnzymeLogic.h"
 #include "../FunctionUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
