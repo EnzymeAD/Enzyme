@@ -33,7 +33,54 @@ namespace {
 using namespace mlir;
 using namespace enzyme;
 
-void lowerAlloc(llvm_ext::AllocOp alloc) {
+LogicalResult tryLoweringToAlloca(llvm_ext::AllocOp alloc,
+                                  uint64_t staticThreshold) {
+  llvm::APInt size;
+  if (!matchPattern(alloc.getSize(), m_ConstantInt(&size)))
+    return failure();
+
+  if (size.getZExtValue() > staticThreshold)
+    return failure();
+
+  Operation *free = nullptr;
+  for (auto user : alloc.getResult().getUsers()) {
+    auto oFree = dyn_cast<llvm_ext::FreeOp>(user);
+    if (!oFree)
+      continue;
+
+    if (free)
+      return failure(); // multiple frees
+
+    if (oFree->getBlock() != alloc->getBlock()) // free not in same block
+      return failure();
+
+    free = user;
+
+    if (!alloc->isBeforeInBlock(free))
+      return failure();
+  }
+
+  OpBuilder builder(alloc);
+  auto alloca = builder.create<LLVM::AllocaOp>(
+      alloc.getLoc(), alloc.getResult().getType(), builder.getI8Type(),
+      alloc.getSize());
+  alloc.getResult().replaceAllUsesWith(alloca.getResult());
+
+  builder.create<LLVM::LifetimeStartOp>(alloc.getLoc(), alloca.getResult());
+
+  builder.setInsertionPoint(free);
+  builder.create<LLVM::LifetimeEndOp>(alloc.getLoc(), alloca.getResult());
+
+  free->erase();
+  alloc->erase();
+
+  return success();
+}
+
+void lowerAlloc(llvm_ext::AllocOp alloc, uint64_t staticThreshold) {
+  if (tryLoweringToAlloca(alloc, staticThreshold).succeeded())
+    return;
+
   SymbolTable symtable(SymbolTable::getNearestSymbolTable(alloc));
 
   auto mallocFn = symtable.lookup<LLVM::LLVMFuncOp>("malloc");
@@ -85,20 +132,13 @@ struct LowerLLVMExtPass
   void runOnOperation() override {
     Operation *op = getOperation();
 
-    // TODO: optimizations
-    // ....   - alloc/free of known size to alloca
-
-    op->walk([](llvm_ext::PtrSizeHintOp psh) {
-      Value ptr = psh.getPtr();
-      psh.getResult().replaceAllUsesWith(ptr);
-      psh.erase();
-    });
+    op->walk([](llvm_ext::PtrSizeHintOp psh) { psh.erase(); });
 
     SmallVector<llvm_ext::AllocOp> allocs;
     op->walk([&](llvm_ext::AllocOp alloc) { allocs.push_back(alloc); });
 
     for (auto alloc : allocs)
-      lowerAlloc(alloc);
+      lowerAlloc(alloc, lowerToAllocaThreshold);
 
     SmallVector<llvm_ext::FreeOp> frees;
     op->walk([&](llvm_ext::FreeOp free) { frees.push_back(free); });

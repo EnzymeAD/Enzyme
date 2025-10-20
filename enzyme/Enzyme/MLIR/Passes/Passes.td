@@ -247,8 +247,8 @@ def LowerLLVMExtPass : Pass<"lower-llvm-ext"> {
     "mlir::enzyme::llvm_ext::LLVMExtDialect",
   ];
   let options = [
-    Option<"promoteToAllocaThreshold", "promote-to-alloca-threshold", "uint64_t",
-           /*default=*/"static_cast<uint64_t>(-1)",
+    Option<"lowerToAllocaThreshold", "lower-to-alloca-threshold", "uint64_t",
+           /*default=*/"0",
            "Maximum static size at which an alloc/free is promoted to an alloca (default -1: promotion disabled)">,
   ];
 }

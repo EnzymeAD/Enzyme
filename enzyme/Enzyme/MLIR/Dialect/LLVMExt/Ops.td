@@ -6,7 +6,7 @@ include "Dialect.td"
 def LLVMPtr : Type<CPred<"::llvm::isa<::mlir::LLVM::LLVMPointerType>($_self)">>;
 
 def AllocOp : LLVMExtOp<"alloc", []> {
-  let summary = "allocate memory";
+  let summary = "Allocates memory";
   let arguments = (ins I64 : $size);
   let results = (outs LLVMPtr : $result);
 
@@ -16,7 +16,7 @@ def AllocOp : LLVMExtOp<"alloc", []> {
 }
 
 def FreeOp : LLVMExtOp<"free", []> {
-  let summary = "free memory";
+  let summary = "Frees memory";
   let arguments = (ins LLVMPtr : $ptr);
   let results = (outs);
 
@@ -26,12 +26,12 @@ def FreeOp : LLVMExtOp<"free", []> {
 }
 
 def PtrSizeHintOp : LLVMExtOp<"ptr_size_hint", []> {
-  let summary = "give information about the size of the underlying memory";
+  let summary = "Gives information about the size of the underlying memory";
   let arguments = (ins LLVMPtr : $ptr, AnyInteger : $size);
-  let results = (outs LLVMPtr : $result);
+  let results = (outs);
 
   let assemblyFormat = [{
-    $ptr `,` $size attr-dict `:` functional-type(operands, results)
+    $ptr `,` $size attr-dict `:` type($ptr) `,` type($size)
   }];
 }
 
