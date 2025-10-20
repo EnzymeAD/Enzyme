@@ -539,6 +539,18 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "llvm-ext-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [(
+        ["-gen-mlir-derivatives"],
+        "Enzyme/MLIR/Implementations/LLVMExtDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LLVMExtDerivatives.td",
+    deps = [":ImplementationsCommonTdFiles"],
+)
+
+gentbl_cc_library(
     name = "llvm-derivatives",
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
@@ -674,6 +686,7 @@ cc_library(
         ":complex-derivatives",
         ":func-derivatives",
         ":llvm-derivatives",
+        ":llvm-ext-derivatives",
         ":math-derivatives",
         ":memref-derivatives",
         ":nvvm-derivatives",

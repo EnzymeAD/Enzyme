@@ -1,4 +1,4 @@
-// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math %s | FileCheck %s
+// RUN: %eopt --split-input-file --enzyme --canonicalize --remove-unnecessary-enzyme-ops --enzyme-simplify-math --lower-llvm-ext --canonicalize %s | FileCheck %s
 
 module {
   llvm.func @square(%x: f64) -> f64 {
@@ -56,6 +56,8 @@ func.func @dmultireturn(%x: f64, %y: f64, %dr: f64) -> (f64, f64) {
 
 module {
 llvm.func @loadstore(%a: !llvm.ptr, %b: f32) -> f32 {
+  %sz = arith.constant 32 : i64
+  llvm_ext.ptr_size_hint %a, %sz : !llvm.ptr, i64
   llvm.store %b, %a : f32, !llvm.ptr
   %0 = llvm.load %a : !llvm.ptr -> f32
   llvm.return %0 : f32
