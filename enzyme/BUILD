@@ -246,6 +246,17 @@ cc_binary(
 )
 
 td_library(
+    name = "LLVMExtDialectTdFiles",
+    srcs = [
+        "Enzyme/MLIR/Dialect/LLVMExt/Dialect.td",
+    ],
+    includes = ["."],
+    deps = [
+        "@llvm-project//mlir:OpBaseTdFiles",
+    ]
+)
+
+td_library(
     name = "EnzymeDialectTdFiles",
     srcs = [
         "Enzyme/MLIR/Dialect/Dialect.td",
@@ -260,6 +271,55 @@ td_library(
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
     ],
+)
+
+cc_library(
+    name = "LLVMExtDialect",
+    srcs = [
+        "Enzyme/MLIR/Dialect/LLVMExt/Dialect.cpp",
+        "Enzyme/MLIR/Dialect/LLVMExt/Ops.cpp",
+    ],
+    hdrs = [
+        "Enzyme/MLIR/Dialect/LLVMExt/Dialect.h",
+        "Enzyme/MLIR/Dialect/LLVMExt/Ops.h"
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":LLVMExtIncGen",
+        "@llvm-project//mlir:LLVMDialect",
+    ],
+)
+
+gentbl_cc_library(
+    name = "LLVMExtIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [
+        (
+            ["-gen-op-decls"],
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.cpp.inc",
+        ),
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=llvm_ext",
+            ],
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=llvm_ext",
+            ],
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/LLVMExt/Ops.td",
+    deps = [":LLVMExtDialectTdFiles"],
 )
 
 gentbl_cc_library(
@@ -479,6 +539,18 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "llvm-ext-derivatives",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [(
+        ["-gen-mlir-derivatives"],
+        "Enzyme/MLIR/Implementations/LLVMExtDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/MLIR/Implementations/LLVMExtDerivatives.td",
+    deps = [":ImplementationsCommonTdFiles"],
+)
+
+gentbl_cc_library(
     name = "llvm-derivatives",
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [(
@@ -603,6 +675,7 @@ cc_library(
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",
+        ":LLVMExtDialect",
         ":EnzymePassesIncGen",
         ":EnzymeTypeInterfacesIncGen",
         ":EnzymeTypesIncGen",
@@ -613,6 +686,7 @@ cc_library(
         ":complex-derivatives",
         ":func-derivatives",
         ":llvm-derivatives",
+        ":llvm-ext-derivatives",
         ":math-derivatives",
         ":memref-derivatives",
         ":nvvm-derivatives",

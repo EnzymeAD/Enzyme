@@ -424,6 +424,7 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerBuiltinDialectAutoDiffInterface(registry);
   enzyme::registerComplexDialectAutoDiffInterface(registry);
   enzyme::registerLLVMDialectAutoDiffInterface(registry);
+  enzyme::registerLLVMExtDialectAutoDiffInterface(registry);
   enzyme::registerNVVMDialectAutoDiffInterface(registry);
   enzyme::registerMathDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
