@@ -75,15 +75,71 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
   matchAndRewrite(enzyme::ConcatOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     // filter based on out type
-    SmallVector<Value> in_args = op.getInputs();
-    auto inTy = in_args.front().getType();
-    if (auto valTensorTy = dyn_cast<TensorType>(inTy)) {
-      rewriter.replaceOpWithNewOp<tensor::ConcatOp>(op, op->getResultTypes(), 0,
-                                                    in_args);
+    SmallVector<Value> inputs = op.getInputs();
+    if (inputs.empty())
+      return failure();
+
+    auto firstInTy = inputs.front().getType();
+
+    if (auto firstRankTy = dyn_cast<RankedTensorType>(firstInTy)) {
+
+      // rank has to be the same for all inputs
+      auto rank = firstRankTy.getRank();
+
+      // Build the reassociation map attribute for expand_shape
+      SmallVector<Attribute> reassociationMap;
+
+      if (rank > 0) {
+        reassociationMap.push_back(rewriter.getI64ArrayAttr({0, 1}));
+      }
+
+      for (auto i = 1; i < rank; ++i) {
+        // src dim 'i' goes to dest dim 'i+1'
+        reassociationMap.push_back(rewriter.getI64ArrayAttr({i + 1}));
+      }
+
+      ArrayAttr reassociationAttr =
+          ArrayAttr::get(rewriter.getContext(), reassociationMap);
+
+      // tensor.expand_shape for every input argument
+      SmallVector<Value> expandedInputs;
+
+      for (Value in : inputs) {
+        auto inRankTy = cast<RankedTensorType>(in.getType());
+        auto inShape = inRankTy.getShape();
+        SmallVector<Value> outDynamicDims;
+
+        SmallVector<int64_t> newInShape = {1};
+        newInShape.append(inShape.begin(), inShape.end());
+
+        for (auto i = 0; i < rank; ++i) {
+          if (inRankTy.isDynamicDim(i)) {
+            // extract dynamic dim
+            Value dynIdx =
+                rewriter.create<arith::ConstantIndexOp>(op->getLoc(), i);
+            Value dynVal =
+                rewriter.create<tensor::DimOp>(op->getLoc(), in, dynIdx);
+            outDynamicDims.push_back(dynVal);
+          }
+        }
+
+        auto newInTy = inRankTy.clone(newInShape);
+        auto outStaticDimAttr =
+            rewriter.getDenseI64ArrayAttr(newInTy.getShape());
+
+        Value newInput = rewriter.create<tensor::ExpandShapeOp>(
+            op->getLoc(), newInTy, in, reassociationAttr, outDynamicDims,
+            outStaticDimAttr);
+
+        expandedInputs.push_back(newInput);
+      }
+
+      rewriter.replaceOpWithNewOp<tensor::ConcatOp>(op, op->getResultTypes(),
+                                                    /*dim*/ 0, expandedInputs);
       return success();
-    } else if (inTy.isIntOrIndexOrFloat()) {
+    } else if (firstInTy.isIntOrIndexOrFloat()) {
       rewriter.replaceOpWithNewOp<tensor::FromElementsOp>(
-          op, op->getResultTypes(), in_args);
+          op, op->getResultTypes(), inputs);
       return success();
     } else {
       // unsupported type
