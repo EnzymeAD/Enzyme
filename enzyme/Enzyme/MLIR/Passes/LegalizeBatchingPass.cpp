@@ -5,6 +5,7 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #define DEBUG_TYPE "enzyme-legalize-batch"
@@ -29,7 +30,41 @@ struct ExtractOpConversion : public OpConversionPattern<enzyme::ExtractOp> {
   LogicalResult
   matchAndRewrite(enzyme::ExtractOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    return failure();
+    // filter based on out type
+    auto outTy = op.getOutput().getType();
+    if (auto outTensorTy = dyn_cast<TensorType>(outTy)) {
+      auto outRankTy = dyn_cast<RankedTensorType>(outTy);
+      auto rank = outRankTy.getRank();
+
+      // Offsets : [index, 0, 0 ...]
+      // Sizes : [1, out_dim1, out_dim2 ...]
+      // Strides : [1,1,1,....]
+      SmallVector<OpFoldResult> offset = {op.getIndex()},
+                                sizes = {rewriter.getI64IntegerAttr(1)},
+                                strides(rank + 1,
+                                        rewriter.getI64IntegerAttr(1));
+      offset.append(
+          SmallVector<OpFoldResult>(rank, rewriter.getI64IntegerAttr(0)));
+
+      for (auto dim : outRankTy.getShape()) {
+        sizes.push_back(rewriter.getI64IntegerAttr(dim));
+      }
+
+      rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
+          op, outRankTy, op.getInput(), offset, sizes, strides);
+
+      return success();
+    } else if (outTy.isIntOrIndexOrFloat()) {
+
+      rewriter.replaceOpWithNewOp<tensor::ExtractOp>(
+          op, op->getResultTypes(), op.getInput(), op.getIndex());
+      return success();
+    } else {
+      // unsupported type
+      // TODO: handle memrefs
+
+      return failure();
+    }
   }
 };
 
@@ -39,7 +74,22 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
   LogicalResult
   matchAndRewrite(enzyme::ConcatOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    return failure();
+    // filter based on out type
+    SmallVector<Value> in_args = op.getInputs();
+    auto inTy = in_args.front().getType();
+    if (auto valTensorTy = dyn_cast<TensorType>(inTy)) {
+      rewriter.replaceOpWithNewOp<tensor::ConcatOp>(op, op->getResultTypes(), 0,
+                                                    in_args);
+      return success();
+    } else if (inTy.isIntOrIndexOrFloat()) {
+      rewriter.replaceOpWithNewOp<tensor::FromElementsOp>(
+          op, op->getResultTypes(), in_args);
+      return success();
+    } else {
+      // unsupported type
+      // TODO: handle memrefs
+      return failure();
+    }
   }
 };
 
