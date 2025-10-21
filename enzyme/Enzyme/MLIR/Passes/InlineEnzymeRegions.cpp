@@ -58,8 +58,10 @@ static void serializeFunctionAttributes(Operation *fn,
   SmallVector<NamedAttribute> fnAttrs;
   fnAttrs.reserve(fn->getAttrDictionary().size());
   for (auto attr : fn->getAttrs()) {
-    // Don't store the function type because it may change when outlining
-    if (attr.getName() == getFunctionTypeAttrName(fn))
+    // Don't store the function type or sym_name because they may change when
+    // outlining
+    if (attr.getName() == getFunctionTypeAttrName(fn) ||
+        attr.getName() == SymbolTable::getSymbolAttrName())
       continue;
     fnAttrs.push_back(attr);
   }
@@ -180,30 +182,42 @@ outlineAutoDiffFunc(enzyme::AutoDiffRegionOp op, StringRef funcName,
 }
 
 LogicalResult outlineEnzymeAutoDiffRegion(enzyme::AutoDiffRegionOp op,
-                                          StringRef defaultFuncName,
+                                          StringRef funcName,
                                           OpBuilder &builder) {
-  StringRef funcName = op.getFn().value_or(defaultFuncName);
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointAfter(op->getParentOfType<SymbolOpInterface>());
 
   SmallVector<enzyme::Activity> argActivities =
       llvm::map_to_vector(op.getActivity().getAsRange<enzyme::ActivityAttr>(),
                           [](auto attr) { return attr.getValue(); });
-
-  size_t numPrimalArgs = op.getActivity().size();
-  SmallVector<Value> primalInputs(op.getInputs().begin(),
-                                  op.getInputs().begin() + numPrimalArgs);
-  SmallVector<Value> seedInputs(op.getInputs().begin() + numPrimalArgs,
+  size_t numSeeds = llvm::count_if(
+      op.getRetActivity().getAsRange<enzyme::ActivityAttr>(), [](auto attr) {
+        switch (attr.getValue()) {
+        case enzyme::Activity::enzyme_active:
+        case enzyme::Activity::enzyme_activenoneed:
+          return true;
+        default:
+          return false;
+        }
+      });
+  size_t numPrimalsAndShadows = op.getInputs().size() - numSeeds;
+  SmallVector<Value> primalsAndShadows(
+      op.getInputs().begin(), op.getInputs().begin() + numPrimalsAndShadows);
+  SmallVector<Value> seedInputs(op.getInputs().begin() + numPrimalsAndShadows,
                                 op.getInputs().end());
 
-  FailureOr<func::FuncOp> outlinedFunc =
-      outlineAutoDiffFunc(op, funcName, primalInputs, argActivities, builder);
+  // Free variables are appended to primalInputs.
+  // The final input ordering should be:
+  // 1. primals and duplicated argument shadows
+  // 2. free variables
+  // 3. return variable shadows (a.k.a. seeds)
+  FailureOr<func::FuncOp> outlinedFunc = outlineAutoDiffFunc(
+      op, funcName, primalsAndShadows, argActivities, builder);
   if (failed(outlinedFunc))
     return failure();
 
-  // [primals (+ free vars...), seeds]
   SmallVector<Value> allInputs;
-  allInputs.append(primalInputs);
+  allInputs.append(primalsAndShadows);
   allInputs.append(seedInputs);
 
   builder.setInsertionPoint(op);
