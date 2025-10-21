@@ -167,30 +167,6 @@ def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
   }];
 }
 
-def PtrSizeHintOp : Enzyme_Op<"ptr_size_hint", [Pure]> {
-  let summary = "Hint the maximum size in bytes that can be accessed for this pointer. Clones of this ptr memory will use this value.";
-  let arguments = (ins AnyType:$ptr, Index:$size);
-  let results = (outs AnyType:$result);
-}
-
-def AllocOp : Enzyme_Op<"alloc", []> {
-  let summary = "Allocate a ptr of given size";
-  let arguments = (ins AnyType:$size);
-  let results = (outs AnyType:$result);
-  let assemblyFormat = [{
-    $size attr-dict `:` functional-type($size, results)
-  }];
-}
-
-def FreeOp : Enzyme_Op<"free", []> {
-  let summary = "Free a ptr";
-  let arguments = (ins AnyType:$ptr);
-  let results = (outs);
-  let assemblyFormat = [{
-    $ptr attr-dict `:` type($ptr)
-  }];
-}
-
 def BatchOp : Enzyme_Op<"batch",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";

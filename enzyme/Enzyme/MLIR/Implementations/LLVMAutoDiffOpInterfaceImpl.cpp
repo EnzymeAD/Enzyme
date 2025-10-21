@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/Ops.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -160,27 +161,16 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
-std::optional<Value> findPtrSize(Value ptr, OpBuilder &builder) {
-  if (auto ba = dyn_cast<BlockArgument>(ptr)) {
-    Block *owner = ba.getOwner();
-    Operation *op = owner->getParentOp();
+std::optional<Value> findPtrSize(Value ptr) {
+  if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
+    return allocOp.getSize();
 
-    FunctionOpInterface fn = dyn_cast<FunctionOpInterface>(op);
-    if (!fn)
-      fn = op->getParentOfType<FunctionOpInterface>();
-
-    if (&fn.front() != owner)
-      return std::nullopt;
-
-    auto argAttrs = fn.getArgAttrs(ba.getArgNumber());
-    for (auto nattr : argAttrs) {
-      if (nattr.getName() == "enzyme.ptr_size_hint") {
-        auto attr = cast<IntegerAttr>(nattr.getValue());
-        return builder.create<LLVM::ConstantOp>(ptr.getLoc(), attr.getType(),
-                                                attr);
-      }
+  for (auto user : ptr.getUsers()) {
+    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
+      return psh.getSize();
     }
   }
+
   return std::nullopt;
 }
 
@@ -189,13 +179,13 @@ struct PointerCachableTypeInterface
                                                   LLVM::LLVMPointerType> {
   mlir::Operation *createPush(Type self, OpBuilder &builder, Value cache,
                               Value value) const {
-    auto ptrSize = findPtrSize(value, builder);
+    auto ptrSize = findPtrSize(value);
     if (!ptrSize) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
       return nullptr;
     }
 
-    auto clone = builder.create<enzyme::AllocOp>(
+    auto clone = builder.create<llvm_ext::AllocOp>(
         cache.getLoc(), LLVM::LLVMPointerType::get(cache.getContext()),
         *ptrSize);
     builder.create<LLVM::MemcpyOp>(cache.getLoc(), clone, value, *ptrSize,
@@ -209,7 +199,7 @@ struct PointerCachableTypeInterface
   }
 
   void deletePoppedValue(Type self, OpBuilder &builder, Value value) const {
-    builder.create<enzyme::FreeOp>(value.getLoc(), value);
+    builder.create<llvm_ext::FreeOp>(value.getLoc(), value);
   }
 };
 
