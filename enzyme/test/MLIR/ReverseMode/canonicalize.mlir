@@ -24,7 +24,7 @@ module {
     // INLINE-NEXT:   %1 = arith.mulf %arg4, %arg4 : f32
     // INLINE-NEXT:   %2 = arith.mulf %arg5, %arg5 : f32
     // INLINE-NEXT:   enzyme.yield %1, %2 : f32, f32
-    // INLINE-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], fn = "square2", fn_attrs = {sym_name = "square2"}, ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]} : (f32, f32, f32, f32) -> (f32, f32, f32, f32)
+    // INLINE-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>], fn = "square2", fn_attrs = {}, ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>]} : (f32, f32, f32, f32) -> (f32, f32, f32, f32)
     return %r#0,%r#1,%r#2,%r#3 : f32,f32,f32,f32
   }
 

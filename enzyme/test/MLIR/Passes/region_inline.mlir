@@ -19,7 +19,7 @@ func.func @dsquare(%x: f64, %dr: f64) -> f64 {
 // CHECK-NEXT:    ^bb0(%arg2: f64):
 // CHECK-NEXT:      %1 = arith.mulf %arg2, %arg2 : f64
 // CHECK-NEXT:      enzyme.yield %1 : f64
-// CHECK-NEXT:    } attributes {activity = [#enzyme<activity enzyme_active>], fn = "square", fn_attrs = {sym_name = "square"}, ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    } attributes {activity = [#enzyme<activity enzyme_active>], fn = "square", fn_attrs = {}, ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
 
@@ -51,4 +51,4 @@ llvm.func internal @d_Z6squarePfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !l
 // Make sure that function attributes are preserved
 // CHECK: llvm.func internal @d_Z6squarePfS_
 // CHECK:    enzyme.autodiff_region(%arg0, %arg1, %arg2, %arg3) {
-// CHECK:    } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_name = "_Z6squarePfS_", sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> (
+// CHECK:    } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> (
