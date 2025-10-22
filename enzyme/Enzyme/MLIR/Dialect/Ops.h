@@ -40,8 +40,9 @@ namespace detail {
 // For any differentiation op, we either return input primal values or selective
 // derivative values. When `filterGrad` is true, `includeShadows` controls
 // whether input shadow arguments (activity `enzyme_dup` / `enzyme_dupnoneed`)
-// are collected, while `includeDifferentialReturns` controls whether reverse-mode output
-// shadows (`enzyme_active` / `enzyme_activenoneed`) are collected.
+// are collected, while `includeDifferentialReturns` controls whether
+// reverse-mode output shadows (`enzyme_active` / `enzyme_activenoneed`) are
+// collected.
 template <typename SourceOp, bool filterGrad, bool includeShadows = true,
           bool includeDifferentialReturns = true>
 llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
