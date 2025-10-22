@@ -1,4 +1,3 @@
-
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/Utils.h"
@@ -8,7 +7,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/DialectConversion.h"
 
-#define DEBUG_TYPE "enzyme-legalize-batch"
+#define DEBUG_TYPE "enzyme-batch-to-tensor"
 #define ENZYME_DBGS llvm::dbgs() << "[" << DEBUG_TYPE << "]"
 
 using namespace mlir;
@@ -17,7 +16,7 @@ using namespace enzyme;
 
 namespace mlir {
 namespace enzyme {
-#define GEN_PASS_DEF_LEGALIZEBATCHINGPASS
+#define GEN_PASS_DEF_ENZYMEBATCHTOTENSORPASS
 #include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
@@ -149,8 +148,8 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
   }
 };
 
-struct LegalizeBatchingPass
-    : public enzyme::impl::LegalizeBatchingPassBase<LegalizeBatchingPass> {
+struct EnzymeBatchToTensorPass
+    : public enzyme::impl::EnzymeBatchToTensorPassBase<EnzymeBatchToTensorPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
