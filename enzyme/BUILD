@@ -275,13 +275,13 @@ td_library(
 
 cc_library(
     name = "LLVMExtDialect",
+    strip_include_prefix = "Enzyme/MLIR",
     srcs = [
-        "Enzyme/MLIR/Dialect/LLVMExt/Dialect.cpp",
-        "Enzyme/MLIR/Dialect/LLVMExt/Ops.cpp",
+        "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.cpp",
+        "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.cpp",
     ],
     hdrs = [
-        "Enzyme/MLIR/Dialect/LLVMExt/Dialect.h",
-        "Enzyme/MLIR/Dialect/LLVMExt/Ops.h"
+        "Enzyme/MLIR/Dialect/LLVMExt/LLVMExt.h",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -307,18 +307,18 @@ gentbl_cc_library(
                 "-gen-dialect-decls",
                 "-dialect=llvm_ext",
             ],
-            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.h.inc",
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOpsDialect.h.inc",
         ),
         (
             [
                 "-gen-dialect-defs",
                 "-dialect=llvm_ext",
             ],
-            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.cpp.inc",
+            "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOpsDialect.cpp.inc",
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/LLVMExt/Ops.td",
+    td_file = "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.td",
     deps = [":LLVMExtDialectTdFiles"],
 )
 
