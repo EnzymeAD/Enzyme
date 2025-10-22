@@ -25,3 +25,5 @@ LINK_LIBS PUBLIC
 MLIRIR
 MLIRMemRefDialect
 )
+
+add_subdirectory(LLVMExt)
