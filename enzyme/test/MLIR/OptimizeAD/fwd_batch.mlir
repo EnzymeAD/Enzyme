@@ -1,5 +1,5 @@
 // RUN: %eopt --split-input-file --enzyme-diff-batch %s | FileCheck %s
-// RUN: %eopt --split-input-file --enzyme-diff-batch --enzyme-legalize-batch %s | FileCheck %s --check-prefix=LEGAL
+// RUN: %eopt --split-input-file --enzyme-diff-batch --enzyme-batch-to-tensor %s | FileCheck %s --check-prefix=LEGAL
 // 1. Scalar test
 module {
   func.func @square(%x : f64) -> f64{
