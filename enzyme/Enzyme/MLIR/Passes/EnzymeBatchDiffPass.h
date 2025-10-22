@@ -138,7 +138,7 @@ SmallVector<MemoryEffects::EffectInstance> findCallerEffects(
     }
 
     // Add primal effects to caller effect map for all ops
-    Value primalVal = callerOp.getPrimalArgs()[primalArgPos];
+    Value primalVal = callerOp.getPrimalInputs()[primalArgPos];
     outerEffects.push_back(
         oputils::getEffectOfVal(primalVal, eff.getEffect(), eff.getResource()));
 
@@ -198,7 +198,13 @@ llvm::SmallVector<SourceOp> pruneGradDefs(BatchDiffCacheKey &key,
   // to the same basic block)
   auto firstDiffOp = allDiffs[0];
   for (auto uop : allDiffs) {
-    auto diffArgs = uop.getGradArgs();
+
+    auto diffArgs = uop.getShadows();
+    if constexpr (std::is_same_v<SourceOp, AutoDiffOp>) {
+      auto diffeRet = uop.getDifferentialReturns();
+      diffArgs.append(diffeRet.begin(), diffeRet.end());
+    }
+
     bool definedBeforeFirst = true;
 
     for (auto diffVal : diffArgs) {

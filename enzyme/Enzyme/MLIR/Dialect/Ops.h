@@ -37,11 +37,14 @@ namespace mlir {
 namespace enzyme {
 namespace detail {
 
-// For any differentiation op, we either return input primal values or
-// derivative values with activity `enzyme_dup` / `enzyme_dupnoneed`. In the
-// case of reverse mode differentiation, derivative values for outputs marked
-// `enzyme_active` / `enzyme_activenoneed` are also returned
-template <typename SourceOp, bool filterGrad>
+// For any differentiation op, we either return input primal values or selective
+// derivative values. When `filterGrad` is true, `includeShadows` controls
+// whether input shadow arguments (activity `enzyme_dup` / `enzyme_dupnoneed`)
+// are collected, while `includeDifferentialReturns` controls whether
+// reverse-mode output shadows (`enzyme_active` / `enzyme_activenoneed`) are
+// collected.
+template <typename SourceOp, bool filterGrad, bool includeShadows = true,
+          bool includeDifferentialReturns = true>
 llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
   llvm::SmallVector<mlir::Value, 2> outs;
   auto in_idx = 0;
@@ -59,7 +62,7 @@ llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
     if (act_val == Activity::enzyme_dup ||
         act_val == Activity::enzyme_dupnoneed) {
 
-      if constexpr (filterGrad) {
+      if constexpr (filterGrad && includeShadows) {
         outs.push_back(uop.getInputs()[in_idx]);
       }
 
@@ -68,8 +71,11 @@ llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
   }
 
   // For reverse mode AD, add derivative values corresponding to active outputs
+  // clang-format off
   if constexpr ((std::is_same_v<SourceOp, AutoDiffOp> ||
-                 std::is_same_v<SourceOp, AutoDiffRegionOp>)&&filterGrad) {
+                 std::is_same_v<SourceOp, AutoDiffRegionOp>) &&
+                filterGrad && includeDifferentialReturns) {
+    // clang-format on
     if (in_idx != uop.getInputs().size()) {
       for (auto act : uop.getRetActivity()) {
         auto iattr = cast<ActivityAttr>(act);
