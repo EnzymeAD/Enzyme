@@ -147,8 +147,9 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   if (DuplicatedRet)
     ActiveReturns = DIFFE_TYPE::DUP_ARG;
   SmallPtrSet<BasicBlock *, 4> notForAnalysis(getGuaranteedUnreachable(&F));
-  ActivityAnalyzer ATA(Logic.PPC, Logic.PPC.FAM.getResult<AAManager>(F), notForAnalysis,
-                       TLI, ConstantValues, ActiveValues, ActiveReturns);
+  ActivityAnalyzer ATA(Logic.PPC, Logic.PPC.FAM.getResult<AAManager>(F),
+                       notForAnalysis, TLI, ConstantValues, ActiveValues,
+                       ActiveReturns);
 
   for (auto &a : F.args()) {
     ATA.isConstantValue(TR, &a);

@@ -316,7 +316,7 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
 }
 
 EnzymeLogicRef EnzymeTypeAnalysisGetLogic(EnzymeTypeAnalysisRef TAR) {
-  return (EnzymeLogicRef) &((TypeAnalysis *)TAR)->Logic;
+  return (EnzymeLogicRef) & ((TypeAnalysis *)TAR)->Logic;
 }
 
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
@@ -330,7 +330,7 @@ void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
 }
 
 EnzymeTypeAnalysisRef EnzymeGetTypeAnalysisFromTypeAnalyzer(void *TAR) {
-  return (EnzymeTypeAnalysisRef) &((TypeAnalyzer *)TAR)->interprocedural;
+  return (EnzymeTypeAnalysisRef) & ((TypeAnalyzer *)TAR)->interprocedural;
 }
 
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
