@@ -52,6 +52,7 @@
 #include "llvm/IR/InlineAsm.h"
 
 #include "../Utils.h"
+#include "../EnzymeLogic.h"
 #include "TypeAnalysis.h"
 
 #include "../FunctionUtils.h"
@@ -242,7 +243,7 @@ bool dontAnalyze(StringRef str) {
 
 TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
-    : Logic(TA.Logic), MST(EnzymePrintType ? new ModuleSlotTracker(fn.Function->getParent())
+    : MST(EnzymePrintType ? new ModuleSlotTracker(fn.Function->getParent())
                           : nullptr),
       notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
