@@ -11,12 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-<<<<<<< HEAD
-#include "Dialect/LLVMExt/Dialect.h"
-#include "Dialect/LLVMExt/Ops.h"
-=======
 #include "Dialect/LLVMExt/LLVMExt.h"
->>>>>>> upstream/main
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"

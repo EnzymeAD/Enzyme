@@ -12,11 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-<<<<<<< HEAD
-#include "Dialect/LLVMExt/Dialect.h"
-=======
 #include "Dialect/LLVMExt/LLVMExt.h"
->>>>>>> upstream/main
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
