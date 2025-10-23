@@ -108,25 +108,6 @@ llvm::LogicalResult GetOp::ensureOnlySafeAccesses(
   return success(slot.ptr == getGradient());
 }
 
-llvm::LogicalResult GetOp::verify() {
-  // make sure that the return type is the same as that of the gradient
-
-  auto GT = llvm::dyn_cast<enzyme::GradientType>(getGradient().getType());
-  if (!GT) {
-    emitOpError("operand is not of gradient type");
-    return failure();
-  }
-
-  auto RT = getResult().getType();
-  if (GT.getBasetype() != RT) {
-    emitOpError("return type does not match gradient type: ")
-        << "got " << RT << " expected " << GT.getBasetype();
-    return failure();
-  }
-
-  return success();
-}
-
 //===----------------------------------------------------------------------===//
 // SetOp
 //===----------------------------------------------------------------------===//
@@ -161,68 +142,6 @@ llvm::LogicalResult SetOp::ensureOnlySafeAccesses(
     const MemorySlot &slot, llvm::SmallVectorImpl<MemorySlot> &mustBeSafelyUsed,
     const DataLayout &dataLayout) {
   return success(slot.ptr == getGradient());
-}
-
-llvm::LogicalResult SetOp::verify() {
-  // make sure that the operand type is the same as that of the gradient
-  auto GT = llvm::dyn_cast<enzyme::GradientType>(getGradient().getType());
-  if (!GT) {
-    emitOpError("operand 0 is not of gradient type");
-    return failure();
-  }
-
-  auto RT = getValue().getType();
-  if (GT.getBasetype() != RT) {
-    emitOpError("operand type does not match gradient type: ")
-        << "got " << RT << " expected " << GT.getBasetype();
-    return failure();
-  }
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// PopOp
-//===----------------------------------------------------------------------===//
-
-llvm::LogicalResult PopOp::verify() {
-  // make sure that the return type is the same as that of the cache
-  auto GT = llvm::dyn_cast<enzyme::CacheType>(getCache().getType());
-  if (!GT) {
-    emitOpError("operand 0 is not of cache type");
-    return failure();
-  }
-
-  auto RT = getResult().getType();
-  if (GT.getType() != RT) {
-    emitOpError("return type does not match cache type: ")
-        << "got " << RT << " expected " << GT.getType();
-    return failure();
-  }
-
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// PushOp
-//===----------------------------------------------------------------------===//
-
-llvm::LogicalResult PushOp::verify() {
-  // make sure that the operand type is the same as that of the cache
-  auto GT = llvm::dyn_cast<enzyme::CacheType>(getCache().getType());
-  if (!GT) {
-    emitOpError("operand 0 is not of cache type");
-    return failure();
-  }
-
-  auto RT = getValue().getType();
-  if (GT.getType() != RT) {
-    emitOpError("operand type does not match cache type: ")
-        << "got " << RT << " expected " << GT.getType();
-    return failure();
-  }
-
-  return success();
 }
 
 //===----------------------------------------------------------------------===//

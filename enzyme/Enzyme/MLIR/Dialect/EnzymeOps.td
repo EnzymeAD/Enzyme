@@ -238,17 +238,21 @@ def BatchOp : Enzyme_Op<"batch",
   }];
 }
 
-def PushOp : Enzyme_Op<"push"> {
+def PushOp : Enzyme_Op<"push", [
+    TypesMatchWith<"type of 'value' matches element type of 'cache'",
+                   "cache", "value",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Push value to cache";
   let arguments = (ins AnyType : $cache, AnyType : $value);
-  let hasVerifier = 1;
 }
 
-def PopOp : Enzyme_Op<"pop"> {
+def PopOp : Enzyme_Op<"pop", [
+    TypesMatchWith<"type of 'output' matches element type of 'cache'",
+                   "cache", "output",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
-  let hasVerifier = 1;
 }
 
 def InitOp : Enzyme_Op<"init",
@@ -301,22 +305,26 @@ def StoreOp : Enzyme_Op<"store",
 
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'value' matches element type of 'gradient'",
+                    "gradient", "value",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Store the current value of the gradient";
   let arguments = (ins Arg<AnyType, "the reference to store to",
                            [MemWrite]>:$gradient, AnyType : $value);
   let results = (outs );
-  let hasVerifier = 1;
 }
 
 def GetOp : Enzyme_Op<"get",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'result' matches element type of 'gradient'",
+                    "gradient", "result",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Load current value of gradient";
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
-  let results = (outs AnyType);
-  let hasVerifier = 1;
+  let results = (outs AnyType:$result);
 }
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
