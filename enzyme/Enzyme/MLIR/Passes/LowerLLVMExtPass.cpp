@@ -11,8 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+<<<<<<< HEAD
 #include "Dialect/LLVMExt/Dialect.h"
 #include "Dialect/LLVMExt/Ops.h"
+=======
+#include "Dialect/LLVMExt/LLVMExt.h"
+>>>>>>> upstream/main
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -119,8 +123,13 @@ void lowerFree(llvm_ext::FreeOp free) {
   }
 
   OpBuilder builder(free);
+<<<<<<< HEAD
   auto freeCall =
       builder.create<LLVM::CallOp>(free.getLoc(), freeFn, free->getOperands());
+=======
+  builder.create<LLVM::CallOp>(free.getLoc(), freeFn, free->getOperands());
+
+>>>>>>> upstream/main
   free.erase();
 }
 

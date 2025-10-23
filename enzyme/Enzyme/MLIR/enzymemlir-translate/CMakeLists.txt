@@ -11,6 +11,7 @@ add_llvm_executable(enzymemlir-translate
 llvm_update_compile_flags(enzymemlir-translate)
 target_link_libraries(enzymemlir-translate
   PRIVATE
+  z
   ${dialect_libs}
   ${translation_libs}
   MLIRIR

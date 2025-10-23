@@ -37,7 +37,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "Dialect/Dialect.h"
-#include "Dialect/LLVMExt/Dialect.h"
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
 
