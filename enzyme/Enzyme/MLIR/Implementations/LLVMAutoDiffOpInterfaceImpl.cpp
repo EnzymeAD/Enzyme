@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -160,12 +161,56 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+std::optional<Value> findPtrSize(Value ptr) {
+  if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
+    return allocOp.getSize();
+
+  for (auto user : ptr.getUsers()) {
+    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
+      return psh.getSize();
+    }
+  }
+
+  return std::nullopt;
+}
+
+struct PointerCachableTypeInterface
+    : public CachableTypeInterface::ExternalModel<PointerCachableTypeInterface,
+                                                  LLVM::LLVMPointerType> {
+  mlir::Operation *createPush(Type self, OpBuilder &builder, Value cache,
+                              Value value) const {
+    auto ptrSize = findPtrSize(value);
+    if (!ptrSize) {
+      llvm::errs() << "cannot find size of ptr: " << value << "\n";
+      return nullptr;
+    }
+
+    auto clone = builder.create<llvm_ext::AllocOp>(
+        cache.getLoc(), LLVM::LLVMPointerType::get(cache.getContext()),
+        *ptrSize);
+    builder.create<LLVM::MemcpyOp>(cache.getLoc(), clone, value, *ptrSize,
+                                   /*isVolatile*/ false);
+
+    return builder.create<enzyme::PushOp>(cache.getLoc(), cache, clone);
+  }
+
+  Value createPop(Type self, OpBuilder &builder, Value cache) const {
+    return builder.create<enzyme::PopOp>(cache.getLoc(), self, cache);
+  }
+
+  void deletePoppedValue(Type self, OpBuilder &builder, Value value) const {
+    builder.create<llvm_ext::FreeOp>(value.getLoc(), value);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    LLVM::LLVMPointerType::attachInterface<PointerCachableTypeInterface>(
+        *context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     registerInterfaces(context);
