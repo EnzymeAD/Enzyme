@@ -50,6 +50,7 @@
 
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
+#include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
@@ -124,8 +125,8 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   }
   type_args.Return = dt.Only(-1, nullptr);
 
-  PreProcessCache PPC;
-  TypeAnalysis TA(PPC.FAM);
+  EnzymeLogic Logic(false);
+  TypeAnalysis TA(Logic);
   TypeResults TR = TA.analyzeFunction(type_args);
 
   llvm::SmallPtrSet<llvm::Value *, 4> ConstantValues;
@@ -146,8 +147,9 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   if (DuplicatedRet)
     ActiveReturns = DIFFE_TYPE::DUP_ARG;
   SmallPtrSet<BasicBlock *, 4> notForAnalysis(getGuaranteedUnreachable(&F));
-  ActivityAnalyzer ATA(PPC, PPC.FAM.getResult<AAManager>(F), notForAnalysis,
-                       TLI, ConstantValues, ActiveValues, ActiveReturns);
+  ActivityAnalyzer ATA(Logic.PPC, Logic.PPC.FAM.getResult<AAManager>(F),
+                       notForAnalysis, TLI, ConstantValues, ActiveValues,
+                       ActiveReturns);
 
   for (auto &a : F.args()) {
     ATA.isConstantValue(TR, &a);

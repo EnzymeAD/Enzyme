@@ -51,6 +51,7 @@
 
 #include "llvm/IR/InlineAsm.h"
 
+#include "../EnzymeLogic.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -247,11 +248,11 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
       notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
       PHIRecur(false),
-      TLI(TA.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
-      DT(TA.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
-      PDT(TA.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
-      LI(TA.FAM.getResult<LoopAnalysis>(*fn.Function)),
-      SE(TA.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function)) {
+      TLI(TA.Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
+      DT(TA.Logic.PPC.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
+      PDT(TA.Logic.PPC.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
+      LI(TA.Logic.PPC.FAM.getResult<LoopAnalysis>(*fn.Function)),
+      SE(TA.Logic.PPC.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function)) {
 
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
