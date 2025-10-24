@@ -11,6 +11,7 @@
 #include "mlir/IR/DialectImplementation.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/Transforms/InliningUtils.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "Dialect/EnzymeEnums.cpp.inc"
@@ -29,7 +30,31 @@ using namespace mlir::enzyme;
 // Enzyme dialect.
 //===----------------------------------------------------------------------===//
 
+namespace {
+struct EnzymeDialectInlinerInterface : public DialectInlinerInterface {
+  using DialectInlinerInterface::DialectInlinerInterface;
+
+  bool isLegalToInline(Operation * /*call*/, Operation * /*callable*/,
+                       bool /*wouldBeCloned*/) const final {
+    return true;
+  }
+
+  bool isLegalToInline(Region * /*dest*/, Region * /*src*/,
+                       bool /*wouldBeCloned*/,
+                       IRMapping & /*valueMapping*/) const final {
+    return true;
+  }
+
+  bool isLegalToInline(Operation * /*op*/, Region * /*dest*/,
+                       bool /*wouldBeCloned*/,
+                       IRMapping & /*valueMapping*/) const final {
+    return true;
+  }
+};
+} // namespace
+
 void EnzymeDialect::initialize() {
+  addInterfaces<EnzymeDialectInlinerInterface>();
   addOperations<
 #define GET_OP_LIST
 #include "Dialect/EnzymeOps.cpp.inc"
