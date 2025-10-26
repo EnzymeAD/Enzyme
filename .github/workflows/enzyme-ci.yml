@@ -62,6 +62,7 @@ jobs:
     - name: add llvm 
       run: |
           brew update
+          brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
     - uses: actions/checkout@v4
@@ -97,6 +98,7 @@ jobs:
     steps:
     - name: add llvm
       run: |
+          brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake gcc
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
     - uses: actions/checkout@v4

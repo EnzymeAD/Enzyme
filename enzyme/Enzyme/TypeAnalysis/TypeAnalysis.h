@@ -174,6 +174,7 @@ static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
 
 class TypeAnalyzer;
 class TypeAnalysis;
+class EnzymeLogic;
 
 /// A holder class representing the results of running TypeAnalysis
 /// on a given function
@@ -204,6 +205,9 @@ public:
   // The flag `anythingIsFloat` specifies whether an anything should
   // be considered a float.
   bool anyFloat(llvm::Value *val, bool anythingIsFloat = true) const;
+
+  /// Whether all of the top level register is known to contain float data
+  bool allFloat(llvm::Value *val) const;
 
   /// Whether any part of the top level register can contain a pointer
   ///   e.g. { i64, i8* } can contain a pointer, but { i64, float } would not.
@@ -409,8 +413,8 @@ public:
 /// Full interprocedural TypeAnalysis
 class TypeAnalysis {
 public:
-  llvm::FunctionAnalysisManager &FAM;
-  TypeAnalysis(llvm::FunctionAnalysisManager &FAM) : FAM(FAM) {}
+  EnzymeLogic &Logic;
+  TypeAnalysis(EnzymeLogic &Logic) : Logic(Logic) {}
   /// Map of custom function call handlers
   llvm::StringMap<
       std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,

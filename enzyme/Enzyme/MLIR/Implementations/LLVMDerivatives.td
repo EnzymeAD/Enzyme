@@ -1,5 +1,6 @@
 include "Common.td"
 
+def : ReturnOp<"LLVM", "ReturnOp">;
 def : MemoryIdentityOp<"LLVM", "StoreOp", [1], [0]>;
 def : InactiveOp<"LLVM", "SIToFPOp">;
 def : InactiveOp<"LLVM", "UIToFPOp">;

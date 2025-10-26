@@ -425,7 +425,28 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     if (auto PN = dyn_cast<PHINode>(&I)) {
       if (PN->getType() != val->getType())
         continue;
-      Value *ival = PN->getIncomingValueForBlock(lc.preheader);
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
+        continue;
+
+      int Idx = PN->getBasicBlockIndex(lc.preheader);
+      if (Idx < 0) {
+
+        std::string str;
+        raw_string_ostream ss(str);
+
+        ss << " Could not find block for index, PN: " << *PN << "\n";
+        ss << " preheader: " << *lc.preheader << "\n";
+        ss << " header: " << *lc.header << "\n";
+        ss << " fn: " << *lc.header->getParent() << "\n";
+
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
+        } else {
+          EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
+        }
+      }
+      Value *ival = PN->getIncomingValue(Idx);
       if (auto CDV = dyn_cast<ConstantDataVector>(ival)) {
         if (CDV->isSplat())
           ival = CDV->getSplatValue();
@@ -486,6 +507,8 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
       if (PN->getNumIncomingValues() == 0)
         continue;
       if (PN->getType() != lc.incvar->getType())
+        continue;
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
         continue;
       Value *ival = PN->getIncomingValueForBlock(lc.preheader);
       if (auto C = dyn_cast<Constant>(ival)) {
@@ -2504,7 +2527,22 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
 
   // TODO replace forwardBlock with the first block dominated by inst,
   // that dominates (or is) forwardBlock to ensuring maximum reuse
-  IRBuilder<> lcssa(&forwardBlock->front());
+  auto inspos = forwardBlock->front().getIterator();
+#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 21
+#else
+  if (forwardBlock->IsNewDbgInfoFormat)
+#endif
+  {
+    if (!inspos.getHeadBit()) {
+      auto srcmarker = forwardBlock->getMarker(inspos);
+      if (srcmarker && !srcmarker->empty()) {
+        inspos.setHeadBit(true);
+      }
+    }
+  }
+#endif
+  IRBuilder<> lcssa(forwardBlock, inspos);
   auto lcssaPHI =
       lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
   lcssaFixes[inst][forwardBlock] = lcssaPHI;
@@ -8321,13 +8359,47 @@ void GradientUtils::computeMinCache() {
                 QueryType::Primal,
                 /*OneLevel*/ true>(this, &I, minCutMode, OneLevelSeen,
                                    notForAnalysis);
-            if (oneneed) {
+
+            bool shadowOneNeed = false;
+            // even if the primal is not needed directly by its users, if the
+            // primal is constant and used to create a shadow insertvalue which
+            // is used, we need to save the shadow since shadow cache and primal
+            // cache are the same, we force a save of cache here.
+            // TODO(wsmoses): extend this to separate caching decisions for
+            // primal and shadow
+            if (!oneneed && isConstantValue(&I) && !TR.allFloat(&I)) {
+              SmallVector<Instruction *, 1> todo;
+              todo.push_back(&I);
+              while (todo.size()) {
+                auto cur = todo.pop_back_val();
+                for (auto u : cur->users()) {
+                  if (isa<InsertValueInst>(u) || isa<InsertElementInst>(u) ||
+                      isa<ExtractValueInst>(u) || isa<ExtractElementInst>(u)) {
+                    auto I2 = cast<Instruction>(u);
+                    if (!isConstantValue(I2)) {
+                      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                              QueryType::Shadow>(this, I2, minCutMode, FullSeen,
+                                                 notForAnalysis)) {
+                        shadowOneNeed = true;
+                        goto endOneNeed;
+                      }
+                    } else {
+                      todo.push_back(I2);
+                    }
+                  }
+                }
+              }
+            endOneNeed:;
+            }
+
+            if (oneneed || shadowOneNeed) {
               knownRecomputeHeuristic[&I] = false;
 
               CountTrackedPointers T(I.getType());
               assert(!T.derived);
-            } else
+            } else {
               Recomputes.insert(&I);
+            }
           }
         }
       }
@@ -8556,13 +8628,18 @@ bool GradientUtils::getContext(llvm::BasicBlock *BB, LoopContext &lc) {
 void GradientUtils::forceAugmentedReturns() {
   assert(TR.getFunction() == oldFunc);
 
+  // Pass 1: create BB-level contexts for the whole loop/function
   for (BasicBlock &oBB : *oldFunc) {
-    // Don't create derivatives for code that results in termination
     if (notForAnalysis.find(&oBB) != notForAnalysis.end())
       continue;
+    LoopContext LC;
+    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), LC);
+  }
 
-    LoopContext loopContext;
-    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
+  // Pass 2: instruction processing
+  for (BasicBlock &oBB : *oldFunc) {
+    if (notForAnalysis.find(&oBB) != notForAnalysis.end())
+      continue;
 
     for (Instruction &I : oBB) {
       Instruction *inst = &I;

@@ -51,6 +51,7 @@
 
 #include "llvm/IR/InlineAsm.h"
 
+#include "../EnzymeLogic.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -247,11 +248,11 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
       notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
       PHIRecur(false),
-      TLI(TA.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
-      DT(TA.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
-      PDT(TA.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
-      LI(TA.FAM.getResult<LoopAnalysis>(*fn.Function)),
-      SE(TA.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function)) {
+      TLI(TA.Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
+      DT(TA.Logic.PPC.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
+      PDT(TA.Logic.PPC.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
+      LI(TA.Logic.PPC.FAM.getResult<LoopAnalysis>(*fn.Function)),
+      SE(TA.Logic.PPC.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function)) {
 
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -6097,6 +6098,35 @@ size_t skippedBytes(SmallSet<size_t, 8> &offs, Type *T, const DataLayout &DL,
     prevOff = off + subSize;
   }
   return prevOff;
+}
+
+bool TypeResults::allFloat(Value *val) const {
+  assert(val);
+  assert(val->getType());
+  auto q = query(val);
+  auto dt = q[{-1}];
+  if (dt != BaseType::Anything && dt != BaseType::Unknown)
+    return dt.isFloat();
+
+  if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+    return false;
+  auto &dl = analyzer->fntypeinfo.Function->getParent()->getDataLayout();
+  SmallSet<size_t, 8> offs;
+  size_t ObjSize = skippedBytes(offs, val->getType(), dl);
+
+  for (size_t i = 0; i < ObjSize;) {
+    dt = q[{(int)i}];
+    if (auto FT = dt.isFloat()) {
+      i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+      continue;
+    }
+    if (offs.count(i)) {
+      i++;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {

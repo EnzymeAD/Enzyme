@@ -53,6 +53,7 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "../EnzymeLogic.h"
 #include "../FunctionUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
@@ -132,8 +133,8 @@ bool printTypeAnalyses(llvm::Function &F) {
     dt = ConcreteType(BaseType::Integer);
   }
   type_args.Return = dt.Only(-1, nullptr);
-  PreProcessCache PPC;
-  TypeAnalysis TA(PPC.FAM);
+  EnzymeLogic Logic(false);
+  TypeAnalysis TA(Logic);
   TA.analyzeFunction(type_args);
   for (Function &f : *F.getParent()) {
 

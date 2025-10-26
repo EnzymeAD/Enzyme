@@ -11,5 +11,4 @@ add_mlir_library(MLIREnzymeAnalysis
 
   LINK_LIBS PUBLIC
   MLIRIR
-  MLIRCopyOpInterface
 )

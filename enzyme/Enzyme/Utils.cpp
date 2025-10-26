@@ -161,7 +161,12 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     name += ".custom@" + std::to_string((size_t)RT);
 
   FunctionType *FT = FunctionType::get(allocType, types, false);
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  AttributeList AL;
+  if (newFunc->hasFnAttribute("enzymejl_world")) {
+    AL = AL.addFnAttribute(newFunc->getContext(),
+                           newFunc->getFnAttribute("enzymejl_world"));
+  }
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 
   if (!F->empty())
     return F;
@@ -2358,6 +2363,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   using namespace llvm;
   if (isa<StoreInst>(maybeReader))
     return false;
+  if (isa<FenceInst>(maybeReader)) {
+    return false;
+  }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     StringRef funcName = getFuncNameFromCall(call);
 
@@ -3982,6 +3990,17 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   if (lhs == rhs) {
     return false;
   }
+  if (auto i1 = dyn_cast<Instruction>(op1))
+    if (isa<ConstantPointerNull>(op0) &&
+        hasMetadata(i1, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+  if (auto i0 = dyn_cast<Instruction>(op0))
+    if (isa<ConstantPointerNull>(op1) &&
+        hasMetadata(i0, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
 

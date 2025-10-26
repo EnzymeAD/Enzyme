@@ -43,7 +43,7 @@ struct LoadOpInterfaceReverse
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
       if (!gutils->isConstantValue(loadOp) &&
           !gutils->isConstantValue(memref)) {
-        Value gradient = gutils->invertPointerM(loadOp, builder);
+        Value gradient = gutils->diffe(loadOp, builder);
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
@@ -52,14 +52,20 @@ struct LoadOpInterfaceReverse
           retrievedArguments.push_back(retrievedValue);
         }
 
-        Value loadedGradient =
-            builder.create<memref::LoadOp>(loadOp.getLoc(), memrefGradient,
-                                           ArrayRef<Value>(retrievedArguments));
-        Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
-                                                loadedGradient, gradient);
-        builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
-                                        memrefGradient,
-                                        ArrayRef<Value>(retrievedArguments));
+        if (!gutils->AtomicAdd) {
+          Value loadedGradient = builder.create<memref::LoadOp>(
+              loadOp.getLoc(), memrefGradient,
+              ArrayRef<Value>(retrievedArguments));
+          Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                  loadedGradient, gradient);
+          builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                          memrefGradient,
+                                          ArrayRef<Value>(retrievedArguments));
+        } else {
+          builder.create<memref::AtomicRMWOp>(
+              loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
+              memrefGradient, ArrayRef<Value>(retrievedArguments));
+        }
       }
     }
     return success();
@@ -108,8 +114,6 @@ struct StoreOpInterfaceReverse
     auto iface = cast<AutoDiffTypeInterface>(val.getType());
 
     if (!gutils->isConstantValue(memref)) {
-      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-
       Value memrefGradient = gutils->invertPointerM(memref, builder);
 
       SmallVector<Value> retrievedArguments;
@@ -190,7 +194,7 @@ struct SubViewOpInterfaceReverse
           gutils->invertPointerM(subviewOp.getSource(), builder),
           newSubviewOp.getMixedOffsets(), newSubviewOp.getMixedSizes(),
           newSubviewOp.getMixedStrides());
-      gutils->setDiffe(subviewOp, shadow, builder);
+      gutils->setInvertedPointer(subviewOp, shadow);
     }
   }
 };

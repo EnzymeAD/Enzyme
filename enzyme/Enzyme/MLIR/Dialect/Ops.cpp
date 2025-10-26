@@ -596,11 +596,16 @@ void BroadcastOp::build(OpBuilder &builder, OperationState &result, Value input,
  * function signature, and only modify the number of outputs.
  *
  */
-class ReverseRetOpt final : public OpRewritePattern<AutoDiffOp> {
-public:
-  using OpRewritePattern<AutoDiffOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(AutoDiffOp uop,
+template <typename SourceOp>
+class ReverseRetOpt final : public OpRewritePattern<SourceOp> {
+private:
+  struct SourceOpCreator;
+
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp uop,
                                 PatternRewriter &rewriter) const override {
     // early return if there are no outputs
     if (uop.getOutputs().size() == 0)
@@ -809,9 +814,8 @@ public:
                        llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
                                                  newRetActivityArgs.end()));
 
-    AutoDiffOp newOp = rewriter.create<AutoDiffOp>(
-        uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
-        newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
+    SourceOp newOp = SourceOpCreator::create(rewriter, uop, out_ty, in_args,
+                                             newInActivity, newRetActivity);
 
     // Map old uses of uop to newOp
     auto oldIdx = 0;
@@ -880,11 +884,40 @@ public:
   }
 };
 
+template <> struct ReverseRetOpt<AutoDiffOp>::SourceOpCreator {
+  static AutoDiffOp create(PatternRewriter &rewriter, AutoDiffOp uop,
+                           ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                           ArrayAttr newInActivity, ArrayAttr newRetActivity) {
+
+    return rewriter.create<AutoDiffOp>(
+        uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
+        newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
+  }
+};
+
+template <> struct ReverseRetOpt<AutoDiffRegionOp>::SourceOpCreator {
+  static AutoDiffRegionOp create(PatternRewriter &rewriter,
+                                 AutoDiffRegionOp uop, ArrayRef<Type> out_ty,
+                                 ArrayRef<Value> in_args,
+                                 ArrayAttr newInActivity,
+                                 ArrayAttr newRetActivity) {
+
+    auto newOp = rewriter.create<AutoDiffRegionOp>(
+        uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
+        uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
+    newOp.getBody().takeBody(uop.getBody());
+    return newOp;
+  }
+};
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
-  patterns.add<ReverseRetOpt>(context);
+  patterns.add<ReverseRetOpt<AutoDiffOp>>(context);
 }
 
+void AutoDiffRegionOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                                   MLIRContext *context) {
+  patterns.add<ReverseRetOpt<AutoDiffRegionOp>>(context);
+}
 //===----------------------------------------------------------------------===//
 // SampleOp
 //===----------------------------------------------------------------------===//

@@ -1,5 +1,6 @@
 #include "ActivityAnalysis.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -283,6 +284,16 @@ static bool isReadOnly(Operation *op) {
     return true;
   }
   return false;
+}
+
+bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
+  auto find = readOnlyCache.find(val);
+  if (find != readOnlyCache.end()) {
+    return find->second;
+  }
+  auto res = ::isReadOnly(val);
+  readOnlyCache[val] = res;
+  return res;
 }
 
 /// Is the use of value val as an argument of call CI known to be inactive

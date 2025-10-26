@@ -213,6 +213,14 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
+void EnzymeLogicSetExternalContext(EnzymeLogicRef Ref, void *ExternalContext) {
+  eunwrap(Ref).ExternalContext = ExternalContext;
+}
+
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
+  return eunwrap(Ref).ExternalContext;
+}
+
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
 }
@@ -266,7 +274,8 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules) {
-  TypeAnalysis *TA = new TypeAnalysis(((EnzymeLogic *)Log)->PPC.FAM);
+  EnzymeLogic &Logic = eunwrap(Log);
+  TypeAnalysis *TA = new TypeAnalysis(Logic);
   for (size_t i = 0; i < numRules; i++) {
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
@@ -306,6 +315,10 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
   delete TA;
 }
 
+EnzymeLogicRef EnzymeTypeAnalysisGetLogic(EnzymeTypeAnalysisRef TAR) {
+  return (EnzymeLogicRef) & ((TypeAnalysis *)TAR)->Logic;
+}
+
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
                          LLVMValueRef F) {
   FnTypeInfo FTI(eunwrap(CTI, cast<Function>(unwrap(F))));
@@ -314,6 +327,10 @@ void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
 
 void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
   return (void *)&G->TR.analyzer;
+}
+
+EnzymeTypeAnalysisRef EnzymeGetTypeAnalysisFromTypeAnalyzer(void *TAR) {
+  return (EnzymeTypeAnalysisRef) & ((TypeAnalyzer *)TAR)->interprocedural;
 }
 
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
@@ -400,6 +417,10 @@ void EnzymeRegisterDiffUseCallHandler(char *Name,
 
 uint8_t EnzymeGradientUtilsGetRuntimeActivity(GradientUtils *gutils) {
   return gutils->runtimeActivity;
+}
+
+void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils) {
+  return gutils->Logic.ExternalContext;
 }
 
 uint8_t EnzymeGradientUtilsGetStrongZero(GradientUtils *gutils) {
@@ -874,6 +895,14 @@ void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
   DataLayout DL(datalayout);
   *(TypeTree *)CTT =
       ((TypeTree *)CTT)->ShiftIndices(DL, offset, maxSize, addOffset);
+}
+void EnzymeTypeTreeInsertEq(CTypeTreeRef CTT, const int64_t *indices,
+                            size_t len, CConcreteType ct, LLVMContextRef ctx) {
+  std::vector<int> seq;
+  for (size_t i = 0; i < len; i++) {
+    seq.push_back(indices[i]);
+  }
+  ((TypeTree *)CTT)->insert(seq, eunwrap(ct, *unwrap(ctx)));
 }
 const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
   std::string tmp = ((TypeTree *)src)->str();

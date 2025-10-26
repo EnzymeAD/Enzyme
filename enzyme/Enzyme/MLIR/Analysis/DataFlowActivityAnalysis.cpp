@@ -477,10 +477,9 @@ std::optional<Value> getStored(Operation *op) {
   return std::nullopt;
 }
 
+// TODO consider making this an interface ourselves
 std::optional<Value> getCopySource(Operation *op) {
-  if (auto copyOp = dyn_cast<CopyOpInterface>(op)) {
-    return copyOp.getSource();
-  } else if (isa<LLVM::MemcpyOp, LLVM::MemcpyInlineOp, LLVM::MemmoveOp>(op)) {
+  if (isa<LLVM::MemcpyOp, LLVM::MemcpyInlineOp, LLVM::MemmoveOp>(op)) {
     return op->getOperand(1);
   }
   return std::nullopt;
