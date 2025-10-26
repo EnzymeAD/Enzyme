@@ -3690,10 +3690,17 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
         createModuleToFunctionPassAdaptor(InvalidateAnalysisPass<AAManager>()));
 
     FunctionPassManager MainFPM;
+#if LLVM_VERSION_MAJOR >= 22
+    MainFPM.addPass(createFunctionToLoopPassAdaptor(
+        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+                 /*AllowSpeculation=*/true),
+        /*USeMemorySSA=*/true));
+#else
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
         LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
+#endif
 
     if (RunNewGVN)
       MainFPM.addPass(NewGVNPass());
