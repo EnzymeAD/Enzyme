@@ -38,7 +38,8 @@ Value mlir::enzyme::MProbProgUtils::getTrace() {
 }
 
 MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
-                                                MProbProgMode mode) {
+                                                MProbProgMode mode,
+                                                int64_t positionSize) {
   if (toeval.getFunctionBody().empty()) {
     llvm::errs() << toeval << "\n";
     llvm_unreachable("Creating MProbProgUtils from empty function");
@@ -68,12 +69,33 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
+  case MProbProgMode::Regenerate:
+    suffix = "regenerate";
+    OperandTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    OperandTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
+    ResultTypes.push_back(originalResults[0]);
+    break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
+    break;
+  case MProbProgMode::Update:
+    suffix = "update";
+    if (positionSize < 0) {
+      llvm_unreachable("Update mode requires positionSize >= 0");
+    }
+    OperandTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    OperandTypes.push_back(
+        RankedTensorType::get({positionSize}, builder.getF64Type()));
+    OperandTypes.append(originalInputs.begin(), originalInputs.end());
+    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
+    ResultTypes.push_back(originalResults[0]);
     break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");
@@ -97,6 +119,21 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     Block &entry = NewF.getFunctionBody().front();
     entry.insertArgument(0u, enzyme::ConstraintType::get(toeval.getContext()),
                          toeval.getLoc());
+  }
+
+  if (mode == MProbProgMode::Regenerate) {
+    Block &entry = NewF.getFunctionBody().front();
+    entry.insertArgument(0u, enzyme::TraceType::get(toeval.getContext()),
+                         toeval.getLoc());
+  }
+
+  if (mode == MProbProgMode::Update) {
+    Block &entry = NewF.getFunctionBody().front();
+    entry.insertArgument(0u, enzyme::TraceType::get(toeval.getContext()),
+                         toeval.getLoc());
+    entry.insertArgument(
+        1u, RankedTensorType::get({positionSize}, builder.getF64Type()),
+        toeval.getLoc());
   }
 
   return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
