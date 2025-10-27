@@ -294,10 +294,13 @@ if (ENZYME_ENABLE_PLUGINS)
     add_subdirectory(test)
 endif()
 
-# The benchmarks data are not in git-exported source archives to minimize size.
-# Only add the benchmarks if the directory exists.
+# Benchmarks have been moved to a separate repository to reduce repo size.
+# Clone them alongside Enzyme to re-enable benchmarking:
+# git clone https://github.com/EnzymeAD/enzyme-benchmarks benchmarks
 if (ENZYME_ENABLE_PLUGINS AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
     add_subdirectory(benchmarks)
+else()
+    message(STATUS "Benchmarks not found. To include them, clone https://github.com/EnzymeAD/enzyme-benchmarks into the Enzyme source tree.")
 endif()
 
 # Make relative paths absolute (needed later on)
