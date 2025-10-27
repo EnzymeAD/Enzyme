@@ -4,21 +4,50 @@
 
 dir := $(abspath $(lastword $(MAKEFILE_LIST))/../../../..)
 
+include $(dir)/benchmarks/ReverseMode/adbench/Makefile.config
+
+ifeq ($(strip $(CLANG)),)
+$(error PASSES1 is not set)
+endif
+
+ifeq ($(strip $(PASSES1)),)
+$(error PASSES1 is not set)
+endif
+
+ifeq ($(strip $(PASSES2)),)
+$(error PASSES2 is not set)
+endif
+
+ifeq ($(strip $(PASSES3)),)
+$(error PASSES3 is not set)
+endif
+
+ifneq ($(strip $(PASSES4)),)
+$(error PASSES4 is set)
+endif
+
 clean:
 	rm -f *.ll *.o results.txt results.json
 
+$(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a: src/lib.rs Cargo.toml
+	RUSTFLAGS="-Z autodiff=Enable" cargo +enzyme rustc --release --lib --crate-type=staticlib
+
 %-unopt.ll: %.cpp
-	clang++ $(BENCH) $(PTR) $^ -pthread -O2 -fno-use-cxa-atexit -fno-vectorize -fno-slp-vectorize -ffast-math -fno-unroll-loops -o $@ -S -emit-llvm
+	$(CLANG) $(BENCH) $^ -DCPP=1 -fno-math-errno -fno-plt -pthread -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -o $@ -S -emit-llvm #-fno-use-cxa-atexit 
+%-unoptr.ll: %.cpp
+	$(CLANG) $(BENCH) $^ -fno-math-errno -fno-plt -pthread -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -o $@ -S -emit-llvm #-fno-use-cxa-atexit 
 
-%-raw.ll: %-unopt.ll
-	opt $^ $(LOAD) $(ENZYME) -o $@ -S
 
-%-opt.ll: %-raw.ll
-	opt $^ -o $@ -S
+%-opt.ll: %-unopt.ll
+	$(OPT) $^ $(LOAD) -passes="$(PASSES2),enzyme" -o $@ -S
+%-optr.ll: %-unoptr.ll
+	$(OPT) $^ $(LOAD) -passes="$(PASSES2),enzyme" -o $@ -S
 
-fft.o: fft-opt.ll
-	clang++ $(BENCH) -pthread -O2 $^ -o $@ $(BENCHLINK) -lpthread -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
-	#clang++ $(LOAD) $(BENCH) fft.cpp -I /usr/include/c++/11 -I/usr/include/x86_64-linux-gnu/c++/11 -O2 -o fft.o -lpthread $(BENCHLINK) -lm -L /usr/lib/gcc/x86_64-linux-gnu/11
+fft.o: fft-opt.ll $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
+	$(CLANG) -DCPP=1 -pthread -O3 -fno-math-errno -fno-plt  -lpthread -lm $^ -o $@ $(BENCHLINK) -lm
+fftr.o: fft-optr.ll $(dir)/benchmarks/ReverseMode/fft/target/release/libfft.a
+	$(CLANG) -pthread -O3 -fno-math-errno -fno-plt  -lpthread -lm $^ -o $@ $(BENCHLINK) -lm
 
-results.json: fft.o
-	./$^ 1048576 | tee $@
+results.json: fftr.o fft.o
+	numactl -C 1 ./fft.o 1048576 | tee results.json
+	numactl -C 1 ./fftr.o 1048576 | tee resultsr.json
