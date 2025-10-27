@@ -5277,10 +5277,17 @@ public:
         // constant [because composed of integer pointers alone]
         auto wt = whatType(argType, Mode);
         if (wt != DIFFE_TYPE::DUP_ARG && wt != DIFFE_TYPE::CONSTANT) {
-          EmitFailure("MismatchArgType", call.getDebugLoc(), &call,
-                      "Mismatched estimated activity type for ", *argType,
-                      " expected DUP_ARG or CONSTANT found ", wt);
-        }
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Mismatched estimated activity type for " * argType
+             << " expected DUP_ARG or CONSTANT found " << wt << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap(&call),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
+          } else {
+            EmitFailure("MismatchArgType", call.getDebugLoc(), &call, ss.str());
+          }
       } else {
         if (foreignFunction)
           assert(!argType->isIntOrIntVectorTy());
