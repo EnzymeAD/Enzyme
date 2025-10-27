@@ -420,6 +420,11 @@ static inline std::string to_string(ValueType mode) {
   llvm_unreachable("illegal valuetype");
 }
 
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            ValueType mode) {
+  return os << to_string(mode);
+}
+
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
@@ -438,6 +443,11 @@ static inline std::string to_string(DerivativeMode mode) {
   llvm_unreachable("illegal derivative mode");
 }
 
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            DerivativeMode mode) {
+  return os << to_string(mode);
+}
+
 /// Convert DIFFE_TYPE to a string
 static inline std::string to_string(DIFFE_TYPE t) {
   switch (t) {
@@ -453,6 +463,11 @@ static inline std::string to_string(DIFFE_TYPE t) {
     assert(0 && "illegal diffetype");
     return "";
   }
+}
+
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            DIFFE_TYPE mode) {
+  return os << to_string(mode);
 }
 
 /// Convert ReturnType to a string
@@ -478,6 +493,11 @@ static inline std::string to_string(ReturnType t) {
     return "Void";
   }
   llvm_unreachable("illegal ReturnType");
+}
+
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            ReturnType mode) {
+  return os << to_string(mode);
 }
 
 #include <set>
