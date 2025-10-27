@@ -4993,11 +4993,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         if (size == 8)
           ty = BuilderM.getInt64Ty();
         else if (size % 8 == 0)
-          ty = ArrayType::get(BuilderM.getInt64Ty(), size);
+          ty = ArrayType::get(BuilderM.getInt64Ty(), size / 8);
         else if (size == 4)
           ty = BuilderM.getInt32Ty();
         else if (size % 4 == 0)
-          ty = ArrayType::get(BuilderM.getInt32Ty(), size);
+          ty = ArrayType::get(BuilderM.getInt32Ty(), size / 4);
         else
           ty = ArrayType::get(i8, size);
 
