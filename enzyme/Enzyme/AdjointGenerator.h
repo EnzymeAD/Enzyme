@@ -5288,6 +5288,7 @@ public:
           } else {
             EmitFailure("MismatchArgType", call.getDebugLoc(), &call, ss.str());
           }
+        }
       } else {
         if (foreignFunction)
           assert(!argType->isIntOrIntVectorTy());
