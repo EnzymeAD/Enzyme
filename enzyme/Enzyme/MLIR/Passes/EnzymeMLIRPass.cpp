@@ -221,7 +221,7 @@ struct DifferentiatePass
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
           llvm::errs() << "Too few arguments to autodiff op"
-                       << "CI: " << CI << "\n";
+                       << " CI: " << CI << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -350,6 +350,153 @@ struct DifferentiatePass
     return success();
   }
 
+  LogicalResult HandleSplitModeAutoDiff(SymbolTableCollection &symbolTable,
+                                        enzyme::AutoDiffDeferredPrimalOp CI) {
+    auto tape = CI.getTape();
+
+    SmallVector<Operation *> reverseCalls;
+    for (auto user : tape.getUsers()) {
+      if (isa<enzyme::AutoDiffDeferredReverseOp>(user))
+        reverseCalls.push_back(user);
+      else {
+        user->emitError() << "todo: unsupported tape usage";
+        return failure();
+      }
+    }
+
+    auto &symbTable =
+        symbolTable.getSymbolTable(SymbolTable::getNearestSymbolTable(CI));
+
+    auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
+    auto fn = cast<FunctionOpInterface>(symbolOp);
+    assert(fn);
+    if (CI.getActivity().size() != fn.getNumArguments()) {
+      llvm::errs() << "Incorrect number of argument activities on autodiff op"
+                   << "CI: " << CI << ", expected " << fn.getNumArguments()
+                   << " found " << CI.getActivity().size() << "\n";
+      return failure();
+    }
+    if (CI.getRetActivity().size() != fn.getNumResults()) {
+      llvm::errs() << "Incorrect number of result activities on autodiff op"
+                   << "CI: " << CI << ", expected " << fn.getNumResults()
+                   << " found " << CI.getRetActivity().size() << "\n";
+      return failure();
+    }
+
+    std::vector<DIFFE_TYPE> arg_activities;
+    SmallVector<mlir::Value, 2> args;
+
+    size_t call_idx = 0;
+    {
+      for (auto act : CI.getActivity()) {
+        if (call_idx >= CI.getInputs().size()) {
+          llvm::errs() << "Too few arguments to autodiff op"
+                       << " CI: " << CI << "\n";
+          return failure();
+        }
+        mlir::Value res = CI.getInputs()[call_idx];
+        ++call_idx;
+
+        auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+        auto val = iattr.getValue();
+        DIFFE_TYPE ty;
+        switch (val) {
+        case mlir::enzyme::Activity::enzyme_active:
+          ty = DIFFE_TYPE::OUT_DIFF;
+          break;
+        case mlir::enzyme::Activity::enzyme_dup:
+          ty = DIFFE_TYPE::DUP_ARG;
+          break;
+        case mlir::enzyme::Activity::enzyme_const:
+          ty = DIFFE_TYPE::CONSTANT;
+          break;
+        case mlir::enzyme::Activity::enzyme_dupnoneed:
+          ty = DIFFE_TYPE::DUP_NONEED;
+          break;
+        case mlir::enzyme::Activity::enzyme_activenoneed:
+          ty = DIFFE_TYPE::OUT_DIFF;
+          assert(0 && "unsupported arg activenoneed");
+          break;
+        case mlir::enzyme::Activity::enzyme_constnoneed:
+          ty = DIFFE_TYPE::CONSTANT;
+          assert(0 && "unsupported arg constnoneed");
+          break;
+        }
+        arg_activities.push_back(ty);
+        args.push_back(res);
+      }
+    }
+
+    bool omp = false;
+    auto mode = DerivativeMode::ReverseModeCombined;
+    std::vector<DIFFE_TYPE> retType;
+    std::vector<bool> returnPrimals;
+    std::vector<bool> returnShadows;
+
+    // Add the return gradient
+    for (auto act : CI.getRetActivity()) {
+      auto iattr = cast<mlir::enzyme::ActivityAttr>(act);
+      auto val = iattr.getValue();
+      DIFFE_TYPE ty;
+      bool primalNeeded = true;
+      switch (val) {
+      case mlir::enzyme::Activity::enzyme_active:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        break;
+      case mlir::enzyme::Activity::enzyme_dup:
+        ty = DIFFE_TYPE::DUP_ARG;
+        break;
+      case mlir::enzyme::Activity::enzyme_const:
+        ty = DIFFE_TYPE::CONSTANT;
+        break;
+      case mlir::enzyme::Activity::enzyme_dupnoneed:
+        ty = DIFFE_TYPE::DUP_NONEED;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_activenoneed:
+        ty = DIFFE_TYPE::OUT_DIFF;
+        primalNeeded = false;
+        break;
+      case mlir::enzyme::Activity::enzyme_constnoneed:
+        ty = DIFFE_TYPE::CONSTANT;
+        primalNeeded = false;
+        break;
+      }
+      retType.push_back(ty);
+      returnPrimals.push_back(primalNeeded);
+      returnShadows.push_back(false);
+    }
+
+    std::vector<bool> volatile_args(
+        fn.getNumArguments(), !(mode == DerivativeMode::ReverseModeCombined));
+
+    MTypeAnalysis TA;
+    auto type_args = TA.getAnalyzedTypeInfo(fn);
+    bool freeMemory = true;
+    size_t width = CI.getWidth();
+
+    auto ruleToCall = Logic.CreateSplitModeDiff(
+        fn, retType, arg_activities, TA, returnPrimals, returnShadows, mode,
+        freeMemory, width,
+        /*addedType*/ nullptr, type_args, volatile_args,
+        /*augmented*/ nullptr, omp, postpasses, verifyPostPasses,
+        CI.getStrongZero());
+
+    OpBuilder builder(CI);
+    auto primalCall = builder.create<enzyme::CallAugmentedPrimalOp>(
+        CI.getLoc(), CI->getResultTypes(), ruleToCall, CI.getOperands());
+    for (auto [oldRes, newRes] :
+         llvm::zip_equal(CI->getResults(), primalCall.getResults())) {
+      oldRes.replaceAllUsesWith(newRes);
+    }
+
+    CI->erase();
+
+    // TODO: track tape usage to replace split_mode_reverse with call_custom_reverse
+
+    return success();
+  }
+
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
                         FunctionOpInterface op) {
     {
@@ -390,6 +537,30 @@ struct DifferentiatePass
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
           auto res = HandleAutoDiffReverse(symbolTable, F);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
+        } else {
+          llvm_unreachable("Illegal type");
+        }
+      }
+    }
+
+    {
+      SmallVector<Operation *> toLower;
+      op->walk([&](enzyme::AutoDiffDeferredPrimalOp dop) {
+        auto *symbolOp =
+            symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
+        auto callableOp = cast<FunctionOpInterface>(symbolOp);
+
+        lowerEnzymeCalls(symbolTable, callableOp);
+        toLower.push_back(dop);
+      });
+
+      for (auto T : toLower) {
+        if (auto F = dyn_cast<enzyme::AutoDiffDeferredPrimalOp>(T)) {
+          auto res = HandleSplitModeAutoDiff(symbolTable, F);
           if (!res.succeeded()) {
             signalPassFailure();
             return;
