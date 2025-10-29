@@ -393,7 +393,9 @@ public:
         for (auto &it : oBB.getOperations()) {
           for (auto res : it.getResults()) {
             if (!gutils->isConstantValue(res)) {
-              gutils->zeroDiffe(res, bodyBuilder);
+              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+              if (iface && !iface.isMutable())
+                gutils->zeroDiffe(res, bodyBuilder);
             }
           }
         }
