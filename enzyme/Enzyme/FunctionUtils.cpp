@@ -4676,7 +4676,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           if (CI->isZero()) {
             // a + a ?= 0 -> a ?= 0
             if (auto addI = dyn_cast<Instruction>(fcmp->getOperand(1 - i))) {
-              if (addI->getOperand(0) == addI->getOperand(1)) {
+              if (addI->getOpcode() == Instruction::Add &&
+                  addI->getOperand(0) == addI->getOperand(1)) {
                 Value *res = pushcse(
                     B.CreateCmp(fcmp->getPredicate(), addI->getOperand(0), CI));
                 replaceAndErase(cur, res);
