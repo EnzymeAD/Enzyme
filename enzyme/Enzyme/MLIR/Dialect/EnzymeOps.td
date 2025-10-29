@@ -206,11 +206,13 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
+def AnyTape : Type<CPred<"::llvm::isa<enzyme::TapeType>($_self)">, "enzyme tape">;
+
 def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Runs an augmented primal that can later be used to generate reverse with enzyme.autodiff_deferred_reverse";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
-  let results = (outs Variadic<AnyType>:$results, AnyType:$tape);
+  let results = (outs Variadic<AnyType>:$outputs, AnyTape:$tape);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -220,11 +222,12 @@ def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
 def AutoDiffDeferredReverseOp : Enzyme_Op<"autodiff_deferred_reverse",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Runs the reverse from an enzyme.autodiff_deferred_primal result";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
-  let results = (outs Variadic<AnyType>:$results);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape,
+                   ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` operands `)` attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -265,7 +268,7 @@ def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal",
     []> {
   let summary = "";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs);
-  let results = (outs Variadic<AnyType>:$outputs);
+  let results = (outs Variadic<AnyType>:$outputs, AnyTape:$tape);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -276,11 +279,11 @@ def CallCustomReverseOp : Enzyme_Op<"call_custom_reverse",
     // [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
     []> {
   let summary = "";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs);
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    $fn `(` operands `)` attr-dict `:` functional-type(operands, results)
   }];
 }
 

@@ -492,7 +492,33 @@ struct DifferentiatePass
 
     CI->erase();
 
-    // TODO: track tape usage to replace split_mode_reverse with call_custom_reverse
+    SetVector<Operation *> toDelete;
+
+    tape = primalCall.getTape();
+    for (auto tapeUser : tape.getUsers()) {
+      if (auto revCall =
+              dyn_cast<enzyme::AutoDiffDeferredReverseOp>(tapeUser)) {
+
+        OpBuilder builder(revCall);
+        auto newRevCall = builder.create<enzyme::CallCustomReverseOp>(
+            revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
+            revCall.getInputs(), tape);
+        revCall.replaceAllUsesWith(newRevCall.getResults());
+
+        toDelete.insert(revCall);
+      } else {
+        tapeUser->emitError()
+            << "todo: support tape going through this operation";
+        return failure();
+      }
+    }
+
+    auto worklist = toDelete.takeVector();
+    while (!worklist.empty()) {
+      Operation *op = worklist.back();
+      op->erase();
+      worklist.pop_back();
+    }
 
     return success();
   }

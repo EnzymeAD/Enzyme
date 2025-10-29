@@ -344,7 +344,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
         fn.getContext(), mlir::enzyme::Activity::enzyme_active));
 
   SmallVector<Attribute> retActivityAttrs;
-  for (auto act : constants)
+  for (auto act : retType)
     retActivityAttrs.push_back(mlir::enzyme::ActivityAttr::get(
         fn.getContext(), mlir::enzyme::Activity::enzyme_active));
 
