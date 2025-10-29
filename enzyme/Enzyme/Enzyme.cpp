@@ -275,8 +275,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       {"PMPI_Ssend", 2},    {"PMPI_Bsend", 2},    {"PMPI_Recv", 2},
       {"PMPI_Brecv", 2},
 
-      {"MPI_Isend", 2},     {"MPI_Irecv", 2},     {"PMPI_Isend", 2},
-      {"PMPI_Irecv", 2},
+      {"MPI_Isend", 2},     {"MPI_Irecv", 2}, 
+      {"PMPI_Isend", 2},    {"PMPI_Irecv", 2},
 
       {"MPI_Reduce", 3},    {"PMPI_Reduce", 3},
 

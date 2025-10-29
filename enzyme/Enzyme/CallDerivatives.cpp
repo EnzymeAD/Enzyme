@@ -45,7 +45,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
   // MPI send / recv can only send float/integers
   if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
-      funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
+      funcName == "PMPI_Irecv" || funcName == "MPI_Irecv" ||) {
     if (!gutils->isConstantInstruction(&call)) {
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {

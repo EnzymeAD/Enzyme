@@ -400,12 +400,13 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   }
 
   // only the buffer is active for mpi send/recv
-  if (Name == "MPI_Recv" || Name == "PMPI_Recv" || Name == "MPI_Send" ||
-      Name == "PMPI_Send") {
+  if (Name == "MPI_Recv" || Name == "MPI_Send" ||
+      Name == "PMPI_Recv" || Name == "PMPI_Send") {
     return val != CI.getArgOperands()[0];
   }
   // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend") {
+  if (Name == "MPI_Irecv" || Name == "MPI_Isend" ||
+      Name == "PMPI_Irecv" || Name == "PMPI_Isend") {
     return val != CI.getArgOperands()[0] && val != CI.getArgOperands()[6];
   }
 
