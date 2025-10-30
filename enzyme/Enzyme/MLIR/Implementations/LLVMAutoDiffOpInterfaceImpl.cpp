@@ -94,8 +94,8 @@ struct GEPOpInterfaceReverse
     auto base = gep.getBase();
     if (!gutils->isConstantValue(base)) {
       auto baseShadow = gutils->invertPointerM(base, builder);
-      Operation *shadowGep = builder.clone(*newGep);
-      shadowGep->setOperand(0, baseShadow);
+      auto shadowGep = cast<LLVM::GEPOp>(builder.clone(*newGep));
+      shadowGep.getBaseMutable().assign(baseShadow);
       gutils->setInvertedPointer(gep.getRes(), shadowGep->getResult(0));
     }
   }
