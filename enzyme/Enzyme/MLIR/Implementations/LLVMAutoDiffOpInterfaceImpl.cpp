@@ -139,7 +139,7 @@ struct LoadOpInterfaceReverse
     auto loadOp = cast<LLVM::LoadOp>(op);
     auto addr = loadOp.getAddr();
     if (!(isa<AutoDiffTypeInterface>(loadOp.getType()) &&
-        (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr))))
+          (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr))))
       return {};
     OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
     return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
@@ -167,7 +167,6 @@ struct StoreOpInterfaceReverse
 
     if (!gutils->isConstantValue(addr)) {
       Value addrGradient = gutils->popCache(caches.front(), builder);
-
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
