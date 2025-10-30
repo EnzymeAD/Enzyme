@@ -45,7 +45,8 @@ public:
   Value getTrace();
 
   static MProbProgUtils *CreateFromClone(FunctionOpInterface toeval,
-                                         MProbProgMode mode);
+                                         MProbProgMode mode,
+                                         int64_t positionSize = -1);
 };
 
 } // namespace enzyme

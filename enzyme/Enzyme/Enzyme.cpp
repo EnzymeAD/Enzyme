@@ -202,7 +202,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::WriteOnly);
     }
-    F.addParamAttr(6, Attribute::WriteOnly);
+    if (F.getFunctionType()->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    }
   }
   if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
     changed = true;
@@ -253,9 +255,13 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    addFunctionNoCapture(&F, 0);
-    F.addParamAttr(1, Attribute::WriteOnly);
-    addFunctionNoCapture(&F, 1);
+    if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+    }
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 1);
+    }
   }
   if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
     changed = true;
@@ -264,9 +270,13 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    addFunctionNoCapture(&F, 1);
-    F.addParamAttr(2, Attribute::WriteOnly);
-    addFunctionNoCapture(&F, 2);
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      addFunctionNoCapture(&F, 1);
+    }
+    if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(2, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 2);
+    }
   }
   // Map of MPI function name to the arg index of its type argument
   std::map<std::string, int> MPI_TYPE_ARGS = {
@@ -1710,7 +1720,7 @@ public:
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
                      Arch == Triple::amdgcn;
 
-    TypeAnalysis TA(Logic.PPC.FAM);
+    TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
 
     IRBuilder Builder(CI);
@@ -2850,7 +2860,7 @@ public:
                     *CI->getArgOperand(0));
         return false;
       }
-      TypeAnalysis TA(Logic.PPC.FAM);
+      TypeAnalysis TA(Logic);
 
       auto Arch =
           llvm::Triple(
@@ -3690,10 +3700,17 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
         createModuleToFunctionPassAdaptor(InvalidateAnalysisPass<AAManager>()));
 
     FunctionPassManager MainFPM;
+#if LLVM_VERSION_MAJOR >= 22
+    MainFPM.addPass(createFunctionToLoopPassAdaptor(
+        LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
+                 /*AllowSpeculation=*/true),
+        /*USeMemorySSA=*/true));
+#else
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
         LICMPass(SetLicmMssaOptCap, SetLicmMssaNoAccForPromotionCap,
                  /*AllowSpeculation=*/true),
         /*USeMemorySSA=*/true, /*UseBlockFrequencyInfo=*/false));
+#endif
 
     if (RunNewGVN)
       MainFPM.addPass(NewGVNPass());

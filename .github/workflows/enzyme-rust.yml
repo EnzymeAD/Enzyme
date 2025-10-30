@@ -1,0 +1,90 @@
+name: Enzyme Rust CI
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+
+jobs:
+  rust-autodiff:
+    name: Rust Autodiff ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux-x86-n2-32]
+        commit: [b2ee1b333aea9951c3eefa4967098cc763de59ca]
+    
+    timeout-minutes: 90
+
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+    
+    steps:
+    - name: Prepare env
+      run: |
+        echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "${GITHUB_ENV}"
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y ninja-build cmake ccache nodejs
+    - name: Prepare ccache directory
+      run: |
+        mkdir -p "$CCACHE_DIR"
+    - name: Install Rust toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . ~/.cargo/env
+        rustup toolchain install nightly
+        rustup default nightly
+    - uses: actions/checkout@v5
+      name: Checkout Enzyme
+    - uses: actions/checkout@v5
+      name: Checkout Rust compiler
+      with:
+        repository: rust-lang/rust
+        ref: ${{ matrix.commit }}
+        path: rust
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-rust-${{ matrix.os }}-${{ matrix.commit }}
+    - name: ccache --show-stats
+      run: |
+        ccache --show-stats --verbose
+    - name: Configure Rust compiler
+      run: |
+        . ~/.cargo/env
+        cd rust
+        # Replace rustc's built-in Enzyme submodule with the Enzyme source code from this repository
+        rm -rf src/tools/enzyme/enzyme
+        ln -s "${GITHUB_WORKSPACE}/enzyme" src/tools/enzyme/enzyme
+        ./configure \
+          --release-channel=nightly \
+          --enable-llvm-enzyme \
+          --enable-option-checking \
+          --disable-docs \
+          --enable-ccache \
+          --enable-llvm-assertions \
+          --enable-llvm-link-shared
+    - name: Build Rust compiler stage 1
+      working-directory: rust
+      run: |
+        . ~/.cargo/env
+        ./x build --stage 1 library
+    - name: Run Rust autodiff tests
+      working-directory: rust
+      run: |
+        . ~/.cargo/env
+        ./x test --stage 1 tests/codegen-llvm/autodiff
+        ./x test --stage 1 tests/pretty/autodiff
+        ./x test --stage 1 tests/ui/autodiff
+        ./x test --stage 1 tests/ui/feature-gates/feature-gate-autodiff.rs
+    - name: ccache --show-stats
+      run: |
+        ccache --show-stats --verbose

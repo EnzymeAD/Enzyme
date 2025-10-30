@@ -586,7 +586,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["logabsgamma"],
+                  ["logabsgamma", "lgamma"],
                   [
                   (
                    ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
@@ -598,7 +598,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["logabsgammaf"],
+                  ["logabsgammaf", "lgammaf"],
                   [
                   (
                    ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
