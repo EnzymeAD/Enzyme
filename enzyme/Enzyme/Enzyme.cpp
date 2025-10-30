@@ -257,9 +257,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoSync);
     if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
       addFunctionNoCapture(&F, 0);
-      F.addParamAttr(1, Attribute::WriteOnly);
     }
     if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
       addFunctionNoCapture(&F, 1);
     }
   }
