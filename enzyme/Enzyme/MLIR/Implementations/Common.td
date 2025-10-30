@@ -180,9 +180,14 @@ def CheckedDivF : SubRoutine<(Op $diffret, $x),
 def LlvmCheckedMulF : LlvmInst<"FMulOp">;
 def LlvmExpF : LlvmInst<"ExpOp">;
 
+def ComplexCreate : ComplexInst<"CreateOp">;
+def ComplexRe : ComplexInst<"ReOp">;
+def ComplexIm : ComplexInst<"ImOp">;
+
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
 def SqrtF : MathInst<"SqrtOp">;
+def AbsF : MathInst<"AbsFOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
