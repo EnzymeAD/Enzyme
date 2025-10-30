@@ -114,37 +114,30 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
   }];
 }
 
-def CachableTypeInterface : TypeInterface<"CachableTypeInterface"> {
+def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
   let description = [{
-    An MLIR type values of which should be cached in a specific manner.
-    Used for mutable types which needs to allocate on push/free on pop.
+    An MLIR type values of which can be cloned.
+    Used for mutable types which needs to allocate and copy their content, specifically
+    for things like checkpointing where the underlying memory needs to be preserved.
   }];
   let cppNamespace = "::mlir::enzyme";
 
   let methods = [
     InterfaceMethod<
       /*desc=*/[{
-        Create a push of a value on a cache of this type.
-      }],
-      /*retTy=*/"::mlir::Operation *",
-      /*methodName=*/"createPush",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$cache, "::mlir::Value":$value)
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
-        Pop the content of the cache which contains this value.
+        Clone a value.
       }],
       /*retTy=*/"::mlir::Value",
-      /*methodName=*/"createPop",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$cache)
+      /*methodName=*/"cloneValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$value)
     >,
     InterfaceMethod<
       /*desc=*/[{
-        The popped value is no longer needed, perform any cleanup necessary.
+        Free the clone.
       }],
       /*retTy=*/"void",
-      /*methodName=*/"deletePoppedValue",
-      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$value)
+      /*methodName=*/"freeClonedValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$clone)
     >
   ];
 

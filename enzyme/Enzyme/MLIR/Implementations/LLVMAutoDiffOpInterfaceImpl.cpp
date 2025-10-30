@@ -174,11 +174,10 @@ std::optional<Value> findPtrSize(Value ptr) {
   return std::nullopt;
 }
 
-struct PointerCachableTypeInterface
-    : public CachableTypeInterface::ExternalModel<PointerCachableTypeInterface,
+struct PointerClonableTypeInterface
+    : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
-  mlir::Operation *createPush(Type self, OpBuilder &builder, Value cache,
-                              Value value) const {
+  mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
     auto ptrSize = findPtrSize(value);
     if (!ptrSize) {
       llvm::errs() << "cannot find size of ptr: " << value << "\n";
@@ -186,19 +185,15 @@ struct PointerCachableTypeInterface
     }
 
     auto clone = builder.create<llvm_ext::AllocOp>(
-        cache.getLoc(), LLVM::LLVMPointerType::get(cache.getContext()),
+        value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
         *ptrSize);
-    builder.create<LLVM::MemcpyOp>(cache.getLoc(), clone, value, *ptrSize,
+    builder.create<LLVM::MemcpyOp>(value.getLoc(), clone, value, *ptrSize,
                                    /*isVolatile*/ false);
 
-    return builder.create<enzyme::PushOp>(cache.getLoc(), cache, clone);
+    return clone;
   }
 
-  Value createPop(Type self, OpBuilder &builder, Value cache) const {
-    return builder.create<enzyme::PopOp>(cache.getLoc(), self, cache);
-  }
-
-  void deletePoppedValue(Type self, OpBuilder &builder, Value value) const {
+  void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
     builder.create<llvm_ext::FreeOp>(value.getLoc(), value);
   }
 };
@@ -209,7 +204,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
-    LLVM::LLVMPointerType::attachInterface<PointerCachableTypeInterface>(
+    LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);

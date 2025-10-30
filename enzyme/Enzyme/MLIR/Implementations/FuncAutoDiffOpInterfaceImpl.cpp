@@ -200,8 +200,8 @@ public:
         continue;
 
       if (act == DIFFE_TYPE::DUP_ARG) {
-        cast<CachableTypeInterface>(arg.getType())
-            .deletePoppedValue(builder, revArguments[fwdIndex - 1]);
+        cast<ClonableTypeInterface>(arg.getType())
+            .freeClonedValue(builder, revArguments[fwdIndex - 1]);
         fwdIndex++;
       } else {
         auto diffe = revCallOp.getResult(revIndex);
@@ -221,8 +221,11 @@ public:
     OpBuilder cacheBuilder(newOp);
 
     for (auto arg : orig->getOperands()) {
-      Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(arg),
-                                             cacheBuilder);
+      Value toCache = gutils->getNewFromOriginal(arg);
+      if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
+        toCache = iface.cloneValue(cacheBuilder, toCache);
+      }
+      Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
       cachedArguments.push_back(cache);
     }
 

@@ -196,7 +196,7 @@ public:
       SmallVector<Value> mutableRefs;
 
       for (auto ref : outsideRefs) {
-        if (isa<CachableTypeInterface>(ref.getType()))
+        if (isa<ClonableTypeInterface>(ref.getType()))
           mutableRefs.push_back(ref);
         else
           immutableRefs.push_back(ref);
@@ -308,8 +308,8 @@ public:
 
       for (auto outsideRef : cachedOutsideRefs) {
         if (auto cachableT =
-                dyn_cast<CachableTypeInterface>(outsideRef.getType())) {
-          cachableT.deletePoppedValue(builder, outsideRef);
+                dyn_cast<ClonableTypeInterface>(outsideRef.getType())) {
+          cachableT.freeClonedValue(builder, outsideRef);
         }
       }
 
@@ -492,7 +492,7 @@ public:
       SmallVector<Value> mutableRefs;
 
       for (auto ref : outsideRefs) {
-        if (isa<CachableTypeInterface>(ref.getType()))
+        if (isa<ClonableTypeInterface>(ref.getType()))
           mutableRefs.push_back(ref);
         else
           immutableRefs.push_back(ref);
@@ -533,8 +533,11 @@ public:
 
       SmallVector<Value> mutableRefsCaches;
       for (auto ref : mutableRefs) {
-        mutableRefsCaches.push_back(gutils->initAndPushCache(
-            mapping.lookupOrDefault(ref), cacheBuilder));
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        auto clone =
+            iface.cloneValue(cacheBuilder, mapping.lookupOrDefault(ref));
+        mutableRefsCaches.push_back(
+            gutils->initAndPushCache(clone, cacheBuilder));
       }
 
       auto innerFwd = cacheBuilder.create<scf::ForOp>(
