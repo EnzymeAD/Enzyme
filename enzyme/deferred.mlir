@@ -27,8 +27,6 @@ module {
     return
   }
 
-  // if there is a single block in the augmented primal and reverse, then the push/pop
-  // can be replaced with just the values carried over from primal to reverse.
   enzyme.custom_reverse_rule @reverse_f {
     %0 = "enzyme.init"() : () -> !enzyme.Cache<f32>
     %1 = "enzyme.init"() : () -> !enzyme.Cache<f32>
