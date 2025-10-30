@@ -1055,8 +1055,8 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
               block.getTerminator())) {
         // TODO: the interface may also tell us which regions are allowed to
         // yield parent op results, and which only branch to other regions.
-        auto successorOperands = llvm::to_vector(
-            iface.getSuccessorOperands(RegionBranchPoint::parent()));
+        auto successorOperands = llvm::to_vector(iface.getSuccessorOperands(
+            RegionSuccessor(iface.getOperation(), iface->getResults())));
         // TODO: understand/document the assumption of how operands flow.
 
         if (successorOperands.size() != owner->getNumResults()) {
@@ -1143,7 +1143,8 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
           // Find all block terminators in the predecessor region that
           // may be branching to this region, and get the operands they
           // forward.
-          for (Block &block : *predecessor.getRegionOrNull()) {
+          for (Block &block : *predecessor.getTerminatorPredecessorOrNull()
+                                   ->getParentRegion()) {
             // TODO: MLIR block without terminator
             if (auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
                     block.getTerminator())) {
@@ -1167,7 +1168,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
     isRegionSucessorOf(iface, parentRegion, RegionBranchPoint::parent(),
                        potentialSources);
     for (Region &childRegion : parent->getRegions())
-      isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
+      isRegionSucessorOf(iface, parentRegion,
+                         cast<RegionBranchTerminatorOpInterface>(
+                             childRegion.front().getTerminator()),
+                         potentialSources);
 
   } else {
     // Conservatively assume any op operand and any terminator operand of
@@ -1263,7 +1267,11 @@ static void allFollowersOf(Operation *op,
     if (!parentOp || isa<FunctionOpInterface>(parentOp))
       return;
 
-    addEntryBlocksOfSuccessorRegions(parentOp, current->getParent(), todo);
+    addEntryBlocksOfSuccessorRegions(
+        parentOp,
+        cast<RegionBranchTerminatorOpInterface>(
+            current->getParent()->front().getTerminator()),
+        todo);
   };
 
   std::deque<Block *> todo;
