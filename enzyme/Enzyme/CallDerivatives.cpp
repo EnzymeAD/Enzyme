@@ -676,9 +676,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow =
-            Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
+      // if (shadow->getType()->isIntegerTy())
+      //   shadow =
+      //       Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
 
       Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
@@ -815,9 +815,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow =
-            Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
+
+      // if (shadow->getType()->isIntegerTy())
+      //   shadow =
+      //       Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(1));
       if (!forwardMode)
