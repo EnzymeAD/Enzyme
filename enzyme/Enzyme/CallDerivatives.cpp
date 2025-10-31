@@ -676,6 +676,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
+      Value *shadowOrig = shadow;
       if (shadow->getType()->isIntegerTy())
         shadow =
             Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
@@ -725,7 +726,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       if (forwardMode) {
         Value *args[] = {
-            /*buf*/ shadow,
+            /*buf*/ shadowOrig,
             /*count*/ count,
             /*datatype*/ datatype,
             /*dest*/ src,
