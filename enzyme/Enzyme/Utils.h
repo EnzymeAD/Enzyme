@@ -2374,10 +2374,12 @@ tripleSplitDollar(llvm::StringRef caller) {
 }
 
 static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
-                                                       llvm::StringRef callee) {
+                                                   llvm::StringRef callee) {
   if (startsWith(caller, "ejl")) {
     auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
-    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" + postfix).str();
+    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" +
+            postfix)
+        .str();
   }
   if (startsWith(caller, "PMPI_")) {
     assert(startsWith(callee, "MPI"));
