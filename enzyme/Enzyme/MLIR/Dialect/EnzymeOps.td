@@ -206,7 +206,7 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
-def AnyTape : Type<CPred<"::llvm::isa<enzyme::TapeType>($_self)">, "enzyme tape">;
+def AnyTape : Type<CPred<"::llvm::isa<mlir::enzyme::TapeType>($_self)">, "enzyme tape">;
 
 def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
