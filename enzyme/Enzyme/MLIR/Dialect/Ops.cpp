@@ -543,8 +543,8 @@ AutoDiffDeferredPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-LogicalResult
-AutoDiffDeferredReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult AutoDiffDeferredReverseOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =
