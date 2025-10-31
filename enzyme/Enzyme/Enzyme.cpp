@@ -206,7 +206,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.addParamAttr(6, Attribute::WriteOnly);
     }
   }
-  if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
+  auto name = getFuncName(F);
+  if (name == "MPI_Isend" || name == "PMPI_Isend") {
     changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemOrArgMem();
@@ -225,8 +226,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
     }
     F.addParamAttr(6, Attribute::WriteOnly);
   }
-  if (F.getName() == "MPI_Comm_rank" || F.getName() == "PMPI_Comm_rank" ||
-      F.getName() == "MPI_Comm_size" || F.getName() == "PMPI_Comm_size") {
+  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
+      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
     changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemOrArgMem();
@@ -248,7 +249,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
+  if (name == "MPI_Wait" || name == "PMPI_Wait") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -263,7 +264,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 1);
     }
   }
-  if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
+  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
     changed = true;
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -292,7 +293,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
 
       {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
   {
-    auto found = MPI_TYPE_ARGS.find(F.getName().str());
+    auto found = MPI_TYPE_ARGS.find(name.str());
     if (found != MPI_TYPE_ARGS.end()) {
       for (auto user : F.users()) {
         if (auto CI = dyn_cast<CallBase>(user))
