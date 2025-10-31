@@ -1760,6 +1760,10 @@ void clearFunctionAttributes(Function *f) {
     f->removeRetAttr(Attribute::Dereferenceable);
   }
 
+  if (f->getAttributes().getRetDereferenceableOrNullBytes()) {
+    f->removeRetAttr(Attribute::DereferenceableOrNull);
+  }
+
   if (f->getAttributes().getRetAlignment()) {
     f->removeRetAttr(Attribute::Alignment);
   }
@@ -2667,6 +2671,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   if (gutils->newFunc->getAttributes().getRetDereferenceableBytes()) {
     gutils->newFunc->removeRetAttr(Attribute::Dereferenceable);
+  }
+
+  if (gutils->newFunc->getAttributes().getRetDereferenceableOrNullBytes()) {
+    gutils->newFunc->removeRetAttr(Attribute::DereferenceableOrNull);
   }
 
   // TODO could keep nonnull if returning value -1

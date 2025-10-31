@@ -44,10 +44,10 @@ struct LoadOpInterfaceReverse
       if (!gutils->isConstantValue(loadOp) &&
           !gutils->isConstantValue(memref)) {
         Value gradient = gutils->diffe(loadOp, builder);
-        Value memrefGradient = gutils->invertPointerM(memref, builder);
+        Value memrefGradient = gutils->popCache(caches.front(), builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value cache : caches) {
+        for (Value cache : ValueRange(caches).drop_front(1)) {
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
@@ -81,6 +81,8 @@ struct LoadOpInterfaceReverse
           !gutils->isConstantValue(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
+        caches.push_back(gutils->initAndPushCache(
+            gutils->invertPointerM(memref, cacheBuilder), cacheBuilder));
         for (Value v : indices) {
           caches.push_back(gutils->initAndPushCache(
               gutils->getNewFromOriginal(v), cacheBuilder));
@@ -114,10 +116,10 @@ struct StoreOpInterfaceReverse
     auto iface = cast<AutoDiffTypeInterface>(val.getType());
 
     if (!gutils->isConstantValue(memref)) {
-      Value memrefGradient = gutils->invertPointerM(memref, builder);
+      Value memrefGradient = gutils->popCache(caches.front(), builder);
 
       SmallVector<Value> retrievedArguments;
-      for (Value cache : caches) {
+      for (Value cache : ValueRange(caches).drop_front(1)) {
         Value retrievedValue = gutils->popCache(cache, builder);
         retrievedArguments.push_back(retrievedValue);
       }
@@ -151,6 +153,8 @@ struct StoreOpInterfaceReverse
       if (!gutils->isConstantValue(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
+        caches.push_back(gutils->initAndPushCache(
+            gutils->invertPointerM(memref, cacheBuilder), cacheBuilder));
         for (Value v : indices) {
           caches.push_back(gutils->initAndPushCache(
               gutils->getNewFromOriginal(v), cacheBuilder));

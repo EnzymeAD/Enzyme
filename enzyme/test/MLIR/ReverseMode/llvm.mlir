@@ -83,3 +83,69 @@ func.func @dloadstore(%a: !llvm.ptr, %da: !llvm.ptr, %b: f32, %dres: f32) -> f32
 // CHECK-NEXT:    llvm.store %[[zero]], %[[da]] : f32, !llvm.ptr
 // CHECK-NEXT:    llvm.return %[[daval3]] : f32
 // CHECK-NEXT:  }
+
+// -----
+
+module {
+llvm.func @f_iter(%a: !llvm.ptr) -> f32 {
+  %lb = arith.constant 0 : index
+  %ub = arith.constant 9 : index
+  %step = arith.constant 1 : index
+
+  %prod_0 = arith.constant 0.00 : f32
+
+  %prod = scf.for %iv = %lb to %ub step %step
+      iter_args(%prod_iter = %prod_0) -> f32 {
+    %i = arith.index_cast %iv : index to i32
+    %ptr = llvm.getelementptr %a[%i] : (!llvm.ptr, i32) -> !llvm.ptr, f32
+    %val = llvm.load %ptr : !llvm.ptr -> f32
+    %prod_next = arith.mulf %val, %prod_iter : f32
+    scf.yield %prod_next : f32
+  }
+
+  llvm.return %prod : f32
+}
+func.func @f_iter_autodiff(%a: !llvm.ptr, %da: !llvm.ptr, %dres: f32) {
+  enzyme.autodiff @f_iter(%a, %da, %dres)
+    {
+      activity=[#enzyme<activity enzyme_dup>],
+      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    } : (!llvm.ptr, !llvm.ptr, f32) -> ()
+  return
+}
+}
+
+// CHECK:  llvm.func @diffef_iter(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f32) attributes {sym_visibility = "private"} {
+// CHECK-NEXT:    %c8 = arith.constant 8 : index
+// CHECK-NEXT:    %c1 = arith.constant 1 : index
+// CHECK-NEXT:    %c9 = arith.constant 9 : index
+// CHECK-NEXT:    %c0 = arith.constant 0 : index
+// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
+// CHECK-NEXT:    %alloc = memref.alloc() : memref<9xf32>
+// CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<9xf32>
+// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c9 step %c1 iter_args(%arg4 = %cst) -> (f32) {
+// CHECK-NEXT:      memref.store %arg4, %alloc_0[%arg3] : memref<9xf32>
+// CHECK-NEXT:      %2 = arith.index_cast %arg3 : index to i32
+// CHECK-NEXT:      %3 = llvm.getelementptr %arg0[%2] : (!llvm.ptr, i32) -> !llvm.ptr, f32
+// CHECK-NEXT:      %4 = llvm.load %3 : !llvm.ptr -> f32
+// CHECK-NEXT:      memref.store %4, %alloc[%arg3] : memref<9xf32>
+// CHECK-NEXT:      %5 = arith.mulf %4, %arg4 : f32
+// CHECK-NEXT:      scf.yield %5 : f32
+// CHECK-NEXT:    }
+// CHECK-NEXT:    %1 = scf.for %arg3 = %c0 to %c9 step %c1 iter_args(%arg4 = %arg2) -> (f32) {
+// CHECK-NEXT:      %2 = arith.subi %c8, %arg3 : index
+// CHECK-NEXT:      %3 = memref.load %alloc[%2] : memref<9xf32>
+// CHECK-NEXT:      %4 = memref.load %alloc_0[%2] : memref<9xf32>
+// CHECK-NEXT:      %5 = arith.index_cast %arg3 : index to i32
+// CHECK-NEXT:      %6 = llvm.getelementptr %arg1[%5] : (!llvm.ptr, i32) -> !llvm.ptr, f32
+// CHECK-NEXT:      %7 = arith.mulf %arg4, %4 : f32
+// CHECK-NEXT:      %8 = arith.mulf %arg4, %3 : f32
+// CHECK-NEXT:      %9 = llvm.load %6 : !llvm.ptr -> f32
+// CHECK-NEXT:      %10 = arith.addf %9, %7 : f32
+// CHECK-NEXT:      llvm.store %10, %6 : f32, !llvm.ptr
+// CHECK-NEXT:      scf.yield %8 : f32
+// CHECK-NEXT:    }
+// CHECK-NEXT:    memref.dealloc %alloc_0 : memref<9xf32>
+// CHECK-NEXT:    memref.dealloc %alloc : memref<9xf32>
+// CHECK-NEXT:    llvm.return
+// CHECK-NEXT:  }

@@ -73,6 +73,34 @@ public:
   bool isZeroAttr(Type self, Attribute attr) const { return false; }
 };
 
+struct GEPOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<GEPOpInterfaceReverse,
+                                                       LLVM::GEPOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto gep = cast<LLVM::GEPOp>(op);
+    auto newGep = cast<LLVM::GEPOp>(gutils->getNewFromOriginal(op));
+    auto base = gep.getBase();
+    if (!gutils->isConstantValue(base)) {
+      auto baseShadow = gutils->invertPointerM(base, builder);
+      auto shadowGep = cast<LLVM::GEPOp>(builder.clone(*newGep));
+      shadowGep.getBaseMutable().assign(baseShadow);
+      gutils->setInvertedPointer(gep.getRes(), shadowGep->getResult(0));
+    }
+  }
+};
+
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
                                                        LLVM::LoadOp> {
@@ -85,7 +113,7 @@ struct LoadOpInterfaceReverse
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
       if (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr)) {
         Value gradient = gutils->diffe(loadOp, builder);
-        Value addrGradient = gutils->invertPointerM(addr, builder);
+        Value addrGradient = gutils->popCache(caches.front(), builder);
 
         if (!gutils->AtomicAdd) {
           Value loadedGradient = builder.create<LLVM::LoadOp>(
@@ -108,7 +136,14 @@ struct LoadOpInterfaceReverse
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
-    return SmallVector<Value>();
+    auto loadOp = cast<LLVM::LoadOp>(op);
+    auto addr = loadOp.getAddr();
+    if (!(isa<AutoDiffTypeInterface>(loadOp.getType()) &&
+          (!gutils->isConstantValue(loadOp) && !gutils->isConstantValue(addr))))
+      return {};
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
+                                     cacheBuilder)};
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
@@ -131,7 +166,7 @@ struct StoreOpInterfaceReverse
     auto iface = cast<AutoDiffTypeInterface>(val.getType());
 
     if (!gutils->isConstantValue(addr)) {
-      Value addrGradient = gutils->invertPointerM(addr, builder);
+      Value addrGradient = gutils->popCache(caches.front(), builder);
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
@@ -153,7 +188,13 @@ struct StoreOpInterfaceReverse
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
-    return SmallVector<Value>();
+    auto storeOp = cast<LLVM::StoreOp>(op);
+    auto addr = storeOp.getAddr();
+    if (gutils->isConstantValue(addr))
+      return {};
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
+                                     cacheBuilder)};
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
@@ -168,6 +209,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
+    LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
     registerInterfaces(context);
     LLVM::UnreachableOp::template attachInterface<
         detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
