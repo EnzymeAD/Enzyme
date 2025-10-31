@@ -2373,17 +2373,17 @@ tripleSplitDollar(llvm::StringRef caller) {
   return std::make_tuple(prefix, name, postfix);
 }
 
-static inline llvm::StringRef getRenamedPerCallingConv(llvm::StringRef caller,
+static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
                                                        llvm::StringRef callee) {
   if (startsWith(caller, "ejl")) {
     auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
-    return (prefix + getRenamedPerCallingConv(name, callee) + postfix).str();
+    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" + postfix).str();
   }
   if (startsWith(caller, "PMPI_")) {
     assert(startsWith(callee, "MPI"));
     return ("P" + callee).str();
   }
-  return callee;
+  return callee.str();
 }
 
 #endif // ENZYME_UTILS_H

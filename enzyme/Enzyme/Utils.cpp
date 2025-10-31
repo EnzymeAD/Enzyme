@@ -1802,7 +1802,9 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 
   auto isendfn = M.getFunction(getRenamedPerCallingConv(caller, "MPI_Isend"));
   assert(isendfn);
+  // TODO: what if Isend not defined, but Irecv is?
   FunctionType *FuT = isendfn->getFunctionType();
+
   auto irecvfn = cast<Function>(
       M.getOrInsertFunction(getRenamedPerCallingConv(caller, "MPI_Irecv"), FuT)
           .getCallee());
