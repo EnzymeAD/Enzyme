@@ -17,6 +17,7 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Pass/PassManager.h"
@@ -51,8 +52,8 @@ struct DifferentiatePass
     }
 
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
-                    mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
-                    mlir::enzyme::EnzymeDialect>();
+                    mlir::cf::ControlFlowDialect, mlir::memref::MemRefDialect,
+                    mlir::tensor::TensorDialect, mlir::enzyme::EnzymeDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
@@ -220,8 +221,8 @@ struct DifferentiatePass
     {
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op"
-                       << "CI: " << CI << "\n";
+          llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
+                       << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -256,8 +257,8 @@ struct DifferentiatePass
         args.push_back(res);
         if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
           if (call_idx >= CI.getInputs().size()) {
-            llvm::errs() << "Too few arguments to autodiff op"
-                         << "CI: " << CI << "\n";
+            llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
+                         << "\n";
             return failure();
           }
           res = CI.getInputs()[call_idx];
@@ -307,8 +308,8 @@ struct DifferentiatePass
       returnShadows.push_back(false);
       if (ty == DIFFE_TYPE::OUT_DIFF) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op"
-                       << "CI: " << CI << "\n";
+          llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
+                       << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
