@@ -1753,9 +1753,9 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 
   auto &&[prefix, _, postfix] = tripleSplitDollar(caller);
 
-  StringRef name = "__enzyme_differential_mpi_wait";
+  std::string name = "__enzyme_differential_mpi_wait";
   if (prefix.size() != 0 || postfix.size() != 0) {
-    name = (name + "$" + prefix + "$" + postfix).str().str();
+    name = (Twine(name) + "$" + prefix + "$" + postfix).str();
   }
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);

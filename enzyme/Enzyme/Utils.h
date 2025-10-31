@@ -2371,12 +2371,12 @@ tripleSplitDollar(llvm::StringRef caller) {
 
 static inline llvm::StringRef getRenamedPerCallingConv(llvm::StringRef caller,
                                                        llvm::StringRef callee) {
-  if (caller.starts_with("ejl")) {
+  if (startsWith(caller, "ejl")) {
     auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
     return (prefix + getRenamedPerCallingConv(name, callee) + postfix).str();
   }
-  if (caller.starts_with("PMPI_")) {
-    assert(callee.starts_with("MPI"));
+  if (startsWith(caller, "PMPI_")) {
+    assert(startsWith(callee, "MPI"));
     return ("P" + callee).str();
   }
   return callee;
