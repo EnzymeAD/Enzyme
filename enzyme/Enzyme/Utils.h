@@ -2362,4 +2362,24 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
 // otherwise.
 bool isTargetNVPTX(llvm::Module &M);
 
+static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
+tripleSplitDollar(llvm::StringRef caller) {
+  auto &&[prefix, todo] = caller.split("$");
+  auto &&[name, postfix] = todo.split("$");
+  return std::make_tuple(prefix, name, postfix);
+}
+
+static inline llvm::StringRef getRenamedPerCallingConv(llvm::StringRef caller,
+                                                       llvm::StringRef callee) {
+  if (caller.starts_with("ejl")) {
+    auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
+    return (prefix + getRenamedPerCallingConv(name, callee) + postfix).str();
+  }
+  if (caller.starts_with("PMPI_")) {
+    assert(callee.starts_with("MPI"));
+    return ("P" + callee).str();
+  }
+  return callee;
+}
+
 #endif // ENZYME_UTILS_H
