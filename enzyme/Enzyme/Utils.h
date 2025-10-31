@@ -2365,6 +2365,9 @@ bool isTargetNVPTX(llvm::Module &M);
 
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
+  if (!startsWith(caller, "ejl")) {
+    return {"", caller, ""};
+  }
   auto &&[prefix, todo] = caller.split("$");
   auto &&[name, postfix] = todo.split("$");
   return std::make_tuple(prefix, name, postfix);
