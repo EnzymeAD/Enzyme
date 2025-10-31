@@ -427,7 +427,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
       Function *dwait = getOrInsertDifferentialMPI_Wait(
-          *called->getParent(), types, call.getOperand(0)->getType());
+          *called->getParent(), types, call.getOperand(0)->getType(),
+          called->getName());
 
       // Need to preserve the shadow Request (operand 0 in wait).
       // However, this doesn't end up preserving
@@ -585,8 +586,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *types[sizeof(args) / sizeof(*args) - 1];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
-      Function *dwait = getOrInsertDifferentialMPI_Wait(*called->getParent(),
-                                                        types, req->getType());
+      Function *dwait = getOrInsertDifferentialMPI_Wait(
+          *called->getParent(), types, req->getType(), called->getName());
       // Need to preserve the shadow Request (operand 6 in isend/irecv), which
       // becomes operand 0 for iwait. However, this doesn't end up preserving
       // the underlying buffers for the adjoint. To remedy, force inline the

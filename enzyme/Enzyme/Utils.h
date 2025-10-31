@@ -806,7 +806,8 @@ llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 llvm::ArrayRef<llvm::Type *> T,
-                                                llvm::Type *reqType);
+                                                llvm::Type *reqType,
+                                                llvm::StringRef caller);
 
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V);
