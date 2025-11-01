@@ -206,7 +206,7 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.addParamAttr(6, Attribute::WriteOnly);
     }
   }
-  auto name = getFuncName(F);
+  auto name = getFuncName(&F);
   if (name == "MPI_Isend" || name == "PMPI_Isend") {
     changed = true;
 #if LLVM_VERSION_MAJOR >= 16
@@ -348,7 +348,6 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
   }
-  auto name = F.getName();
 
   const char *NonEscapingFns[] = {
       "julia.ptls_states",
