@@ -29,9 +29,11 @@ using namespace mlir::enzyme;
 Value mlir::enzyme::MProbProgUtils::getTrace() {
   if (!trace) {
     OpBuilder builder(initializationBlock, initializationBlock->begin());
+    auto loc = (initializationBlock->rbegin())->getLoc();
+    auto ctx = initializationBlock->begin()->getContext();
+    auto fnAttr = FlatSymbolRefAttr::get(ctx, newFunc.getName());
     auto initTraceOp = builder.create<enzyme::InitTraceOp>(
-        (initializationBlock->rbegin())->getLoc(),
-        enzyme::TraceType::get(initializationBlock->begin()->getContext()));
+        loc, enzyme::TraceType::get(ctx), fnAttr);
     trace = initTraceOp.getTrace();
   }
   return trace;

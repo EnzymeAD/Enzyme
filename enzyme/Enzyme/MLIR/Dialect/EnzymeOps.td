@@ -575,7 +575,7 @@ def InitTraceOp : Enzyme_Op<"initTrace", [Pure]> {
   let description = [{
     Initialize an execution trace for a probabilistic function.
   }];
-  let arguments = (ins );
+  let arguments = (ins OptionalAttr<FlatSymbolRefAttr>:$fn);
   let results = (outs Trace:$trace);
   let assemblyFormat = "attr-dict `:` type($trace)";
 }
