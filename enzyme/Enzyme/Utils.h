@@ -806,7 +806,8 @@ llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 llvm::ArrayRef<llvm::Type *> T,
-                                                llvm::Type *reqType);
+                                                llvm::Type *reqType,
+                                                llvm::StringRef caller);
 
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V);
@@ -2361,5 +2362,30 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
 // Return true if the module has a triple indicating an nvptx target, false
 // otherwise.
 bool isTargetNVPTX(llvm::Module &M);
+
+static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
+tripleSplitDollar(llvm::StringRef caller) {
+  if (!startsWith(caller, "ejl")) {
+    return {"", caller, ""};
+  }
+  auto &&[prefix, todo] = caller.split("$");
+  auto &&[name, postfix] = todo.split("$");
+  return std::make_tuple(prefix, name, postfix);
+}
+
+static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
+                                                   llvm::StringRef callee) {
+  if (startsWith(caller, "ejl")) {
+    auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
+    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" +
+            postfix)
+        .str();
+  }
+  if (startsWith(caller, "PMPI_")) {
+    assert(startsWith(callee, "MPI"));
+    return ("P" + callee).str();
+  }
+  return callee.str();
+}
 
 #endif // ENZYME_UTILS_H

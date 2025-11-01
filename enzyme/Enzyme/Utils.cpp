@@ -1746,10 +1746,17 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
 
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 ArrayRef<llvm::Type *> T,
-                                                Type *reqType) {
+                                                Type *reqType,
+                                                StringRef caller) {
   llvm::SmallVector<llvm::Type *, 4> types(T.begin(), T.end());
   types.push_back(reqType);
+
+  auto &&[prefix, _, postfix] = tripleSplitDollar(caller);
+
   std::string name = "__enzyme_differential_mpi_wait";
+  if (prefix.size() != 0 || postfix.size() != 0) {
+    name = (Twine(name) + "$" + prefix + "$" + postfix).str();
+  }
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -1793,21 +1800,14 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   Value *d_req = buff + 7;
   d_req->setName("d_req");
 
-  bool pmpi = true;
-  auto isendfn = M.getFunction("PMPI_Isend");
-  if (!isendfn) {
-    isendfn = M.getFunction("MPI_Isend");
-    pmpi = false;
-  }
+  auto isendfn = M.getFunction(getRenamedPerCallingConv(caller, "MPI_Isend"));
   assert(isendfn);
-  auto irecvfn = M.getFunction("PMPI_Irecv");
-  if (!irecvfn)
-    irecvfn = M.getFunction("MPI_Irecv");
-  if (!irecvfn) {
-    FunctionType *FuT = isendfn->getFunctionType();
-    std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
-    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
-  }
+  // TODO: what if Isend not defined, but Irecv is?
+  FunctionType *FuT = isendfn->getFunctionType();
+
+  auto irecvfn = cast<Function>(
+      M.getOrInsertFunction(getRenamedPerCallingConv(caller, "MPI_Irecv"), FuT)
+          .getCallee());
   assert(irecvfn);
 
   IRBuilder<> B(entry);
