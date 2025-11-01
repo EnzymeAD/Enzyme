@@ -31,9 +31,9 @@ Value mlir::enzyme::MProbProgUtils::getTrace() {
     OpBuilder builder(initializationBlock, initializationBlock->begin());
     auto loc = (initializationBlock->rbegin())->getLoc();
     auto ctx = initializationBlock->begin()->getContext();
-    auto fnAttr = FlatSymbolRefAttr::get(ctx, newFunc.getName());
+    auto sourceFnAttr = FlatSymbolRefAttr::get(ctx, newFunc.getName());
     auto initTraceOp = builder.create<enzyme::InitTraceOp>(
-        loc, enzyme::TraceType::get(ctx), fnAttr);
+        loc, enzyme::TraceType::get(ctx), sourceFnAttr);
     trace = initTraceOp.getTrace();
   }
   return trace;
