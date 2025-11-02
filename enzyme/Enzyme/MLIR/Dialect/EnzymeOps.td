@@ -199,15 +199,15 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "LoopOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region or loop op";
+    ParentOneOf<["AutoDiffRegionOp", "ForLoopOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region or loop ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
   }];
 }
 
-def LoopOp : Enzyme_Op<"loop", [AutomaticAllocationScope]> {
+def ForLoopOp : Enzyme_Op<"for_loop", [AutomaticAllocationScope]> {
   let summary = "Counted loop for probabilistic programming";
   let description = [{
     A counted loop operation that iterates from `lowerBound` to `upperBound`
