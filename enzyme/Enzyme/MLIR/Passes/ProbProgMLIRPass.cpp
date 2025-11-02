@@ -620,11 +620,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       SmallVector<Type> loopResultTypes = {positionType, positionType,
                                            positionType, rng0_final.getType()};
-      auto loopOp =
-          enzyme::LoopOp::create(rewriter, loc, loopResultTypes, c0, numSteps,
-                                 c1, ValueRange{q0, p0, grad0, rng0_final});
+      auto forLoopOp = rewriter.create<enzyme::ForLoopOp>(
+          loc, loopResultTypes, c0, numSteps, c1,
+          ValueRange{q0, p0, grad0, rng0_final});
 
-      Block *loopBody = rewriter.createBlock(&loopOp.getRegion());
+      Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
       loopBody->addArgument(i64TensorType, loc);        // iv
       loopBody->addArgument(positionType, loc);         // q
       loopBody->addArgument(positionType, loc);         // p
@@ -715,10 +715,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       enzyme::YieldOp::create(rewriter, loc,
                               ValueRange{q1, p2, newGradient, newRng});
 
-      rewriter.setInsertionPointAfter(loopOp);
-      Value qL = loopOp.getResult(0);
-      Value pL = loopOp.getResult(1);
-      Value rngAfterLeapfrog = loopOp.getResult(3);
+      rewriter.setInsertionPointAfter(forLoopOp);
+      Value qL = forLoopOp.getResult(0);
+      Value pL = forLoopOp.getResult(1);
+      Value rngAfterLeapfrog = forLoopOp.getResult(3);
 
       // 7. Generate final trace with final position qL
       SmallVector<Value> finalUpdateInputs;
