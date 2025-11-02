@@ -570,7 +570,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
   }];
 }
 
-def InitTraceOp : Enzyme_Op<"initTrace", [Pure]> {
+def InitTraceOp : Enzyme_Op<"initTrace", [MemoryEffects<[MemAlloc]>]> {
   let summary = "Initialize an execution trace for a probabilistic function";
   let description = [{
     Initialize an execution trace for a probabilistic function.
