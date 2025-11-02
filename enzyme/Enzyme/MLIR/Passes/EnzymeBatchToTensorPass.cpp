@@ -149,7 +149,8 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
 };
 
 struct EnzymeBatchToTensorPass
-    : public enzyme::impl::EnzymeBatchToTensorPassBase<EnzymeBatchToTensorPass> {
+    : public enzyme::impl::EnzymeBatchToTensorPassBase<
+          EnzymeBatchToTensorPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
