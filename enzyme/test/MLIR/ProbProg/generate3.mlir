@@ -32,7 +32,7 @@ module {
 
 // CHECK: func.func @test.generate(%[[constraint:.+]]: !enzyme.Constraint, %[[rng:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
 // CHECK-NEXT:   %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace {source_fn = @test.generate} : !enzyme.Trace
 // CHECK-NEXT:   %[[sample_from_constraint1:.+]] = enzyme.getSampleFromConstraint %[[constraint]] {symbol = #enzyme.symbol<1>} : tensor<f64>
 // CHECK-NEXT:   %[[logpdf1:.+]] = call @logpdf(%[[sample_from_constraint1]], %[[mean]], %[[stddev]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:   %[[addf1:.+]] = arith.addf %[[logpdf1]], %[[cst]] : tensor<f64>
@@ -54,7 +54,7 @@ module {
 
 // CHECK: func.func @two_normals.generate(%[[constraint:.+]]: !enzyme.Constraint, %[[rng:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
 // CHECK-NEXT:   %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace {source_fn = @two_normals.generate} : !enzyme.Trace
 // CHECK-NEXT:   %[[normal_call:.+]]:2 = call @normal(%[[rng]], %[[mean]], %[[stddev]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:   %[[logpdf1:.+]] = call @logpdf(%[[normal_call]]#1, %[[mean]], %[[stddev]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:   %[[addf1:.+]] = arith.addf %[[logpdf1]], %[[cst]] : tensor<f64>
@@ -70,7 +70,7 @@ module {
 
 // CHECK: func.func @two_normals.generate_0(%[[constraint:.+]]: !enzyme.Constraint, %[[rng:.+]]: tensor<2xui64>, %[[mean:.+]]: tensor<f64>, %[[stddev:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
 // CHECK-NEXT:   %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:   %[[trace_init:.+]] = enzyme.initTrace {source_fn = @two_normals.generate_0} : !enzyme.Trace
 // CHECK-NEXT:   %[[sample_from_constraint1:.+]] = enzyme.getSampleFromConstraint %[[constraint]] {symbol = #enzyme.symbol<3>} : tensor<f64>
 // CHECK-NEXT:   %[[logpdf1:.+]] = call @logpdf(%[[sample_from_constraint1]], %[[mean]], %[[stddev]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:   %[[addf1:.+]] = arith.addf %[[logpdf1]], %[[cst]] : tensor<f64>

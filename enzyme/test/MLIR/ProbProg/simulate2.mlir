@@ -26,7 +26,7 @@ module {
 
 // CHECK:  func.func @test.simulate(%[[arg0:.+]]: tensor<2xui64>, %[[arg1:.+]]: tensor<f64>, %[[arg2:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
 // CHECK-NEXT:    %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace {source_fn = @test.simulate} : !enzyme.Trace
 // CHECK-NEXT:    %[[normal_call:.+]]:2 = call @normal(%[[arg0]], %[[arg1]], %[[arg2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:    %[[logpdf_call:.+]] = call @logpdf(%[[normal_call]]#1, %[[arg1]], %[[arg2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %[[addf1:.+]] = arith.addf %[[logpdf_call]], %[[cst]] : tensor<f64>
@@ -42,7 +42,7 @@ module {
 
 // CHECK:  func.func @two_normals.simulate(%[[arg0:.+]]: tensor<2xui64>, %[[arg1:.+]]: tensor<f64>, %[[arg2:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
 // CHECK-NEXT:    %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace {source_fn = @two_normals.simulate} : !enzyme.Trace
 // CHECK-NEXT:    %[[normal_call1:.+]]:2 = call @normal(%[[arg0]], %[[arg1]], %[[arg2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:    %[[logpdf_call1:.+]] = call @logpdf(%[[normal_call1]]#1, %[[arg1]], %[[arg2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %[[addf1:.+]] = arith.addf %[[logpdf_call1]], %[[cst]] : tensor<f64>
