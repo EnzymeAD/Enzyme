@@ -11,7 +11,7 @@ module {
   }
 
   func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>) {
-    %init_trace = enzyme.initTrace : !enzyme.Trace
+    %init_trace = enzyme.initTrace {source_fn = @hmc} : !enzyme.Trace
 
     %mass = arith.constant dense<[[1.0, 0.0], [0.0, 1.0]]> : tensor<2x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
@@ -36,7 +36,7 @@ module {
 // CHECK-NEXT:    %cst_5 = arith.constant dense<10> : tensor<i64>
 // CHECK-NEXT:    %cst_6 = arith.constant dense<1.000000e-01> : tensor<f64>
 // CHECK-NEXT:    %cst_7 = arith.constant dense<{{\[}}[1.000000e+00, 0.000000e+00], [0.000000e+00, 1.000000e+00]{{\]}}> : tensor<2x2xf64>
-// CHECK-NEXT:    %0 = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:    %0 = enzyme.initTrace {source_fn = @hmc} : !enzyme.Trace
 // CHECK-NEXT:    %1 = enzyme.getFlattenedSamplesFromTrace %0 {selection = {{\[}}[#enzyme.symbol<1>], [#enzyme.symbol<2>]{{\]}}} : tensor<2xf64>
 // CHECK-NEXT:    %2 = enzyme.getWeightFromTrace %0 : tensor<f64>
 // CHECK-NEXT:    %3 = arith.negf %2 : tensor<f64>
@@ -87,7 +87,7 @@ module {
 
 // CHECK:  func.func @test.update(%arg0: !enzyme.Trace, %arg1: tensor<2xf64>, %arg2: tensor<2xui64>, %arg3: tensor<f64>, %arg4: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>) {
 // CHECK-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %0 = enzyme.initTrace : !enzyme.Trace
+// CHECK-NEXT:    %0 = enzyme.initTrace {source_fn = @test.update} : !enzyme.Trace
 // CHECK-NEXT:    %1 = enzyme.unflatten_slice %arg1[0] : tensor<2xf64> -> tensor<f64>
 // CHECK-NEXT:    %2 = call @logpdf(%1, %arg3, %arg4) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %3 = arith.addf %2, %cst : tensor<f64>
