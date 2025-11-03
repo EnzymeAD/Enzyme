@@ -401,7 +401,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     newArgTys.push_back(arg.getType());
     if (act == DIFFE_TYPE::DUP_ARG) {
       numDup++;
-      auto shadowType = cast<AutoDiffTypeInterface>(arg.getType()).getShadowType(width);
+      auto shadowType =
+          cast<AutoDiffTypeInterface>(arg.getType()).getShadowType(width);
       auto shadow = fnEntry->insertArgument(arg.getArgNumber() + numDup,
                                             shadowType, arg.getLoc());
       newArgTys.push_back(shadowType);
