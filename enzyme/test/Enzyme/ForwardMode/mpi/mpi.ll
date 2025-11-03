@@ -141,4 +141,5 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %2 = bitcast float* %val2 to i8*
 ; CHECK-NEXT:   %call1 = call i32 @MPI_Recv(i8* %2, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* nonnull %statut)
 ; CHECK-NEXT:   %3 = call i32 @MPI_Recv(i8* %"'ipc2", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* %statut)
+; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
