@@ -836,8 +836,13 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
+      Value *status = gutils->getNewFromOriginal(call.getOperand(6));
+      if (!forwardMode)
+        status = lookup(status, Builder2);
+
+
       Value *args[] = {
-          shadow, count, datatype, source, tag, comm,
+          shadow, count, datatype, source, tag, comm, status
       };
 
       auto Defs = gutils->getInvertedBundles(
