@@ -31,17 +31,20 @@ func.func @to_outline(%26: !llvm.ptr, %27: !llvm.ptr, %28: !llvm.ptr, %29: !llvm
   return
 }
 
-// CHECK: func.func @to_outline_to_diff0(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: index, %arg3: f64) {
-// CHECK-NEXT:    %0 = arith.index_castui %arg2 : index to i64
-// CHECK-NEXT:    %1 = llvm.getelementptr inbounds|nuw %arg0[%0] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-// CHECK-NEXT:    %2 = llvm.load %1 invariant {alignment = 4 : i64} : !llvm.ptr -> f32
-// CHECK-NEXT:    %3 = arith.extf %2 : f32 to f64
-// CHECK-NEXT:    %4 = arith.mulf %3, %arg3 {fastmathFlags = #llvm.fastmath<contract>} : f64
-// CHECK-NEXT:    %5 = arith.truncf %4 : f64 to f32
-// CHECK-NEXT:    %6 = llvm.getelementptr inbounds|nuw %arg1[%0] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-// CHECK-NEXT:    llvm.store %5, %6 {alignment = 4 : i64} : f32, !llvm.ptr
-// CHECK-NEXT:    return
-// CHECK-NEXT:  }
+// CHECK-LABEL:   func.func @to_outline_to_diff0(
+// CHECK-SAME:      %[[ARG0:.*]]: !llvm.ptr, %[[ARG1:.*]]: !llvm.ptr,
+// CHECK-SAME:      %[[ARG2:.*]]: index) {
+// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 5.600000e+00 : f64
+// CHECK:           %[[INDEX_CASTUI_0:.*]] = arith.index_castui %[[ARG2]] : index to i64
+// CHECK:           %[[GETELEMENTPTR_0:.*]] = llvm.getelementptr inbounds|nuw %[[ARG0]]{{\[}}%[[INDEX_CASTUI_0]]] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+// CHECK:           %[[LOAD_0:.*]] = llvm.load %[[GETELEMENTPTR_0]] invariant {alignment = 4 : i64} : !llvm.ptr -> f32
+// CHECK:           %[[EXTF_0:.*]] = arith.extf %[[LOAD_0]] : f32 to f64
+// CHECK:           %[[MULF_0:.*]] = arith.mulf %[[EXTF_0]], %[[CONSTANT_0]] {fastmathFlags = #llvm.fastmath<contract>} : f64
+// CHECK:           %[[TRUNCF_0:.*]] = arith.truncf %[[MULF_0]] : f64 to f32
+// CHECK:           %[[GETELEMENTPTR_1:.*]] = llvm.getelementptr inbounds|nuw %[[ARG1]]{{\[}}%[[INDEX_CASTUI_0]]] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+// CHECK:           llvm.store %[[TRUNCF_0]], %[[GETELEMENTPTR_1]] {alignment = 4 : i64} : f32, !llvm.ptr
+// CHECK:           return
+// CHECK:         }
 
 // -----
 
@@ -64,7 +67,7 @@ llvm.func internal @d_Z6squarePfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !l
 }
 
 // Attributes should be passed back to the outlined function
-// CHECK: func.func private @d_Z6squarePfS__to_diff0(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}, %arg2: f64) attributes {CConv = #llvm.cconv<ccc>, dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return} {
+// CHECK: func.func private @d_Z6squarePfS__to_diff0(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}) attributes {CConv = #llvm.cconv<ccc>, dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return} {
 
 // -----
 
@@ -120,12 +123,13 @@ func.func @free_var_ordering(%x: f64) -> f64 {
 // CHECK: func.func @free_var_ordering(%arg0: f64) -> f64 {
 // CHECK-NEXT:    %[[CONST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[SEED:.*]] = arith.constant 1.000000e+00 : f64
-// CHECK-NEXT:    %[[GRAD:.*]] = enzyme.autodiff @free_var_ordering_to_diff0(%arg0, %[[CONST]], %[[SEED]]) {activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64, f64) -> f64
+// CHECK-NEXT:    %[[GRAD:.*]] = enzyme.autodiff @free_var_ordering_to_diff0(%arg0, %[[SEED]]) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:    return %[[GRAD]] : f64
 // CHECK-NEXT:  }
 
-// CHECK: func.func @free_var_ordering_to_diff0(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %arg0, %arg1 : f64
+// CHECK: func.func @free_var_ordering_to_diff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:    %[[CONST:.*]] = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %arg0, %[[CONST]] : f64
 // CHECK-NEXT:    return %[[MUL]] : f64
 // CHECK-NEXT:  }
 
@@ -151,13 +155,14 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
 // CHECK: func.func @free_var_with_dup(%arg0: memref<f64>, %arg1: memref<f64>) {
 // CHECK-NEXT:    %[[CST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[SEED:.*]] = arith.constant 1.000000e+00 : f64
-// CHECK-NEXT:    enzyme.autodiff @free_var_with_dup_to_diff0(%arg0, %arg1, %[[CST]], %[[SEED]]) {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (memref<f64>, memref<f64>, f64, f64) -> ()
+// CHECK-NEXT:    enzyme.autodiff @free_var_with_dup_to_diff0(%arg0, %arg1, %[[SEED]]) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (memref<f64>, memref<f64>, f64) -> ()
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }
 
-// CHECK:  func.func @free_var_with_dup_to_diff0(%arg0: memref<f64>, %arg1: f64) -> f64 {
+// CHECK:  func.func @free_var_with_dup_to_diff0(%arg0: memref<f64>) -> f64 {
+// CHECK-NEXT:    %[[CST:.*]] = arith.constant 2.000000e+00 : f64
 // CHECK-NEXT:    %[[LOAD:.*]] = memref.load %arg0[] : memref<f64>
-// CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %[[LOAD]], %arg1 : f64
+// CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %[[LOAD]], %[[CST]] : f64
 // CHECK-NEXT:    return %[[MUL]] : f64
 // CHECK-NEXT:  }
 
