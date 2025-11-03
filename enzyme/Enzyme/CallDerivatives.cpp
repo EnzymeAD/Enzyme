@@ -798,7 +798,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
   if (funcName == "MPI_Recv" || funcName == "PMPI_Recv") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
                          Mode == DerivativeMode::ForwardModeError;
 
