@@ -15,21 +15,17 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
-#include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include <functional>
 
 using namespace mlir;
@@ -766,6 +762,44 @@ struct ParallelOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct IfOpEnzymeOpsRemover
+    : public IfLikeEnzymeOpsRemover<IfOpEnzymeOpsRemover, scf::IfOp> {
+  static Block *getThenBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    return ifOp.thenBlock();
+  }
+
+  static Block *getElseBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      scf::YieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.elseBlock();
+  }
+
+  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
+    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
+  }
+
+  static scf::IfOp replace(PatternRewriter &rewriter, scf::IfOp otherIfOp,
+                           TypeRange resultTypes) {
+    auto newIf = scf::IfOp::create(rewriter, otherIfOp->getLoc(), resultTypes,
+                                   otherIfOp.getCondition());
+
+    newIf.getThenRegion().takeBody(otherIfOp.getThenRegion());
+    newIf.getElseRegion().takeBody(otherIfOp.getElseRegion());
+
+    rewriter.replaceAllUsesWith(
+        otherIfOp->getResults(),
+        newIf->getResults().slice(0, otherIfOp->getNumResults()));
+    rewriter.eraseOp(otherIfOp);
+    return newIf;
+  }
+};
+
 struct IfOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<IfOpInterfaceReverse,
                                                        scf::IfOp> {
@@ -800,13 +834,16 @@ struct IfOpInterfaceReverse
         OpBuilder bodyBuilder(&revBB, revBB.end());
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
 
-        // All values defined in the body should have no use outside this block
-        // therefore we can set their diffe to zero upon entering the reverse
-        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
+        // All values defined in the body should have no use outside this
+        // block therefore we can set their diffe to zero upon entering the
+        // reverse block to simplify the work of the
+        // remove-unnecessary-enzyme-ops pass.
         for (auto &it : oBB.getOperations()) {
           for (auto res : it.getResults()) {
             if (!gutils->isConstantValue(res)) {
-              gutils->zeroDiffe(res, bodyBuilder);
+              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+              if (iface && !iface.isMutable())
+                gutils->zeroDiffe(res, bodyBuilder);
             }
           }
         }
@@ -823,10 +860,10 @@ struct IfOpInterfaceReverse
 
         for (auto &&[arg, operand] :
              llvm::zip_equal(incomingGradients, activeTermOperands)) {
-          // Check activity of the argument separately from the result. If some
-          // branches yield inactive values while others yield active values,
-          // the result will be active, but this operand may still be inactive
-          // (and we cannot addToDiffe)
+          // Check activity of the argument separately from the result. If
+          // some branches yield inactive values while others yield active
+          // values, the result will be active, but this operand may still be
+          // inactive (and we cannot addToDiffe)
           if (!gutils->isConstantValue(operand)) {
             gutils->addToDiffe(operand, arg, bodyBuilder);
           }
@@ -905,6 +942,7 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
     registerInterfaces(context);
     scf::IfOp::attachInterface<IfOpInterfaceReverse>(*context);
+    scf::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
     scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
