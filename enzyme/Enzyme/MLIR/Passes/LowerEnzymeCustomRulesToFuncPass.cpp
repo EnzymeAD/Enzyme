@@ -49,17 +49,17 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
 
   Block *bodyDef = &revRule.getBody().front();
 
-  enzyme::AugmentedPrimalOp primal = nullptr;
-  enzyme::ReverseOp reverse = nullptr;
+  enzyme::CustomReverseRuleAugmentedPrimalOp primal = nullptr;
+  enzyme::CustomReverseRuleReverseOp reverse = nullptr;
 
   for (Operation &op : *bodyDef) {
-    if (auto AP = dyn_cast<enzyme::AugmentedPrimalOp>(op)) {
+    if (auto AP = dyn_cast<enzyme::CustomReverseRuleAugmentedPrimalOp>(op)) {
       if (primal) {
         AP->emitError() << "multiple augmented primal ops in a custom rule";
         return failure();
       }
       primal = AP;
-    } else if (auto RO = dyn_cast<enzyme::ReverseOp>(op)) {
+    } else if (auto RO = dyn_cast<enzyme::CustomReverseRuleReverseOp>(op)) {
       if (reverse) {
         RO->emitError() << "multiple reverse op in a custom rule";
         return failure();
@@ -79,8 +79,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
 
   auto funcType = revRule.getFunctionType();
 
-  SmallVector<mlir::Type> primalArgTypes(funcType.getInputs().begin(),
-                                         funcType.getInputs().end());
+  SmallVector<mlir::Type> primalArgTypes;
   SmallVector<mlir::Type> primalResultTypes(funcType.getResults().begin(),
                                             funcType.getResults().end());
 
@@ -110,8 +109,14 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     case mlir::enzyme::Activity::enzyme_active:
     case mlir::enzyme::Activity::enzyme_activenoneed:
       reverseResultTypes.push_back(argTy);
+      primalArgTypes.push_back(argTy);
       break;
     case mlir::enzyme::Activity::enzyme_const:
+      primalArgTypes.push_back(argTy);
+      break;
+    case mlir::enzyme::Activity::enzyme_dup:
+      primalArgTypes.push_back(argTy);
+      primalArgTypes.push_back(argTy);
       break;
     default:
       llvm_unreachable("todo");
@@ -232,6 +237,10 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     OpBuilder builder(CAP);
     auto primalCall = builder.create<func::CallOp>(CAP.getLoc(), primalFunc,
                                                    CAP->getOperands());
+    for (auto [oldRes, newRes] :
+         llvm::zip(CAP.getOutputs(), primalCall->getResults())) {
+      oldRes.replaceAllUsesWith(newRes);
+    }
 
     auto tape = CAP->getResult(CAP->getNumResults() - 1);
     for (auto tapeUser : tape.getUsers()) {

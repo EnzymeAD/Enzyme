@@ -242,7 +242,7 @@ def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove]> 
   }];
 }
 
-def AugmentedPrimalOp : Enzyme_Op<"augmented_primal", [
+def CustomReverseRuleAugmentedPrimalOp : Enzyme_Op<"custom_reverse_rule.augmented_primal", [
     HasParent<"CustomReverseRuleOp">,
     AutomaticAllocationScope,
     AffineScope]> {
@@ -256,7 +256,7 @@ def AugmentedPrimalOp : Enzyme_Op<"augmented_primal", [
   }];
 }
 
-def ReverseOp : Enzyme_Op<"reverse", [
+def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
     HasParent<"CustomReverseRuleOp">,
     AutomaticAllocationScope,
     AffineScope]> {
@@ -331,7 +331,7 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "LoopOp", "ReverseOp", "AugmentedPrimalOp", "CustomReverseRuleOp"]>]> {
+    ParentOneOf<["AutoDiffRegionOp", "LoopOp", "CustomReverseRuleReverseOp", "CustomReverseRuleAugmentedPrimalOp", "CustomReverseRuleOp"]>]> {
   let summary = "Yield values at the end of an autodiff_region, loop op, reverse op, aug primal op or custom reverse rule op";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{

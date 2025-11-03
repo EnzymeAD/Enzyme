@@ -307,6 +307,18 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   return nf;
 }
 
+static mlir::enzyme::ActivityAttr activityFromDiffeType(mlir::MLIRContext *ctx,
+                                                        DIFFE_TYPE ty) {
+  auto activity = mlir::enzyme::Activity::enzyme_active;
+  switch (ty) {
+  case DIFFE_TYPE::DUP_ARG:
+    activity = mlir::enzyme::Activity::enzyme_dup;
+  default:
+    break;
+  };
+  return mlir::enzyme::ActivityAttr::get(ctx, activity);
+}
+
 FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
@@ -331,7 +343,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     else
       nonconstant_values.insert(arg);
   }
-  IRMapping invertedPointers;
 
   SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
   SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
@@ -340,13 +351,11 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   SmallVector<Attribute> argActivityAttrs;
   for (auto act : constants)
-    argActivityAttrs.push_back(mlir::enzyme::ActivityAttr::get(
-        fn.getContext(), mlir::enzyme::Activity::enzyme_active));
+    argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
 
   SmallVector<Attribute> retActivityAttrs;
   for (auto act : retType)
-    retActivityAttrs.push_back(mlir::enzyme::ActivityAttr::get(
-        fn.getContext(), mlir::enzyme::Activity::enzyme_active));
+    retActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
 
   auto argActivityAttr = ArrayAttr::get(fn.getContext(), argActivityAttrs);
   auto retActivityAttr = ArrayAttr::get(fn.getContext(), retActivityAttrs);
@@ -356,6 +365,10 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   auto ruleNameAttr = FlatSymbolRefAttr::get(
       fn.getContext(), customRuleName.toStringRef(nameBuf));
+
+  SmallVector<Type> argTys(
+      cast<FunctionType>(fn.getFunctionType()).getInputs().begin(),
+      cast<FunctionType>(fn.getFunctionType()).getInputs().end());
 
   OpBuilder builder(fn);
   auto customRule = enzyme::CustomReverseRuleOp::create(
@@ -367,7 +380,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   OpBuilder ruleBuilder(ruleBody, ruleBody->begin());
 
-  auto reverse = ruleBuilder.create<enzyme::ReverseOp>(fn.getLoc());
+  auto reverse =
+      ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(fn.getLoc());
   ruleBuilder.create<enzyme::YieldOp>(fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
@@ -390,6 +404,31 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   auto newFunc = cast<FunctionOpInterface>(fn->cloneWithoutRegions());
   cloneInto(&fn.getFunctionBody(), &newFunc.getFunctionBody(), originalToNew,
             originalToNewOps);
+
+  Block *fnEntry = &newFunc.getFunctionBody().front();
+  IRMapping invertedPointers;
+
+  SmallVector<Type> newArgTys;
+
+  int numDup = 0;
+  for (auto [act, arg] : llvm::zip_equal(
+           constants, fn.getFunctionBody().front().getArguments())) {
+    newArgTys.push_back(arg.getType());
+    if (act == DIFFE_TYPE::DUP_ARG) {
+      numDup++;
+      auto shadow = fnEntry->insertArgument(arg.getArgNumber() + numDup,
+                                            arg.getType(), // shadow
+                                            arg.getLoc());
+      // argTys.insert(arg.getArgNumber() + numDup, arg.getType());
+      newArgTys.push_back(arg.getType());
+      invertedPointers.map(arg, shadow);
+    }
+  }
+
+  auto newFuncType =
+      FunctionType::get(newFunc.getContext(), newArgTys,
+                        cast<FunctionType>(fn.getFunctionType()).getResults());
+  newFunc.setFunctionTypeAttr(TypeAttr::get(newFuncType));
 
   llvm::errs() << "new func = " << newFunc << "\n";
 
@@ -450,7 +489,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   ruleBuilder.setInsertionPoint(reverse);
   auto augmentedPrimal =
-      ruleBuilder.create<enzyme::AugmentedPrimalOp>(fn.getLoc());
+      ruleBuilder.create<enzyme::CustomReverseRuleAugmentedPrimalOp>(
+          fn.getLoc());
   augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
   for (Block &b : augmentedPrimal.getBody()) {
     if (b.getNumSuccessors() == 0) {

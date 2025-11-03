@@ -372,13 +372,13 @@ struct DifferentiatePass
     assert(fn);
     if (CI.getActivity().size() != fn.getNumArguments()) {
       llvm::errs() << "Incorrect number of argument activities on autodiff op"
-                   << "CI: " << CI << ", expected " << fn.getNumArguments()
+                   << " CI: " << CI << ", expected " << fn.getNumArguments()
                    << " found " << CI.getActivity().size() << "\n";
       return failure();
     }
     if (CI.getRetActivity().size() != fn.getNumResults()) {
       llvm::errs() << "Incorrect number of result activities on autodiff op"
-                   << "CI: " << CI << ", expected " << fn.getNumResults()
+                   << " CI: " << CI << ", expected " << fn.getNumResults()
                    << " found " << CI.getRetActivity().size() << "\n";
       return failure();
     }
