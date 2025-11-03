@@ -6405,7 +6405,8 @@ public:
       return;
 
     bool useConstantFallback =
-        DifferentialUseAnalysis::callShouldNotUseDerivative(gutils, call);
+        DifferentialUseAnalysis::callShouldNotUseDerivative(
+            gutils, call, QueryType::Primal, nullptr);
     if (!useConstantFallback) {
       if (gutils->isConstantInstruction(&call) &&
           gutils->isConstantValue(&call)) {

@@ -150,13 +150,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
-        if (Function *recvfn = called->getParent()->getFunction("PMPI_Wait")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        }
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Wait")) {
+        if (Function *recvfn = called->getParent()->getFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Wait"))) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
@@ -224,8 +219,11 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                          /*status*/ IRBuilder<>(gutils->inversionAllocs)
                              .CreateAlloca(statusType)};
         FunctionCallee waitFunc = nullptr;
-        for (auto name : {"PMPI_Wait", "MPI_Wait"})
-          if (Function *recvfn = called->getParent()->getFunction(name)) {
+        for (auto name : {
+                 "MPI_Wait",
+             })
+          if (Function *recvfn = called->getParent()->getFunction(
+                  getRenamedPerCallingConv(called->getName(), name))) {
             auto statusArg = recvfn->arg_end();
             statusArg--;
             if (statusArg->getType()->isIntegerTy())
@@ -240,7 +238,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
             types[i] = args[i]->getType();
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
-          waitFunc = called->getParent()->getOrInsertFunction("MPI_Wait", FT);
+          waitFunc = called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Wait"), FT);
         }
         assert(waitFunc);
 
@@ -428,7 +427,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
       Function *dwait = getOrInsertDifferentialMPI_Wait(
-          *called->getParent(), types, call.getOperand(0)->getType());
+          *called->getParent(), types, call.getOperand(0)->getType(),
+          called->getName());
 
       // Need to preserve the shadow Request (operand 0 in wait).
       // However, this doesn't end up preserving
@@ -586,8 +586,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *types[sizeof(args) / sizeof(*args) - 1];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
-      Function *dwait = getOrInsertDifferentialMPI_Wait(*called->getParent(),
-                                                        types, req->getType());
+      Function *dwait = getOrInsertDifferentialMPI_Wait(
+          *called->getParent(), types, req->getType(), called->getName());
       // Need to preserve the shadow Request (operand 6 in isend/irecv), which
       // becomes operand 0 for iwait. However, this doesn't end up preserving
       // the underlying buffers for the adjoint. To remedy, force inline the
@@ -676,6 +676,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
+      Value *shadowOrig = shadow;
       if (shadow->getType()->isIntegerTy())
         shadow =
             Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
@@ -683,13 +684,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
       if (called->getContext().supportsTypedPointers()) {
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        } else if (Function *recvfn =
-                       called->getParent()->getFunction("PMPI_Recv")) {
+        if (Function *recvfn = called->getParent()->getFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Recv"))) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
@@ -725,7 +721,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       if (forwardMode) {
         Value *args[] = {
-            /*buf*/ shadow,
+            /*buf*/ shadowOrig,
             /*count*/ count,
             /*datatype*/ datatype,
             /*dest*/ src,
@@ -783,7 +779,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           Builder2, /*lookup*/ true);
 
       auto fcall = Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Recv", FT), args);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Recv"), FT),
+          args);
       fcall->setCallingConv(call.getCallingConv());
 
       DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
@@ -815,9 +813,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow =
-            Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(1));
       if (!forwardMode)
@@ -863,7 +858,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
       auto fcall = Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Send", FT), args, Defs);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Send"), FT),
+          args, Defs);
       fcall->setCallingConv(call.getCallingConv());
 
       auto dst_arg =
@@ -1034,8 +1031,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Reduce"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, set shadow(buffer) = intermediate [memcpy]
@@ -1293,8 +1291,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Bcast"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -1487,8 +1486,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Allreduce", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Allreduce"),
+                FT),
+            args, BufferDefs);
       }
 
       // 3. Zero diff(recvbuffer) [memset to 0]
@@ -1661,8 +1662,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Scatter", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Scatter"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -1907,8 +1909,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Gather", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Gather"), FT),
+            args, BufferDefs);
       }
 
       // 3. Zero diff(recvbuffer) [memset to 0]
@@ -2105,9 +2108,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           types[i] = args[i]->getType();
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        Builder2.CreateCall(called->getParent()->getOrInsertFunction(
-                                "MPI_Reduce_scatter_block", FT),
-                            args, BufferDefs);
+        Builder2.CreateCall(
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(),
+                                         "MPI_Reduce_scatter_block"),
+                FT),
+            args, BufferDefs);
       }
 
       // 3. zero diff(recvbuffer) [memset to 0]
@@ -2189,7 +2195,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       FunctionType *FT = FunctionType::get(call.getType(), types, false);
       Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Comm_free", FT), args);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Comm_free"), FT),
+          args);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
