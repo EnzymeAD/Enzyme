@@ -363,8 +363,8 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   auto customRuleName = name + "_reverse_rule";
   SmallVector<char> nameBuf;
 
-  auto ruleNameAttr = StringAttr::get(
-      fn.getContext(), customRuleName.toStringRef(nameBuf));
+  auto ruleNameAttr =
+      StringAttr::get(fn.getContext(), customRuleName.toStringRef(nameBuf));
 
   SmallVector<Type> argTys(
       cast<FunctionType>(fn.getFunctionType()).getInputs().begin(),
@@ -380,13 +380,16 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   OpBuilder ruleBuilder(ruleBody, ruleBody->begin());
 
-  SmallVector<Type> revInputTypes, revOutputTypes, primalInputTypes, primalOutputTypes;
+  SmallVector<Type> revInputTypes, revOutputTypes, primalInputTypes,
+      primalOutputTypes;
 
-  auto revFuncType = FunctionType::get(fn.getContext(), revInputTypes, revOutputTypes);
-  auto primalFuncType = FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
+  auto revFuncType =
+      FunctionType::get(fn.getContext(), revInputTypes, revOutputTypes);
+  auto primalFuncType =
+      FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
 
-  auto reverse =
-      ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(fn.getLoc(), revFuncType);
+  auto reverse = ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(
+      fn.getLoc(), revFuncType);
   ruleBuilder.create<enzyme::YieldOp>(fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
