@@ -123,7 +123,7 @@ void batchCloneBlock(
     for (auto opValue : src.getOperands())
       operands.push_back(mapper.lookup(opValue));
 
-    if (withoutTerminator && src->hasTrait<OpTrait::IsTerminator>()) {
+    if (withoutTerminator && src.hasTrait<OpTrait::IsTerminator>()) {
       // map the operands and the results
       for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
         mapper.map(src.getResult(i), operands[i]);
