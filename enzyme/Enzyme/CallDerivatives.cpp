@@ -856,11 +856,11 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *args[] = {shadow, count, datatype, source, tag, comm};
 
       auto Defs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-             ValueType::Primal, ValueType::Primal, ValueType::Primal,
-             ValueType::None},
-            Builder2, /*lookup*/ !forwardMode);
+          &call,
+          {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+           ValueType::Primal, ValueType::Primal, ValueType::Primal,
+           ValueType::None},
+          Builder2, /*lookup*/ !forwardMode);
 
       Type *types[sizeof(args) / sizeof(*args)];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
