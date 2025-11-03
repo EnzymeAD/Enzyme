@@ -386,21 +386,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   ruleBuilder.setInsertionPoint(reverse);
 
-  // FunctionOpInterface newF =
-  //     cast<FunctionOpInterface>(fn->cloneWithoutRegions());
-  // SymbolTable::setSymbolName(
-  //     newF, StringAttr::get(fn->getContext(), name + "_primal"));
-
-  // FunctionOpInterface newFRev =
-  //     cast<FunctionOpInterface>(fn->cloneWithoutRegions());
-  // SymbolTable::setSymbolName(
-  //     newFRev, StringAttr::get(fn->getContext(), name + "_reverse"));
-  //
-  // cloneInto(&fn.getFunctionBody(), &newF.getFunctionBody(), originalToNew,
-  //           originalToNewOps);
-  //
-  // llvm::errs() << "fn = " << newF << "\n";
-
   auto newFunc = cast<FunctionOpInterface>(fn->cloneWithoutRegions());
   cloneInto(&fn.getFunctionBody(), &newFunc.getFunctionBody(), originalToNew,
             originalToNewOps);
@@ -416,11 +401,10 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
     newArgTys.push_back(arg.getType());
     if (act == DIFFE_TYPE::DUP_ARG) {
       numDup++;
+      auto shadowType = cast<AutoDiffTypeInterface>(arg.getType()).getShadowType(width);
       auto shadow = fnEntry->insertArgument(arg.getArgNumber() + numDup,
-                                            arg.getType(), // shadow
-                                            arg.getLoc());
-      // argTys.insert(arg.getArgNumber() + numDup, arg.getType());
-      newArgTys.push_back(arg.getType());
+                                            shadowType, arg.getLoc());
+      newArgTys.push_back(shadowType);
       invertedPointers.map(arg, shadow);
     }
   }

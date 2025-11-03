@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "Passes/Passes.h"
 #include "Passes/RemovalUtils.h"
 
@@ -116,7 +117,8 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       break;
     case mlir::enzyme::Activity::enzyme_dup:
       primalArgTypes.push_back(argTy);
-      primalArgTypes.push_back(argTy);
+      primalArgTypes.push_back(
+          cast<AutoDiffTypeInterface>(argTy).getShadowType(/*width*/ 1));
       break;
     default:
       llvm_unreachable("todo");

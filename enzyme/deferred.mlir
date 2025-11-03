@@ -31,7 +31,7 @@ module {
     %0 = "enzyme.init"() : () -> !enzyme.Cache<f32>
     %1 = "enzyme.init"() : () -> !enzyme.Cache<f32>
 
-    enzyme.augmented_primal {
+    enzyme.custom_reverse_rule.augmented_primal {
     ^bb0(%a: f32, %b: f32):
       "enzyme.push"(%0, %a) : (!enzyme.Cache<f32>, f32) -> ()
       "enzyme.push"(%1, %b) : (!enzyme.Cache<f32>, f32) -> ()
@@ -41,7 +41,7 @@ module {
       enzyme.yield %res : f32
     }
 
-    enzyme.reverse {
+    enzyme.custom_reverse_rule.reverse {
     ^bb0(%dres: f32):
       %a = "enzyme.pop"(%0) : (!enzyme.Cache<f32>) -> f32
       %b = "enzyme.pop"(%1) : (!enzyme.Cache<f32>) -> f32
@@ -74,13 +74,13 @@ module {
 
   enzyme.custom_reverse_rule @exp_f32 {
     %cache = "enzyme.init"() : () -> !enzyme.Cache<f32>
-    enzyme.augmented_primal {
+    enzyme.custom_reverse_rule.augmented_primal {
     ^bb0(%arg0: f32):
       %res = math.exp %arg0 : f32
       "enzyme.push"(%cache, %res) : (!enzyme.Cache<f32>, f32) -> ()
       enzyme.yield %res : f32
     }
-    enzyme.reverse {
+    enzyme.custom_reverse_rule.reverse {
     ^bb0(%dres: f32):
       %res = "enzyme.pop"(%cache) : (!enzyme.Cache<f32>) -> (f32)
       %darg0 = arith.mulf %dres, %res : f32
@@ -91,6 +91,28 @@ module {
       activity=[#enzyme<activity enzyme_active>],
       ret_activity=[#enzyme<activity enzyme_active>],
       function_type = (f32) -> (f32)
+  }
+
+  func.func @f_dup(%a: !llvm.ptr) -> f32 {
+    %0 = llvm.load %a : !llvm.ptr -> f32
+    return %0 : f32
+  }
+
+  func.func @ff_dup(%a: !llvm.ptr, %b: !llvm.ptr) -> f32 {
+    %r, %tape = enzyme.autodiff_split_mode.primal @f_dup(%a, %b) {
+      activity=[#enzyme<activity enzyme_dup>],
+      ret_activity=[#enzyme<activity enzyme_active>]
+    } : (!llvm.ptr, !llvm.ptr) -> (f32, !enzyme.Tape)
+
+    //
+
+    %dres = arith.constant 1.0 : f32
+    enzyme.autodiff_split_mode.reverse @f_dup(%dres, %tape) {
+      activity=[#enzyme<activity enzyme_dup>],
+      ret_activity=[#enzyme<activity enzyme_active>]
+    } : (f32, !enzyme.Tape) -> ()
+
+    return %r : f32
   }
 
   // TODO: split mode is implemented using custom_reverse_rule + AD
