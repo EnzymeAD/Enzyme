@@ -708,5 +708,134 @@ public:
   }
 };
 
+void removalBlockExplore(Block *block, IRMapping &mapping,
+                         PatternRewriter &rewriter,
+                         llvm::SetVector<Value> &gradients,
+                         llvm::MapVector<Value, CacheInfo> &caches);
+
+template <typename FinalClass, typename OpName>
+struct IfLikeEnzymeOpsRemover
+    : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
+  LogicalResult removeEnzymeOps(Operation *op,
+                                PatternRewriter &rewriter) const {
+    auto ifOp = cast<OpName>(op);
+    // Gradients:
+    //
+    //  For each set in a branch, we instead set after the if by using the
+    //  return value.
+    //
+    //  if %pred {
+    //    enzyme.set %grad, %2
+    //  } else {
+    //  }
+    //
+    //  %0 = enzyme.get %grad
+    //  %1 = if %pred {
+    //    return %2
+    //  } else {
+    //    return %0
+    //  }
+    //  enzyme.set %grad, %1
+    //
+    //  For each get in a branch, we get before and use that instead of the
+    //  get.
+
+    // Caches:
+    //
+    // For each push, push after the if instead add a dummy value in the other
+    // branch.
+    //
+    // For each pop in the reverse if, pop before the if instead of inside a
+    // branch.
+
+    Block *trueBlock = FinalClass::getThenBlock(ifOp, rewriter),
+          *falseBlock = FinalClass::getElseBlock(ifOp, rewriter);
+
+    // Gradients whose value is set in either branches.
+    llvm::SetVector<Value> gradients;
+
+    // We assume pushes are exclusive.
+    llvm::MapVector<Value, CacheInfo> pushedCaches;
+
+    // Grad to value
+    IRMapping trueMapping, falseMapping;
+
+    removalBlockExplore(trueBlock, trueMapping, rewriter, gradients,
+                        pushedCaches);
+    removalBlockExplore(falseBlock, falseMapping, rewriter, gradients,
+                        pushedCaches);
+
+    if (gradients.empty() && pushedCaches.empty())
+      return success();
+
+    Operation *trueTerm = trueBlock->getTerminator();
+    Operation *falseTerm = falseBlock->getTerminator();
+
+    for (auto grad : gradients) {
+      auto trueValue = trueMapping.lookupOrNull(grad);
+      if (!trueValue) {
+        trueValue = enzyme::GetOp::create(
+            rewriter, grad.getLoc(),
+            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
+      }
+      trueTerm->insertOperands(trueTerm->getNumOperands(),
+                               ValueRange(trueValue));
+
+      auto falseValue = falseMapping.lookupOrNull(grad);
+      if (!falseValue) {
+        falseValue = enzyme::GetOp::create(
+            rewriter, grad.getLoc(),
+            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
+      }
+      falseTerm->insertOperands(falseTerm->getNumOperands(),
+                                ValueRange(falseValue));
+    }
+
+    for (auto &[pushedValue, info] : pushedCaches) {
+      Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
+                                              pushedValue.getType());
+
+      Value trueValue =
+          pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
+      Value falseValue =
+          pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
+
+      trueTerm->insertOperands(trueTerm->getNumOperands(),
+                               ValueRange(trueValue));
+      falseTerm->insertOperands(falseTerm->getNumOperands(),
+                                ValueRange(falseValue));
+    }
+
+    OpName newIf =
+        FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
+
+    size_t idx = ifOp->getNumResults();
+    for (auto grad : gradients) {
+      enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
+                            newIf->getResult(idx));
+      idx++;
+    }
+
+    for (auto &[pushedValue, info] : pushedCaches) {
+      enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
+                             info.initOp.getResult(), newIf->getResult(idx));
+      rewriter.eraseOp(info.pushOp);
+
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+      auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                          info.popOp.getResult().getType(),
+                                          info.popOp.getCache());
+      rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+      rewriter.eraseOp(info.popOp);
+
+      idx++;
+    }
+
+    return success();
+  }
+};
+
 } // namespace enzyme
 } // namespace mlir

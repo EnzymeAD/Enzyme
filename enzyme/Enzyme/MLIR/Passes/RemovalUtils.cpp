@@ -22,6 +22,68 @@ using namespace mlir::enzyme;
 
 #define DEBUG_TYPE "enzyme-mincut"
 
+void mlir::enzyme::removalBlockExplore(
+    Block *block, IRMapping &mapping, PatternRewriter &rewriter,
+    llvm::SetVector<Value> &gradients,
+    llvm::MapVector<Value, CacheInfo> &caches) {
+  for (auto it = block->begin(), e = block->end(); it != e;) {
+    Operation *op = &*it;
+
+    if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
+      auto grad = setOp.getGradient();
+      auto value = setOp.getValue();
+      mapping.map(grad, value);
+      gradients.insert(grad);
+    }
+
+    if (auto getOp = dyn_cast<enzyme::GetOp>(op)) {
+      auto grad = getOp.getGradient();
+      Value value = mapping.lookupOrNull(getOp.getGradient());
+      if (!value) {
+        value = enzyme::GetOp::create(rewriter, getOp->getLoc(),
+                                      getOp.getResult().getType(), grad);
+        mapping.map(grad, value);
+      }
+      rewriter.replaceAllUsesWith(getOp.getResult(), value);
+    }
+
+    if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
+      CacheInfo info(pushOp.getCache());
+
+      Value pushedValue = info.pushedValue();
+
+      // Then we can push the value before the if, if it is defined before the
+      // if
+      if (pushedValue.getParentBlock() != block) {
+        enzyme::PushOp::create(rewriter, pushOp->getLoc(), pushOp.getCache(),
+                               pushedValue);
+
+        ++it; // Increment iterator to allow in place deletion
+        rewriter.eraseOp(pushOp);
+
+        // Move the pop before the other if
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+        auto newPop =
+            enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                  pushedValue.getType(), info.popOp.getCache());
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+        rewriter.eraseOp(info.popOp);
+
+        continue;
+      }
+
+      if (caches.contains(pushedValue)) {
+        info = info.merge(caches.lookup(pushedValue), rewriter);
+      }
+      caches[pushedValue] = info;
+    }
+
+    ++it;
+  }
+}
+
 typedef llvm::PointerUnion<Operation *, Value> Node;
 
 void dump(const Node &n) {
