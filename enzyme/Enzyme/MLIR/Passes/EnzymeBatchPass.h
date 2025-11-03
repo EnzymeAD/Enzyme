@@ -119,8 +119,9 @@ LogicalResult batchOperation(
 
 // instead of inserting a call op, we will inline each operation directly
 // into the caller
-void batchOperationInline(PatternRewriter &rewriter, enzyme::BatchOp batchOp,
-                          FunctionOpInterface func) {
+inline void batchOperationInline(PatternRewriter &rewriter,
+                                 enzyme::BatchOp batchOp,
+                                 FunctionOpInterface func) {
   auto &origRegion = func.getFunctionBody();
   auto &origBlock = origRegion.front();
 
