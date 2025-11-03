@@ -76,7 +76,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
           Value *tysize =
               MPI_TYPE_SIZE(gutils->getNewFromOriginal(call.getOperand(2)),
-                            BuilderZ, call.getType());
+                            BuilderZ, call.getType(), called);
 
           auto len_arg = BuilderZ.CreateZExtOrTrunc(
               gutils->getNewFromOriginal(call.getOperand(1)),
@@ -213,7 +213,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         assert(shouldFree());
 
         assert(tysize);
-        tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType());
+        tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType(), called);
 
         Value *args[] = {/*req*/ req,
                          /*status*/ IRBuilder<>(gutils->inversionAllocs)
@@ -750,7 +750,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           /*status*/
           IRBuilder<>(gutils->inversionAllocs).CreateAlloca(statusType)};
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       auto len_arg = Builder2.CreateZExtOrTrunc(
           args[1], Type::getInt64Ty(call.getContext()));
@@ -868,7 +868,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
       auto len_arg = Builder2.CreateZExtOrTrunc(
           args[1], Type::getInt64Ty(call.getContext()));
-      auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
       len_arg =
           Builder2.CreateMul(len_arg,
                              Builder2.CreateZExtOrTrunc(
@@ -962,8 +962,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       auto len_arg = Builder2.CreateZExtOrTrunc(
           count, Type::getInt64Ty(call.getContext()));
@@ -1199,7 +1199,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1224,7 +1224,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
@@ -1452,7 +1452,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
@@ -1591,8 +1591,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1690,7 +1690,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         recvlen_arg = Builder2.CreateMul(
             recvlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType()),
+                MPI_COMM_SIZE(comm, Builder2, root->getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
@@ -1796,8 +1796,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1865,7 +1865,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         sendlen_arg = Builder2.CreateMul(
             sendlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType()),
+                MPI_COMM_SIZE(comm, Builder2, root->getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
@@ -2033,7 +2033,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -2128,7 +2128,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         recvlen_arg = Builder2.CreateMul(
             recvlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, call.getType()),
+                MPI_COMM_SIZE(comm, Builder2, call.getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
         auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
