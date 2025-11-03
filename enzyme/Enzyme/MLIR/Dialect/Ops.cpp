@@ -530,8 +530,8 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // AutoDiffDeferredOp
 //===----------------------------------------------------------------------===//
 
-LogicalResult
-AutoDiffDeferredPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =
@@ -543,7 +543,7 @@ AutoDiffDeferredPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-LogicalResult AutoDiffDeferredReverseOp::verifySymbolUses(
+LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.

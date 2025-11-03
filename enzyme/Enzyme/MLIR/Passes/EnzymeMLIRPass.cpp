@@ -351,12 +351,12 @@ struct DifferentiatePass
   }
 
   LogicalResult HandleSplitModeAutoDiff(SymbolTableCollection &symbolTable,
-                                        enzyme::AutoDiffDeferredPrimalOp CI) {
+                                        enzyme::AutoDiffSplitModePrimalOp CI) {
     auto tape = CI.getTape();
 
     SmallVector<Operation *> reverseCalls;
     for (auto user : tape.getUsers()) {
-      if (isa<enzyme::AutoDiffDeferredReverseOp>(user))
+      if (isa<enzyme::AutoDiffSplitModeReverseOp>(user))
         reverseCalls.push_back(user);
       else {
         user->emitError() << "todo: unsupported tape usage";
@@ -497,7 +497,7 @@ struct DifferentiatePass
     tape = primalCall.getTape();
     for (auto tapeUser : tape.getUsers()) {
       if (auto revCall =
-              dyn_cast<enzyme::AutoDiffDeferredReverseOp>(tapeUser)) {
+              dyn_cast<enzyme::AutoDiffSplitModeReverseOp>(tapeUser)) {
 
         OpBuilder builder(revCall);
         auto newRevCall = builder.create<enzyme::CallCustomReverseOp>(
@@ -575,7 +575,7 @@ struct DifferentiatePass
 
     {
       SmallVector<Operation *> toLower;
-      op->walk([&](enzyme::AutoDiffDeferredPrimalOp dop) {
+      op->walk([&](enzyme::AutoDiffSplitModePrimalOp dop) {
         auto *symbolOp =
             symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
         auto callableOp = cast<FunctionOpInterface>(symbolOp);
@@ -585,7 +585,7 @@ struct DifferentiatePass
       });
 
       for (auto T : toLower) {
-        if (auto F = dyn_cast<enzyme::AutoDiffDeferredPrimalOp>(T)) {
+        if (auto F = dyn_cast<enzyme::AutoDiffSplitModePrimalOp>(T)) {
           auto res = HandleSplitModeAutoDiff(symbolTable, F);
           if (!res.succeeded()) {
             signalPassFailure();

@@ -208,7 +208,7 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
 
 def AnyTape : Type<CPred<"::llvm::isa<mlir::enzyme::TapeType>($_self)">, "enzyme tape">;
 
-def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
+def AutoDiffSplitModePrimalOp : Enzyme_Op<"autodiff_split_mode.primal",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Runs an augmented primal that can later be used to generate reverse with enzyme.autodiff_deferred_reverse";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
@@ -219,7 +219,7 @@ def AutoDiffDeferredPrimalOp : Enzyme_Op<"autodiff_deferred_primal",
   }];
 }
 
-def AutoDiffDeferredReverseOp : Enzyme_Op<"autodiff_deferred_reverse",
+def AutoDiffSplitModeReverseOp : Enzyme_Op<"autodiff_split_mode.reverse",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Runs the reverse from an enzyme.autodiff_deferred_primal result";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape,
@@ -242,7 +242,10 @@ def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove]> 
   }];
 }
 
-def AugmentedPrimalOp : Enzyme_Op<"augmented_primal", [HasParent<"CustomReverseRuleOp">]> {
+def AugmentedPrimalOp : Enzyme_Op<"augmented_primal", [
+    HasParent<"CustomReverseRuleOp">,
+    AutomaticAllocationScope,
+    AffineScope]> {
   let summary = "Defines the augmented primal for a custom reverse rule";
   let arguments = (ins);
   let regions = (region AnyRegion:$body);
@@ -253,7 +256,10 @@ def AugmentedPrimalOp : Enzyme_Op<"augmented_primal", [HasParent<"CustomReverseR
   }];
 }
 
-def ReverseOp : Enzyme_Op<"reverse", [HasParent<"CustomReverseRuleOp">]> {
+def ReverseOp : Enzyme_Op<"reverse", [
+    HasParent<"CustomReverseRuleOp">,
+    AutomaticAllocationScope,
+    AffineScope]> {
   let summary = "Defined the reverse for a custom rule.";
   let arguments = (ins);
   let regions = (region AnyRegion:$body);
