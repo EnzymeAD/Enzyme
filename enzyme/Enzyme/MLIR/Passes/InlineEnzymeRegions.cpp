@@ -16,6 +16,8 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
@@ -148,11 +150,99 @@ struct InlineEnzymeForwardDiff
 
 // Based on
 // https://github.com/llvm/llvm-project/blob/665da0a1649814471739c41a702e0e9447316b20/mlir/lib/Dialect/GPU/Transforms/KernelOutlining.cpp
+
+/// Identifies operations that are beneficial to sink into kernels. These
+/// operations may not have side-effects, as otherwise sinking (and hence
+/// duplicating them) is not legal.
+static bool isLikelyAnIndexComputation(Operation *op) {
+  return matchPattern(op, m_Constant()) ||
+         isa<memref::DimOp, arith::SelectOp, arith::CmpIOp>(op);
+}
+
+/// For a given operation `op`, computes whether it is beneficial to sink the
+/// operation into the kernel. An operation can be sunk if doing so does not
+/// introduce new kernel arguments. Whether a value is already available in the
+/// kernel (and hence does not introduce new arguments) is checked by
+/// querying `existingDependencies` and `availableValues`.
+/// If an operand is not yet available, we recursively check whether it can be
+/// made available by siking its defining op.
+/// Operations that are indentified for sinking are added to `beneficiaryOps` in
+/// the order they should appear in the kernel. Furthermore, `availableValues`
+/// is updated with results that will be available after sinking the identified
+/// ops.
+static bool extractBeneficiaryOps(
+    Operation *op, const SetVector<Value> &existingDependencies,
+    SetVector<Operation *> &beneficiaryOps,
+    llvm::SmallPtrSetImpl<Value> &availableValues,
+    llvm::function_ref<bool(Operation *)> isSinkingBeneficiary) {
+  if (beneficiaryOps.count(op))
+    return true;
+
+  if (!isSinkingBeneficiary(op))
+    return false;
+
+  for (Value operand : op->getOperands()) {
+    // It is already visible in the kernel, keep going.
+    if (availableValues.count(operand))
+      continue;
+    // Else check whether it can be made available via sinking or already is a
+    // dependency.
+    Operation *definingOp = operand.getDefiningOp();
+    if ((!definingOp || !extractBeneficiaryOps(definingOp, existingDependencies,
+                                               beneficiaryOps, availableValues,
+                                               isSinkingBeneficiary)) &&
+        !existingDependencies.count(operand))
+      return false;
+  }
+  // We will sink the operation, mark its results as now available.
+  beneficiaryOps.insert(op);
+  for (Value result : op->getResults())
+    availableValues.insert(result);
+  return true;
+}
+
+template <typename DiffRegionOp>
+static LogicalResult sinkOperationsIntoRegionOp(
+    DiffRegionOp regionOp,
+    function_ref<bool(Operation *)> isSinkingBeneficiary) {
+  assert(isSinkingBeneficiary);
+  Region &body = regionOp.getBody();
+
+  SetVector<Value> sinkCandidates;
+  getUsedValuesDefinedAbove(body, sinkCandidates);
+
+  SetVector<Operation *> toBeSunk;
+  llvm::SmallPtrSet<Value, 4> availableValues;
+  for (Value operand : sinkCandidates) {
+    Operation *operandOp = operand.getDefiningOp();
+    if (!operandOp)
+      continue;
+    extractBeneficiaryOps(operandOp, sinkCandidates, toBeSunk, availableValues,
+                          isSinkingBeneficiary);
+  }
+
+  // Insert operations so that the defs get cloned before uses.
+  IRMapping map;
+  OpBuilder builder(body);
+  for (Operation *op : toBeSunk) {
+    Operation *clonedOp = builder.clone(*op, map);
+    // Only replace uses within the launch op.
+    for (auto pair : llvm::zip(op->getResults(), clonedOp->getResults()))
+      replaceAllUsesInRegionWith(std::get<0>(pair), std::get<1>(pair), body);
+  }
+  return success();
+}
+
 template <typename DiffRegionOp>
 static FailureOr<func::FuncOp> outlineAutoDiffFunc(
     DiffRegionOp op, StringRef funcName, SmallVectorImpl<Value> &inputs,
     SmallVectorImpl<enzyme::Activity> &argActivities, OpBuilder &builder) {
   Region &autodiffRegion = op.getBody();
+  // Sink constants into the region (TODO consider making this its own pass)
+  if (failed(sinkOperationsIntoRegionOp(op, isLikelyAnIndexComputation))) {
+    return failure();
+  }
+
   SmallVector<Type> argTypes(autodiffRegion.getArgumentTypes()), resultTypes;
   SmallVector<Location> argLocs(autodiffRegion.getNumArguments(), op.getLoc());
   // Infer the result types from an enzyme.yield op
