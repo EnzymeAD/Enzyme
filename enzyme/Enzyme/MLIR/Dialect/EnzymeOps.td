@@ -873,7 +873,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     and the 0th operand in results is the updated RNG state.
 
     Optional HMC-specific parameters:
-    - mass: Mass matrix (identity assumed if not provided)
+    - inverse_mass_matrix: Inverse mass matrix (identity assumed if not provided).
     - step_size: Leapfrong integration step size
     - num_steps: Number of leapfrog steps
     - initial_momentum: deterministic initial momentum (debug)
@@ -885,7 +885,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
     AddressArrayAttr:$selection,
-    Optional<AnyType>:$mass,
+    Optional<AnyType>:$inverse_mass_matrix,
     Optional<AnyType>:$step_size,
     Optional<AnyType>:$num_steps,
     Optional<AnyType>:$initial_momentum,
@@ -896,7 +896,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
 
   let assemblyFormat = [{
     `algorithm` `=` $alg $fn `(` $inputs `)` `given` $original_trace
-    (`mass` `=` $mass^ `:` type($mass))?
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^ `:` type($inverse_mass_matrix))?
     (`step_size` `=` $step_size^ `:` type($step_size))?
     (`num_steps` `=` $num_steps^ `:` type($num_steps))?
     (`initial_momentum` `=` $initial_momentum^ `:` type($initial_momentum))?
