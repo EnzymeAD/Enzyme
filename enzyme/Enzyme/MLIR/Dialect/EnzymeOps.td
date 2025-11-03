@@ -905,12 +905,19 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
 }
 
 def DotOp : Enzyme_Op<"dot", [Pure]> {
-  let summary = "Compute dot product of two vectors";
+  let summary = "Computes a general dot product operation";
   let description = [{
-    Computes the dot product of two 1D tensors (vectors).
+    Computes a general dot product operation. To be lowered to `stablehlo.dot_general`.
   }];
 
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
+  let arguments = (ins
+    AnyRankedTensor:$lhs,
+    AnyRankedTensor:$rhs,
+    DenseI64ArrayAttr:$lhs_batching_dimensions,
+    DenseI64ArrayAttr:$rhs_batching_dimensions,
+    DenseI64ArrayAttr:$lhs_contracting_dimensions,
+    DenseI64ArrayAttr:$rhs_contracting_dimensions
+  );
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
