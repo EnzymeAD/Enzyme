@@ -133,7 +133,7 @@ public:
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
-                             llvm::Type *intType, llvm::Function *caller)) {
+                             llvm::Type *intType, llvm::Function *caller) {
     using namespace llvm;
 
     if (DT->getType()->isIntegerTy())
@@ -183,7 +183,7 @@ public:
                                 Attribute::AttrKind::WillReturn);
     auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            getRenamedPerCallingConv("MPI_Type_size", caller->getName()), FT,
+            getRenamedPerCallingConv(caller->getName(), "MPI_Type_size"), FT,
             AL),
         args);
 #if LLVM_VERSION_MAJOR >= 16
@@ -198,7 +198,7 @@ public:
   // To be double-checked against the functionality needed and the respective
   // implementation in Adjoint-MPI
   llvm::Value *MPI_COMM_RANK(llvm::Value *comm, llvm::IRBuilder<> &B,
-                             llvm::Type *rankTy, llvm::Function *caller)) {
+                             llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
     Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
@@ -225,7 +225,7 @@ public:
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            getRenamedPerCallingConv("MPI_Comm_rank", caller->getName()), FT,
+            getRenamedPerCallingConv(caller->getName(), "MPI_Comm_rank"), FT,
             AL),
         args);
     return B.CreateLoad(rankTy, alloc);
@@ -259,7 +259,7 @@ public:
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            getRenamedPerCallingConv("MPI_Comm_size", caller->getName()), FT,
+            getRenamedPerCallingConv(caller->getName(), "MPI_Comm_size"), FT,
             AL),
         args);
     return B.CreateLoad(rankTy, alloc);
