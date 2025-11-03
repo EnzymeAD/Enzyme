@@ -363,7 +363,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   auto customRuleName = name + "_reverse_rule";
   SmallVector<char> nameBuf;
 
-  auto ruleNameAttr = FlatSymbolRefAttr::get(
+  auto ruleNameAttr = StringAttr::get(
       fn.getContext(), customRuleName.toStringRef(nameBuf));
 
   SmallVector<Type> argTys(
@@ -414,8 +414,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       FunctionType::get(newFunc.getContext(), newArgTys,
                         cast<FunctionType>(fn.getFunctionType()).getResults());
   newFunc.setFunctionTypeAttr(TypeAttr::get(newFuncType));
-
-  llvm::errs() << "new func = " << newFunc << "\n";
 
   MGradientUtilsReverse *gutils = new MGradientUtilsReverse(
       *this, newFunc, fn, TA, invertedPointers, returnPrimalsP, returnShadowsP,
@@ -490,5 +488,5 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   newFunc->erase();
 
-  return ruleNameAttr;
+  return FlatSymbolRefAttr::get(ruleNameAttr);
 }

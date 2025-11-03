@@ -231,14 +231,14 @@ def AutoDiffSplitModeReverseOp : Enzyme_Op<"autodiff_split_mode.reverse",
   }];
 }
 
-def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove]> {
+def CustomReverseRuleOp : Enzyme_Op<"custom_reverse_rule", [IsolatedFromAbove, Symbol]> {
   let summary = "Parent operation for custom reverse rule declaration.";
-  let arguments = (ins FlatSymbolRefAttr:$name, TypeAttrOf<FunctionType>:$function_type, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttrOf<FunctionType>:$function_type, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity);
   let regions = (region AnyRegion:$body);
   let results = (outs);
 
   let assemblyFormat = [{
-    $name $body attr-dict-with-keyword
+    $sym_name $body attr-dict-with-keyword
   }];
 }
 
@@ -269,9 +269,8 @@ def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
   }];
 }
 
-def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal",
-    // [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-    []> {
+def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs);
   let results = (outs Variadic<AnyType>:$outputs, AnyTape:$tape);
@@ -281,9 +280,8 @@ def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal",
   }];
 }
 
-def CallCustomReverseOp : Enzyme_Op<"call_custom_reverse",
-    // [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-    []> {
+def CallCustomReverseOp : Enzyme_Op<"call_custom_reverse", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, AnyTape:$tape);
   let results = (outs Variadic<AnyType>:$outputs);

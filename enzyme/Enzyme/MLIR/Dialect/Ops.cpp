@@ -527,7 +527,7 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 //===----------------------------------------------------------------------===//
-// AutoDiffDeferredOp
+// AutoDiffSplitModePrimalOp
 //===----------------------------------------------------------------------===//
 
 LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
@@ -543,6 +543,10 @@ LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModeReverseOp
+//===----------------------------------------------------------------------===//
+
 LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
@@ -555,6 +559,43 @@ LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// CallAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CallAugmentedPrimalOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleOp
+//===----------------------------------------------------------------------===//
+
+// mlir::StringAttr 
+
+//===----------------------------------------------------------------------===//
+// CallCustomReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CallCustomReverseOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  return success();
+}
+
 
 //===----------------------------------------------------------------------===//
 // BroadcastOp
