@@ -34,7 +34,8 @@ mlir::TensorType applyBatchSizes(mlir::Type Ty,
 FunctionOpInterface batchCloneFunction(
     OpBuilder &builder, FunctionOpInterface F, Twine name,
     llvm::ArrayRef<int64_t> batchSizes,
-    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator);
 
 void batchCloneBlock(
     OpBuilder &builder, Block *blk, IRMapping &mapper,

@@ -100,7 +100,8 @@ LogicalResult handleCallOp(
 void batchCloneBlock(
     OpBuilder &builder, Block *blk, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
-    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator) {
   for (auto &src : *blk) {
     if (auto callOp = dyn_cast<func::CallOp>(&src)) {
       if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes,
@@ -121,6 +122,13 @@ void batchCloneBlock(
     operands.reserve(src.getNumOperands());
     for (auto opValue : src.getOperands())
       operands.push_back(mapper.lookup(opValue));
+
+    if (withoutTerminator && src->hasTrait<OpTrait::IsTerminator>()) {
+      // map the operands and the results
+      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
+        mapper.map(src.getResult(i), operands[i]);
+      continue;
+    }
 
     // Remap the successors.
     successors.reserve(src.getNumSuccessors());
@@ -173,7 +181,8 @@ void batchCloneRegion(
   for (auto &&[blk, newBlk] : llvm::zip(*src, *dest)) {
     IRRewriter::InsertionGuard insertGuard(builder);
     builder.setInsertionPointToEnd(&newBlk);
-    batchCloneBlock(builder, blk, mapper, batchSizes, batchedFunctionCache);
+    batchCloneBlock(builder, &blk, mapper, batchSizes, batchedFunctionCache,
+                    false);
   }
 }
 
