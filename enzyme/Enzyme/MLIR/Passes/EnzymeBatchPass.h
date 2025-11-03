@@ -130,6 +130,7 @@ inline void batchOperationInline(PatternRewriter &rewriter,
     mapper.map(origBlock.getArguments()[i], batchOp->getOperand(i));
   }
 
+  rewriter.setInsertionPoint(batchOp);
   std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
   batchCloneBlock(rewriter, &origBlock, mapper, batchOp.getBatchShape(),
                   batchedFunctionCache, true);
