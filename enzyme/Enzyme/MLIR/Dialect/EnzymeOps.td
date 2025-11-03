@@ -247,13 +247,11 @@ def CustomReverseRuleAugmentedPrimalOp : Enzyme_Op<"custom_reverse_rule.augmente
     AutomaticAllocationScope,
     AffineScope]> {
   let summary = "Defines the augmented primal for a custom reverse rule";
-  let arguments = (ins);
+  let arguments = (ins TypeAttrOf<FunctionType>:$function_type);
   let regions = (region AnyRegion:$body);
   let results = (outs);
 
-  let assemblyFormat = [{
-    $body attr-dict-with-keyword
-  }];
+  let hasCustomAssemblyFormat = 1;
 }
 
 def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
@@ -261,12 +259,11 @@ def CustomReverseRuleReverseOp : Enzyme_Op<"custom_reverse_rule.reverse", [
     AutomaticAllocationScope,
     AffineScope]> {
   let summary = "Defined the reverse for a custom rule.";
-  let arguments = (ins);
+  let arguments = (ins TypeAttrOf<FunctionType>:$function_type);
   let regions = (region AnyRegion:$body);
   let results = (outs);
-  let assemblyFormat = [{
-    $body attr-dict-with-keyword
-  }];
+
+  let hasCustomAssemblyFormat = 1;
 }
 
 def CallAugmentedPrimalOp : Enzyme_Op<"call_augmented_primal", [

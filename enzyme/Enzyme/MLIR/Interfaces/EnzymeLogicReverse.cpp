@@ -380,8 +380,13 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   OpBuilder ruleBuilder(ruleBody, ruleBody->begin());
 
+  SmallVector<Type> revInputTypes, revOutputTypes, primalInputTypes, primalOutputTypes;
+
+  auto revFuncType = FunctionType::get(fn.getContext(), revInputTypes, revOutputTypes);
+  auto primalFuncType = FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
+
   auto reverse =
-      ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(fn.getLoc());
+      ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(fn.getLoc(), revFuncType);
   ruleBuilder.create<enzyme::YieldOp>(fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
@@ -473,7 +478,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   ruleBuilder.setInsertionPoint(reverse);
   auto augmentedPrimal =
       ruleBuilder.create<enzyme::CustomReverseRuleAugmentedPrimalOp>(
-          fn.getLoc());
+          fn.getLoc(), primalFuncType);
   augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
   for (Block &b : augmentedPrimal.getBody()) {
     if (b.getNumSuccessors() == 0) {
