@@ -836,25 +836,31 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *status = gutils->getNewFromOriginal(call.getOperand(6));
-      if (!forwardMode)
-        status = lookup(status, Builder2);
-
-      Value *args[] = {shadow, count, datatype, source, tag, comm, status};
-
-      auto Defs = gutils->getInvertedBundles(
-          &call,
-          {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
-           ValueType::Primal, ValueType::Primal, ValueType::Primal,
-           ValueType::None},
-          Builder2, /*lookup*/ !forwardMode);
-
       if (forwardMode) {
+        Value *status = gutils->getNewFromOriginal(call.getOperand(6));
+        Value *args[] = {shadow, count, datatype, source, tag, comm, status};
+
+        auto Defs = gutils->getInvertedBundles(
+            &call,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+             ValueType::Primal, ValueType::Primal, ValueType::Primal,
+             ValueType::None},
+            Builder2, /*lookup*/ !forwardMode);
+
         auto callval = call.getCalledOperand();
 
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
       }
+
+      Value *args[] = {shadow, count, datatype, source, tag, comm};
+
+      auto Defs = gutils->getInvertedBundles(
+            &call,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+             ValueType::Primal, ValueType::Primal, ValueType::Primal,
+             ValueType::None},
+            Builder2, /*lookup*/ !forwardMode);
 
       Type *types[sizeof(args) / sizeof(*args)];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
