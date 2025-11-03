@@ -117,6 +117,31 @@ LogicalResult batchOperation(
   return success();
 }
 
+// instead of inserting a call op, we will inline each operation directly
+// into the caller
+void batchOperationInline(PatternRewriter &rewriter, enzyme::BatchOp batchOp,
+                          FunctionOpInterface func) {
+  auto &origRegion = func.getFunctionBody();
+  auto &origBlock = origRegion.front();
+
+  IRMapping mapper;
+  for (int i = 0; i < batchOp->getNumOperands(); i++) {
+    mapper.map(origBlock.getArguments()[i], batchOp->getOperand(i));
+  }
+
+  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
+  batchCloneBlock(rewriter, &origBlock, mapper, batchOp.getBatchShape(),
+                  batchedFunctionCache, true);
+
+  auto origTerm = origBlock.getTerminator();
+  for (auto [i, operand] : llvm::enumerate(origTerm->getOperands())) {
+    auto mappedOperand = mapper.lookup(operand);
+    rewriter.replaceAllUsesWith(batchOp->getResult(i), mappedOperand);
+  }
+  rewriter.eraseOp(batchOp);
+  rewriter.eraseOp(func);
+}
+
 } // namespace batchutils
 } // namespace enzyme
 } // namespace mlir
