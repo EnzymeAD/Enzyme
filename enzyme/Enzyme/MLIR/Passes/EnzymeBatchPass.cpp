@@ -97,6 +97,69 @@ LogicalResult handleCallOp(
   return success();
 }
 
+void batchCloneBlock(
+    OpBuilder &builder, Block *blk, IRMapping &mapper,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator) {
+  for (auto &src : *blk) {
+    if (auto callOp = dyn_cast<func::CallOp>(&src)) {
+      if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes,
+                                 batchedFunctionCache)))
+        continue;
+    }
+
+    if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
+      auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
+      if (res.succeeded())
+        continue;
+    }
+
+    SmallVector<Value, 8> operands;
+    SmallVector<Block *, 2> successors;
+
+    // Remap the operands.
+    operands.reserve(src.getNumOperands());
+    for (auto opValue : src.getOperands())
+      operands.push_back(mapper.lookup(opValue));
+
+    if (withoutTerminator && src.hasTrait<OpTrait::IsTerminator>()) {
+      // map the operands and the results
+      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
+        mapper.map(src.getResult(i), operands[i]);
+      continue;
+    }
+
+    // Remap the successors.
+    successors.reserve(src.getNumSuccessors());
+    for (Block *successor : src.getSuccessors())
+      successors.push_back(mapper.lookup(successor));
+
+    SmallVector<Type> resultTypes(src.getResultTypes().begin(),
+                                  src.getResultTypes().end());
+    for (auto &Ty : resultTypes) {
+      Ty = applyBatchSizes(Ty, batchSizes);
+    }
+
+    Operation *newOp = Operation::create(
+        src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
+        OpaqueProperties(nullptr), successors, src.getNumRegions());
+
+    // Clone the regions.
+    for (auto &&[oldReg, newReg] :
+         llvm::zip(src.getRegions(), newOp->getRegions())) {
+      batchCloneRegion(builder, &oldReg, &newReg, mapper, batchSizes,
+                       batchedFunctionCache);
+    }
+
+    // Remember the mapping of any results.
+    for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
+      mapper.map(src.getResult(i), newOp->getResult(i));
+
+    builder.insert(newOp);
+  }
+}
+
 void batchCloneRegion(
     OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
@@ -118,55 +181,8 @@ void batchCloneRegion(
   for (auto &&[blk, newBlk] : llvm::zip(*src, *dest)) {
     IRRewriter::InsertionGuard insertGuard(builder);
     builder.setInsertionPointToEnd(&newBlk);
-    for (auto &src : blk) {
-      if (auto callOp = dyn_cast<func::CallOp>(&src)) {
-        if (succeeded(handleCallOp(callOp, builder, mapper, batchSizes,
-                                   batchedFunctionCache)))
-          continue;
-      }
-
-      if (auto ifaceOp = dyn_cast<BatchOpInterface>(&src)) {
-        auto res = ifaceOp.createBatch(builder, mapper, batchSizes);
-        if (res.succeeded())
-          continue;
-      }
-
-      SmallVector<Value, 8> operands;
-      SmallVector<Block *, 2> successors;
-
-      // Remap the operands.
-      operands.reserve(src.getNumOperands());
-      for (auto opValue : src.getOperands())
-        operands.push_back(mapper.lookup(opValue));
-
-      // Remap the successors.
-      successors.reserve(src.getNumSuccessors());
-      for (Block *successor : src.getSuccessors())
-        successors.push_back(mapper.lookup(successor));
-
-      SmallVector<Type> resultTypes(src.getResultTypes().begin(),
-                                    src.getResultTypes().end());
-      for (auto &Ty : resultTypes) {
-        Ty = applyBatchSizes(Ty, batchSizes);
-      }
-
-      Operation *newOp = Operation::create(
-          src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
-          OpaqueProperties(nullptr), successors, src.getNumRegions());
-
-      // Clone the regions.
-      for (auto &&[oldReg, newReg] :
-           llvm::zip(src.getRegions(), newOp->getRegions())) {
-        batchCloneRegion(builder, &oldReg, &newReg, mapper, batchSizes,
-                         batchedFunctionCache);
-      }
-
-      // Remember the mapping of any results.
-      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i)
-        mapper.map(src.getResult(i), newOp->getResult(i));
-
-      builder.insert(newOp);
-    }
+    batchCloneBlock(builder, &blk, mapper, batchSizes, batchedFunctionCache,
+                    false);
   }
 }
 
