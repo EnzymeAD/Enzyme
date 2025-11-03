@@ -358,9 +358,11 @@ public:
         rewriter.setInsertionPoint(forOp);
         fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
       }
+      SmallVector<Value> dynamicDims;
       for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
+          dynamicDims.push_back(dim.vval);
         } else {
           newShape.push_back(dim.ival);
         }
@@ -369,21 +371,20 @@ public:
       auto ET = info.cachedType();
       ShapedType NT;
 
+      bool multiDim = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        newShape.append(ST.getShape().begin(), ST.getShape().end());
-        ET = ST.getElementType();
+        if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+              return dim != ShapedType::kDynamic;
+            })) {
+          multiDim = true;
+          newShape.append(ST.getShape().begin(), ST.getShape().end());
+          ET = ST.getElementType();
+        }
       }
 
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
-
-      SmallVector<Value> dynamicDims;
-      for (const auto &dim : fwdNumIters) {
-        if (dim.vval) {
-          dynamicDims.push_back(dim.vval);
-        }
-      }
 
       for (size_t i = fwdNumIters.size(); i < newShape.size(); i++) {
         if (newShape[i] == mlir::ShapedType::kDynamic) {
@@ -454,7 +455,8 @@ public:
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(info.pushOp);
 
-          if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+          auto MT = dyn_cast<MemRefType>(info.cachedType());
+          if (multiDim && MT) {
             auto memref = info.pushOp.getValue();
             auto shape = MT.getShape();
 
@@ -594,9 +596,15 @@ public:
       auto ET = info.cachedType();
       ShapedType NT;
 
+      bool multiDim = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        newShape.append(ST.getShape().begin(), ST.getShape().end());
-        ET = ST.getElementType();
+        if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+              return dim != ShapedType::kDynamic;
+            })) {
+          multiDim = true;
+          newShape.append(ST.getShape().begin(), ST.getShape().end());
+          ET = ST.getElementType();
+        }
       }
 
       auto newType = cacheType == LoopCacheType::TENSOR
@@ -660,7 +668,8 @@ public:
         }
       } else if (cacheType == LoopCacheType::MEMREF) {
 
-        if (auto MT = dyn_cast<MemRefType>(info.cachedType())) {
+        auto MT = dyn_cast<MemRefType>(info.cachedType());
+        if (multiDim && MT) {
           auto shape = MT.getShape();
 
           SmallVector<int64_t> offsets(shape.size() + 1, 0);
