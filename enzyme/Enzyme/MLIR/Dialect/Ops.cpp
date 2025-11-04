@@ -1039,3 +1039,27 @@ LogicalResult MCMCOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// InitTraceOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+struct RemoveUnusedInitTrace : public OpRewritePattern<InitTraceOp> {
+  using OpRewritePattern<InitTraceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(InitTraceOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    return failure();
+  }
+};
+} // namespace
+
+void InitTraceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
+                                              MLIRContext *context) {
+  patterns.add<RemoveUnusedInitTrace>(context);
+}

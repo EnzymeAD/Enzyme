@@ -1,4 +1,4 @@
-// RUN: %eopt --probprog %s | FileCheck %s
+// RUN: %eopt --probprog --canonicalize %s | FileCheck %s
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
@@ -11,6 +11,7 @@ module {
   }
 
   func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>) {
+    %unused = enzyme.initTrace : !enzyme.Trace
     %init_trace = enzyme.initTrace : !enzyme.Trace
 
     %mass = arith.constant dense<[[1.0, 0.0], [0.0, 1.0]]> : tensor<2x2xf64>
