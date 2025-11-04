@@ -436,8 +436,8 @@ public:
                        llvm::ArrayRef<Attribute>(newRetActivityArgs.begin(),
                                                  newRetActivityArgs.end()));
 
-    ForwardDiffOp newOp = rewriter.create<ForwardDiffOp>(
-        uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(),
+    ForwardDiffOp newOp = ForwardDiffOp::create(
+        rewriter, uop.getLoc(), out_ty, uop.getFnAttr(), uop.getInputs(),
         uop.getActivityAttr(), newRetActivity, uop.getWidthAttr(),
         uop.getStrongZeroAttr());
 
@@ -889,9 +889,9 @@ template <> struct ReverseRetOpt<AutoDiffOp>::SourceOpCreator {
                            ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
                            ArrayAttr newInActivity, ArrayAttr newRetActivity) {
 
-    return rewriter.create<AutoDiffOp>(
-        uop.getLoc(), out_ty, uop.getFnAttr(), in_args, newInActivity,
-        newRetActivity, uop.getWidthAttr(), uop.getStrongZeroAttr());
+    return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
+                              in_args, newInActivity, newRetActivity,
+                              uop.getWidthAttr(), uop.getStrongZeroAttr());
   }
 };
 
@@ -902,8 +902,8 @@ template <> struct ReverseRetOpt<AutoDiffRegionOp>::SourceOpCreator {
                                  ArrayAttr newInActivity,
                                  ArrayAttr newRetActivity) {
 
-    auto newOp = rewriter.create<AutoDiffRegionOp>(
-        uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
+    auto newOp = AutoDiffRegionOp::create(
+        rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
     newOp.getBody().takeBody(uop.getBody());
     return newOp;

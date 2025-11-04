@@ -43,7 +43,7 @@ class PointerTypeInterface
 public:
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
                               Location loc) const {
-    return builder.create<LLVM::ZeroOp>(loc, self);
+    return LLVM::ZeroOp::create(builder, loc, self);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -116,17 +116,17 @@ struct LoadOpInterfaceReverse
         Value addrGradient = gutils->popCache(caches.front(), builder);
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient = builder.create<LLVM::LoadOp>(
-              loadOp.getLoc(), iface, addrGradient);
+          Value loadedGradient = LLVM::LoadOp::create(builder, loadOp.getLoc(),
+                                                      iface, addrGradient);
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                   loadedGradient, gradient);
 
-          builder.create<LLVM::StoreOp>(loadOp.getLoc(), addedGradient,
-                                        addrGradient);
+          LLVM::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
+                                addrGradient);
         } else {
-          builder.create<LLVM::AtomicRMWOp>(
-              loadOp.getLoc(), LLVM::AtomicBinOp::fadd, addrGradient, gradient,
-              LLVM::AtomicOrdering::monotonic);
+          LLVM::AtomicRMWOp::create(builder, loadOp.getLoc(),
+                                    LLVM::AtomicBinOp::fadd, addrGradient,
+                                    gradient, LLVM::AtomicOrdering::monotonic);
         }
       }
     }
@@ -170,8 +170,8 @@ struct StoreOpInterfaceReverse
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient = builder.create<LLVM::LoadOp>(
-              storeOp.getLoc(), val.getType(), addrGradient);
+          Value loadedGradient = LLVM::LoadOp::create(
+              builder, storeOp.getLoc(), val.getType(), addrGradient);
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -179,7 +179,7 @@ struct StoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        builder.create<LLVM::StoreOp>(storeOp.getLoc(), zero, addrGradient);
+        LLVM::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient);
       }
     }
 
