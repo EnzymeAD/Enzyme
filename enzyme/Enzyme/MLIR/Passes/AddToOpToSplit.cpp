@@ -94,7 +94,7 @@ void processGenericDuplication(Operation *op, OpBuilder &builder, Location loc,
   auto scope = OpBuilder::InsertionGuard(builder);
 
   builder.setInsertionPointAfter(clonedAddToOp);
-  auto terminator = builder.create<linalg::YieldOp>(loc);
+  auto terminator = linalg::YieldOp::create(builder, loc);
 
   auto operand = clonedAddToOp->getOperand(i);
   auto outputOperand =

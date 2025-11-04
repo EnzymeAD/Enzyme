@@ -42,8 +42,8 @@ SmallVector<Value> applyAffineMap(AffineMap aMap, SmallVector<Value> indices,
   SmallVector<Value> appliedAffineMap;
   for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
     AffineMap subMap = aMap.getSubMap({i});
-    auto mapApplied =
-        builder.create<affine::AffineApplyOp>(loc, subMap, ValueRange(indices));
+    auto mapApplied = affine::AffineApplyOp::create(builder, loc, subMap,
+                                                    ValueRange(indices));
     appliedAffineMap.push_back(mapApplied);
   }
   return appliedAffineMap;
@@ -85,33 +85,33 @@ struct AddToOpToIndexAndLoadPass
 
       // Is it a fine assumption that all indexing maps are the same?
       for (size_t i = 0; i < map[0].getNumDims(); i++) {
-        indices.push_back(cacheBuilder.create<linalg::IndexOp>(loc, i));
+        indices.push_back(linalg::IndexOp::create(cacheBuilder, loc, i));
       }
 
       SmallVector<Value> rets;
       for (size_t i = 0; i < retargs.size(); i++) {
-        // auto load = cacheBuilder.create<AffineLoadOp>(loc, inputs[i], map[i],
-        // indices); auto store = cacheBuilder.create<AffineStoreOp>(loc, load,
-        // inputs[i], map[i], indices);
+        // auto load = AffineLoadOp::create(cacheBuilder, loc, inputs[i],
+        // map[i], indices); auto store = AffineStoreOp::create(cacheBuilder,
+        // loc, load, inputs[i], map[i], indices);
         SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
-        auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
-                                                        mapAppliedIndices);
+        auto load = memref::LoadOp::create(cacheBuilder, loc, outs[i],
+                                           mapAppliedIndices);
         auto added = cast<enzyme::AutoDiffTypeInterface>(load.getType())
                          .createAddOp(cacheBuilder, loc, load, retargs[i]);
-        cacheBuilder.create<memref::StoreOp>(loc, added, outs[i],
-                                             mapAppliedIndices);
+        memref::StoreOp::create(cacheBuilder, loc, added, outs[i],
+                                mapAppliedIndices);
       }
 
       for (size_t i = 0; i < retargs.size(); i++) {
         SmallVector<Value> mapAppliedIndices =
             applyAffineMap(map[num_ins + i], indices, cacheBuilder, loc);
-        auto load = cacheBuilder.create<memref::LoadOp>(loc, outs[i],
-                                                        mapAppliedIndices);
+        auto load = memref::LoadOp::create(cacheBuilder, loc, outs[i],
+                                           mapAppliedIndices);
         retargs[i] = load;
       }
 
-      cacheBuilder.create<linalg::YieldOp>(loc, ValueRange{retargs});
+      linalg::YieldOp::create(cacheBuilder, loc, ValueRange{retargs});
       addToOp->erase();
     });
   };

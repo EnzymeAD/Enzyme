@@ -41,17 +41,18 @@ Value invertMemref(Value inp, OpBuilder &builder, Location loc) {
   SmallVector<Value> dims;
   SmallVector<Value> dimSubOnes;
   SmallVector<Value> strides;
-  Value negOne = builder.create<arith::ConstantIndexOp>(loc, -1);
+  Value negOne = arith::ConstantIndexOp::create(builder, loc, -1);
   int shapeDim = iType.getShape().size();
   for (int i = 0; i < shapeDim; i++) {
-    Value dim = builder.create<memref::DimOp>(loc, inp, i);
+    Value dim = memref::DimOp::create(builder, loc, inp, i);
     dims.push_back(dim);
-    auto dimSubOne = builder.create<arith::AddIOp>(loc, dim, negOne);
+    auto dimSubOne = arith::AddIOp::create(builder, loc, dim, negOne);
     dimSubOnes.push_back(dimSubOne);
     strides.push_back(negOne);
   }
-  Value view = builder.create<memref::SubViewOp>(
-      loc, inp, ValueRange(dimSubOnes), ValueRange(dims), ValueRange(strides));
+  Value view =
+      memref::SubViewOp::create(builder, loc, inp, ValueRange(dimSubOnes),
+                                ValueRange(dims), ValueRange(strides));
   return view;
 }
 
@@ -101,9 +102,9 @@ struct GenericOpInterfaceReverse
       auto shape = cast<MemRefType>(input->get().getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
-            cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
-        auto dim = cacheBuilder.create<memref::DimOp>(op->getLoc(),
-                                                      input->get(), dimI);
+            arith::ConstantIndexOp::create(cacheBuilder, op->getLoc(), i);
+        auto dim = memref::DimOp::create(cacheBuilder, op->getLoc(),
+                                         input->get(), dimI);
         dims.push_back(dim);
       }
     }
@@ -111,9 +112,9 @@ struct GenericOpInterfaceReverse
       auto shape = cast<MemRefType>(output.getType()).getShape();
       for (unsigned i = 0; i < shape.size(); i++) {
         auto dimI =
-            cacheBuilder.create<arith::ConstantIndexOp>(op->getLoc(), i);
+            arith::ConstantIndexOp::create(cacheBuilder, op->getLoc(), i);
         auto dim =
-            cacheBuilder.create<memref::DimOp>(op->getLoc(), output, dimI);
+            memref::DimOp::create(cacheBuilder, op->getLoc(), output, dimI);
         dims.push_back(dim);
       }
     }
@@ -122,8 +123,8 @@ struct GenericOpInterfaceReverse
     SmallVector<int64_t> shapes;
     for (unsigned int i = 0; i < aMap.getNumResults(); i++) {
       AffineMap subMap = aMap.getSubMap({i});
-      Value domain = cacheBuilder.create<affine::AffineApplyOp>(
-          op->getLoc(), subMap, ValueRange(dims));
+      Value domain = affine::AffineApplyOp::create(cacheBuilder, op->getLoc(),
+                                                   subMap, ValueRange(dims));
       iterationDomains.push_back(domain);
       shapes.push_back(ShapedType::kDynamic);
     }
@@ -161,10 +162,10 @@ struct GenericOpInterfaceReverse
             iteratorTypes, [&](utils::IteratorType iter) -> mlir::Attribute {
               return linalg::IteratorTypeAttr::get(builder.getContext(), iter);
             })));
-    auto adjoint = builder.create<enzyme::GenericAdjointOp>(
-        op->getLoc(), TypeRange(), ValueRange(outputs), ValueRange(inputs),
-        indexingMapsArrayAttr, iteratorTypesArrayAttr, StringAttr(),
-        StringAttr());
+    auto adjoint = enzyme::GenericAdjointOp::create(
+        builder, op->getLoc(), TypeRange(), ValueRange(outputs),
+        ValueRange(inputs), indexingMapsArrayAttr, iteratorTypesArrayAttr,
+        StringAttr(), StringAttr());
 
     int numInputs = inputs.size();
     auto buildFuncReturnOp = [&gutils, numInputs](OpBuilder &builder,
@@ -174,8 +175,8 @@ struct GenericOpInterfaceReverse
       for (auto arg : oBB->getArguments()) {
         retargs.push_back(gutils->invertPointerM(arg, builder));
       }
-      builder.create<enzyme::AddToOp>(
-          loc, ValueRange{retargs}.take_front(numInputs));
+      enzyme::AddToOp::create(builder, loc,
+                              ValueRange{retargs}.take_front(numInputs));
       return;
     };
 
@@ -189,7 +190,7 @@ struct GenericOpInterfaceReverse
     auto hook = [newOpRegion, adjointRegion, loc, &numCaches = numCaches,
                  numInputsAdjoint, &pushCaches = pushCaches](Type t) {
       OpBuilder builder(newOpRegion);
-      Value pushCache = builder.create<enzyme::InitOp>(loc, t);
+      Value pushCache = enzyme::InitOp::create(builder, loc, t);
       pushCaches.push_back(pushCache);
       newOpRegion->addArgument(t, loc);
 
@@ -226,8 +227,8 @@ struct GenericOpInterfaceReverse
 
       Type ct = cacheArg.getType();
       Type type = MemRefType::get(shapes, ct);
-      auto alloc = cacheBuilder.create<memref::AllocOp>(
-          op->getLoc(), type, ValueRange(iterationDomains));
+      auto alloc = memref::AllocOp::create(cacheBuilder, op->getLoc(), type,
+                                           ValueRange(iterationDomains));
       Value cache = gutils->initAndPushCache(alloc, cacheBuilder);
       // TODO use higher level API
       alloc->setAttr(alloc.getOperandSegmentSizesAttrName(),
@@ -351,9 +352,9 @@ public:
     // We also assume that the region-holding op returns all of the values
     // yielded by terminators, and only those values.
 
-    auto replacement = builder.create<linalg::GenericOp>(
-        op.getLoc(), newOpResultTypes, newInputs, newOutputs, indexingMaps,
-        op.getIteratorTypesArray(),
+    auto replacement = linalg::GenericOp::create(
+        builder, op.getLoc(), newOpResultTypes, newInputs, newOutputs,
+        indexingMaps, op.getIteratorTypesArray(),
         /*doc*/ "",
         /*libraryCall*/ "");
 

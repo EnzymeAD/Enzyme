@@ -89,9 +89,8 @@ LogicalResult batchOperation(
   {
     IRRewriter::InsertionGuard insertGuard(builder);
     builder.setInsertionPoint(CI);
-    auto dCI =
-        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                     newFunc.getResultTypes(), CI.getInputs());
+    auto dCI = func::CallOp::create(builder, CI.getLoc(), newFunc.getName(),
+                                    newFunc.getResultTypes(), CI.getInputs());
     CI.replaceAllUsesWith(dCI);
     CI->erase();
   }

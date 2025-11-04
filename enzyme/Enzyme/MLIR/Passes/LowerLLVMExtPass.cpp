@@ -59,15 +59,15 @@ LogicalResult tryLoweringToAlloca(llvm_ext::AllocOp alloc,
   }
 
   OpBuilder builder(alloc);
-  auto alloca = builder.create<LLVM::AllocaOp>(
-      alloc.getLoc(), alloc.getResult().getType(), builder.getI8Type(),
-      alloc.getSize());
+  auto alloca = LLVM::AllocaOp::create(builder, alloc.getLoc(),
+                                       alloc.getResult().getType(),
+                                       builder.getI8Type(), alloc.getSize());
   alloc.getResult().replaceAllUsesWith(alloca.getResult());
 
-  builder.create<LLVM::LifetimeStartOp>(alloc.getLoc(), alloca.getResult());
+  LLVM::LifetimeStartOp::create(builder, alloc.getLoc(), alloca.getResult());
 
   builder.setInsertionPoint(free);
-  builder.create<LLVM::LifetimeEndOp>(alloc.getLoc(), alloca.getResult());
+  LLVM::LifetimeEndOp::create(builder, alloc.getLoc(), alloca.getResult());
 
   free->erase();
   alloc->erase();
@@ -91,12 +91,12 @@ void lowerAlloc(llvm_ext::AllocOp alloc, uint64_t staticThreshold) {
         /*isVarArg=*/false);
 
     mallocFn =
-        builder.create<LLVM::LLVMFuncOp>(alloc.getLoc(), "malloc", fnType);
+        LLVM::LLVMFuncOp::create(builder, alloc.getLoc(), "malloc", fnType);
   }
 
   OpBuilder builder(alloc);
-  auto mallocCall = builder.create<LLVM::CallOp>(alloc.getLoc(), mallocFn,
-                                                 alloc->getOperands());
+  auto mallocCall = LLVM::CallOp::create(builder, alloc.getLoc(), mallocFn,
+                                         alloc->getOperands());
   alloc.getResult().replaceAllUsesWith(mallocCall.getResult());
   alloc.erase();
 }
@@ -114,11 +114,11 @@ void lowerFree(llvm_ext::FreeOp free) {
         LLVM::LLVMPointerType::get(free.getContext()),
         /*isVarArg=*/false);
 
-    freeFn = builder.create<LLVM::LLVMFuncOp>(free.getLoc(), "free", fnType);
+    freeFn = LLVM::LLVMFuncOp::create(builder, free.getLoc(), "free", fnType);
   }
 
   OpBuilder builder(free);
-  builder.create<LLVM::CallOp>(free.getLoc(), freeFn, free->getOperands());
+  LLVM::CallOp::create(builder, free.getLoc(), freeFn, free->getOperands());
 
   free.erase();
 }

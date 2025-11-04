@@ -158,11 +158,11 @@ Value MDiffeGradientUtils::getNewGradient(Location loc, Type t) {
     OpBuilder builder(t.getContext());
     builder.setInsertionPointToStart(initializationBlock);
 
-    auto shadow = builder.create<enzyme::InitOp>(
-        loc, enzyme::GradientType::get(t.getContext(), shadowty));
+    auto shadow = enzyme::InitOp::create(
+        builder, loc, enzyme::GradientType::get(t.getContext(), shadowty));
     auto toset =
         cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
-    builder.create<enzyme::SetOp>(loc, shadow, toset);
+    enzyme::SetOp::create(builder, loc, shadow, toset);
     return shadow;
   } else {
     return gradientCreatorHook.back()(loc, t);
@@ -187,7 +187,7 @@ void mlir::enzyme::MDiffeGradientUtils::setDiffe(mlir::Value oval,
   auto iface = cast<AutoDiffTypeInterface>(oval.getType());
   if (!iface.isMutable()) {
     auto shadow = getDifferential(oval);
-    BuilderM.create<enzyme::SetOp>(oval.getLoc(), shadow, toset);
+    enzyme::SetOp::create(BuilderM, oval.getLoc(), shadow, toset);
   } else {
     MGradientUtils::setDiffe(oval, toset, BuilderM);
   }
@@ -205,8 +205,8 @@ mlir::Value mlir::enzyme::MDiffeGradientUtils::diffe(mlir::Value oval,
                                                      OpBuilder &BuilderM) {
 
   auto shadow = getDifferential(oval);
-  return BuilderM.create<enzyme::GetOp>(oval.getLoc(),
-                                        getShadowType(oval.getType()), shadow);
+  return enzyme::GetOp::create(BuilderM, oval.getLoc(),
+                               getShadowType(oval.getType()), shadow);
 }
 
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
@@ -297,7 +297,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
             cast<AutoDiffTypeInterface>(res.getType()).isMutable()))
         continue;
       mlir::Type antiTy = getShadowType(res.getType());
-      auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(), antiTy);
+      auto anti = enzyme::PlaceholderOp::create(BuilderZ, res.getLoc(), antiTy);
       invertedPointers.map(res, anti);
     }
   });

@@ -86,8 +86,8 @@ LogicalResult handleCallOp(
     newOperands.push_back(mapper.lookup(operand));
 
   auto newCall =
-      builder.create<func::CallOp>(callOp.getLoc(), batchedFunc.getName(),
-                                   batchedFunc.getResultTypes(), newOperands);
+      func::CallOp::create(builder, callOp.getLoc(), batchedFunc.getName(),
+                           batchedFunc.getResultTypes(), newOperands);
 
   // Map the results
   for (auto [oldResult, newResult] :
