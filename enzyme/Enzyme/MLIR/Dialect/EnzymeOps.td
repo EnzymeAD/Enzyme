@@ -578,6 +578,7 @@ def InitTraceOp : Enzyme_Op<"initTrace", [MemoryEffects<[MemAlloc]>]> {
   let arguments = (ins );
   let results = (outs Trace:$trace);
   let assemblyFormat = "attr-dict `:` type($trace)";
+  let hasCanonicalizer = 1;
 }
 
 def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
