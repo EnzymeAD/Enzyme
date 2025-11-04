@@ -2205,7 +2205,6 @@ static void symmTests() {
 }
 
 int main() {
-    /*
   dotTests();
 
   nrm2Tests();
@@ -2227,7 +2226,6 @@ int main() {
   trtrsTests();
   
   symmTests();
-  */
 
   symvTests();
 }
