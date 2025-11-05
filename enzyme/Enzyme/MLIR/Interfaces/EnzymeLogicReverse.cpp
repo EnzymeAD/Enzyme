@@ -442,7 +442,6 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   bool valid = true;
   for (auto &oBB : fn.getFunctionBody()) {
-    Block *newBB = gutils->getNewFromOriginal(&oBB);
     Block *reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
     if (oBB.getNumSuccessors() == 0) {
       Operation *oTerm = oBB.getTerminator();
