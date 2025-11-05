@@ -239,17 +239,12 @@ FunctionOpInterface CloneFunctionWithReturns(
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, name.str());
   SmallVector<Type> resultTypes(FTy.getResults());
-  if (isa<LLVM::LLVMFuncOp>(F)) {
-    if (resultTypes.empty()) {
-      // llvm.func ops that return no results need to explicitly return
-      // LLVMVoidType
-      resultTypes.push_back(LLVM::LLVMVoidType::get(FTy.getContext()));
-    } else if (resultTypes.size() > 1) {
-      auto structType =
-          LLVM::LLVMStructType::getLiteral(FTy.getContext(), resultTypes);
-      resultTypes.clear();
-      resultTypes.push_back(structType);
-    }
+  if (auto iface = dyn_cast<AutoDiffFunctionInterface>(*NewF)) {
+    iface.transformResultTypes(resultTypes);
+  } else {
+    llvm::errs()
+        << F << "this function does not implement AutoDiffFunctionInterface";
+    return nullptr;
   }
   NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
 

@@ -47,19 +47,6 @@ static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
          gutils->isConstantInstruction(op);
 }
 
-static Value packIntoStruct(ValueRange values, OpBuilder &builder,
-                            Location loc) {
-  SmallVector<Type> resultTypes =
-      llvm::map_to_vector(values, [](Value v) { return v.getType(); });
-  auto structType =
-      LLVM::LLVMStructType::getLiteral(builder.getContext(), resultTypes);
-  Value result = LLVM::PoisonOp::create(builder, loc, structType);
-  for (auto &&[i, v] : llvm::enumerate(values))
-    result = LLVM::InsertValueOp::create(builder, loc, result, v, i);
-
-  return result;
-}
-
 /*
 Create reverse mode adjoint for an operation.
 */
@@ -263,16 +250,11 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     }
 
     Location loc = oBB->rbegin()->getLoc();
-    if (isa<LLVM::LLVMFuncOp>(fn)) {
-      if (retargs.size() > 1) {
-        Value packedReturns = packIntoStruct(retargs, builder, loc);
-        LLVM::ReturnOp::create(builder, loc, packedReturns);
-      } else {
-        LLVM::ReturnOp::create(builder, loc, retargs);
-      }
-    } else {
-      func::ReturnOp::create(builder, loc, retargs);
-    }
+    if (auto iface = dyn_cast<enzyme::AutoDiffFunctionInterface>(*fn))
+      iface.createReturn(builder, loc, retargs);
+    else
+      fn->emitError() << "this function operation does not implement "
+                         "AutoDiffFunctionInterface";
     return;
   };
 

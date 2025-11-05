@@ -236,11 +236,30 @@ public:
                           MGradientUtilsReverse *gutils) const {}
 };
 
+class AutoDiffFuncFuncFunctionInterface
+    : public AutoDiffFunctionInterface::ExternalModel<
+          AutoDiffFuncFuncFunctionInterface, func::FuncOp> {
+public:
+  void transformResultTypes(Operation *self,
+                            SmallVectorImpl<Type> &types) const {}
+
+  Operation *createCall(Operation *self, OpBuilder &builder, Location loc,
+                        ValueRange args) const {
+    return func::CallOp::create(builder, loc, cast<func::FuncOp>(self), args);
+  }
+
+  Operation *createReturn(Operation *self, OpBuilder &builder, Location loc,
+                          ValueRange args) const {
+    return func::ReturnOp::create(builder, loc, args);
+  }
+};
+
 void mlir::enzyme::registerFuncDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, func::FuncDialect *) {
     registerInterfaces(context);
     func::CallOp::attachInterface<AutoDiffCallFwd>(*context);
     func::CallOp::attachInterface<AutoDiffCallRev>(*context);
+    func::FuncOp::attachInterface<AutoDiffFuncFuncFunctionInterface>(*context);
   });
 }
