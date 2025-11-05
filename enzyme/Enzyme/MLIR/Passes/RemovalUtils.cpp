@@ -454,7 +454,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
           continue;
         }
         if (v.getDefiningOp<enzyme::PopOp>()) {
-        // Poped value would be part of the graph through the pushed value.
+          // Poped value would be part of the graph through the pushed value.
           continue;
         }
         if (G.contains(Node(v))) {
