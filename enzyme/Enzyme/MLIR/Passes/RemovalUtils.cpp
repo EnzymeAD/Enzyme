@@ -399,6 +399,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       for (auto user : poped.getUsers()) {
         if (user->getBlock() != reverse || !isMovable(user)) {
           G[info.pushedValue()].insert(Node(user));
+          llvm::errs() << "adding required = " << user << "\n";
           Required.insert(user);
           isRequired = true;
           break;
@@ -452,7 +453,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         if (v.getParentBlock() != reverse) {
           continue;
         }
-        if (v.getDefiningOp<enzyme::PopOp>() || G.contains(Node(v))) {
+        if (v.getDefiningOp<enzyme::PopOp>()) {
+        // Poped value would be part of the graph through the pushed value.
+          continue;
+        }
+        if (G.contains(Node(v))) {
           continue;
         }
         Required.insert(op);
