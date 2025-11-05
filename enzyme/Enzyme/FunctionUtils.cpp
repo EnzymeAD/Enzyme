@@ -1311,16 +1311,15 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
         Function *Fn = CI->getCalledFunction();
         if (Fn == nullptr)
           continue;
-        if (Fn->getName() == "MPI_Comm_rank" ||
-            Fn->getName() == "PMPI_Comm_rank" ||
-            Fn->getName() == "MPI_Comm_size" ||
-            Fn->getName() == "PMPI_Comm_size") {
+        auto name = getFuncName(Fn);
+        if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
+            name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
           Todo.push_back(CI);
         }
-        if (Fn->getName() == "__kmpc_for_static_init_4" ||
-            Fn->getName() == "__kmpc_for_static_init_4u" ||
-            Fn->getName() == "__kmpc_for_static_init_8" ||
-            Fn->getName() == "__kmpc_for_static_init_8u") {
+        if (name == "__kmpc_for_static_init_4" ||
+            name == "__kmpc_for_static_init_4u" ||
+            name == "__kmpc_for_static_init_8" ||
+            name == "__kmpc_for_static_init_8u") {
           OMPBounds.push_back(CI);
         }
       }

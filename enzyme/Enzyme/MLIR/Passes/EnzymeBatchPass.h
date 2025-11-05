@@ -36,6 +36,12 @@ FunctionOpInterface batchCloneFunction(
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
+void batchCloneBlock(
+    OpBuilder &builder, Block *blk, IRMapping &mapper,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator);
+
 void batchCloneRegion(
     OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
@@ -83,9 +89,8 @@ LogicalResult batchOperation(
   {
     IRRewriter::InsertionGuard insertGuard(builder);
     builder.setInsertionPoint(CI);
-    auto dCI =
-        builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                     newFunc.getResultTypes(), CI.getInputs());
+    auto dCI = func::CallOp::create(builder, CI.getLoc(), newFunc.getName(),
+                                    newFunc.getResultTypes(), CI.getInputs());
     CI.replaceAllUsesWith(dCI);
     CI->erase();
   }
@@ -109,6 +114,33 @@ LogicalResult batchOperation(
         CI, newFunc.getName(), newFunc.getResultTypes(), CI.getInputs());
   }
   return success();
+}
+
+// instead of inserting a call op, we will inline each operation directly
+// into the caller
+inline void batchOperationInline(PatternRewriter &rewriter,
+                                 enzyme::BatchOp batchOp,
+                                 FunctionOpInterface func) {
+  auto &origRegion = func.getFunctionBody();
+  auto &origBlock = origRegion.front();
+
+  IRMapping mapper;
+  for (int i = 0; i < batchOp->getNumOperands(); i++) {
+    mapper.map(origBlock.getArguments()[i], batchOp->getOperand(i));
+  }
+
+  rewriter.setInsertionPoint(batchOp);
+  std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
+  batchCloneBlock(rewriter, &origBlock, mapper, batchOp.getBatchShape(),
+                  batchedFunctionCache, true);
+
+  auto origTerm = origBlock.getTerminator();
+  for (auto [i, operand] : llvm::enumerate(origTerm->getOperands())) {
+    auto mappedOperand = mapper.lookup(operand);
+    rewriter.replaceAllUsesWith(batchOp->getResult(i), mappedOperand);
+  }
+  rewriter.eraseOp(batchOp);
+  rewriter.eraseOp(func);
 }
 
 } // namespace batchutils

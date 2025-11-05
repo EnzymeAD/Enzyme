@@ -86,8 +86,8 @@ public:
         fwdArguments.push_back(gutils->invertPointerM(arg, builder));
     }
 
-    auto fwdCallOp = builder.create<func::CallOp>(
-        orig->getLoc(), cast<func::FuncOp>(forwardFn), fwdArguments);
+    auto fwdCallOp = func::CallOp::create(
+        builder, orig->getLoc(), cast<func::FuncOp>(forwardFn), fwdArguments);
 
     SmallVector<Value> primals;
     primals.reserve(nret);
@@ -189,8 +189,8 @@ public:
       revArguments.push_back(gutils->diffe(result, builder));
     }
 
-    auto revCallOp = builder.create<func::CallOp>(
-        orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
+    auto revCallOp = func::CallOp::create(
+        builder, orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
 
     int revIndex = 0, fwdIndex = 0;
     for (auto [arg, act] : llvm::zip_equal(callOp.getOperands(), ArgActivity)) {

@@ -39,8 +39,8 @@ struct SimplifyMemrefCachePass
       llvm_unreachable("Unknown user of memref<CacheType>");
     }
     OpBuilder allocBuilder(allocOp);
-    auto newAllocOp = allocBuilder.create<memref::AllocOp>(
-        allocOp.getLoc(), dyn_cast<MemRefType>(newType),
+    auto newAllocOp = memref::AllocOp::create(
+        allocBuilder, allocOp.getLoc(), dyn_cast<MemRefType>(newType),
         allocOp.getDynamicSizes(), allocOp.getSymbolOperands(),
         allocOp.getAlignmentAttr());
 
@@ -90,8 +90,8 @@ struct SimplifyMemrefCachePass
 
   void handlePopOp(enzyme::PopOp popOp, Type newType, enzyme::CacheType c2) {
     OpBuilder popBuilder(popOp);
-    auto newPopOp = popBuilder.create<enzyme::PopOp>(popOp.getLoc(), newType,
-                                                     popOp.getCache());
+    auto newPopOp = enzyme::PopOp::create(popBuilder, popOp.getLoc(), newType,
+                                          popOp.getCache());
 
     // TODO: handle all the stuff inside linalg.generic
     for (auto user : popOp->getUsers()) {
@@ -127,8 +127,8 @@ struct SimplifyMemrefCachePass
       }
       // Replace Subview Op
       OpBuilder subviewBuilder(subviewOp);
-      auto newSubviewOp = subviewBuilder.create<memref::SubViewOp>(
-          subviewOp.getLoc(), newPopOp, subviewOp.getOffsets(),
+      auto newSubviewOp = memref::SubViewOp::create(
+          subviewBuilder, subviewOp.getLoc(), newPopOp, subviewOp.getOffsets(),
           subviewOp.getSizes(), subviewOp.getStrides());
       subviewOp.replaceAllUsesWith((Value)newSubviewOp);
       subviewOp.erase();
@@ -172,7 +172,8 @@ struct SimplifyMemrefCachePass
       }
 
       OpBuilder builder(op);
-      auto newInit = builder.create<enzyme::InitOp>(op->getLoc(), newCacheType);
+      auto newInit =
+          enzyme::InitOp::create(builder, op->getLoc(), newCacheType);
       op->replaceAllUsesWith(newInit);
 
       op->erase();

@@ -15,21 +15,17 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/EnzymeLogic.h"
-#include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include <functional>
 
 using namespace mlir;
@@ -70,9 +66,9 @@ public:
     } else {
       Value lb = forOp.getLowerBound(), ub = forOp.getUpperBound(),
             step = forOp.getStep();
-      Value diff = builder.create<arith::SubIOp>(forOp->getLoc(), ub, lb);
+      Value diff = arith::SubIOp::create(builder, forOp->getLoc(), ub, lb);
       Value nSteps =
-          builder.create<arith::DivUIOp>(forOp->getLoc(), diff, step);
+          arith::DivUIOp::create(builder, forOp->getLoc(), diff, step);
       return {IntOrValue(nSteps)};
     }
   }
@@ -82,13 +78,13 @@ public:
 
     Value val = forOp.getBody()->getArgument(0);
     if (!matchPattern(forOp.getLowerBound(), m_Zero())) {
-      val = builder.create<arith::SubIOp>(forOp->getLoc(), val,
-                                          forOp.getLowerBound());
+      val = arith::SubIOp::create(builder, forOp->getLoc(), val,
+                                  forOp.getLowerBound());
     }
 
     if (!matchPattern(forOp.getStep(), m_One())) {
-      val =
-          builder.create<arith::DivUIOp>(forOp->getLoc(), val, forOp.getStep());
+      val = arith::DivUIOp::create(builder, forOp->getLoc(), val,
+                                   forOp.getStep());
     }
     return {val};
   }
@@ -114,8 +110,8 @@ public:
   static scf::ForOp replaceWithNewOperands(PatternRewriter &rewriter,
                                            scf::ForOp otherForOp,
                                            ArrayRef<Value> operands) {
-    auto newOtherForOp = rewriter.create<scf::ForOp>(
-        otherForOp->getLoc(), otherForOp.getLowerBound(),
+    auto newOtherForOp = scf::ForOp::create(
+        rewriter, otherForOp->getLoc(), otherForOp.getLowerBound(),
         otherForOp.getUpperBound(), otherForOp.getStep(), operands);
 
     newOtherForOp.getRegion().takeBody(otherForOp.getRegion());
@@ -133,7 +129,7 @@ struct ForOpInterfaceReverse
 private:
   static Value makeIntConstant(Location loc, OpBuilder builder, int64_t val,
                                Type ty) {
-    return builder.create<arith::ConstantOp>(loc, IntegerAttr::get(ty, val))
+    return arith::ConstantOp::create(builder, loc, IntegerAttr::get(ty, val))
         .getResult();
   };
 
@@ -215,8 +211,8 @@ public:
       auto ivTy = forOp.getLowerBound().getType();
       Value outerUB = makeIntConstant(forOp.getLowerBound().getLoc(), builder,
                                       nOuter + hasTrailing, ivTy);
-      auto revOuter = builder.create<scf::ForOp>(
-          op->getLoc(),
+      auto revOuter = scf::ForOp::create(
+          builder, op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), builder, 0, ivTy),
           outerUB,
           makeIntConstant(forOp.getLowerBound().getLoc(), builder, 1, ivTy),
@@ -234,8 +230,8 @@ public:
       }
 
       Location loc = forOp.getInductionVar().getLoc();
-      Value currentOuterStep = builder.create<arith::SubIOp>(
-          loc, makeIntConstant(loc, builder, nOuter, ivTy),
+      Value currentOuterStep = arith::SubIOp::create(
+          builder, loc, makeIntConstant(loc, builder, nOuter, ivTy),
           revOuter.getInductionVar());
 
       SmallVector<Value> initArgs(numIterArgs, nullptr);
@@ -254,15 +250,15 @@ public:
       if (trailingIters > 0) {
         // this is the first reverse iteration
         Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = builder.create<arith::SelectOp>(
-            loc,
-            builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                          revOuter.getInductionVar(), zero),
+        nInnerUB = arith::SelectOp::create(
+            builder, loc,
+            arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                  revOuter.getInductionVar(), zero),
             makeIntConstant(loc, builder, trailingIters, ivTy), nInnerCst);
       }
 
-      auto revInner = builder.create<scf::ForOp>(forOp.getLoc(), zero, nInnerUB,
-                                                 one, initArgs);
+      auto revInner = scf::ForOp::create(builder, forOp.getLoc(), zero,
+                                         nInnerUB, one, initArgs);
       preserveAttributesButCheckpointing(revInner, forOp);
 
       llvm::APInt stepI;
@@ -279,19 +275,19 @@ public:
 
       builder.setInsertionPointToEnd(revInner.getBody());
 
-      Value currentIV = builder.create<arith::AddIOp>(
-          loc,
-          builder.create<arith::MulIOp>(
-              loc,
-              builder.create<arith::AddIOp>(
-                  loc,
-                  builder.create<arith::MulIOp>(loc, currentOuterStep,
-                                                nInnerCst),
-                  revInner.getInductionVar()),
-              builder.create<arith::ConstantOp>(loc,
-                                                IntegerAttr::get(ivTy, stepI))),
-          builder.create<arith::ConstantOp>(loc,
-                                            IntegerAttr::get(ivTy, startI)));
+      Value currentIV = arith::AddIOp::create(
+          builder, loc,
+          arith::MulIOp::create(
+              builder, loc,
+              arith::AddIOp::create(builder, loc,
+                                    arith::MulIOp::create(builder, loc,
+                                                          currentOuterStep,
+                                                          nInnerCst),
+                                    revInner.getInductionVar()),
+              arith::ConstantOp::create(builder, loc,
+                                        IntegerAttr::get(ivTy, stepI))),
+          arith::ConstantOp::create(builder, loc,
+                                    IntegerAttr::get(ivTy, startI)));
 
       for (auto [oldArg, newArg] :
            llvm::zip_equal(forOp.getBody()->getArguments(),
@@ -313,9 +309,9 @@ public:
         }
       }
 
-      auto revLoop = builder.create<scf::ForOp>(
-          forOp.getLoc(), zero, nInnerUB, one,
-          revOuter.getBody()->getArguments().drop_front());
+      auto revLoop =
+          scf::ForOp::create(builder, forOp.getLoc(), zero, nInnerUB, one,
+                             revOuter.getBody()->getArguments().drop_front());
       preserveAttributesButCheckpointing(revLoop, forOp);
 
       Block *revLoopBody = revLoop.getBody();
@@ -357,12 +353,12 @@ public:
       }
 
       builder.setInsertionPointToEnd(revLoopBody);
-      builder.create<scf::YieldOp>(forOp.getBody()->getTerminator()->getLoc(),
-                                   newResults);
+      scf::YieldOp::create(builder, forOp.getBody()->getTerminator()->getLoc(),
+                           newResults);
 
       builder.setInsertionPointToEnd(revOuter.getBody());
-      builder.create<scf::YieldOp>(forOp.getBody()->getTerminator()->getLoc(),
-                                   revLoop.getResults());
+      scf::YieldOp::create(builder, forOp.getBody()->getTerminator()->getLoc(),
+                           revLoop.getResults());
 
       builder.setInsertionPointAfter(revOuter);
 
@@ -385,8 +381,8 @@ public:
     auto end = gutils->popCache(caches[1], builder);
     auto step = gutils->popCache(caches[2], builder);
 
-    auto repFor = builder.create<scf::ForOp>(forOp.getLoc(), start, end, step,
-                                             incomingGradients);
+    auto repFor = scf::ForOp::create(builder, forOp.getLoc(), start, end, step,
+                                     incomingGradients);
     preserveAttributesButCheckpointing(repFor, forOp);
 
     bool valid = true;
@@ -397,7 +393,7 @@ public:
 
         // Create implicit terminator if not present (when num results > 0)
         if (revBB.empty()) {
-          bodyBuilder.create<scf::YieldOp>(repFor->getLoc());
+          scf::YieldOp::create(bodyBuilder, repFor->getLoc());
         }
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
 
@@ -503,8 +499,8 @@ public:
       scf::ForOp newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
 
       Type ty = forOp.getLowerBound().getType();
-      auto outerFwd = cacheBuilder.create<scf::ForOp>(
-          op->getLoc(),
+      auto outerFwd = scf::ForOp::create(
+          cacheBuilder, op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
           makeIntConstant(forOp.getUpperBound().getLoc(), cacheBuilder,
                           nInner * (nOuter + hasTrailing), ty),
@@ -521,10 +517,11 @@ public:
         // if this is the last iteration, then the inner
         // loop will only make trailingIters iterations
         Location loc = forOp.getUpperBound().getLoc();
-        nInnerUB = cacheBuilder.create<arith::SelectOp>(
-            loc,
-            cacheBuilder.create<arith::CmpIOp>(
-                loc, arith::CmpIPredicate::eq, outerFwd.getInductionVar(),
+        nInnerUB = arith::SelectOp::create(
+            cacheBuilder, loc,
+            arith::CmpIOp::create(
+                cacheBuilder, loc, arith::CmpIPredicate::eq,
+                outerFwd.getInductionVar(),
                 makeIntConstant(loc, cacheBuilder, nInner * nOuter, ty)),
             makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
       }
@@ -540,8 +537,8 @@ public:
             gutils->initAndPushCache(clone, cacheBuilder));
       }
 
-      auto innerFwd = cacheBuilder.create<scf::ForOp>(
-          op->getLoc(),
+      auto innerFwd = scf::ForOp::create(
+          cacheBuilder, op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
           nInnerUB,
           makeIntConstant(forOp.getStep().getLoc(), cacheBuilder, 1, ty),
@@ -551,12 +548,12 @@ public:
       cacheBuilder.setInsertionPointToEnd(innerFwd.getBody());
 
       Location loc = forOp.getInductionVar().getLoc();
-      auto currentIV = cacheBuilder.create<arith::MulIOp>(
-          loc,
-          cacheBuilder.create<arith::AddIOp>(
-              loc,
-              cacheBuilder.create<arith::MulIOp>(
-                  loc, outerFwd.getInductionVar(), nInnerCst),
+      auto currentIV = arith::MulIOp::create(
+          cacheBuilder, loc,
+          arith::AddIOp::create(
+              cacheBuilder, loc,
+              arith::MulIOp::create(cacheBuilder, loc,
+                                    outerFwd.getInductionVar(), nInnerCst),
               innerFwd.getInductionVar()),
           newForOp.getStep());
 
@@ -573,8 +570,9 @@ public:
       for (auto initArg : innerFwd.getInitArgs())
         caches.push_back(gutils->initAndPushCache(initArg, cacheBuilder));
 
-      cacheBuilder.create<scf::YieldOp>(
-          forOp.getBody()->getTerminator()->getLoc(), innerFwd->getResults());
+      scf::YieldOp::create(cacheBuilder,
+                           forOp.getBody()->getTerminator()->getLoc(),
+                           innerFwd->getResults());
 
       cacheBuilder.setInsertionPointAfter(outerFwd);
 
@@ -764,11 +762,11 @@ struct ParallelOpInterfaceReverse
       // each iteration
       builder.setInsertionPointToStart(revPar.getBody());
 
-      auto shadow = builder.create<enzyme::InitOp>(
-          loc, enzyme::GradientType::get(t.getContext(), shadowty));
+      auto shadow = enzyme::InitOp::create(
+          builder, loc, enzyme::GradientType::get(t.getContext(), shadowty));
       auto toset =
           cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
-      builder.create<enzyme::SetOp>(loc, shadow, toset);
+      enzyme::SetOp::create(builder, loc, shadow, toset);
       return shadow;
     };
     gutils->registerGradientCreatorHook(gradientCreator);
@@ -820,6 +818,44 @@ struct ParallelOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct IfOpEnzymeOpsRemover
+    : public IfLikeEnzymeOpsRemover<IfOpEnzymeOpsRemover, scf::IfOp> {
+  static Block *getThenBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    return ifOp.thenBlock();
+  }
+
+  static Block *getElseBlock(scf::IfOp ifOp, OpBuilder &builder) {
+    // Ensure the if has an else block
+    if (ifOp.getElseRegion().empty()) {
+      OpBuilder::InsertionGuard guard(builder);
+      Block &newBlock = ifOp.getElseRegion().emplaceBlock();
+      builder.setInsertionPointToStart(&newBlock);
+      scf::YieldOp::create(builder, ifOp.getLoc());
+    }
+
+    return ifOp.elseBlock();
+  }
+
+  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
+    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
+  }
+
+  static scf::IfOp replace(PatternRewriter &rewriter, scf::IfOp otherIfOp,
+                           TypeRange resultTypes) {
+    auto newIf = scf::IfOp::create(rewriter, otherIfOp->getLoc(), resultTypes,
+                                   otherIfOp.getCondition());
+
+    newIf.getThenRegion().takeBody(otherIfOp.getThenRegion());
+    newIf.getElseRegion().takeBody(otherIfOp.getElseRegion());
+
+    rewriter.replaceAllUsesWith(
+        otherIfOp->getResults(),
+        newIf->getResults().slice(0, otherIfOp->getNumResults()));
+    rewriter.eraseOp(otherIfOp);
+    return newIf;
+  }
+};
+
 struct IfOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<IfOpInterfaceReverse,
                                                        scf::IfOp> {
@@ -846,7 +882,7 @@ struct IfOpInterfaceReverse
     }
 
     auto revIf =
-        builder.create<scf::IfOp>(ifOp.getLoc(), TypeRange{}, cond, hasElse);
+        scf::IfOp::create(builder, ifOp.getLoc(), TypeRange{}, cond, hasElse);
     bool valid = true;
     for (auto &&[oldReg, newReg] :
          llvm::zip(op->getRegions(), revIf->getRegions())) {
@@ -854,13 +890,16 @@ struct IfOpInterfaceReverse
         OpBuilder bodyBuilder(&revBB, revBB.end());
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
 
-        // All values defined in the body should have no use outside this block
-        // therefore we can set their diffe to zero upon entering the reverse
-        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
+        // All values defined in the body should have no use outside this
+        // block therefore we can set their diffe to zero upon entering the
+        // reverse block to simplify the work of the
+        // remove-unnecessary-enzyme-ops pass.
         for (auto &it : oBB.getOperations()) {
           for (auto res : it.getResults()) {
             if (!gutils->isConstantValue(res)) {
-              gutils->zeroDiffe(res, bodyBuilder);
+              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+              if (iface && !iface.isMutable())
+                gutils->zeroDiffe(res, bodyBuilder);
             }
           }
         }
@@ -877,10 +916,10 @@ struct IfOpInterfaceReverse
 
         for (auto &&[arg, operand] :
              llvm::zip_equal(incomingGradients, activeTermOperands)) {
-          // Check activity of the argument separately from the result. If some
-          // branches yield inactive values while others yield active values,
-          // the result will be active, but this operand may still be inactive
-          // (and we cannot addToDiffe)
+          // Check activity of the argument separately from the result. If
+          // some branches yield inactive values while others yield active
+          // values, the result will be active, but this operand may still be
+          // inactive (and we cannot addToDiffe)
           if (!gutils->isConstantValue(operand)) {
             gutils->addToDiffe(operand, arg, bodyBuilder);
           }
@@ -959,6 +998,7 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
     registerInterfaces(context);
     scf::IfOp::attachInterface<IfOpInterfaceReverse>(*context);
+    scf::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
     scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);

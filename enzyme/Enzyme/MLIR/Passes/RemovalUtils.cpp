@@ -22,6 +22,68 @@ using namespace mlir::enzyme;
 
 #define DEBUG_TYPE "enzyme-mincut"
 
+void mlir::enzyme::removalBlockExplore(
+    Block *block, IRMapping &mapping, PatternRewriter &rewriter,
+    llvm::SetVector<Value> &gradients,
+    llvm::MapVector<Value, CacheInfo> &caches) {
+  for (auto it = block->begin(), e = block->end(); it != e;) {
+    Operation *op = &*it;
+
+    if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
+      auto grad = setOp.getGradient();
+      auto value = setOp.getValue();
+      mapping.map(grad, value);
+      gradients.insert(grad);
+    }
+
+    if (auto getOp = dyn_cast<enzyme::GetOp>(op)) {
+      auto grad = getOp.getGradient();
+      Value value = mapping.lookupOrNull(getOp.getGradient());
+      if (!value) {
+        value = enzyme::GetOp::create(rewriter, getOp->getLoc(),
+                                      getOp.getResult().getType(), grad);
+        mapping.map(grad, value);
+      }
+      rewriter.replaceAllUsesWith(getOp.getResult(), value);
+    }
+
+    if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
+      CacheInfo info(pushOp.getCache());
+
+      Value pushedValue = info.pushedValue();
+
+      // Then we can push the value before the if, if it is defined before the
+      // if
+      if (pushedValue.getParentBlock() != block) {
+        enzyme::PushOp::create(rewriter, pushOp->getLoc(), pushOp.getCache(),
+                               pushedValue);
+
+        ++it; // Increment iterator to allow in place deletion
+        rewriter.eraseOp(pushOp);
+
+        // Move the pop before the other if
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+        auto newPop =
+            enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                  pushedValue.getType(), info.popOp.getCache());
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+        rewriter.eraseOp(info.popOp);
+
+        continue;
+      }
+
+      if (caches.contains(pushedValue)) {
+        info = info.merge(caches.lookup(pushedValue), rewriter);
+      }
+      caches[pushedValue] = info;
+    }
+
+    ++it;
+  }
+}
+
 typedef llvm::PointerUnion<Operation *, Value> Node;
 
 void dump(const Node &n) {
@@ -569,8 +631,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       enzyme::InitOp initOp = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(entry);
-        rewriter.create<enzyme::InitOp>(
-            newCache.getLoc(),
+        enzyme::InitOp::create(
+            rewriter, newCache.getLoc(),
             enzyme::CacheType::get(newCache.getContext(), newCache.getType()));
       });
 
@@ -581,14 +643,14 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         } else {
           rewriter.setInsertionPointAfterValue(newCache);
         }
-        rewriter.create<enzyme::PushOp>(newCache.getLoc(), initOp.getResult(),
-                                        newCache);
+        enzyme::PushOp::create(rewriter, newCache.getLoc(), initOp.getResult(),
+                               newCache);
       });
 
       assert(rewriter.getInsertionBlock() == reverse);
       assert(rewriter.getInsertionPoint()->getBlock() == reverse);
-      enzyme::PopOp popOp = rewriter.create<enzyme::PopOp>(
-          newCache.getLoc(), newCache.getType(), initOp.getResult());
+      enzyme::PopOp popOp = enzyme::PopOp::create(
+          rewriter, newCache.getLoc(), newCache.getType(), initOp.getResult());
       if (!firstClone)
         firstClone = popOp;
       mapping.map(newCache, popOp.getResult());
@@ -626,23 +688,23 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
             enzyme::InitOp initOp = ({
               OpBuilder::InsertionGuard guard(rewriter);
               rewriter.setInsertionPoint(entry);
-              rewriter.create<enzyme::InitOp>(
-                  newRes.getLoc(), enzyme::CacheType::get(newRes.getContext(),
-                                                          newRes.getType()));
+              enzyme::InitOp::create(rewriter, newRes.getLoc(),
+                                     enzyme::CacheType::get(newRes.getContext(),
+                                                            newRes.getType()));
             });
 
             enzyme::PushOp pushOp = ({
               OpBuilder::InsertionGuard guard(rewriter);
               rewriter.setInsertionPoint(forward->getTerminator());
-              rewriter.create<enzyme::PushOp>(newRes.getLoc(),
-                                              initOp.getResult(), newRes);
+              enzyme::PushOp::create(rewriter, newRes.getLoc(),
+                                     initOp.getResult(), newRes);
             });
 
             enzyme::PopOp popOp = ({
               OpBuilder::InsertionGuard guard(rewriter);
               rewriter.setInsertionPoint(&op);
-              rewriter.create<enzyme::PopOp>(newRes.getLoc(), newRes.getType(),
-                                             initOp.getResult());
+              enzyme::PopOp::create(rewriter, newRes.getLoc(), newRes.getType(),
+                                    initOp.getResult());
             });
 
             rewriter.replaceAllUsesWith(res, popOp->getResult(0));
@@ -694,21 +756,22 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       enzyme::InitOp initOp = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(entry);
-        rewriter.create<enzyme::InitOp>(
-            v.getLoc(), enzyme::CacheType::get(v.getContext(), v.getType()));
+        enzyme::InitOp::create(
+            rewriter, v.getLoc(),
+            enzyme::CacheType::get(v.getContext(), v.getType()));
       });
 
       {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(forward->getParentOp());
-        rewriter.create<enzyme::PushOp>(v.getLoc(), initOp.getResult(), v);
+        enzyme::PushOp::create(rewriter, v.getLoc(), initOp.getResult(), v);
       };
 
       enzyme::PopOp popOp = ({
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(reverse->getParentOp());
-        rewriter.create<enzyme::PopOp>(v.getLoc(), v.getType(),
-                                       initOp.getResult());
+        enzyme::PopOp::create(rewriter, v.getLoc(), v.getType(),
+                              initOp.getResult());
       });
       mapping.map(v, popOp->getResult(0));
     }

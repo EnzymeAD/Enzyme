@@ -181,8 +181,8 @@ struct DifferentiatePass
       return failure();
 
     OpBuilder builder(CI);
-    auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                            newFunc.getResultTypes(), args);
+    auto dCI = func::CallOp::create(builder, CI.getLoc(), newFunc.getName(),
+                                    newFunc.getResultTypes(), args);
     if (dCI.getNumResults() != CI.getNumResults()) {
       CI.emitError() << "Incorrect number of results for enzyme operation: "
                      << *CI << " expected " << *dCI;
@@ -339,11 +339,11 @@ struct DifferentiatePass
 
     OpBuilder builder(CI);
     if (auto llvmNewFn = dyn_cast<LLVM::LLVMFuncOp>(newFunc.getOperation())) {
-      auto dCI = builder.create<LLVM::CallOp>(CI.getLoc(), llvmNewFn, args);
+      auto dCI = LLVM::CallOp::create(builder, CI.getLoc(), llvmNewFn, args);
       CI.replaceAllUsesWith(dCI);
     } else {
-      auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
-                                              newFunc.getResultTypes(), args);
+      auto dCI = func::CallOp::create(builder, CI.getLoc(), newFunc.getName(),
+                                      newFunc.getResultTypes(), args);
       CI.replaceAllUsesWith(dCI);
     }
     CI->erase();

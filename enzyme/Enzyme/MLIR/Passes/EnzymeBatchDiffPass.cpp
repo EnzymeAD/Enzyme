@@ -66,15 +66,15 @@ Value getConcatValue(OpBuilder &builder, Location &loc,
                      SmallVector<Value> &argList) {
   int64_t width = argList.size();
   Type out_type = getConcatType(argList.front(), width);
-  mlir::Value out = builder.create<enzyme::ConcatOp>(loc, out_type, argList);
+  mlir::Value out = enzyme::ConcatOp::create(builder, loc, out_type, argList);
   return out;
 }
 
 Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
                       Value &val, int64_t index) {
   // Extract the original output from the tensorized output at the given index.
-  Value indexOp = builder.create<arith::ConstantIndexOp>(loc, index);
-  Value out = builder.create<enzyme::ExtractOp>(loc, argTy, val, indexOp);
+  Value indexOp = arith::ConstantIndexOp::create(builder, loc, index);
+  Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexOp);
   return out;
 }
 
@@ -344,9 +344,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           IntegerAttr newWidthAttr =
               IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
 
-          auto newDiffOp = builder.create<ForwardDiffOp>(
-              loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
-              newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
+          auto newDiffOp = ForwardDiffOp::create(
+              builder, loc, out_ty, firstDiffOp.getFnAttr(), in_args,
+              newInActivity, newRetActivity, newWidthAttr,
+              firstDiffOp.getStrongZeroAttr());
 
           // Rename old users of out,d<out> to new users
           out_idx = 0;
@@ -675,9 +676,10 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           IntegerAttr newWidthAttr =
               IntegerAttr::get(firstDiffOp.getWidthAttr().getType(), width);
 
-          auto newDiffOp = builder.create<AutoDiffOp>(
-              loc, out_ty, firstDiffOp.getFnAttr(), in_args, newInActivity,
-              newRetActivity, newWidthAttr, firstDiffOp.getStrongZeroAttr());
+          auto newDiffOp =
+              AutoDiffOp::create(builder, loc, out_ty, firstDiffOp.getFnAttr(),
+                                 in_args, newInActivity, newRetActivity,
+                                 newWidthAttr, firstDiffOp.getStrongZeroAttr());
 
           // Map old uses to new uses
           out_idx = 0;

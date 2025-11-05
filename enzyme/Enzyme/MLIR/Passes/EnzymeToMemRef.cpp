@@ -55,7 +55,7 @@ struct LoweredCache {
         context, /*inputs=*/
         {elements.getType(), size.getType(), capacity.getType(), elementType},
         /*outputs=*/{});
-    auto pushFn = b.create<func::FuncOp>(loc, funcName, pushFnType);
+    auto pushFn = func::FuncOp::create(b, loc, funcName, pushFnType);
     pushFn.setPrivate();
     Block *entryBlock = pushFn.addEntryBlock();
     b.setInsertionPointToStart(entryBlock);
@@ -64,36 +64,37 @@ struct LoweredCache {
     BlockArgument capacityField = pushFn.getArgument(2);
     BlockArgument value = pushFn.getArgument(3);
 
-    Value sizeVal = b.create<memref::LoadOp>(loc, sizeField);
-    Value capacityVal = b.create<memref::LoadOp>(loc, capacityField);
+    Value sizeVal = memref::LoadOp::create(b, loc, sizeField);
+    Value capacityVal = memref::LoadOp::create(b, loc, capacityField);
 
-    Value predicate = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                              sizeVal, capacityVal);
-    b.create<scf::IfOp>(
-        loc, predicate, [&](OpBuilder &thenBuilder, Location loc) {
-          Value two = thenBuilder.create<arith::ConstantIndexOp>(loc, 2);
+    Value predicate = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                            sizeVal, capacityVal);
+    scf::IfOp::create(
+        b, loc, predicate, [&](OpBuilder &thenBuilder, Location loc) {
+          Value two = arith::ConstantIndexOp::create(thenBuilder, loc, 2);
           Value newCapacity =
-              thenBuilder.create<arith::MulIOp>(loc, capacityVal, two);
+              arith::MulIOp::create(thenBuilder, loc, capacityVal, two);
           Value oldElements =
-              thenBuilder.create<memref::LoadOp>(loc, elementsField);
-          Value newElements = thenBuilder.create<memref::AllocOp>(
-              loc, cast<MemRefType>(oldElements.getType()), newCapacity);
-          thenBuilder.create<memref::CopyOp>(loc, oldElements, newElements);
-          thenBuilder.create<memref::DeallocOp>(loc, oldElements);
-          thenBuilder.create<memref::StoreOp>(loc, newElements, elementsField);
-          thenBuilder.create<memref::StoreOp>(loc, newCapacity, capacityField);
-          thenBuilder.create<scf::YieldOp>(loc);
+              memref::LoadOp::create(thenBuilder, loc, elementsField);
+          Value newElements = memref::AllocOp::create(
+              thenBuilder, loc, cast<MemRefType>(oldElements.getType()),
+              newCapacity);
+          memref::CopyOp::create(thenBuilder, loc, oldElements, newElements);
+          memref::DeallocOp::create(thenBuilder, loc, oldElements);
+          memref::StoreOp::create(thenBuilder, loc, newElements, elementsField);
+          memref::StoreOp::create(thenBuilder, loc, newCapacity, capacityField);
+          scf::YieldOp::create(thenBuilder, loc);
         });
 
-    Value elementsVal = b.create<memref::LoadOp>(loc, elementsField);
-    b.create<memref::StoreOp>(loc, value, elementsVal,
-                              /*indices=*/sizeVal);
+    Value elementsVal = memref::LoadOp::create(b, loc, elementsField);
+    memref::StoreOp::create(b, loc, value, elementsVal,
+                            /*indices=*/sizeVal);
 
-    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSize = b.create<arith::AddIOp>(loc, sizeVal, one);
+    Value one = arith::ConstantIndexOp::create(b, loc, 1);
+    Value newSize = arith::AddIOp::create(b, loc, sizeVal, one);
 
-    b.create<memref::StoreOp>(loc, newSize, sizeField);
-    b.create<func::ReturnOp>(loc);
+    memref::StoreOp::create(b, loc, newSize, sizeField);
+    func::ReturnOp::create(b, loc);
 
     return SymbolRefAttr::get(context, funcName);
   }
@@ -114,44 +115,43 @@ struct LoweredCache {
         context,
         /*inputs=*/{elements.getType(), size.getType(), capacity.getType()},
         /*outputs=*/elementType);
-    auto popFn = b.create<func::FuncOp>(loc, funcName, popFnType);
+    auto popFn = func::FuncOp::create(b, loc, funcName, popFnType);
     popFn.setPrivate();
     Block *entryBlock = popFn.addEntryBlock();
     b.setInsertionPointToStart(entryBlock);
     BlockArgument elementsField = popFn.getArgument(0);
     BlockArgument sizeField = popFn.getArgument(1);
 
-    Value elementsVal = b.create<memref::LoadOp>(loc, elementsField);
-    Value sizeVal = b.create<memref::LoadOp>(loc, sizeField);
-    Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value elementsVal = memref::LoadOp::create(b, loc, elementsField);
+    Value sizeVal = memref::LoadOp::create(b, loc, sizeField);
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
     Value pred =
-        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, sizeVal, zero);
-    b.create<cf::AssertOp>(loc, pred, "pop on empty cache");
+        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sgt, sizeVal, zero);
+    cf::AssertOp::create(b, loc, pred, "pop on empty cache");
 
-    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSize = b.create<arith::SubIOp>(loc, sizeVal, one);
-    b.create<memref::StoreOp>(loc, newSize, sizeField);
+    Value one = arith::ConstantIndexOp::create(b, loc, 1);
+    Value newSize = arith::SubIOp::create(b, loc, sizeVal, one);
+    memref::StoreOp::create(b, loc, newSize, sizeField);
 
-    Value result = b.create<memref::LoadOp>(loc, elementsVal, newSize);
-    b.create<func::ReturnOp>(loc, result);
+    Value result = memref::LoadOp::create(b, loc, elementsVal, newSize);
+    func::ReturnOp::create(b, loc, result);
     return SymbolRefAttr::get(context, funcName);
   }
 
   void emitPush(Location loc, Value value, OpBuilder &b,
                 FlatSymbolRefAttr pushFn) const {
-    b.create<func::CallOp>(
-        loc, pushFn, /*results=*/TypeRange{},
+    func::CallOp::create(
+        b, loc, pushFn, /*results=*/TypeRange{},
         /*operands=*/ValueRange{elements, size, capacity, value});
   }
 
   Value emitPop(Location loc, OpBuilder &b, FlatSymbolRefAttr popFn) const {
-    return b
-        .create<func::CallOp>(
-            loc, popFn, /*results=*/
-            cast<ShapedType>(
-                cast<ShapedType>(elements.getType()).getElementType())
-                .getElementType(),
-            ValueRange{elements, size, capacity})
+    return func::CallOp::create(
+               b, loc, popFn, /*results=*/
+               cast<ShapedType>(
+                   cast<ShapedType>(elements.getType()).getElementType())
+                   .getElementType(),
+               ValueRange{elements, size, capacity})
         .getResult(0);
   }
 
@@ -171,35 +171,34 @@ struct LoweredCache {
         context,
         /*inputs=*/{elements.getType(), size.getType(), capacity.getType()},
         /*outputs=*/elementType);
-    auto popFn = b.create<func::FuncOp>(loc, funcName, popFnType);
+    auto popFn = func::FuncOp::create(b, loc, funcName, popFnType);
     popFn.setPrivate();
     Block *entryBlock = popFn.addEntryBlock();
     b.setInsertionPointToStart(entryBlock);
     BlockArgument elementsField = popFn.getArgument(0);
     BlockArgument sizeField = popFn.getArgument(1);
 
-    Value elementsVal = b.create<memref::LoadOp>(loc, elementsField);
-    Value sizeVal = b.create<memref::LoadOp>(loc, sizeField);
-    Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
-    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
+    Value elementsVal = memref::LoadOp::create(b, loc, elementsField);
+    Value sizeVal = memref::LoadOp::create(b, loc, sizeField);
+    Value zero = arith::ConstantIndexOp::create(b, loc, 0);
+    Value one = arith::ConstantIndexOp::create(b, loc, 1);
     Value pred =
-        b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, sizeVal, zero);
-    b.create<cf::AssertOp>(loc, pred, "get on empty cache");
+        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sgt, sizeVal, zero);
+    cf::AssertOp::create(b, loc, pred, "get on empty cache");
 
-    Value lastIndex = b.create<arith::SubIOp>(loc, sizeVal, one);
-    Value result = b.create<memref::LoadOp>(loc, elementsVal, lastIndex);
-    b.create<func::ReturnOp>(loc, result);
+    Value lastIndex = arith::SubIOp::create(b, loc, sizeVal, one);
+    Value result = memref::LoadOp::create(b, loc, elementsVal, lastIndex);
+    func::ReturnOp::create(b, loc, result);
     return SymbolRefAttr::get(context, funcName);
   }
 
   Value emitGet(Location loc, OpBuilder &b, FlatSymbolRefAttr getFn) const {
-    return b
-        .create<func::CallOp>(
-            loc, getFn, /*results=*/
-            cast<ShapedType>(
-                cast<ShapedType>(elements.getType()).getElementType())
-                .getElementType(),
-            ValueRange{elements, size, capacity})
+    return func::CallOp::create(
+               b, loc, getFn, /*results=*/
+               cast<ShapedType>(
+                   cast<ShapedType>(elements.getType()).getElementType())
+                   .getElementType(),
+               ValueRange{elements, size, capacity})
         .getResult(0);
   }
   static std::optional<LoweredCache>
@@ -212,7 +211,7 @@ struct LoweredCache {
       return {};
     }
     auto unpackedCache =
-        b.create<UnrealizedConversionCastOp>(loc, resultTypes, enzymeCache);
+        UnrealizedConversionCastOp::create(b, loc, resultTypes, enzymeCache);
     return LoweredCache{.elements = unpackedCache.getResult(0),
                         .size = unpackedCache.getResult(1),
                         .capacity = unpackedCache.getResult(2),
@@ -233,7 +232,7 @@ struct InitOpConversion : public OpConversionPattern<enzyme::InitOp> {
     if (isa<enzyme::GradientType>(op.getType())) {
       auto memrefType =
           cast<MemRefType>(getTypeConverter()->convertType(op.getType()));
-      Value buffer = rewriter.create<memref::AllocOp>(op.getLoc(), memrefType);
+      Value buffer = memref::AllocOp::create(rewriter, op.getLoc(), memrefType);
       rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, op.getType(),
                                                               buffer);
       return success();
@@ -246,24 +245,24 @@ struct InitOpConversion : public OpConversionPattern<enzyme::InitOp> {
         return failure();
       }
 
-      Value capacity = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+      Value capacity = arith::ConstantIndexOp::create(rewriter, op.getLoc(), 1);
       Value initialSize =
-          rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+          arith::ConstantIndexOp::create(rewriter, op.getLoc(), 0);
       auto dataType = cast<MemRefType>(resultTypes[0]);
       auto sizeType = cast<MemRefType>(resultTypes[1]);
       auto capacityType = cast<MemRefType>(resultTypes[2]);
-      Value buffer = rewriter.create<memref::AllocOp>(
-          op.getLoc(), cast<MemRefType>(dataType.getElementType()),
+      Value buffer = memref::AllocOp::create(
+          rewriter, op.getLoc(), cast<MemRefType>(dataType.getElementType()),
           /*dynamicSize=*/capacity);
       Value bufferField =
-          rewriter.create<memref::AllocaOp>(op.getLoc(), dataType);
+          memref::AllocaOp::create(rewriter, op.getLoc(), dataType);
       Value sizeField =
-          rewriter.create<memref::AllocaOp>(op.getLoc(), sizeType);
+          memref::AllocaOp::create(rewriter, op.getLoc(), sizeType);
       Value capacityField =
-          rewriter.create<memref::AllocaOp>(op.getLoc(), capacityType);
-      rewriter.create<memref::StoreOp>(op.getLoc(), buffer, bufferField);
-      rewriter.create<memref::StoreOp>(op.getLoc(), initialSize, sizeField);
-      rewriter.create<memref::StoreOp>(op.getLoc(), capacity, capacityField);
+          memref::AllocaOp::create(rewriter, op.getLoc(), capacityType);
+      memref::StoreOp::create(rewriter, op.getLoc(), buffer, bufferField);
+      memref::StoreOp::create(rewriter, op.getLoc(), initialSize, sizeField);
+      memref::StoreOp::create(rewriter, op.getLoc(), capacity, capacityField);
       rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(
           op, op.getType(), ValueRange{bufferField, sizeField, capacityField});
       return success();
@@ -330,8 +329,8 @@ struct SetOpConversion : public OpConversionPattern<enzyme::SetOp> {
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
       auto memrefType = cast<MemRefType>(getTypeConverter()->convertType(type));
-      auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
-          op.getLoc(), memrefType, op.getGradient());
+      auto castedGradient = UnrealizedConversionCastOp::create(
+          rewriter, op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::StoreOp>(op, op.getValue(),
                                                    castedGradient.getResult(0));
     }
@@ -361,8 +360,8 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
       auto memrefType = cast<MemRefType>(getTypeConverter()->convertType(type));
-      auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
-          op.getLoc(), memrefType, op.getGradient());
+      auto castedGradient = UnrealizedConversionCastOp::create(
+          rewriter, op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::LoadOp>(op,
                                                   castedGradient.getResult(0));
     }
