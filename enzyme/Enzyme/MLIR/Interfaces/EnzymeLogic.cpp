@@ -158,7 +158,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
       OpBuilder builder(gutils->oldFunc.getContext());
       builder.setInsertionPointToEnd(newBB);
-      builder.create<LLVM::UnreachableOp>(gutils->oldFunc.getLoc());
+      LLVM::UnreachableOp::create(builder, gutils->oldFunc.getLoc());
       continue;
     }
 

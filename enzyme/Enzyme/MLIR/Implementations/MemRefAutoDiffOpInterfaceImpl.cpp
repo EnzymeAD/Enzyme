@@ -53,17 +53,17 @@ struct LoadOpInterfaceReverse
         }
 
         if (!gutils->AtomicAdd) {
-          Value loadedGradient = builder.create<memref::LoadOp>(
-              loadOp.getLoc(), memrefGradient,
-              ArrayRef<Value>(retrievedArguments));
+          Value loadedGradient =
+              memref::LoadOp::create(builder, loadOp.getLoc(), memrefGradient,
+                                     ArrayRef<Value>(retrievedArguments));
           Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
                                                   loadedGradient, gradient);
-          builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
-                                          memrefGradient,
-                                          ArrayRef<Value>(retrievedArguments));
+          memref::StoreOp::create(builder, loadOp.getLoc(), addedGradient,
+                                  memrefGradient,
+                                  ArrayRef<Value>(retrievedArguments));
         } else {
-          builder.create<memref::AtomicRMWOp>(
-              loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
+          memref::AtomicRMWOp::create(
+              builder, loadOp.getLoc(), arith::AtomicRMWKind::addf, gradient,
               memrefGradient, ArrayRef<Value>(retrievedArguments));
         }
       }
@@ -126,9 +126,9 @@ struct StoreOpInterfaceReverse
 
       if (!iface.isMutable()) {
         if (!gutils->isConstantValue(val)) {
-          Value loadedGradient = builder.create<memref::LoadOp>(
-              storeOp.getLoc(), memrefGradient,
-              ArrayRef<Value>(retrievedArguments));
+          Value loadedGradient =
+              memref::LoadOp::create(builder, storeOp.getLoc(), memrefGradient,
+                                     ArrayRef<Value>(retrievedArguments));
           gutils->addToDiffe(val, loadedGradient, builder);
         }
 
@@ -136,8 +136,8 @@ struct StoreOpInterfaceReverse
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
 
-        builder.create<memref::StoreOp>(storeOp.getLoc(), zero, memrefGradient,
-                                        ArrayRef<Value>(retrievedArguments));
+        memref::StoreOp::create(builder, storeOp.getLoc(), zero, memrefGradient,
+                                ArrayRef<Value>(retrievedArguments));
       }
     }
     return success();
@@ -193,8 +193,8 @@ struct SubViewOpInterfaceReverse
     auto subviewOp = cast<memref::SubViewOp>(op);
     auto newSubviewOp = cast<memref::SubViewOp>(gutils->getNewFromOriginal(op));
     if (!gutils->isConstantValue(subviewOp.getSource())) {
-      Value shadow = builder.create<memref::SubViewOp>(
-          op->getLoc(), newSubviewOp.getType(),
+      Value shadow = memref::SubViewOp::create(
+          builder, op->getLoc(), newSubviewOp.getType(),
           gutils->invertPointerM(subviewOp.getSource(), builder),
           newSubviewOp.getMixedOffsets(), newSubviewOp.getMixedSizes(),
           newSubviewOp.getMixedStrides());
@@ -235,7 +235,7 @@ public:
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
       if (!iface.isMutable()) {
         Value zero = iface.createNullValue(builder, loc);
-        builder.create<linalg::FillOp>(loc, zero, val);
+        linalg::FillOp::create(builder, loc, zero, val);
       }
     } else {
       return failure();

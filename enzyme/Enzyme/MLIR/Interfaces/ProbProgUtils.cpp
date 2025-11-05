@@ -29,8 +29,8 @@ using namespace mlir::enzyme;
 Value mlir::enzyme::MProbProgUtils::getTrace() {
   if (!trace) {
     OpBuilder builder(initializationBlock, initializationBlock->begin());
-    auto initTraceOp = builder.create<enzyme::InitTraceOp>(
-        (initializationBlock->rbegin())->getLoc(),
+    auto initTraceOp = enzyme::InitTraceOp::create(
+        builder, (initializationBlock->rbegin())->getLoc(),
         enzyme::TraceType::get(initializationBlock->begin()->getContext()));
     trace = initTraceOp.getTrace();
   }

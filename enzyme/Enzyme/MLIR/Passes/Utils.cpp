@@ -18,10 +18,10 @@ linalg::GenericOp Utils::adjointToGeneric(enzyme::GenericAdjointOp &op,
   auto indexingMaps = op.getIndexingMapsAttr();
   auto iteratorTypes = op.getIteratorTypesAttr();
 
-  auto genericOp = builder.create<mlir::linalg::GenericOp>(
-      loc, TypeRange(resultTensors), ValueRange(inputs), ValueRange(outputs),
-      ArrayAttr(indexingMaps), ArrayAttr(iteratorTypes), StringAttr(),
-      StringAttr());
+  auto genericOp = mlir::linalg::GenericOp::create(
+      builder, loc, TypeRange(resultTensors), ValueRange(inputs),
+      ValueRange(outputs), ArrayAttr(indexingMaps), ArrayAttr(iteratorTypes),
+      StringAttr(), StringAttr());
 
   auto &body = genericOp.getRegion();
   body.takeBody(op.getRegion());

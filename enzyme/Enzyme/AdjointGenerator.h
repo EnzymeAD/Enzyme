@@ -133,7 +133,7 @@ public:
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
-                             llvm::Type *intType) {
+                             llvm::Type *intType, llvm::Function *caller) {
     using namespace llvm;
 
     if (DT->getType()->isIntegerTy())
@@ -183,7 +183,8 @@ public:
                                 Attribute::AttrKind::WillReturn);
     auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "MPI_Type_size", FT, AL),
+            getRenamedPerCallingConv(caller->getName(), "MPI_Type_size"), FT,
+            AL),
         args);
 #if LLVM_VERSION_MAJOR >= 16
     CI->setOnlyAccessesArgMemory();
@@ -197,7 +198,7 @@ public:
   // To be double-checked against the functionality needed and the respective
   // implementation in Adjoint-MPI
   llvm::Value *MPI_COMM_RANK(llvm::Value *comm, llvm::IRBuilder<> &B,
-                             llvm::Type *rankTy) {
+                             llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
     Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
@@ -224,13 +225,14 @@ public:
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "MPI_Comm_rank", FT, AL),
+            getRenamedPerCallingConv(caller->getName(), "MPI_Comm_rank"), FT,
+            AL),
         args);
     return B.CreateLoad(rankTy, alloc);
   }
 
   llvm::Value *MPI_COMM_SIZE(llvm::Value *comm, llvm::IRBuilder<> &B,
-                             llvm::Type *rankTy) {
+                             llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
     Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
@@ -257,7 +259,8 @@ public:
     llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "MPI_Comm_size", FT, AL),
+            getRenamedPerCallingConv(caller->getName(), "MPI_Comm_size"), FT,
+            AL),
         args);
     return B.CreateLoad(rankTy, alloc);
   }

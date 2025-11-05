@@ -176,11 +176,13 @@ attributes #4 = { nounwind }
 ; MSG2: define internal void @fwddiffemsg2(float* %val1, float* %"val1'", float* %val2, float* %"val2'", i32 %numprocprec, i32 %numprocsuiv, i32 %etiquette)
 ; MSG2-NEXT: entry:
 ; MSG2-NEXT:   %statut = alloca %struct.ompi_status_public_t, align 8
+; MSG2-NEXT:   %"'ipc" = bitcast float* %"val2'" to i8*
 ; MSG2-NEXT:   %0 = bitcast float* %val2 to i8*
 ; MSG2-NEXT:   %call = call i32 @MPI_Recv(i8* %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* nonnull %statut)
+; MSG2-NEXT:   %1 = call i32 @MPI_Recv(i8* %"'ipc", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* %statut)
 ; MSG2-NEXT:   %[[ipc:.+]] = bitcast float* %"val1'" to i8*
-; MSG2-NEXT:   %1 = bitcast float* %val1 to i8*
-; MSG2-NEXT:   %call1 = call i32 @MPI_Send(i8* %1, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
-; MSG2-NEXT:   %2 = call i32 @MPI_Send(i8* %[[ipc]], i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
+; MSG2-NEXT:   %2 = bitcast float* %val1 to i8*
+; MSG2-NEXT:   %call1 = call i32 @MPI_Send(i8* %2, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
+; MSG2-NEXT:   %3 = call i32 @MPI_Send(i8* %[[ipc]], i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; MSG2-NEXT:   ret void
 ; MSG2-NEXT: }

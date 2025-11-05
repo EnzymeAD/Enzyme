@@ -174,9 +174,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         auto distFn =
             cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                 sampleOp, sampleOp.getFnAttr()));
-        auto distCall = rewriter.create<func::CallOp>(
-            sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-            sampleOp.getInputs());
+        auto distCall =
+            func::CallOp::create(rewriter, sampleOp.getLoc(), distFn.getName(),
+                                 distFn.getResultTypes(), sampleOp.getInputs());
         sampleOp.replaceAllUsesWith(distCall);
 
         toErase.push_back(sampleOp);
@@ -186,8 +186,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.eraseOp(op);
 
       rewriter.setInsertionPoint(CI);
-      auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getOperands());
+      auto newCI =
+          func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
+                               NewF.getResultTypes(), CI.getOperands());
 
       rewriter.replaceOp(CI, newCI.getResults());
 
@@ -224,9 +225,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
       auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = entryBuilder.create<arith::ConstantOp>(
-          putils->initializationBlock->begin()->getLoc(), tensorType,
-          DenseElementsAttr::get(tensorType, 0.0));
+      auto zeroWeight = arith::ConstantOp::create(
+          entryBuilder, putils->initializationBlock->begin()->getLoc(),
+          tensorType, DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
 
@@ -245,9 +246,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getFnAttr()));
 
-          auto distCall = rewriter.create<func::CallOp>(
-              sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-              sampleOp.getInputs());
+          auto distCall = func::CallOp::create(
+              rewriter, sampleOp.getLoc(), distFn.getName(),
+              distFn.getResultTypes(), sampleOp.getInputs());
 
           sampledValues.append(distCall.getResults().begin(),
                                distCall.getResults().end());
@@ -272,17 +273,18 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           }
 
           // A2. Compute and accumulate weight.
-          auto logpdf = rewriter.create<func::CallOp>(
-              sampleOp.getLoc(), logpdfFn.getName(), logpdfFn.getResultTypes(),
-              logpdfOperands);
-          weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+          auto logpdf = func::CallOp::create(
+              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+              logpdfFn.getResultTypes(), logpdfOperands);
+          weightAccumulator =
+              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                    weightAccumulator, logpdf.getResult(0));
         } else {
           // B1. Generative functions: generate a simulate op that will itself
           // be lowered in a subsequent rewrite. No direct call to the
           // generative function should be emitted here.
-          auto simulateOp = rewriter.create<enzyme::SimulateOp>(
-              sampleOp.getLoc(),
+          auto simulateOp = enzyme::SimulateOp::create(
+              rewriter, sampleOp.getLoc(),
               /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
               /*outputs*/ sampleOp.getResultTypes(),
@@ -298,8 +300,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             sampledValues.push_back(simulateOp->getResult(i + 2));
 
           // B2. Add subtrace to trace.
-          auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
-              sampleOp.getLoc(),
+          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*subtrace*/ simulateOp->getResult(0),
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -307,8 +309,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           currTrace = addSubtraceOp.getUpdatedTrace();
 
           // B3. Accumulate weight returned by simulateOp.
-          weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, simulateOp->getResult(1));
+          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    weightAccumulator,
+                                                    simulateOp->getResult(1));
         }
 
         // C. Add non-RNG sampled values to trace (common for both cases).
@@ -318,8 +321,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
-              sampleOp.getLoc(),
+          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -350,8 +353,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.setInsertionPoint(retOp);
 
         // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
-            retOp.getLoc(),
+        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
+            rewriter, retOp.getLoc(),
             /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
@@ -363,8 +366,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!retvals.empty()) {
-          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
-              retOp.getLoc(),
+          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
+              rewriter, retOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
               /*trace*/ currTrace,
               /*retval*/ retvals);
@@ -379,13 +382,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
 
-        rewriter.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
       });
 
       rewriter.setInsertionPoint(CI);
-      auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), CI.getInputs());
+      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
+                                        NewF.getResultTypes(), CI.getInputs());
 
       rewriter.replaceOp(CI, newCI.getResults());
 
@@ -422,9 +425,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
     Value conditionalDump(OpBuilder &builder, Location loc, Value value,
                           StringRef label) const {
       if (debug) {
-        return builder
-            .create<enzyme::DumpOp>(loc, value.getType(), value,
-                                    builder.getStringAttr(label))
+        return enzyme::DumpOp::create(builder, loc, value.getType(), value,
+                                      builder.getStringAttr(label))
             .getOutput();
       }
       return value;
@@ -479,21 +481,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           RankedTensorType::get({positionSize}, rewriter.getF64Type());
 
       // 1. Extract initial position vector q0
-      auto q0 = rewriter.create<enzyme::GetFlattenedSamplesFromTraceOp>(
-          loc, positionType, originalTrace, selection);
+      auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
+          rewriter, loc, positionType, originalTrace, selection);
 
       // 2. Compute initial potential energy U0 = -weight
-      auto weight0 = rewriter.create<enzyme::GetWeightFromTraceOp>(
-          loc, tensorType, originalTrace);
+      auto weight0 = enzyme::GetWeightFromTraceOp::create(
+          rewriter, loc, tensorType, originalTrace);
       Value U0 = conditionalDump(rewriter, loc,
-                                 rewriter.create<arith::NegFOp>(loc, weight0),
+                                 arith::NegFOp::create(rewriter, loc, weight0),
                                  "HMC: initial potential energy U0");
 
-      auto zeroConst = rewriter.create<arith::ConstantOp>(
-          loc, tensorType,
+      auto zeroConst = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.0)));
-      auto oneConst = rewriter.create<arith::ConstantOp>(
-          loc, tensorType,
+      auto oneConst = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
 
       Value rng1;
@@ -507,17 +509,17 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rng1 = rngState;
       } else {
         if (mass) {
-          auto randomOp = rewriter.create<enzyme::RandomOp>(
-              loc, TypeRange{rngState.getType(), positionType}, rngState,
-              zeroConst, mass,
+          auto randomOp = enzyme::RandomOp::create(
+              rewriter, loc, TypeRange{rngState.getType(), positionType},
+              rngState, zeroConst, mass,
               enzyme::RngDistributionAttr::get(
                   rewriter.getContext(), enzyme::RngDistribution::MULTINORMAL));
           rng1 = randomOp.getOutputRngState();
           p0 = randomOp.getResult();
         } else {
-          auto randomOp = rewriter.create<enzyme::RandomOp>(
-              loc, TypeRange{rngState.getType(), positionType}, rngState,
-              zeroConst, oneConst,
+          auto randomOp = enzyme::RandomOp::create(
+              rewriter, loc, TypeRange{rngState.getType(), positionType},
+              rngState, zeroConst, oneConst,
               enzyme::RngDistributionAttr::get(
                   rewriter.getContext(), enzyme::RngDistribution::NORMAL));
           rng1 = randomOp.getOutputRngState();
@@ -525,39 +527,39 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
       }
 
-      auto halfConst = rewriter.create<arith::ConstantOp>(
-          loc, tensorType,
+      auto halfConst = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^{-1} * p
       Value K0;
       if (mass) {
-        auto MInvP0 = rewriter.create<enzyme::CholeskySolveOp>(
-            loc, positionType, mass, p0);
+        auto MInvP0 = enzyme::CholeskySolveOp::create(rewriter, loc,
+                                                      positionType, mass, p0);
         auto p0DotMInvP =
-            rewriter.create<enzyme::DotOp>(loc, tensorType, p0, MInvP0);
+            enzyme::DotOp::create(rewriter, loc, tensorType, p0, MInvP0);
         K0 = conditionalDump(
             rewriter, loc,
-            rewriter.create<arith::MulFOp>(loc, halfConst, p0DotMInvP),
+            arith::MulFOp::create(rewriter, loc, halfConst, p0DotMInvP),
             "HMC: initial kinetic energy K0");
       } else {
-        auto p0DotP0 = rewriter.create<enzyme::DotOp>(loc, tensorType, p0, p0);
+        auto p0DotP0 = enzyme::DotOp::create(rewriter, loc, tensorType, p0, p0);
         K0 = conditionalDump(
             rewriter, loc,
-            rewriter.create<arith::MulFOp>(loc, halfConst, p0DotP0),
+            arith::MulFOp::create(rewriter, loc, halfConst, p0DotP0),
             "HMC: initial kinetic energy K0");
       }
 
       Value H0 = conditionalDump(rewriter, loc,
-                                 rewriter.create<arith::AddFOp>(loc, U0, K0),
+                                 arith::AddFOp::create(rewriter, loc, U0, K0),
                                  "HMC: initial Hamiltonian H0");
 
       // 5. Compute initial gradient at q0
-      auto gradSeedInit = rewriter.create<arith::ConstantOp>(
-          loc, tensorType,
+      auto gradSeedInit = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
-      auto autodiffInit = rewriter.create<enzyme::AutoDiffRegionOp>(
-          loc, TypeRange{rng1.getType(), positionType},
+      auto autodiffInit = enzyme::AutoDiffRegionOp::create(
+          rewriter, loc, TypeRange{rng1.getType(), positionType},
           ValueRange{q0, gradSeedInit},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
@@ -579,15 +581,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       updateInputsInit.push_back(rng1);
       updateInputsInit.append(fnInputs.begin(), fnInputs.end());
 
-      auto updateOpInit = rewriter.create<enzyme::UpdateOp>(
-          loc, TypeRange{traceType, tensorType, rng1.getType()},
+      auto updateOpInit = enzyme::UpdateOp::create(
+          rewriter, loc, TypeRange{traceType, tensorType, rng1.getType()},
           mcmcOp.getFnAttr(), updateInputsInit, originalTrace, q0Arg, selection,
           rewriter.getStringAttr(""));
       Value w0 = updateOpInit.getWeight();
       Value rng0_out = updateOpInit.getOutputRngState();
-      Value U0_init = rewriter.create<arith::NegFOp>(loc, w0);
+      Value U0_init = arith::NegFOp::create(rewriter, loc, w0);
 
-      rewriter.create<enzyme::YieldOp>(loc, ValueRange{U0_init, rng0_out});
+      enzyme::YieldOp::create(rewriter, loc, ValueRange{U0_init, rng0_out});
 
       rewriter.setInsertionPointAfter(autodiffInit);
       Value rng0_final = autodiffInit.getResult(0);
@@ -595,11 +597,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       // 6. Leapfrog integration
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
-      auto c0 = rewriter.create<arith::ConstantOp>(
-          loc, i64TensorType,
+      auto c0 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
-      auto c1 = rewriter.create<arith::ConstantOp>(
-          loc, i64TensorType,
+      auto c1 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
 
       ArrayRef<int64_t> positionShape = positionType.getShape();
@@ -607,20 +609,20 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       stepSize =
           conditionalDump(rewriter, loc, stepSize, "HMC: step_size (eps)");
 
-      auto stepSizeBroadcast = rewriter.create<enzyme::BroadcastOp>(
-          loc, positionType, stepSize,
+      auto stepSizeBroadcast = enzyme::BroadcastOp::create(
+          rewriter, loc, positionType, stepSize,
           rewriter.getDenseI64ArrayAttr(positionShape));
       auto halfStepSize =
-          rewriter.create<arith::MulFOp>(loc, halfConst, stepSize);
-      auto halfStepSizeBroadcast = rewriter.create<enzyme::BroadcastOp>(
-          loc, positionType, halfStepSize,
+          arith::MulFOp::create(rewriter, loc, halfConst, stepSize);
+      auto halfStepSizeBroadcast = enzyme::BroadcastOp::create(
+          rewriter, loc, positionType, halfStepSize,
           rewriter.getDenseI64ArrayAttr(positionShape));
 
       SmallVector<Type> loopResultTypes = {positionType, positionType,
                                            positionType, rng0_final.getType()};
-      auto loopOp = rewriter.create<enzyme::LoopOp>(
-          loc, loopResultTypes, c0, numSteps, c1,
-          ValueRange{q0, p0, grad0, rng0_final});
+      auto loopOp =
+          enzyme::LoopOp::create(rewriter, loc, loopResultTypes, c0, numSteps,
+                                 c1, ValueRange{q0, p0, grad0, rng0_final});
 
       Block *loopBody = rewriter.createBlock(&loopOp.getRegion());
       loopBody->addArgument(i64TensorType, loc);        // iv
@@ -640,31 +642,31 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       // 6.1 Half step on momentum: p -= (eps/2) * gradient
       auto deltaP1 =
-          rewriter.create<arith::MulFOp>(loc, halfStepSizeBroadcast, gradient);
+          arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast, gradient);
       Value p1 = conditionalDump(
-          rewriter, loc, rewriter.create<arith::SubFOp>(loc, p, deltaP1),
+          rewriter, loc, arith::SubFOp::create(rewriter, loc, p, deltaP1),
           "Leapfrog: momentum p(t + eps/2)");
 
       // 6.2 Full step on position: q += eps * M^{-1} * p1
       Value v1;
       if (mass) {
-        v1 = rewriter.create<enzyme::CholeskySolveOp>(loc, positionType, mass,
-                                                      p1);
+        v1 = enzyme::CholeskySolveOp::create(rewriter, loc, positionType, mass,
+                                             p1);
       } else {
         v1 = p1;
       }
 
-      auto deltaQ = rewriter.create<arith::MulFOp>(loc, stepSizeBroadcast, v1);
-      Value q1 = conditionalDump(rewriter, loc,
-                                 rewriter.create<arith::AddFOp>(loc, q, deltaQ),
-                                 "Leapfrog: position q(t + eps)");
+      auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v1);
+      Value q1 = conditionalDump(
+          rewriter, loc, arith::AddFOp::create(rewriter, loc, q, deltaQ),
+          "Leapfrog: position q(t + eps)");
 
       // Compute new gradient at q1
-      auto gradSeedLoop = rewriter.create<arith::ConstantOp>(
-          loc, tensorType,
+      auto gradSeedLoop = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
-      auto autodiffOp = rewriter.create<enzyme::AutoDiffRegionOp>(
-          loc, TypeRange{loopRng.getType(), positionType},
+      auto autodiffOp = enzyme::AutoDiffRegionOp::create(
+          rewriter, loc, TypeRange{loopRng.getType(), positionType},
           ValueRange{q1, gradSeedLoop},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
@@ -685,15 +687,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       updateInputs.push_back(loopRng);
       updateInputs.append(fnInputs.begin(), fnInputs.end());
 
-      auto updateOp = rewriter.create<enzyme::UpdateOp>(
-          loc, TypeRange{traceType, tensorType, loopRng.getType()},
+      auto updateOp = enzyme::UpdateOp::create(
+          rewriter, loc, TypeRange{traceType, tensorType, loopRng.getType()},
           mcmcOp.getFnAttr(), updateInputs, originalTrace, q1Arg, selection,
           rewriter.getStringAttr(""));
       Value w1 = updateOp.getWeight();
       Value rng1_inner = updateOp.getOutputRngState();
-      Value U1 = rewriter.create<arith::NegFOp>(loc, w1);
+      Value U1 = arith::NegFOp::create(rewriter, loc, w1);
 
-      rewriter.create<enzyme::YieldOp>(loc, ValueRange{U1, rng1_inner});
+      enzyme::YieldOp::create(rewriter, loc, ValueRange{U1, rng1_inner});
 
       rewriter.setInsertionPointAfter(autodiffOp);
 
@@ -703,15 +705,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                           "Leapfrog: gradient dU/dq(t + eps)");
 
       // 6.3 Another half step on momentum: p -= (eps/2) * gradient (new)
-      auto deltaP2 = rewriter.create<arith::MulFOp>(loc, halfStepSizeBroadcast,
-                                                    newGradient);
+      auto deltaP2 = arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast,
+                                           newGradient);
       Value p2 = conditionalDump(
-          rewriter, loc, rewriter.create<arith::SubFOp>(loc, p1, deltaP2),
+          rewriter, loc, arith::SubFOp::create(rewriter, loc, p1, deltaP2),
           "Leapfrog: momentum p(t + eps)");
 
       // Yield [position, momentum, gradient (new), RNG]
-      rewriter.create<enzyme::YieldOp>(loc,
-                                       ValueRange{q1, p2, newGradient, newRng});
+      enzyme::YieldOp::create(rewriter, loc,
+                              ValueRange{q1, p2, newGradient, newRng});
 
       rewriter.setInsertionPointAfter(loopOp);
       Value qL = loopOp.getResult(0);
@@ -723,8 +725,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       finalUpdateInputs.push_back(rngAfterLeapfrog);
       finalUpdateInputs.append(fnInputs.begin(), fnInputs.end());
 
-      auto finalUpdateOp = rewriter.create<enzyme::UpdateOp>(
-          loc, TypeRange{traceType, tensorType, rngAfterLeapfrog.getType()},
+      auto finalUpdateOp = enzyme::UpdateOp::create(
+          rewriter, loc,
+          TypeRange{traceType, tensorType, rngAfterLeapfrog.getType()},
           mcmcOp.getFnAttr(), finalUpdateInputs, originalTrace, qL, selection,
           rewriter.getStringAttr(""));
       Value finalTrace = finalUpdateOp.getUpdatedTrace();
@@ -732,56 +735,56 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
       Value U1_final = conditionalDump(
-          rewriter, loc, rewriter.create<arith::NegFOp>(loc, weight1),
+          rewriter, loc, arith::NegFOp::create(rewriter, loc, weight1),
           "HMC: final potential energy U1");
 
       // K1 = 0.5 * pL^T * M^{-1} * pL
       Value K1;
       if (mass) {
-        auto MInvPL = rewriter.create<enzyme::CholeskySolveOp>(
-            loc, positionType, mass, pL);
+        auto MInvPL = enzyme::CholeskySolveOp::create(rewriter, loc,
+                                                      positionType, mass, pL);
         auto pLDotMInvPL =
-            rewriter.create<enzyme::DotOp>(loc, tensorType, pL, MInvPL);
+            enzyme::DotOp::create(rewriter, loc, tensorType, pL, MInvPL);
         K1 = conditionalDump(
             rewriter, loc,
-            rewriter.create<arith::MulFOp>(loc, halfConst, pLDotMInvPL),
+            arith::MulFOp::create(rewriter, loc, halfConst, pLDotMInvPL),
             "HMC: final kinetic energy K1");
       } else {
-        auto pLDotPL = rewriter.create<enzyme::DotOp>(loc, tensorType, pL, pL);
+        auto pLDotPL = enzyme::DotOp::create(rewriter, loc, tensorType, pL, pL);
         K1 = conditionalDump(
             rewriter, loc,
-            rewriter.create<arith::MulFOp>(loc, halfConst, pLDotPL),
+            arith::MulFOp::create(rewriter, loc, halfConst, pLDotPL),
             "HMC: final kinetic energy K1");
       }
 
       Value H1 = conditionalDump(
-          rewriter, loc, rewriter.create<arith::AddFOp>(loc, U1_final, K1),
+          rewriter, loc, arith::AddFOp::create(rewriter, loc, U1_final, K1),
           "HMC: final Hamiltonian H1");
 
       // 8. Metropolis-Hastings accept/reject step
       // with acceptance probability: α = min(1, exp(H0 - H1))
-      auto dH = rewriter.create<arith::SubFOp>(loc, H0, H1);
-      auto expDH = rewriter.create<math::ExpOp>(loc, dH);
+      auto dH = arith::SubFOp::create(rewriter, loc, H0, H1);
+      auto expDH = math::ExpOp::create(rewriter, loc, dH);
       Value accProb = conditionalDump(
           rewriter, loc,
-          rewriter.create<arith::MinimumFOp>(loc, oneConst, expDH),
+          arith::MinimumFOp::create(rewriter, loc, oneConst, expDH),
           "HMC: acceptance probability α");
 
-      auto randomOp2 = rewriter.create<enzyme::RandomOp>(
-          loc, TypeRange{rngAfterUpdate.getType(), tensorType}, rngAfterUpdate,
-          zeroConst, oneConst,
+      auto randomOp2 = enzyme::RandomOp::create(
+          rewriter, loc, TypeRange{rngAfterUpdate.getType(), tensorType},
+          rngAfterUpdate, zeroConst, oneConst,
           enzyme::RngDistributionAttr::get(rewriter.getContext(),
                                            enzyme::RngDistribution::UNIFORM));
       Value rngFinal = randomOp2.getOutputRngState();
       Value randUniform = randomOp2.getResult();
 
       // Accept if U(0,1) < α
-      auto acceptedTensor = rewriter.create<arith::CmpFOp>(
-          loc, arith::CmpFPredicate::OLT, randUniform, accProb);
+      auto acceptedTensor = arith::CmpFOp::create(
+          rewriter, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
       // 9. Select trace based on acceptance
-      auto selectedTrace = rewriter.create<enzyme::SelectTraceOp>(
-          loc, traceType, acceptedTensor, finalTrace, originalTrace);
+      auto selectedTrace = enzyme::SelectTraceOp::create(
+          rewriter, loc, traceType, acceptedTensor, finalTrace, originalTrace);
 
       rewriter.replaceOp(mcmcOp, {selectedTrace, acceptedTensor, rngFinal});
 
@@ -816,8 +819,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // `enzyme.regenerate` returns the same results as `enzyme.generate`
       // (trace, weight, outputs...<rng_state, original_outputs...>), but
       // takes addresses to regenerate instead of to specify constraints.
-      auto regenerateOp = rewriter.create<enzyme::RegenerateOp>(
-          mhOp.getLoc(),
+      auto regenerateOp = enzyme::RegenerateOp::create(
+          rewriter, mhOp.getLoc(),
           /*trace*/ traceType,
           /*weight*/ tensorType,
           /*output_rng_state*/ rngStateType,
@@ -828,32 +831,35 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           /*name*/ mhOp.getNameAttr());
 
       // 2. Metropolis-Hastings accept/reject step
-      auto getOriginalWeightOp = rewriter.create<enzyme::GetWeightFromTraceOp>(
-          mhOp.getLoc(), tensorType, mhOp.getOriginalTrace());
-      auto logAlpha = rewriter.create<arith::SubFOp>(
-          mhOp.getLoc(), regenerateOp.getWeight(),
-          getOriginalWeightOp.getWeight());
+      auto getOriginalWeightOp = enzyme::GetWeightFromTraceOp::create(
+          rewriter, mhOp.getLoc(), tensorType, mhOp.getOriginalTrace());
+      auto logAlpha = arith::SubFOp::create(rewriter, mhOp.getLoc(),
+                                            regenerateOp.getWeight(),
+                                            getOriginalWeightOp.getWeight());
 
-      auto zeroConst = rewriter.create<arith::ConstantOp>(
-          mhOp.getLoc(), tensorType, DenseElementsAttr::get(tensorType, 0.0));
-      auto oneConst = rewriter.create<arith::ConstantOp>(
-          mhOp.getLoc(), tensorType, DenseElementsAttr::get(tensorType, 1.0));
+      auto zeroConst =
+          arith::ConstantOp::create(rewriter, mhOp.getLoc(), tensorType,
+                                    DenseElementsAttr::get(tensorType, 0.0));
+      auto oneConst =
+          arith::ConstantOp::create(rewriter, mhOp.getLoc(), tensorType,
+                                    DenseElementsAttr::get(tensorType, 1.0));
 
-      auto randomOp = rewriter.create<enzyme::RandomOp>(
-          mhOp.getLoc(), TypeRange{rngStateType, tensorType},
+      auto randomOp = enzyme::RandomOp::create(
+          rewriter, mhOp.getLoc(), TypeRange{rngStateType, tensorType},
           regenerateOp.getOutputRngState(), zeroConst, oneConst,
           enzyme::RngDistributionAttr::get(rewriter.getContext(),
                                            enzyme::RngDistribution::UNIFORM));
       auto logRand =
-          rewriter.create<math::LogOp>(mhOp.getLoc(), randomOp.getResult());
+          math::LogOp::create(rewriter, mhOp.getLoc(), randomOp.getResult());
 
       // 3. Check if proposal is accepted: log(rand()) < log_alpha
-      auto accepted = rewriter.create<arith::CmpFOp>(
-          mhOp.getLoc(), arith::CmpFPredicate::OLT, logRand, logAlpha);
+      auto accepted =
+          arith::CmpFOp::create(rewriter, mhOp.getLoc(),
+                                arith::CmpFPredicate::OLT, logRand, logAlpha);
 
       // 4. Select between new and original trace based on acceptance
-      auto selectedTrace = rewriter.create<enzyme::SelectTraceOp>(
-          mhOp.getLoc(), traceType, accepted, regenerateOp.getTrace(),
+      auto selectedTrace = enzyme::SelectTraceOp::create(
+          rewriter, mhOp.getLoc(), traceType, accepted, regenerateOp.getTrace(),
           mhOp.getOriginalTrace());
 
       rewriter.replaceOp(
@@ -889,9 +895,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
       auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = entryBuilder.create<arith::ConstantOp>(
-          putils->initializationBlock->begin()->getLoc(), tensorType,
-          DenseElementsAttr::get(tensorType, 0.0));
+      auto zeroWeight = arith::ConstantOp::create(
+          entryBuilder, putils->initializationBlock->begin()->getLoc(),
+          tensorType, DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
       Value constraint = NewF.getArgument(0);
@@ -932,8 +938,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               constraintOutputTypes.push_back(sampleOp.getResult(i).getType());
             }
 
-            auto gsfcOp = rewriter.create<enzyme::GetSampleFromConstraintOp>(
-                sampleOp.getLoc(), constraintOutputTypes, constraint,
+            auto gsfcOp = enzyme::GetSampleFromConstraintOp::create(
+                rewriter, sampleOp.getLoc(), constraintOutputTypes, constraint,
                 sampleOp.getSymbolAttr());
 
             // Pass along the RNG state.
@@ -963,19 +969,20 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               return WalkResult::interrupt();
             }
 
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           } else {
             auto distFn =
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getFnAttr()));
 
-            auto distCall = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-                sampleOp.getInputs());
+            auto distCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), distFn.getName(),
+                distFn.getResultTypes(), sampleOp.getInputs());
 
             sampledValues.append(distCall.getResults().begin(),
                                  distCall.getResults().end());
@@ -1001,11 +1008,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             }
 
             // A2. Compute and accumulate weight.
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           }
         } else {
           // B1. Generative functions: generate a recursive op (simulate when
@@ -1040,17 +1048,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           Operation *recursiveOp = nullptr;
 
           if (isConstrained) {
-            auto getSubconstraintOp =
-                rewriter.create<enzyme::GetSubconstraintOp>(
-                    sampleOp.getLoc(),
-                    /*subconstraint*/
-                    enzyme::ConstraintType::get(sampleOp.getContext()),
-                    /*constraint*/ constraint,
-                    /*symbol*/ sampleOp.getSymbolAttr());
+            auto getSubconstraintOp = enzyme::GetSubconstraintOp::create(
+                rewriter, sampleOp.getLoc(),
+                /*subconstraint*/
+                enzyme::ConstraintType::get(sampleOp.getContext()),
+                /*constraint*/ constraint,
+                /*symbol*/ sampleOp.getSymbolAttr());
             Value subConstraint = getSubconstraintOp.getSubconstraint();
 
-            recursiveOp = rewriter.create<enzyme::GenerateOp>(
-                sampleOp.getLoc(),
+            recursiveOp = enzyme::GenerateOp::create(
+                rewriter, sampleOp.getLoc(),
                 /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
                 /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
                 /*outputs*/ sampleOp.getResultTypes(),
@@ -1062,8 +1069,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 subConstraint,
                 /*name*/ sampleOp.getNameAttr());
           } else {
-            recursiveOp = rewriter.create<enzyme::SimulateOp>(
-                sampleOp.getLoc(),
+            recursiveOp = enzyme::SimulateOp::create(
+                rewriter, sampleOp.getLoc(),
                 /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
                 /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
                 /*outputs*/ sampleOp.getResultTypes(),
@@ -1079,8 +1086,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             sampledValues.push_back(recursiveOp->getResult(i + 2));
 
           // B2. Add subtrace to trace.
-          auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
-              sampleOp.getLoc(),
+          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*subtrace*/ recursiveOp->getResult(0),
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -1088,8 +1095,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           currTrace = addSubtraceOp.getUpdatedTrace();
 
           // B3. Accumulate weight returned by recursive op.
-          weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, recursiveOp->getResult(1));
+          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    weightAccumulator,
+                                                    recursiveOp->getResult(1));
         }
 
         // C. Add non-RNG sampled values to trace (common for both cases).
@@ -1099,8 +1107,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
-              sampleOp.getLoc(),
+          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -1131,8 +1139,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.setInsertionPoint(retOp);
 
         // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
-            retOp.getLoc(),
+        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
+            rewriter, retOp.getLoc(),
             /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
@@ -1144,8 +1152,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!retvals.empty()) {
-          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
-              retOp.getLoc(),
+          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
+              rewriter, retOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
               /*trace*/ currTrace,
               /*retval*/ retvals);
@@ -1160,7 +1168,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         newRetVals.append(retOp.getOperands().begin(),
                           retOp.getOperands().end());
 
-        rewriter.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
       });
 
@@ -1168,8 +1176,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       SmallVector<Value> operands;
       operands.push_back(CI.getConstraint());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
+      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
+                                        NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
 
@@ -1207,9 +1215,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                              putils->initializationBlock->begin());
       auto traceType = enzyme::TraceType::get(CI.getContext());
       auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = entryBuilder.create<arith::ConstantOp>(
-          putils->initializationBlock->begin()->getLoc(), tensorType,
-          DenseElementsAttr::get(tensorType, 0.0));
+      auto zeroWeight = arith::ConstantOp::create(
+          entryBuilder, putils->initializationBlock->begin()->getLoc(),
+          tensorType, DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
 
@@ -1247,9 +1255,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getFnAttr()));
 
-            auto distCall = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), distFn.getName(), distFn.getResultTypes(),
-                sampleOp.getInputs());
+            auto distCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), distFn.getName(),
+                distFn.getResultTypes(), sampleOp.getInputs());
 
             sampledValues.append(distCall.getResults().begin(),
                                  distCall.getResults().end());
@@ -1275,11 +1283,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             }
 
             // A2. Compute and accumulate weight.
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           } else {
             // Use sampled values from the original trace.
             sampledValues.resize(sampleOp.getNumResults());
@@ -1289,8 +1298,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               sampledValueTypes.push_back(sampleOp->getResultTypes()[i]);
             }
 
-            auto gsftOp = rewriter.create<enzyme::GetSampleFromTraceOp>(
-                sampleOp.getLoc(), sampledValueTypes, prevTrace,
+            auto gsftOp = enzyme::GetSampleFromTraceOp::create(
+                rewriter, sampleOp.getLoc(), sampledValueTypes, prevTrace,
                 sampleOp.getSymbolAttr());
 
             // Pass along the RNG state.
@@ -1321,11 +1330,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             }
 
             // A2. Compute and accumulate weight.
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           }
         } else {
           // B1. Generative functions: Get the subselection (potentially empty).
@@ -1351,13 +1361,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           }
 
           // B2. Generate a recursive regenerate op.
-          auto getSubtraceOp = rewriter.create<enzyme::GetSubtraceOp>(
-              sampleOp.getLoc(),
+          auto getSubtraceOp = enzyme::GetSubtraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*subtrace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*trace*/ prevTrace,
               /*symbol*/ sampleOp.getSymbolAttr());
-          auto recursiveOp = rewriter.create<enzyme::RegenerateOp>(
-              sampleOp.getLoc(),
+          auto recursiveOp = enzyme::RegenerateOp::create(
+              rewriter, sampleOp.getLoc(),
               /*trace*/ traceType,
               /*weight*/ tensorType,
               /*output_rng_state*/ sampleOp.getOperand(0).getType(),
@@ -1372,8 +1382,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             sampledValues.push_back(recursiveOp->getResult(i + 2));
 
           // B2. Add subtrace to trace.
-          auto addSubtraceOp = rewriter.create<enzyme::AddSubtraceOp>(
-              sampleOp.getLoc(),
+          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
               /*subtrace*/ recursiveOp->getResult(0),
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -1381,8 +1391,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           currTrace = addSubtraceOp.getUpdatedTrace();
 
           // B3. Accumulate weight returned by recursive op.
-          weightAccumulator = rewriter.create<arith::AddFOp>(
-              sampleOp.getLoc(), weightAccumulator, recursiveOp->getResult(1));
+          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    weightAccumulator,
+                                                    recursiveOp->getResult(1));
         }
 
         // C. Add non-RNG sampled values to trace (common for both cases).
@@ -1392,8 +1403,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
-              sampleOp.getLoc(),
+          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
+              rewriter, sampleOp.getLoc(),
               /*updated_trace*/ traceType,
               /*trace*/ currTrace,
               /*symbol*/ sampleOp.getSymbolAttr(),
@@ -1424,8 +1435,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.setInsertionPoint(retOp);
 
         // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
-            retOp.getLoc(),
+        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
+            rewriter, retOp.getLoc(),
             /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
             /*trace*/ currTrace, /*weight*/ weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
@@ -1437,8 +1448,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!retvals.empty()) {
-          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
-              retOp.getLoc(),
+          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
+              rewriter, retOp.getLoc(),
               /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
               /*trace*/ currTrace,
               /*retval*/ retvals);
@@ -1451,7 +1462,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         newRetVals.push_back(weightAccumulator);
         newRetVals.push_back(retOp.getOperand(0));
 
-        rewriter.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
       });
 
@@ -1459,8 +1470,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       SmallVector<Value> operands;
       operands.push_back(CI.getOriginalTrace());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
+      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
+                                        NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
 
@@ -1499,9 +1510,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
       auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = entryBuilder.create<arith::ConstantOp>(
-          putils->initializationBlock->begin()->getLoc(), tensorType,
-          DenseElementsAttr::get(tensorType, 0.0));
+      auto zeroWeight = arith::ConstantOp::create(
+          entryBuilder, putils->initializationBlock->begin()->getLoc(),
+          tensorType, DenseElementsAttr::get(tensorType, 0.0));
       Value weightAccumulator = zeroWeight;
       Value currTrace = putils->getTrace();
 
@@ -1555,8 +1566,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               }
 
               // Reconstruct multi-dimensional tensor from position vector
-              auto unflattenOp = rewriter.create<enzyme::UnflattenSliceOp>(
-                  sampleOp.getLoc(), resultType, position,
+              auto unflattenOp = enzyme::UnflattenSliceOp::create(
+                  rewriter, sampleOp.getLoc(), resultType, position,
                   rewriter.getI64IntegerAttr(positionOffset));
 
               sampledValues[i] = unflattenOp.getResult();
@@ -1582,11 +1593,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               return WalkResult::interrupt();
             }
 
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           } else {
             sampledValues.resize(sampleOp.getNumResults());
 
@@ -1595,8 +1607,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               sampledValueTypes.push_back(sampleOp->getResultTypes()[i]);
             }
 
-            auto gsftOp = rewriter.create<enzyme::GetSampleFromTraceOp>(
-                sampleOp.getLoc(), sampledValueTypes, originalTrace,
+            auto gsftOp = enzyme::GetSampleFromTraceOp::create(
+                rewriter, sampleOp.getLoc(), sampledValueTypes, originalTrace,
                 sampleOp.getSymbolAttr());
 
             sampledValues[0] = sampleOp.getOperand(0); // RNG state
@@ -1623,11 +1635,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               return WalkResult::interrupt();
             }
 
-            auto logpdf = rewriter.create<func::CallOp>(
-                sampleOp.getLoc(), logpdfFn.getName(),
+            auto logpdf = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator = rewriter.create<arith::AddFOp>(
-                sampleOp.getLoc(), weightAccumulator, logpdf.getResult(0));
+            weightAccumulator =
+                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                      weightAccumulator, logpdf.getResult(0));
           }
         } else {
           // TODO
@@ -1642,9 +1655,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = rewriter.create<enzyme::AddSampleToTraceOp>(
-              sampleOp.getLoc(), enzyme::TraceType::get(sampleOp.getContext()),
-              currTrace, sampleOp.getSymbolAttr(), valuesToTrace);
+          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
+              rewriter, sampleOp.getLoc(),
+              enzyme::TraceType::get(sampleOp.getContext()), currTrace,
+              sampleOp.getSymbolAttr(), valuesToTrace);
           currTrace = addSampleToTraceOp.getUpdatedTrace();
         }
 
@@ -1665,9 +1679,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
 
-        auto addWeightOp = rewriter.create<enzyme::AddWeightToTraceOp>(
-            retOp.getLoc(), enzyme::TraceType::get(retOp.getContext()),
-            currTrace, weightAccumulator);
+        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
+            rewriter, retOp.getLoc(),
+            enzyme::TraceType::get(retOp.getContext()), currTrace,
+            weightAccumulator);
         currTrace = addWeightOp.getUpdatedTrace();
 
         SmallVector<Value> retvals;
@@ -1676,9 +1691,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
 
         if (!retvals.empty()) {
-          auto addRetvalOp = rewriter.create<enzyme::AddRetvalToTraceOp>(
-              retOp.getLoc(), enzyme::TraceType::get(retOp.getContext()),
-              currTrace, retvals);
+          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
+              rewriter, retOp.getLoc(),
+              enzyme::TraceType::get(retOp.getContext()), currTrace, retvals);
           currTrace = addRetvalOp.getUpdatedTrace();
         }
 
@@ -1687,7 +1702,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         newRetVals.push_back(weightAccumulator);
         newRetVals.push_back(retOp.getOperand(0));
 
-        rewriter.create<func::ReturnOp>(retOp.getLoc(), newRetVals);
+        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
       });
 
@@ -1696,8 +1711,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       operands.push_back(CI.getOriginalTrace());
       operands.push_back(CI.getPosition());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = rewriter.create<func::CallOp>(
-          CI.getLoc(), NewF.getName(), NewF.getResultTypes(), operands);
+      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
+                                        NewF.getResultTypes(), operands);
 
       rewriter.replaceOp(CI, newCI.getResults());
 

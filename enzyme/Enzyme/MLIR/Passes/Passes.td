@@ -242,6 +242,15 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
   let summary = "Duplicate linalg.generic once for each output to remove enzyme.addTo op";
 }
 
+def EnzymeBatchToTensorPass : Pass<"enzyme-batch-to-tensor"> {
+  let summary = "Legalize batching specific operations to tensor dialect";
+  let dependentDialects = [
+    "tensor::TensorDialect", 
+    "arith::ArithDialect",
+    "enzyme::EnzymeDialect"
+  ];
+}
+
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
   let dependentDialects = [
