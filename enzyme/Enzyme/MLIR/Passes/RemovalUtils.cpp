@@ -452,7 +452,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         if (v.getParentBlock() != reverse) {
           continue;
         }
-        if (G.contains(Node(v))) {
+        if (v.getDefiningOp<enzyme::PopOp>() || G.contains(Node(v))) {
           continue;
         }
         Required.insert(op);
