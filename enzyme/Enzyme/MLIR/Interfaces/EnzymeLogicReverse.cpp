@@ -388,9 +388,9 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
   auto primalFuncType =
       FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
 
-  auto reverse = ruleBuilder.create<enzyme::CustomReverseRuleReverseOp>(
-      fn.getLoc(), revFuncType);
-  ruleBuilder.create<enzyme::YieldOp>(fn.getLoc(), ValueRange{});
+  auto reverse = enzyme::CustomReverseRuleReverseOp::create(
+      ruleBuilder, fn.getLoc(), revFuncType);
+  enzyme::YieldOp::create(ruleBuilder, fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
 
@@ -431,13 +431,13 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   gutils->createReverseModeBlocks(fn.getFunctionBody(), reverse.getBody());
   gutils->registerCacheCreatorHook([&](Type ty) -> std::pair<Value, Value> {
-    Value cache = ruleBuilder.create<enzyme::InitOp>(fn.getLoc(), ty);
+    Value cache = enzyme::InitOp::create(ruleBuilder, fn.getLoc(), ty);
     return {cache, cache};
   });
   gutils->registerGradientCreatorHook([&](Location loc, Type ty) -> Value {
     auto reverseEntry = &reverse.getBody().front();
     OpBuilder gBuilder(reverseEntry, reverseEntry->begin());
-    return gBuilder.create<enzyme::InitOp>(loc, ty);
+    return enzyme::InitOp::create(gBuilder, loc, ty);
   });
 
   bool valid = true;
@@ -474,20 +474,19 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
           toYield.push_back(gutils->diffe(arg, rBuilder));
         }
       }
-      rBuilder.create<enzyme::YieldOp>(fn.getLoc(), toYield);
+      enzyme::YieldOp::create(rBuilder, fn.getLoc(), toYield);
     }
   }
 
   ruleBuilder.setInsertionPoint(reverse);
-  auto augmentedPrimal =
-      ruleBuilder.create<enzyme::CustomReverseRuleAugmentedPrimalOp>(
-          fn.getLoc(), primalFuncType);
+  auto augmentedPrimal = enzyme::CustomReverseRuleAugmentedPrimalOp::create(
+      ruleBuilder, fn.getLoc(), primalFuncType);
   augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
   for (Block &b : augmentedPrimal.getBody()) {
     if (b.getNumSuccessors() == 0) {
       Operation *term = b.getTerminator();
       OpBuilder builder(term);
-      builder.create<enzyme::YieldOp>(term->getLoc(), term->getOperands());
+      enzyme::YieldOp::create(builder, term->getLoc(), term->getOperands());
       term->erase();
     }
   }

@@ -187,7 +187,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
         toReturn.push_back(info.pushOp.getValue());
         info.pushOp->erase();
       }
-      builder.create<func::ReturnOp>(term->getLoc(), toReturn);
+      func::ReturnOp::create(builder, term->getLoc(), toReturn);
       term->erase();
     }
   }
@@ -206,7 +206,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
     Operation *term = b.getTerminator();
     if (isa<enzyme::YieldOp>(term)) {
       OpBuilder builder(term);
-      builder.create<func::ReturnOp>(term->getLoc(), term->getOperands());
+      func::ReturnOp::create(builder, term->getLoc(), term->getOperands());
       term->erase();
     }
   }
@@ -237,8 +237,8 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       continue;
 
     OpBuilder builder(CAP);
-    auto primalCall = builder.create<func::CallOp>(CAP.getLoc(), primalFunc,
-                                                   CAP->getOperands());
+    auto primalCall = func::CallOp::create(builder, CAP.getLoc(), primalFunc,
+                                           CAP->getOperands());
     for (auto [oldRes, newRes] :
          llvm::zip(CAP.getOutputs(), primalCall->getResults())) {
       oldRes.replaceAllUsesWith(newRes);
@@ -260,7 +260,7 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
                 .slice(revRule.getFunctionType().getNumResults(), caches.size())
                 .end());
         auto reverseCall =
-            builder.create<func::CallOp>(CCR.getLoc(), reverseFunc, operands);
+            func::CallOp::create(builder, CCR.getLoc(), reverseFunc, operands);
         for (auto [oldRes, newRes] :
              llvm::zip(CCR.getResults(), reverseCall.getResults())) {
           oldRes.replaceAllUsesWith(newRes);

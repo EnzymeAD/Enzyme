@@ -483,8 +483,9 @@ struct DifferentiatePass
         CI.getStrongZero());
 
     OpBuilder builder(CI);
-    auto primalCall = builder.create<enzyme::CallAugmentedPrimalOp>(
-        CI.getLoc(), CI->getResultTypes(), ruleToCall, CI.getOperands());
+    auto primalCall = enzyme::CallAugmentedPrimalOp::create(
+        builder, CI.getLoc(), CI->getResultTypes(), ruleToCall,
+        CI.getOperands());
     for (auto [oldRes, newRes] :
          llvm::zip_equal(CI->getResults(), primalCall.getResults())) {
       oldRes.replaceAllUsesWith(newRes);
@@ -500,8 +501,8 @@ struct DifferentiatePass
               dyn_cast<enzyme::AutoDiffSplitModeReverseOp>(tapeUser)) {
 
         OpBuilder builder(revCall);
-        auto newRevCall = builder.create<enzyme::CallCustomReverseOp>(
-            revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
+        auto newRevCall = enzyme::CallCustomReverseOp::create(
+            builder, revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
             revCall.getInputs(), tape);
         revCall.replaceAllUsesWith(newRevCall.getResults());
 
