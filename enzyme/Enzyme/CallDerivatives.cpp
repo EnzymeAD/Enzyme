@@ -461,11 +461,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *request = gutils->invertPointerM(call.getArgOperand(0), Builder2);
       Value *status = gutils->invertPointerM(call.getArgOperand(1), Builder2);
 
-      if (request->getType()->isIntegerTy()) {
-        request = Builder2.CreateIntToPtr(
-            request, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
-      }
-
       Value *args[] = {/*request*/ request,
                        /*status*/ status};
 

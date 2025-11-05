@@ -1259,8 +1259,12 @@ Function *CreateMPIWrapper(Function *F) {
   std::string name = ("enzyme_wrapmpi$$" + F->getName() + "#").str();
   if (auto W = F->getParent()->getFunction(name))
     return W;
-  Type *types = {F->getFunctionType()->getParamType(0)};
-  auto FT = FunctionType::get(F->getReturnType(), types, false);
+
+  // MPI_Comm_rank(MPI_Comm comm, int *rank)
+  // MPI_Comm_size(MPI_Comm comm, int *size)
+  Type *ReturnType = Type::getInt32Ty(F->getContext());
+  Type *types = {F->getFunctionType()->getParamType(0)}; // MPI_Comm
+  auto FT = FunctionType::get(ReturnType, types, false);
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
@@ -1288,7 +1292,7 @@ Function *CreateMPIWrapper(Function *F) {
   W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
   BasicBlock *entry = BasicBlock::Create(W->getContext(), "entry", W);
   IRBuilder<> B(entry);
-  auto alloc = B.CreateAlloca(F->getReturnType());
+  auto alloc = B.CreateAlloca(ReturnType);
   Value *args[] = {W->arg_begin(), alloc};
 
   auto T = F->getFunctionType()->getParamType(1);
@@ -1297,7 +1301,7 @@ Function *CreateMPIWrapper(Function *F) {
     args[1] = B.CreatePtrToInt(args[1], T);
   }
   B.CreateCall(F, args);
-  B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
+  B.CreateRet(B.CreateLoad(ReturnType, alloc));
   return W;
 }
 
