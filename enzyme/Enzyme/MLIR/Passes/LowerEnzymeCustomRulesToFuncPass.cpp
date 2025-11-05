@@ -15,6 +15,7 @@
 #include "Passes/Passes.h"
 #include "Passes/RemovalUtils.h"
 
+#include "RemovalUtils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -150,6 +151,16 @@ lowerCustomReverseRuleToFunc(enzyme::CustomReverseRuleOp revRule) {
       cacheTypes.push_back(ET);
       caches.push_back(info);
     }
+  }
+
+  if (singleBlock && !revRule->hasAttr("enzyme.disable_mincut")) {
+    Block *fwdBlock = &primal.getBody().front(),
+          *bwdBlock = &reverse.getBody().front();
+
+    IRMapping fwdrevmap;
+    PatternRewriter rewriter(primal.getContext());
+    rewriter.setInsertionPointToStart(bwdBlock);
+    mlir::enzyme::minCutCache(fwdBlock, bwdBlock, caches, rewriter, fwdrevmap);
   }
 
   primalResultTypes.append(cacheTypes.begin(), cacheTypes.end());

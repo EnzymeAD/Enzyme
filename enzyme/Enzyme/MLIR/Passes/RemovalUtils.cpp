@@ -602,7 +602,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       int64_t newSize = computeSizeOfType(candidate),
               newRank = computeRankOfType(candidate);
 
-      if (newRank < curRank || (newRank == curRank && newSize < curSize)) {
+      if (newRank <= curRank || (newRank == curRank && newSize <= curSize)) {
         newCaches.remove(cur);
         newCaches.insert(candidate);
         todo.push_back(candidate);
