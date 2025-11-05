@@ -215,21 +215,21 @@ public:
 
     for (auto [i, s] : llvm::enumerate(MT.getShape())) {
       if (s == ShapedType::kDynamic) {
-        Value dim = builder.create<arith::ConstantIndexOp>(value.getLoc(), i);
+        Value dim = arith::ConstantIndexOp::create(builder, value.getLoc(), i);
         dynamicSizes.push_back(
-            builder.create<memref::DimOp>(value.getLoc(), value, dim));
+            memref::DimOp::create(builder, value.getLoc(), value, dim));
       }
     }
 
     auto clone =
-        builder.create<memref::AllocOp>(value.getLoc(), self, dynamicSizes);
-    builder.create<memref::CopyOp>(value.getLoc(), value, clone);
+        memref::AllocOp::create(builder, value.getLoc(), self, dynamicSizes);
+    memref::CopyOp::create(builder, value.getLoc(), value, clone);
 
     return clone;
   }
 
   void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {
-    builder.create<memref::DeallocOp>(value.getLoc(), value);
+    memref::DeallocOp::create(builder, value.getLoc(), value);
   };
 };
 

@@ -225,17 +225,17 @@ struct PointerClonableTypeInterface
       return nullptr;
     }
 
-    auto clone = builder.create<llvm_ext::AllocOp>(
-        value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
+    auto clone = llvm_ext::AllocOp::create(
+        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
         *ptrSize);
-    builder.create<LLVM::MemcpyOp>(value.getLoc(), clone, value, *ptrSize,
-                                   /*isVolatile*/ false);
+    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, *ptrSize,
+                           /*isVolatile*/ false);
 
     return clone;
   }
 
   void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
-    builder.create<llvm_ext::FreeOp>(value.getLoc(), value);
+    llvm_ext::FreeOp::create(builder, value.getLoc(), value);
   }
 };
 
