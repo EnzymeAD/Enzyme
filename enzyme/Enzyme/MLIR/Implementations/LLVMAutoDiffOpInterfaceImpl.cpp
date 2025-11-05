@@ -239,19 +239,71 @@ struct PointerClonableTypeInterface
   }
 };
 
+static Value packIntoStruct(ValueRange values, OpBuilder &builder,
+                            Location loc) {
+  SmallVector<Type> resultTypes =
+      llvm::map_to_vector(values, [](Value v) { return v.getType(); });
+  auto structType =
+      LLVM::LLVMStructType::getLiteral(builder.getContext(), resultTypes);
+  Value result = LLVM::PoisonOp::create(builder, loc, structType);
+  for (auto &&[i, v] : llvm::enumerate(values))
+    result = LLVM::InsertValueOp::create(builder, loc, result, v, i);
+
+  return result;
+}
+
+class AutoDiffLLVMFuncOpFunctionInterface
+    : public AutoDiffFunctionInterface::ExternalModel<
+          AutoDiffLLVMFuncOpFunctionInterface, LLVM::LLVMFuncOp> {
+public:
+  void transformResultTypes(Operation *self,
+                            SmallVectorImpl<Type> &resultTypes) const {
+    auto fn = cast<mlir::FunctionOpInterface>(self);
+    auto FTy = fn.getFunctionType();
+    if (resultTypes.empty()) {
+      // llvm.func ops that return no results need to explicitly return
+      // LLVMVoidType
+      resultTypes.push_back(LLVM::LLVMVoidType::get(FTy.getContext()));
+    } else if (resultTypes.size() > 1) {
+      auto structType =
+          LLVM::LLVMStructType::getLiteral(FTy.getContext(), resultTypes);
+      resultTypes.clear();
+      resultTypes.push_back(structType);
+    }
+  }
+
+  Operation *createCall(Operation *self, OpBuilder &builder, Location loc,
+                        ValueRange args) const {
+    return LLVM::CallOp::create(builder, loc, cast<LLVM::LLVMFuncOp>(self),
+                                args);
+  }
+
+  Operation *createReturn(Operation *self, OpBuilder &builder, Location loc,
+                          ValueRange retargs) const {
+    if (retargs.size() > 1) {
+      Value packedReturns = packIntoStruct(retargs, builder, loc);
+      return LLVM::ReturnOp::create(builder, loc, packedReturns);
+    }
+
+    return LLVM::ReturnOp::create(builder, loc, retargs);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
+    registerInterfaces(context);
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
-    registerInterfaces(context);
     LLVM::UnreachableOp::template attachInterface<
         detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
+    LLVM::LLVMFuncOp::attachInterface<AutoDiffLLVMFuncOpFunctionInterface>(
+        *context);
   });
 }
