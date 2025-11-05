@@ -115,9 +115,9 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
           if (inRankTy.isDynamicDim(i)) {
             // extract dynamic dim
             Value dynIdx =
-                rewriter.create<arith::ConstantIndexOp>(op->getLoc(), i);
+                arith::ConstantIndexOp::create(rewriter, op->getLoc(), i);
             Value dynVal =
-                rewriter.create<tensor::DimOp>(op->getLoc(), in, dynIdx);
+                tensor::DimOp::create(rewriter, op->getLoc(), in, dynIdx);
             outDynamicDims.push_back(dynVal);
           }
         }
@@ -126,9 +126,9 @@ struct ConcatOpConversion : public OpConversionPattern<enzyme::ConcatOp> {
         auto outStaticDimAttr =
             rewriter.getDenseI64ArrayAttr(newInTy.getShape());
 
-        Value newInput = rewriter.create<tensor::ExpandShapeOp>(
-            op->getLoc(), newInTy, in, reassociationAttr, outDynamicDims,
-            outStaticDimAttr);
+        Value newInput = tensor::ExpandShapeOp::create(
+            rewriter, op->getLoc(), newInTy, in, reassociationAttr,
+            outDynamicDims, outStaticDimAttr);
 
         expandedInputs.push_back(newInput);
       }

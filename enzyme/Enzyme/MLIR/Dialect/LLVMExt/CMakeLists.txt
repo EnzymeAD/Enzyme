@@ -11,7 +11,7 @@ add_mlir_dialect_library(MLIRLLVMExt
 
   DEPENDS
   MLIRLLVMExtOpsIncGen
-  
+
   LINK_LIBS PUBLIC
   MLIRIR
   MLIRLLVMDialect

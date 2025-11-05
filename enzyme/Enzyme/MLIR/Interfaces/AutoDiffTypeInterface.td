@@ -114,4 +114,34 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
   }];
 }
 
+def ClonableTypeInterface : TypeInterface<"ClonableTypeInterface"> {
+  let description = [{
+    An MLIR type values of which can be cloned.
+    Used for mutable types which needs to allocate and copy their content, specifically
+    for things like checkpointing where the underlying memory needs to be preserved.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{
+        Clone a value.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"cloneValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$value)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Free the clone.
+      }],
+      /*retTy=*/"void",
+      /*methodName=*/"freeClonedValue",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Value":$clone)
+    >
+  ];
+
+  let extraSharedClassDeclaration = [{}];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFTYPEINTERFACE

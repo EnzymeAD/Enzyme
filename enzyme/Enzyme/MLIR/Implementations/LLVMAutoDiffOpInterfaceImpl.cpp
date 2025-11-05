@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -201,12 +202,51 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+std::optional<Value> findPtrSize(Value ptr) {
+  if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
+    return allocOp.getSize();
+
+  for (auto user : ptr.getUsers()) {
+    if (auto psh = dyn_cast<llvm_ext::PtrSizeHintOp>(user)) {
+      return psh.getSize();
+    }
+  }
+
+  return std::nullopt;
+}
+
+struct PointerClonableTypeInterface
+    : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
+                                                  LLVM::LLVMPointerType> {
+  mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
+    auto ptrSize = findPtrSize(value);
+    if (!ptrSize) {
+      llvm::errs() << "cannot find size of ptr: " << value << "\n";
+      return nullptr;
+    }
+
+    auto clone = llvm_ext::AllocOp::create(
+        builder, value.getLoc(), LLVM::LLVMPointerType::get(value.getContext()),
+        *ptrSize);
+    LLVM::MemcpyOp::create(builder, value.getLoc(), clone, value, *ptrSize,
+                           /*isVolatile*/ false);
+
+    return clone;
+  }
+
+  void freeClonedValue(Type self, OpBuilder &builder, Value value) const {
+    llvm_ext::FreeOp::create(builder, value.getLoc(), value);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
+        *context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
