@@ -399,7 +399,7 @@ getTypeFromTBAAString(std::string TypeName, llvm::Instruction &I,
     }
     return ConcreteType(BaseType::Integer);
   } else if (TypeName == "any pointer" || TypeName == "vtable pointer" ||
-             TypeName == "jtbaa_arrayptr" || TypeName == "jtbaa_tag") {
+             TypeName == "jtbaa_tag") {
     if (EnzymePrintType) {
       llvm::errs() << "known tbaa ";
       if (MST)
