@@ -9,6 +9,11 @@ on:
     - main
   merge_group:
 
+# needed to allow julia-actions/cache to delete old caches that it has created
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   build:
     name: Enzyme CI Julia ${{ matrix.version }} ${{ matrix.os }}
