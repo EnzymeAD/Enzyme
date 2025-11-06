@@ -274,7 +274,6 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        mlir::Attribute argAttr = F.getArgAttrDict(i);
         mlir::Attribute dupAttr = nullptr;
         if ((size_t)i == ArgActivity.size() - 1) {
           dval = blk.addArgument(getShadowType(val.getType(), width),
