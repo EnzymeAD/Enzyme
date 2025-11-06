@@ -40,12 +40,12 @@ jobs:
     - uses: julia-actions/cache@v2
 
     - name: Build libEnzyme
-      if: ${{ matrix.os != 'macOS-latest'}}
+      if: ${{ runner.os != 'macOS' }}
       run: |
         julia --color=yes --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         julia --color=yes --project=jl/deps jl/deps/build_local.jl ./enzyme
     - name: Build libEnzyme MacOS
-      if: ${{ matrix.os == 'macOS-latest'}}
+      if: ${{ runner.os == 'macOS' }}
       run: |
         julia --color=yes --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         SDKROOT=`xcrun --show-sdk-path` julia --color=yes --project=jl/deps jl/deps/build_local.jl ./enzyme
