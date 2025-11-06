@@ -1771,6 +1771,9 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *isend = BasicBlock::Create(M.getContext(), "invertISend", F);
   BasicBlock *irecv = BasicBlock::Create(M.getContext(), "invertIRecv", F);
+  BasicBlock *send_init = BasicBlock::Create(M.getContext(), "invertSendInit", F);
+  BasicBlock *recv_init = BasicBlock::Create(M.getContext(), "invertRecvInit", F);
+  BasicBlock *error = BasicBlock::Create(M.getContext(), "invertError", F);
 
 #if 0
     /*0 */getInt8PtrTy(call.getContext())
@@ -1831,10 +1834,25 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
       buf, count, datatype, source, tag, comm, d_req,
   };
 
-  B.CreateCondBr(B.CreateICmpEQ(fn, ConstantInt::get(fn->getType(),
-                                                     (int)MPI_CallType::ISEND)),
-                 isend, irecv);
+  auto *SI = B.CreateSwitch(fn, error, 4);
 
+  SI->addCase(
+    ConstantInt::get(fn->getType(), (int)MPI_CallType::ISEND),
+      isend);
+  SI->addCase(
+    ConstantInt::get(fn->getType(), (int)MPI_CallType::IRECV),
+      irecv);
+  SI->addCase(
+    ConstantInt::get(fn->getType(), (int)MPI_CallType::SEND_INIT),
+      send_init);
+  SI->addCase(
+    ConstantInt::get(fn->getType(), (int)MPI_CallType::RECV_INIT),
+      recv_init);
+
+  {
+    B.SetInsertPoint(error);
+    B.CreateUnreachable();
+  }
   {
     B.SetInsertPoint(isend);
     auto fcall = B.CreateCall(irecvfn, args);
@@ -1848,6 +1866,21 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
     fcall->setCallingConv(isendfn->getCallingConv());
     B.CreateRetVoid();
   }
+
+  {
+    B.SetInsertPoint(send_init);
+    auto fcall = B.CreateCall(recv_initfn, args);
+    fcall->setCallingConv(isendfn->getCallingConv());
+    B.CreateRetVoid();
+  }
+
+  {
+    B.SetInsertPoint(recv_init);
+    auto fcall = B.CreateCall(send_initfn, args);
+    fcall->setCallingConv(isendfn->getCallingConv());
+    B.CreateRetVoid();
+  }
+
   return F;
 }
 

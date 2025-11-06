@@ -4952,8 +4952,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
-        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
+    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" || funcName == "MPI_Send_init" || funcName == "MPI_Recv_init" ||
+        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv" || funcName == "PMPI_Send_init" || funcName == "PMPI_Recv_init") {
       TypeTree buf = TypeTree(BaseType::Pointer);
 
       if (Constant *C = dyn_cast<Constant>(call.getOperand(2))) {
@@ -4988,6 +4988,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(call.getOperand(6),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
+    }
+    if (funcName == "MPI_Start" || funcName == "PMPI_Start") {
+      // TODO
+      return; 
     }
     if (funcName == "MPI_Wait") {
       updateAnalysis(call.getOperand(0),
