@@ -2377,15 +2377,26 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
                                                    llvm::StringRef callee) {
   if (startsWith(caller, "ejl")) {
     auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
-    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" +
-            postfix)
-        .str();
-  }
-  if (startsWith(caller, "PMPI_")) {
-    assert(startsWith(callee, "MPI"));
-    return ("P" + callee).str();
+    return (prefix + "$" + callee + "$" + postfix).str();
   }
   return callee.str();
+}
+
+static inline std::string getMPIFunction(llvm::Module &M,
+                                         llvm::StringRef caller,
+                                         llvm::StringRef callee) {
+  // The function could exist in two forms in the module - with PMPI_ or MPI_
+  // prefix. Check for both.
+  assert(startsWith(callee, "MPI"));
+  auto mpi_name = getRenamedPerCallingConv(caller, callee);
+  if (M.getFunction(mpi_name))
+    return mpi_name;
+
+  // Now check for PMPI_ form.
+  auto pmpi_callee = ("P" + callee).str();
+  auto pmpi_name = getRenamedPerCallingConv(caller, pmpi_callee);
+  // TODO: Should we error if neither form exists?
+  return pmpi_name;
 }
 
 #endif // ENZYME_UTILS_H
