@@ -73,8 +73,8 @@ Value getConcatValue(OpBuilder &builder, Location &loc,
 Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
                       Value &val, int64_t index) {
   // Extract the original output from the tensorized output at the given index.
-  Value indexOp = arith::ConstantIndexOp::create(builder, loc, index);
-  Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexOp);
+  IntegerAttr indexAttr = builder.getI64IntegerAttr(index);
+  Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexAttr);
   return out;
 }
 

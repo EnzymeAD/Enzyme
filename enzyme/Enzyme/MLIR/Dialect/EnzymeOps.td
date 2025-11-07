@@ -451,7 +451,7 @@ def ExtractOp : Enzyme_Op<"extract"> {
     Extract value from batched operand at index
   }];
 
-  let arguments = (ins AnyType:$input, Index:$index);
+  let arguments = (ins AnyType:$input, I64Attr:$index);
   let results = (outs AnyType:$output);
   
   let assemblyFormat = [{
