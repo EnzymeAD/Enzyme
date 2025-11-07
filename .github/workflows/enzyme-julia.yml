@@ -68,11 +68,11 @@ jobs:
       run: |
         # Run tests in verbose mode
         TEST_ARGS=(--verbose)
-        if [[ ${{ runner.os }} == 'macOS' ]]; then
-            # Encourage ParallelTestRunner to use two jobs on macOS, rather
-            # than the single one it'd use by default.
-            TEST_ARGS+=(--jobs=2)
-        fi
+        # if [[ ${{ runner.os }} == 'macOS' ]]; then
+        #     # Encourage ParallelTestRunner to use two jobs on macOS, rather
+        #     # than the single one it'd use by default.
+        #     TEST_ARGS+=(--jobs=2)
+        # fi
         echo "runtest_test_args=${TEST_ARGS[@]}" >> "${GITHUB_ENV}"
     - uses: julia-actions/julia-runtest@v1
       with:
