@@ -38,7 +38,7 @@ struct ExtractOpConversion : public OpConversionPattern<enzyme::ExtractOp> {
       // Offsets : [index, 0, 0 ...]
       // Sizes : [1, out_dim1, out_dim2 ...]
       // Strides : [1,1,1,....]
-      SmallVector<OpFoldResult> offset = {op.getIndex()},
+      SmallVector<OpFoldResult> offset = {op.getIndexAttr()},
                                 sizes = {rewriter.getI64IntegerAttr(1)},
                                 strides(rank + 1,
                                         rewriter.getI64IntegerAttr(1));
@@ -54,9 +54,11 @@ struct ExtractOpConversion : public OpConversionPattern<enzyme::ExtractOp> {
 
       return success();
     } else if (outTy.isIntOrIndexOrFloat()) {
-
-      rewriter.replaceOpWithNewOp<tensor::ExtractOp>(
-          op, op->getResultTypes(), op.getInput(), op.getIndex());
+      // ExtractOp expects only index type arg
+      Value indexOp =
+          arith::ConstantIndexOp::create(rewriter, op->getLoc(), op.getIndex());
+      rewriter.replaceOpWithNewOp<tensor::ExtractOp>(op, op->getResultTypes(),
+                                                     op.getInput(), indexOp);
       return success();
     } else {
       // unsupported type
