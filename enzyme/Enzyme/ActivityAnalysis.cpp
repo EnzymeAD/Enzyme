@@ -947,7 +947,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       InsertConstantInstruction(TR, I);
       return true;
     }
+  }
 
+  if (noActiveWrite ||
+      (isa<CallBase>(I) && isLocalReadOnlyOrThrow(cast<CallBase>(I)))) {
+    bool checkSret = false;
+    if (!noActiveWrite && cast<CallBase>(I)->hasStructRetAttr()) {
+      checkSret = true;
+    }
     // Even if the return is nonconstant, it's worth checking explicitly the
     // users since unlike isConstantValue, returning a pointer does not make the
     // instruction active
@@ -958,7 +965,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       // If we aren't a phi node (and thus potentially recursive on uses) and
       // already equal to the current direction, we don't need to induct,
       // reducing runtime.
-      if (directions == DOWN && !isa<PHINode>(I)) {
+      if (directions == DOWN && !isa<PHINode>(I) && !checkSret) {
         if (isValueInactiveFromUsers(TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
@@ -970,8 +977,21 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
-        if (DownHypothesis->isValueInactiveFromUsers(TR, I,
-                                                     UseActivity::None)) {
+        if (checkSret) {
+          if (ConstantValues.find(I) != ConstantValues.end() ||
+              (directions == 3 &&
+               DownHypothesis->isValueInactiveFromUsers(
+                   TR, getBaseObject(cast<CallBase>(I)->getArgOperand(0)),
+                   UseActivity::None))) {
+            if (EnzymePrintActivity)
+              llvm::errs() << " constant instruction[" << (int)directions
+                           << "] from users instruction " << *I << "\n";
+            InsertConstantInstruction(TR, I);
+            insertConstantsFrom(TR, *DownHypothesis);
+            return true;
+          }
+        } else if (DownHypothesis->isValueInactiveFromUsers(
+                       TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
                          << "] from users instruction " << *I << "\n";
@@ -980,6 +1000,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
           return true;
         }
       }
+      ReEvaluateInstIfInactiveValue[I].insert(I);
     }
   }
 
