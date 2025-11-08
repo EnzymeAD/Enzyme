@@ -159,10 +159,13 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
          << ") {\n";
       os << "      F->removeParamAttr(" << i << " + offset"
          << ", llvm::Attribute::ReadNone);\n"
-         << "      F->addParamAttr(" << i << " + offset"
-         << ", llvm::Attribute::ReadOnly);\n"
-         << "      addFunctionNoCapture(F, " << i << " + offset);\n";
-      os << "  }\n";
+         << "      if (F->getFunctionType()->getParamType(" << i
+         << " + offset)->isPointerTy()) {\n"
+         << "        F->addParamAttr(" << i
+         << " + offset, llvm::Attribute::ReadOnly);\n"
+         << "        addFunctionNoCapture(F, " << i << " + offset);\n"
+         << "      }\n"
+         << "  }\n";
     }
   }
 
@@ -175,7 +178,9 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
         // Only emit ReadOnly if the arg isn't mutable
         os << "  F->removeParamAttr(" << i << " + offset"
            << ", llvm::Attribute::ReadNone);\n"
-           << "  F->addParamAttr(" << i << " + offset"
+           << "  if (F->getFunctionType()->getParamType(" << i
+           << " + offset)->isPointerTy())\n"
+           << "    F->addParamAttr(" << i << " + offset"
            << ", llvm::Attribute::ReadOnly);\n";
       }
     }
@@ -187,9 +192,12 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
     os << "  if (cublas) {\n"
        << "      F->removeParamAttr(" << ptrRetArg << " + offset"
        << ", llvm::Attribute::ReadNone);\n"
-       << "      F->addParamAttr(" << ptrRetArg << " + offset"
-       << ", llvm::Attribute::WriteOnly);\n"
-       << "  addFunctionNoCapture(F, " << ptrRetArg << " + offset);\n"
+       << "      if (F->getFunctionType()->getParamType(" << ptrRetArg
+       << " + offset)->isPointerTy()) {\n"
+       << "        F->addParamAttr(" << ptrRetArg
+       << " + offset, llvm::Attribute::WriteOnly);\n"
+       << "        addFunctionNoCapture(F, " << ptrRetArg << " + offset);\n"
+       << "      }\n"
        << "  }\n";
   }
   os << "  return res;\n";
