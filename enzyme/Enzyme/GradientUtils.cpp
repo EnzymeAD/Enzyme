@@ -4961,6 +4961,33 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
 
+  BasicBlock *merge = nullptr;
+
+  if (runtimeActivity) {
+    auto basePtr = getBaseObject(origptr);
+
+    // TODO make this work for forward mode
+    // If runtime activity, first see if we can prove that the shadow/primal
+    // are distinct statically as they are allocas/mallocs, if not compare
+    // the pointers and conditionally execute.
+    if (!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI) &&
+        !merge && !isOriginalBlock(*BuilderM.GetInsertBlock())) {
+      auto shadow_ptr = ptr;
+      auto primal_ptr = lookupM(getNewFromOriginal(origptr), BuilderM);
+      if (getWidth() != 1) {
+        shadow_ptr = extractMeta(BuilderM, shadow_ptr, 0);
+      }
+      Value *shadow = BuilderM.CreateICmpNE(primal_ptr, shadow_ptr);
+
+      BasicBlock *current = BuilderM.GetInsertBlock();
+      BasicBlock *conditional =
+          addReverseBlock(current, current->getName() + "_active");
+      merge = addReverseBlock(conditional, current->getName() + "_amerge");
+      BuilderM.CreateCondBr(shadow, conditional, merge);
+      BuilderM.SetInsertPoint(conditional);
+    }
+  }
+
   auto rule = [&](Value *ptr, Value *newval) {
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
@@ -5065,6 +5092,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
   };
 
   applyChainRule(BuilderM, rule, ptr, newval);
+
+  if (merge) {
+    BuilderM.CreateBr(merge);
+    BuilderM.SetInsertPoint(merge);
+  }
 }
 
 Type *GradientUtils::getShadowType(Type *ty, unsigned width) {
