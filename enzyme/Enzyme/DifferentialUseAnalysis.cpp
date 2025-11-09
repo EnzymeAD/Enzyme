@@ -143,8 +143,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
             break;
           }
         }
-        if (hasFloat && !gutils->isConstantInstruction(
-                            const_cast<llvm::Instruction *>(user))) {
+        if (hasFloat && !gutils->isConstantValue(const_cast<llvm::Value *>(
+                            SI->getPointerOperand()))) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need direct primal of " << *val
                          << " in reverse from runtime active store " << *user
