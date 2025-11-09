@@ -4469,8 +4469,13 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
     if (cmode == DerivativeMode::ForwardMode ||
         cmode == DerivativeMode::ForwardModeError ||
         cmode == DerivativeMode::ForwardModeSplit) {
-      subretType = DIFFE_TYPE::DUP_ARG;
-      shadowReturnUsed = true;
+      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
+        subretType = DIFFE_TYPE::DUP_ARG;
+        shadowReturnUsed = true;
+      } else {
+        subretType = DIFFE_TYPE::CONSTANT;
+      }
     } else {
       if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
