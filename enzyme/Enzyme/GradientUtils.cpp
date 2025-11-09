@@ -6350,12 +6350,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
           which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
+          // Avoid re-extracting from the same value, since multiple
+          // entries to the same phi from the same block must have the
+          // same value;
+          DenseMap<Block *, Value *> samePHI;
           for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
                     ->getTerminator());
             Value *val = invertedVals[j];
-            auto extracted_diff = extractMeta(pre, val, i);
+            Value *extracted_diff;
+            auto found = samePHI.find(phi->getIncomingBlock(j));
+            if (found == samePHI.end()) {
+              extracted_diff = extractMeta(pre, val, i);
+              samePHI[phi->getIncomingBlock(j)] = extracted_diff;
+            } else {
+              extracted_diff = found->second;
+            }
             which->addIncoming(
                 extracted_diff,
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j))));
