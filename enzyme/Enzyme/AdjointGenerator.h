@@ -1048,6 +1048,12 @@ public:
 
     unsigned start = 0;
 
+    IRBuilder<> Builder2(&I);
+    BasicBlock *merge = nullptr;
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined)
+      getReverseBuilder(Builder2);
+
     while (1) {
       unsigned nextStart = storeSize;
 
@@ -1093,8 +1099,34 @@ public:
           break;
         case DerivativeMode::ReverseModeGradient:
         case DerivativeMode::ReverseModeCombined: {
-          IRBuilder<> Builder2(&I);
-          getReverseBuilder(Builder2);
+
+          if (!merge && gutils->runtimeActivity) {
+            auto basePtr = getBaseObject(orig_ptr);
+
+            // If runtime activity, first see if we can prove that the
+            // shadow/primal are distinct statically as they are
+            // allocas/mallocs, if not compare the pointers and conditionally
+            // execute.
+            if (!isa<AllocaInst>(basePtr) &&
+                !isAllocationCall(basePtr, gutils->TLI)) {
+              auto shadow_ptr =
+                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+              auto primal_ptr =
+                  lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
+              if (gutils->getWidth() != 1) {
+                shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
+              }
+              Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
+
+              BasicBlock *current = Builder2.GetInsertBlock();
+              BasicBlock *conditional = gutils->addReverseBlock(
+                  current, current->getName() + "_active");
+              merge = gutils->addReverseBlock(conditional,
+                                              current->getName() + "_amerge");
+              Builder2.CreateCondBr(shadow, conditional, merge);
+              Builder2.SetInsertPoint(conditional);
+            }
+          }
 
           if (constantval) {
             gutils->setPtrDiffe(
@@ -1179,16 +1211,14 @@ public:
         case DerivativeMode::ForwardModeSplit:
         case DerivativeMode::ForwardModeError:
         case DerivativeMode::ForwardMode: {
-          IRBuilder<> Builder2(&I);
-          getForwardBuilder(Builder2);
 
           Type *diffeTy = gutils->getShadowType(valType);
 
           Value *diff = constantval
                             ? Constant::getNullValue(diffeTy)
-                            : gutils->invertPointerM(orig_val, Builder2,
+                            : gutils->invertPointerM(orig_val, BuilderZ,
                                                      /*nullShadow*/ true);
-          gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, start, size,
+          gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, start, size,
                               isVolatile, ordering, syncScope, mask,
                               prevNoAlias, prevScopes);
 
@@ -1277,6 +1307,11 @@ public:
       if (nextStart == storeSize)
         break;
       start = nextStart;
+    }
+
+    if (merge) {
+      Builder2.CreateBr(merge);
+      Builder2.SetInsertPoint(merge);
     }
   }
 
