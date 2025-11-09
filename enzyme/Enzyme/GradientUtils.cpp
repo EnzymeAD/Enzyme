@@ -6353,7 +6353,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           // Avoid re-extracting from the same value, since multiple
           // entries to the same phi from the same block must have the
           // same value;
-          DenseMap<Block *, Value *> samePHI;
+          DenseMap<BasicBlock *, Value *> samePHI;
           for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
