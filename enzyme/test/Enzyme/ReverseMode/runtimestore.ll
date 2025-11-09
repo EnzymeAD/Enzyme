@@ -18,16 +18,16 @@ bb:
 ; CHECK: define internal { double } @diffejulia___2553_inner.1(double* %arg, double* %"arg'", double %arg2)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   store double %arg2, double* %arg
-; CHECK-NEXT:   %0 = load double, double* %"arg'"
-; CHECK-NEXT:   %1 = icmp ne double* %arg, %"arg'"
-; CHECK-NEXT:   br i1 %1, label %invertbb_active, label %invertbb_amerge
+; CHECK-NEXT:   %[[cmp:.+]] = icmp ne double* %arg, %"arg'"
+; CHECK-NEXT:   br i1 %[[cmp]], label %invertbb_active, label %invertbb_amerge
 
 ; CHECK: invertbb_active:                                  ; preds = %bb
+; CHECK-NEXT:   %[[act:.+]] = load double, double* %"arg'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arg'"
 ; CHECK-NEXT:   br label %invertbb_amerge
 
 ; CHECK: invertbb_amerge:                                  ; preds = %invertbb_active, %bb
-; CHECK-NEXT:   %2 = insertvalue { double } undef, double %0, 0
-; CHECK-NEXT:   ret { double } %2
+; CHECK-NEXT:   %[[phi:.+]] = phi double [ %[[act]], %invertbb_active ], [ 0.000000e+00, %bb ]
+; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %[[phi]], 0
+; CHECK-NEXT:   ret { double } %[[res]]
 ; CHECK-NEXT: }
-
