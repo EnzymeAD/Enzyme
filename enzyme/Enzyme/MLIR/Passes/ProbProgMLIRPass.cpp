@@ -416,11 +416,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerMCMCPattern : public mlir::OpRewritePattern<enzyme::MCMCOp> {
-    bool debug;
+    bool debugDump;
 
-    LowerMCMCPattern(MLIRContext *context, bool debug,
+    LowerMCMCPattern(MLIRContext *context, bool debugDump,
                      PatternBenefit benefit = 1)
-        : OpRewritePattern(context, benefit), debug(debug) {}
+        : OpRewritePattern(context, benefit), debugDump(debugDump) {}
 
     LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
@@ -1837,7 +1837,7 @@ void ProbProgPass::runOnOperation() {
       .add<LowerUntracedCallPattern, LowerSimulatePattern, LowerGeneratePattern,
            LowerMHPattern, LowerRegeneratePattern, LowerUpdatePattern>(
           &getContext());
-  patterns.add<LowerMCMCPattern>(&getContext(), debugMCMC);
+  patterns.add<LowerMCMCPattern>(&getContext(), debugDump);
 
   mlir::GreedyRewriteConfig config;
 
