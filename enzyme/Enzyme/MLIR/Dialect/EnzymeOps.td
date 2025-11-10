@@ -533,7 +533,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -559,7 +559,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
@@ -749,7 +749,7 @@ def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace", [Pure]> {
   }];
   let arguments = (ins Trace:$trace);
 
-  let results = (outs AnyType:$weight);
+  let results = (outs AnyRankedTensor:$weight);
 
   let assemblyFormat = [{
     $trace attr-dict `:` type($weight)
@@ -802,12 +802,12 @@ def UpdateOp : Enzyme_Op<"update", [DeclareOpInterfaceMethods<SymbolUserOpInterf
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
-    AnyType:$position,
+    AnyRankedTensor:$position,
     AddressArrayAttr:$selection,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$updated_trace, AnyType:$weight, AnyType:$output_rng_state);
+  let results = (outs Trace:$updated_trace, AnyRankedTensor:$weight, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace `at` $position attr-dict `:` functional-type(operands, results)
@@ -831,7 +831,7 @@ def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUser
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, AnyType:$output_rng_state);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
@@ -856,7 +856,7 @@ def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
@@ -885,14 +885,14 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
     AddressArrayAttr:$selection,
-    Optional<AnyType>:$inverse_mass_matrix,
-    Optional<AnyType>:$step_size,
-    Optional<AnyType>:$num_steps,
-    Optional<AnyType>:$initial_momentum,
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+    Optional<AnyRankedTensor>:$num_steps,
+    Optional<AnyRankedTensor>:$initial_momentum,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
     `algorithm` `=` $alg $fn `(` $inputs `)` `given` $original_trace
