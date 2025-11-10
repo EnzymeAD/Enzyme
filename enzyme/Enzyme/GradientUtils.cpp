@@ -4521,8 +4521,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
-      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
-        assert(unnecessaryValuesP);
+      } else if ((isa<AllocaInst>(at) || isAllocationCall(at, TLI)) &&
+                 unnecessaryValuesP) {
         if (unnecessaryValuesP->count(at))
           return DIFFE_TYPE::DUP_NONEED;
       }
