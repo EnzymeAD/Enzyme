@@ -9308,6 +9308,25 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
 
   SmallVector<BasicBlock *, 4> &vec = reverseBlocks[found->second];
   assert(vec.size());
+  if (vec.back() != currentBlock) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Error adding reverse block:\n";
+    ss << "fwdBlock: " << *found->second << "\n";
+    ss << "currentBlock: " << *currentBlock << "\n";
+    ss << "vec.back(): " << *vec.back() << "\n";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(str.c_str(), wrap((Value *)currentBlock),
+                         ErrorType::InternalError, nullptr, nullptr, nullptr);
+    } else {
+      DebugLoc loc;
+      if (auto term = found->second->getTerminator()) {
+        loc = term->getDebugLoc();
+      }
+      EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
+                  ss.str());
+    }
+  }
   assert(vec.back() == currentBlock);
 
   BasicBlock *rev =
