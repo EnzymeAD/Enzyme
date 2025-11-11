@@ -391,15 +391,21 @@ struct AffineParallelOpEnzymeOpsRemover
   replaceWithNewOperands(PatternRewriter &rewriter,
                          affine::AffineParallelOp otherParOp,
                          ArrayRef<Value> operands) {
-    auto reductionKinds = llvm::map_to_vector(
-        otherParOp.getReductions().getAsRange<arith::AtomicRMWKindAttr>(),
-        [](auto red) { return red.getValue(); });
+    SmallVector<mlir::Attribute> reductionKinds(
+        otherParOp.getReductions().begin(), otherParOp.getReductions().end());
+
+    for (unsigned i = otherParOp->getNumOperands(); i < operands.size(); i++) {
+      reductionKinds.push_back(arith::AtomicRMWKindAttr::get(
+          otherParOp.getContext(), arith::AtomicRMWKind::addf));
+    }
+
+    ValueRange operands_(operands);
     auto newOtherParOp = affine::AffineParallelOp::create(
-        rewriter, otherParOp.getLoc(), otherParOp.getResultTypes(),
-        otherParOp.getReductions(), otherParOp.getLowerBoundsMap(),
-        otherParOp.getLowerBoundsGroups(), otherParOp.getUpperBoundsMap(),
-        otherParOp.getUpperBoundsGroups(), otherParOp.getSteps(),
-        otherParOp.getMapOperands());
+        rewriter, otherParOp.getLoc(), operands_.getTypes(),
+        ArrayAttr::get(otherParOp.getContext(), reductionKinds),
+        otherParOp.getLowerBoundsMap(), otherParOp.getLowerBoundsGroups(),
+        otherParOp.getUpperBoundsMap(), otherParOp.getUpperBoundsGroups(),
+        otherParOp.getSteps(), otherParOp.getMapOperands());
 
     newOtherParOp.getRegion().takeBody(otherParOp.getRegion());
     rewriter.replaceOp(otherParOp, newOtherParOp->getResults().slice(
@@ -409,6 +415,17 @@ struct AffineParallelOpEnzymeOpsRemover
 
   static ValueRange getInits(affine::AffineParallelOp parOp) {
     return parOp.getInits();
+  }
+
+  static bool mustPostAdd(affine::AffineParallelOp forOp) { return true; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(body);
+    return cast<AutoDiffTypeInterface>(
+               cast<enzyme::GradientType>(grad.getType()).getBasetype())
+        .createNullValue(builder, grad.getLoc());
   }
 };
 
@@ -741,6 +758,14 @@ public:
 
   static ValueRange getInits(affine::AffineForOp forOp) {
     return forOp.getInits();
+  }
+
+  static bool mustPostAdd(affine::AffineForOp forOp) { return false; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
+    return body->addArgument(Ty, grad.getLoc());
   }
 };
 

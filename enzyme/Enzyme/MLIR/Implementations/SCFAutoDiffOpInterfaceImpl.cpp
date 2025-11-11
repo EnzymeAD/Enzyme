@@ -121,6 +121,19 @@ public:
   }
 
   static ValueRange getInits(scf::ForOp forOp) { return forOp.getInitArgs(); }
+
+  static bool mustPostAdd(scf::ForOp forOp) { return false; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
+    return body->addArgument(Ty, grad.getLoc());
+  }
+
+  static void yieldNewValue(OpBuilder &builder, scf::ForOp forOp,
+                            Operation *term, Value outVal) {
+    term->insertOperands(term->getNumOperands(), ValueRange(outVal));
+  }
 };
 
 struct ForOpInterfaceReverse
@@ -699,18 +712,58 @@ struct ParallelOpEnzymeOpsRemover
                                                 ArrayRef<Value> operands) {
     auto newOtherParOp = scf::ParallelOp::create(
         rewriter, otherParallelOp.getLoc(), otherParallelOp.getLowerBound(),
-        otherParallelOp.getUpperBound(), otherParallelOp.getStep(),
-        otherParallelOp.getInitVals());
+        otherParallelOp.getUpperBound(), otherParallelOp.getStep(), operands);
 
     newOtherParOp.getRegion().takeBody(otherParallelOp.getRegion());
     rewriter.replaceOp(
         otherParallelOp,
         newOtherParOp.getResults().slice(0, otherParallelOp.getNumResults()));
+
+    if (operands.size() >= 1) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      Operation *oldTerm = newOtherParOp.getBody()->getTerminator();
+      rewriter.setInsertionPointToEnd(newOtherParOp.getBody());
+      auto term = scf::ReduceOp::create(rewriter, newOtherParOp.getLoc(),
+                                        oldTerm->getOperands());
+
+      for (auto [reg, operand] :
+           llvm::zip_equal(term->getRegions(), operands)) {
+        Block *b = &reg.front();
+        rewriter.setInsertionPointToEnd(b);
+
+        auto Ty = cast<AutoDiffTypeInterface>(operand.getType());
+        Value reduced = Ty.createAddOp(rewriter, operand.getLoc(),
+                                       b->getArgument(0), b->getArgument(1));
+        scf::ReduceReturnOp::create(rewriter, reduced.getLoc(), reduced);
+      }
+
+      oldTerm->erase();
+    }
+
     return newOtherParOp;
   }
 
   static ValueRange getInits(scf::ParallelOp parallelOp) {
     return parallelOp.getInitVals();
+  }
+
+  static bool mustPostAdd(scf::ParallelOp forOp) { return false; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(body);
+    return cast<AutoDiffTypeInterface>(
+               cast<enzyme::GradientType>(grad.getType()).getBasetype())
+        .createNullValue(builder, grad.getLoc());
+  }
+
+  static void yieldNewValue(OpBuilder &builder, scf::ParallelOp parOp,
+                            Operation *term, Value outVal) {
+    SmallVector<Value> operands(term->getOperands());
+    operands.push_back(outVal);
+    scf::ReduceOp::create(builder, term->getLoc(), operands);
+    term->erase();
   }
 };
 
@@ -739,30 +792,16 @@ struct ParallelOpInterfaceReverse
     bool valid = true;
     bool wasAtomic = gutils->AtomicAdd;
     gutils->AtomicAdd = true;
-    std::function<Value(Location, Type)> gradientCreator = [&](Location loc,
-                                                               Type t) {
-      auto shadowty = getShadowType(t);
-      OpBuilder builder(t.getContext());
-      // Gradients of values defined within the parallel body should be local to
-      // each iteration
-      builder.setInsertionPointToStart(revPar.getBody());
-
-      auto shadow = enzyme::InitOp::create(
-          builder, loc, enzyme::GradientType::get(t.getContext(), shadowty));
-      auto toset =
-          cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
-      enzyme::SetOp::create(builder, loc, shadow, toset);
-      return shadow;
-    };
-    gutils->registerGradientCreatorHook(gradientCreator);
-    auto scope = llvm::make_scope_exit(
-        [&]() { gutils->deregisterGradientCreatorHook(gradientCreator); });
 
     {
       Block *oBB = parallelOp.getBody();
       Block *revBB = revPar.getBody();
 
       OpBuilder bodyBuilder(revBB, revBB->end());
+
+      bodyBuilder.setInsertionPointToStart(revBB);
+      mlir::enzyme::localizeGradients(bodyBuilder, gutils, oBB);
+
       bodyBuilder.setInsertionPoint(revBB->getTerminator());
 
       auto first = oBB->rbegin();
