@@ -242,21 +242,6 @@ struct AffineParallelOpInterfaceReverse
     bool valid = true;
     bool wasAtomic = gutils->AtomicAdd;
     gutils->AtomicAdd = true;
-    std::function<Value(Location, Type)> gradientCreator = [&](Location loc,
-                                                               Type t) {
-      auto shadowty = getShadowType(t);
-      OpBuilder builder(t.getContext());
-      // Gradients of values defined within the parallel body should be local to
-      // each iteration
-      builder.setInsertionPointToStart(revPar.getBody());
-
-      auto shadow = enzyme::InitOp::create(
-          builder, loc, enzyme::GradientType::get(t.getContext(), shadowty));
-      auto toset =
-          cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
-      enzyme::SetOp::create(builder, loc, shadow, toset);
-      return shadow;
-    };
 
     {
       Block *oBB = parOp.getBody();
