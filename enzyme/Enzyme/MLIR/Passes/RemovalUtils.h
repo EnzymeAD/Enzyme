@@ -396,6 +396,7 @@ public:
         }
       }
 
+      // Replace the pushes in the forward pass
       if (cacheType == LoopCacheType::TENSOR) {
         {
           OpBuilder::InsertionGuard guard(rewriter);
@@ -487,14 +488,23 @@ public:
                 /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
 
           } else {
-            memref::StoreOp::create(rewriter, info.pushOp->getLoc(),
-                                    info.pushOp.getValue(), initValue,
-                                    inductionVariable);
+            if (dynamicDims.empty()) {
+              memref::StoreOp::create(rewriter, info.pushOp->getLoc(),
+                                      info.pushOp.getValue(), initValue,
+                                      inductionVariable);
+            } else {
+              auto memrefType = cast<MemRefType>(initValue.getType());
+              enzyme::StoreOp::create(rewriter, info.pushOp.getLoc(),
+                                      info.pushOp.getValue(), initValue,
+                                      inductionVariable, dynamicDims,
+                                      memrefType.getShape());
+            }
           }
         }
       }
     }
 
+    // Replace the reverse pass loop
     auto numInitArgs = FinalClass::getInits(forOp).size();
     rewriter.setInsertionPoint(forOp);
 
@@ -596,9 +606,11 @@ public:
       }
 
       SmallVector<int64_t> newShape;
+      SmallVector<Value> dynamicDims;
       for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
+          dynamicDims.push_back(dim.vval);
         } else {
           newShape.push_back(dim.ival);
         }
@@ -710,8 +722,17 @@ public:
               rewriter.eraseOp(user);
           }
         } else {
-          popValue = memref::LoadOp::create(rewriter, info.popOp->getLoc(),
-                                            popNewValue, reversedIndex);
+          if (dynamicDims.empty()) {
+            popValue = memref::LoadOp::create(rewriter, info.popOp->getLoc(),
+                                              popNewValue, reversedIndex);
+          } else {
+            auto memrefType = cast<MemRefType>(popNewValue.getType());
+            popValue = enzyme::LoadOp::create(
+                rewriter, info.popOp.getLoc(),
+                cast<MemRefType>(popNewValue.getType()).getElementType(),
+                popNewValue.getResult(), reversedIndex, dynamicDims,
+                memrefType.getShape());
+          }
         }
 
         // this memref was allocated on push, dealloc it

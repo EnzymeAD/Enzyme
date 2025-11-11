@@ -335,23 +335,36 @@ def Gradient : Enzyme_Type<"Gradient"> {
 }
 
 def LoadOp : Enzyme_Op<"load",
-    [TypesMatchWith<"type of 'result' matches element type of 'cache'",
-                    "cache", "result",
-                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Load a value from a cache at the specified indices";
-  let arguments = (ins Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'result' matches element type of 'memref'",
+                    "memref", "result",
+                    "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Load from a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins Arg<AnyMemRef, "the reference to load from",
+                           [MemRead]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$cache `[` $indices `]` attr-dict `:` type($cache)";
+  let assemblyFormat = [{
+    $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
+  }];
 }
 
 def StoreOp : Enzyme_Op<"store",
-    [TypesMatchWith<"type of 'value' matches element type of 'cache'",
-                     "cache", "value",
-                     "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
-  let summary = "Store a value to a cache at the specific indices";
-  let arguments = (ins AnyType:$value, Cache:$cache, Variadic<Index>:$indices);
+    [TypesMatchWith<"type of 'value' matches element type of 'memref'",
+                     "memref", "value",
+                     "::llvm::cast<MemRefType>($_self).getElementType()">,
+     AttrSizedOperandSegments]> {
+  let summary = "Store to a memref, annotated with dimension sizes for dynamic dims";
+  let arguments = (ins AnyType:$value,
+                       Arg<AnyMemRef, "the reference to store to",
+                           [MemWrite]>:$memref,
+                       Variadic<Index>:$indices,
+                       Variadic<Index>:$sizes,
+                       DenseI64ArrayAttr:$static_sizes);
   let assemblyFormat = [{
-    $value `,` $cache `[` $indices `]` attr-dict `:` type($cache)
+    $value `,` $memref `[` $indices `]` `(` custom<DynamicIndexList>($sizes, $static_sizes) `)` attr-dict `:` type($memref)
   }];
 }
 

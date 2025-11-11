@@ -212,6 +212,14 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   ];
 }
 
+def FlattenEnzymeCachesPass : Pass<"flatten-enzyme-caches"> {
+  let summary = "Flatten multi-dimensional enzyme memory ops to 1-D memrefs.";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "memref::MemRefDialect",
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
