@@ -244,7 +244,7 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForLoopOp"]>]> {
+    ParentOneOf<["AutoDiffRegionOp", "ForLoopOp", "WhileLoopOp"]>]> {
   let summary = "Yield values at the end of an autodiff_region or loop ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
@@ -730,6 +730,21 @@ def RandomOp : Enzyme_Op<"random"> {
   }];
 }
 
+def RandomSplitOp : Enzyme_Op<"randomSplit"> {
+  let summary = "Split RNG state into multiple independent states";
+  let description = [{
+    Splits an RNG state into multiple independent RNG states.
+    Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
+  }];
+
+  let arguments = (ins AnyType:$rng_state);
+  let results = (outs Variadic<AnyType>:$output_rng_states);
+
+  let assemblyFormat = [{
+    $rng_state attr-dict `:` functional-type(operands, results)
+  }];
+}
+
 def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
   let summary = "Get a subtrace from a trace for a given symbol";
   let description = [{
@@ -990,6 +1005,55 @@ def DumpOp : Enzyme_Op<"dump"> {
 
   let assemblyFormat = [{
     $value attr-dict `:` functional-type($value, results)
+  }];
+}
+
+def WhileLoopOp : Enzyme_Op<"while_loop", [AutomaticAllocationScope]> {
+  let summary = "While loop with condition";
+  let description = [{
+    A while loop operation that continues iterating as long as the condition
+    evaluates to true. Intended to be lowered to `stablehlo.while`.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$initArgs);
+  let regions = (region SizedRegion<1>:$conditionRegion,
+                        SizedRegion<1>:$bodyRegion);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $initArgs `:` type($initArgs) `)`
+    `->` type(results)
+    `condition` $conditionRegion
+    `body` $bodyRegion
+    attr-dict
+  }];
+}
+
+def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
+  let summary = "Computes log(exp(x) + exp(y))";
+  let description = [{
+    Computes log(exp(x) + exp(y)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def SigmoidOp : Enzyme_Op<"sigmoid", [Pure]> {
+  let summary = "Computes sigmoid function 1 / (1 + exp(-x))";
+  let description = [{
+    Computes sigmoid function 1 / (1 + exp(-x)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$input);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type(operands, results)
   }];
 }
 
