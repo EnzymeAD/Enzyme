@@ -2388,4 +2388,16 @@ static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
   return callee.str();
 }
 
+static inline std::string convertSRetTypeToString(llvm::Type *T) {
+  return std::to_string((size_t)T);
+}
+
+static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str) {
+  size_t idx;
+  bool failed = str.consumeInteger(10, idx);
+  (void)failed;
+  assert(!failed);
+  return (llvm::Type *)idx;
+}
+
 #endif // ENZYME_UTILS_H
