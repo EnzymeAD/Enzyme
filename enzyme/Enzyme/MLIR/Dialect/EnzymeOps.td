@@ -1018,18 +1018,4 @@ def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
   }];
 }
 
-def SigmoidOp : Enzyme_Op<"sigmoid", [Pure]> {
-  let summary = "Computes sigmoid function 1 / (1 + exp(-x))";
-  let description = [{
-    Computes sigmoid function 1 / (1 + exp(-x)).
-  }];
-
-  let arguments = (ins AnyRankedTensor:$input);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $input attr-dict `:` functional-type(operands, results)
-  }];
-}
-
 #endif // ENZYME_OPS
