@@ -395,26 +395,11 @@ public:
         if (revBB.empty()) {
           scf::YieldOp::create(bodyBuilder, repFor->getLoc());
         }
+
+        bodyBuilder.setInsertionPointToStart(&revBB);
+        mlir::enzyme::localizeGradients(bodyBuilder, gutils, &oBB);
+
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
-
-        // All values defined in the body should have no use outside this block
-        // therefore we can set their diffe to zero upon entering the reverse
-        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
-        for (auto operand : oBB.getArguments().slice(1)) {
-          if (!gutils->isConstantValue(operand)) {
-            gutils->zeroDiffe(operand, bodyBuilder);
-          }
-        }
-
-        for (auto &it : oBB.getOperations()) {
-          for (auto res : it.getResults()) {
-            if (!gutils->isConstantValue(res)) {
-              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
-              if (iface && !iface.isMutable())
-                gutils->zeroDiffe(res, bodyBuilder);
-            }
-          }
-        }
 
         auto term = oBB.getTerminator();
 

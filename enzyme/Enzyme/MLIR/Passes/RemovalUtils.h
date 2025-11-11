@@ -717,6 +717,15 @@ public:
   }
 };
 
+// All values defined in fwd should have no use outside this block
+// therefore we can localize their differential to only the rev block in order
+// to simplify the work of the remove-unnecessary-enzyme-ops pass.
+//
+// The builder insertion point should be at the start of the corresponding rev
+// block.
+void localizeGradients(OpBuilder &builder, MGradientUtilsReverse *gutils,
+                       Block *fwd);
+
 void removalBlockExplore(Block *block, IRMapping &mapping,
                          PatternRewriter &rewriter,
                          llvm::SetVector<Value> &gradients,

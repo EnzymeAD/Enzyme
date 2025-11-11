@@ -257,15 +257,16 @@ struct AffineParallelOpInterfaceReverse
       enzyme::SetOp::create(builder, loc, shadow, toset);
       return shadow;
     };
-    gutils->registerGradientCreatorHook(gradientCreator);
-    auto scope = llvm::make_scope_exit(
-        [&]() { gutils->deregisterGradientCreatorHook(gradientCreator); });
 
     {
       Block *oBB = parOp.getBody();
       Block *rBB = revPar.getBody();
 
       OpBuilder bodyBuilder = revPar.getBodyBuilder();
+
+      bodyBuilder.setInsertionPointToStart(revPar.getBody());
+      mlir::enzyme::localizeGradients(bodyBuilder, gutils, oBB);
+
       bodyBuilder.setInsertionPoint(rBB->getTerminator());
 
       auto first = oBB->rbegin();
