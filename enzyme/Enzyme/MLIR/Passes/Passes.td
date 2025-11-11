@@ -255,6 +255,15 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
     "tensor::TensorDialect",
     "memref::MemRefDialect"
   ];
+  let options = [
+    Option<
+      /*C++ variable name=*/"skipWorklist",
+      /*CLI argument=*/"skip-worklist",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"If true, will skip calling the EnzymeOpsRemover interface and instead only apply simple patterns"
+    >,
+  ];
 }
 
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {

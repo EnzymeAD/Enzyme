@@ -288,6 +288,7 @@ static FailureOr<func::FuncOp> outlineAutoDiffFunc(
   // to some issue with the dbg info.
   Location loc = UnknownLoc::get(op.getContext());
   auto outlinedFunc = func::FuncOp::create(builder, loc, funcName, fnType);
+  outlinedFunc.setPrivate();
   Region &outlinedBody = outlinedFunc.getBody();
   deserializeFunctionAttributes(op, outlinedFunc, freeValues.size());
 
