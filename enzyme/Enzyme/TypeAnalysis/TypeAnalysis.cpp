@@ -718,8 +718,8 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     // Constants explicitly marked as negative that aren't -1 are considered
-    // integral
-    if (ci->isNegative() && !ci->isMinusOne()) {
+    // integral if >= -4096
+    if (ci->isNegative() && !ci->isMinusOne() && ci->getValue().sge(-4096)) {
       analysis[Val].insert({-1}, BaseType::Integer);
       return;
     }
