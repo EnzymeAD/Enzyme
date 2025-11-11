@@ -378,15 +378,20 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
       IRBuilder<> B(CI);
-      auto nCI0 = B.CreateCast(
-          CI->getOpcode(), rep,
+      Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-          PointerType::get(CI->getType()->getPointerElementType(),
-                           cast<PointerType>(rep->getType())->getAddressSpace())
+      if (CI->getContext().supportsTypedPointers()) {
+        resTy = PointerType::get(
+            CI->getType()->getPointerElementType(),
+            cast<PointerType>(rep->getType())->getAddressSpace());
+      } else {
+        resTy = rep->getType();
+      }
 #else
-          rep->getType()
+      resTy = rep->getType();
 #endif
-      );
+
+      auto nCI0 = B.CreateCast(CI->getOpcode(), rep, resTy);
       if (auto nCI = dyn_cast<CastInst>(nCI0))
         nCI->takeName(CI);
       for (auto U : CI->users()) {
@@ -400,14 +405,18 @@ void RecursivelyReplaceAddressSpace(
       IRBuilder<> B(GEP);
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
-        rep = B.CreateAddrSpaceCast(
-            rep,
+
+        Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-            PointerType::get(rep->getType()->getPointerElementType(), 11)
+        if (GEP->getContext().supportsTypedPointers()) {
+          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+        } else {
+          resTy = PointerType::get(rep->getContext(), 11);
+        }
 #else
-            PointerType::get(rep->getContext(), 11)
+        resTy = PointerType::get(rep->getContext(), 11);
 #endif
-        );
+        rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       SmallVector<Value *, 1> ind(GEP->indices());
       auto nGEP = cast<GetElementPtrInst>(
