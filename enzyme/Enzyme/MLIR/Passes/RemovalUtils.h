@@ -230,8 +230,6 @@ public:
       rewriter.eraseOp(getOp);
     }
 
-    auto name = forOp->getName().getStringRef();
-
     // postadd means that the loops init is zero and that the result
     // is added with the previous grad after the loop.
     bool postAdd = FinalClass::mustPostAdd(forOp);
