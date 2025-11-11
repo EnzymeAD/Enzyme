@@ -2400,4 +2400,11 @@ static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str) {
   return (llvm::Type *)idx;
 }
 
+static inline bool hasSRetOrUnionSRet(llvm::CallBase *CB) {
+  return CB->hasStructRetAttr() ||
+         CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex,
+                                 "enzymejl_sret_union_bytes")
+             .isValid();
+}
+
 #endif // ENZYME_UTILS_H

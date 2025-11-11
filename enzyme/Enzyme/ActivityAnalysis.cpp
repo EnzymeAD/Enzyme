@@ -952,7 +952,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   if (noActiveWrite ||
       (isa<CallBase>(I) && isLocalReadOnlyOrThrow(cast<CallBase>(I)))) {
     bool checkSret = false;
-    if (!noActiveWrite && cast<CallBase>(I)->hasStructRetAttr()) {
+    if (!noActiveWrite && hasSRetOrUnionSRet(cast<CallBase>(I))) {
       checkSret = true;
     }
     // Even if the return is nonconstant, it's worth checking explicitly the
@@ -1984,7 +1984,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = ModRefInfo::NoModRef;
 
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
-        if (CB->hasStructRetAttr() &&
+        if (hasSRetOrUnionSRet(CB) &&
             getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
           ReadOnly = false;
 
@@ -3047,7 +3047,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         bool ReadOnly = isReadOnly(call, idx);
         if (!ReadOnly && isLocalReadOnlyOrThrow(call) && idx != 0 &&
-            call->hasStructRetAttr())
+            hasSRetOrUnionSRet(call))
           ReadOnly = true;
 
         mayWrite |= !ReadOnly;
