@@ -521,12 +521,17 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
 struct RemoveUnusedEnzymeOpsPass
     : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<
           RemoveUnusedEnzymeOpsPass> {
+  using RemoveUnusedEnzymeOpsPassBase::RemoveUnusedEnzymeOpsPassBase;
+
   void runOnOperation() override {
     auto op = getOperation();
 
     applyPatterns(op);
 
     annotateRegionOpsInLoops(op);
+    if (skipWorklist)
+      return;
+
     bool failed = false;
     op->walk([&](FunctionOpInterface func) {
       PostOrderWalkDriver driver(func);
