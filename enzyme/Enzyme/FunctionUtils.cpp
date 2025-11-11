@@ -514,14 +514,17 @@ void RecursivelyReplaceAddressSpace(
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
         IRBuilder<> B(LI);
-        rep = B.CreateAddrSpaceCast(
-            rep,
+        Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-            PointerType::get(rep->getType()->getPointerElementType(), 11)
+        if (LI->getContext().supportsTypedPointers()) {
+          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+        } else {
+          resTy = PointerType::get(rep->getContext(), 11);
+        }
 #else
-            PointerType::get(rep->getContext(), 11)
+        resTy = PointerType::get(rep->getContext(), 11);
 #endif
-        );
+        rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       LI->setOperand(0, rep);
       continue;
@@ -531,14 +534,18 @@ void RecursivelyReplaceAddressSpace(
         if (EnzymeJuliaAddrLoad &&
             cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
           IRBuilder<> B(SI);
-          rep = B.CreateAddrSpaceCast(
-              rep,
+          Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-              PointerType::get(rep->getType()->getPointerElementType(), 11)
+          if (SI->getContext().supportsTypedPointers()) {
+            resTy =
+                PointerType::get(rep->getType()->getPointerElementType(), 11);
+          } else {
+            resTy = PointerType::get(rep->getContext(), 11);
+          }
 #else
-              PointerType::get(rep->getContext(), 11)
+          resTy = PointerType::get(rep->getContext(), 11);
 #endif
-          );
+          rep = B.CreateAddrSpaceCast(rep, resTy);
         }
         SI->setOperand(1, rep);
         if (EnzymeJuliaAddrLoad &&
@@ -1095,8 +1102,9 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
 #if LLVM_VERSION_MAJOR < 17
-    if (AIV->getType()->getPointerElementType() !=
-        T->getType()->getPointerElementType()) {
+    if (AIV->getContext().supportsTypedPointers() &&
+        AIV->getType()->getPointerElementType() !=
+            T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
       AIV = B.CreateBitCast(
           AIV, PointerType::get(
