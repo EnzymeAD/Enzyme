@@ -1650,29 +1650,30 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   for (auto idx : enzyme_srets) {
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    (void)idx;
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = FT->getParamType(idx)->getPointerElementType();
+    llvm::Type *SRetType = convertSRetTypeFromString(
+        Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret")
+            .getValueAsString());
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers()) {
+      auto T = FT->getParamType(idx)->getPointerElementType();
+      assert(T == SRetType);
+    }
 #endif
-    Types.push_back(T);
+    Types.push_back(SRetType);
   }
   for (auto idx : enzyme_srets_v) {
-    llvm::Type *T = nullptr;
+    llvm::Type *SRetType = convertSRetTypeFromString(
+        Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret_v")
+            .getValueAsString());
     auto AT = cast<ArrayType>(FT->getParamType(idx));
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-    //         .getValueAsType();
-#else
-    T = AT->getElementType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers()) {
+      auto T = AT->getElementType()->getPointerElementType();
+      assert(T == SRetType);
+    }
 #endif
     for (size_t i = 0; i < AT->getNumElements(); i++)
-      Types.push_back(T);
+      Types.push_back(SRetType);
   }
 
   StructType *ST =

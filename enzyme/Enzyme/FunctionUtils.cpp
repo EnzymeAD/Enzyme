@@ -2790,14 +2790,11 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
-      // TODO
-      // NewF->addParamAttr(
-      //    jj,
-      //    Attribute::get(
-      //        F->getContext(), Attribute::AttrKind::ElementType,
-      //        F->getParamAttribute(ii,
-      //        Attribute::StructRet).getValueAsType()));
+      NewF->addParamAttr(
+          jj, Attribute::get(F->getContext(), "enzyme_sret",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
     }
     if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
       NewF->addParamAttr(
@@ -2884,27 +2881,19 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {
-          NewF->addParamAttr(jj + 1,
-                             Attribute::get(F->getContext(), "enzyme_sret"));
-          // TODO
-          // NewF->addParamAttr(
-          //     jj + 1,
-          //     Attribute::get(F->getContext(),
-          //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii,
-          //                    Attribute::StructRet)
-          //                        .getValueAsType()));
+          NewF->addParamAttr(
+              jj + 1,
+              Attribute::get(F->getContext(), "enzyme_sret",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
         } else {
-          NewF->addParamAttr(jj + 1,
-                             Attribute::get(F->getContext(), "enzyme_sret_v"));
-          // TODO
-          // NewF->addParamAttr(
-          //     jj + 1,
-          //     Attribute::get(F->getContext(),
-          //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii,
-          //                    Attribute::StructRet)
-          //                        .getValueAsType()));
+          NewF->addParamAttr(
+              jj + 1,
+              Attribute::get(F->getContext(), "enzyme_sret_v",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
         }
       }
 

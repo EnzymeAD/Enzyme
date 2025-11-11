@@ -4875,12 +4875,10 @@ public:
       for (unsigned i = 0; i < call.arg_size(); ++i) {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
-          structAttrs[args.size()].push_back(
-              Attribute::get(call.getContext(), "enzyme_sret"));
-          // TODO
-          // structAttrs[args.size()].push_back(Attribute::get(
-          //     call.getContext(), Attribute::AttrKind::ElementType,
-          //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
+          structAttrs[args.size()].push_back(Attribute::get(
+              call.getContext(), "enzyme_sret",
+              convertSRetTypeToString(call.getParamAttr(i, Attribute::StructRet)
+                                          .getValueAsType())));
         }
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
                           "enzymejl_parmtype_ref", "enzyme_type",
@@ -4965,23 +4963,16 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[args.size()].push_back(
-                Attribute::get(call.getContext(), "enzyme_sret")
-                // orig->getParamAttr(i,
-                // Attribute::StructRet).getValueAsType());
-            );
-            // TODO
-            // structAttrs[args.size()].push_back(Attribute::get(
-            //     call.getContext(), Attribute::AttrKind::ElementType,
-            //     call.getParamAttr(i,
-            //     Attribute::StructRet).getValueAsType()));
+                Attribute::get(call.getContext(), "enzyme_sret",
+                               convertSRetTypeToString(
+                                   call.getParamAttr(i, Attribute::StructRet)
+                                       .getValueAsType())));
           } else {
             structAttrs[args.size()].push_back(
-                Attribute::get(call.getContext(), "enzyme_sret_v"));
-            // TODO
-            // structAttrs[args.size()].push_back(Attribute::get(
-            //     call.getContext(), Attribute::AttrKind::ElementType,
-            //     call.getParamAttr(i,
-            //     Attribute::StructRet).getValueAsType()));
+                Attribute::get(call.getContext(), "enzyme_sret_v",
+                               convertSRetTypeToString(
+                                   call.getParamAttr(i, Attribute::StructRet)
+                                       .getValueAsType())));
           }
         }
 
@@ -5180,12 +5171,10 @@ public:
           structAttrs[pre_args.size()].push_back(call.getParamAttr(i, attr));
         }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
-        structAttrs[pre_args.size()].push_back(
-            // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret")
-            // Attribute::get(orig->getContext(), "enzyme_sret",
-            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
-        );
+        structAttrs[pre_args.size()].push_back(Attribute::get(
+            call.getContext(), "enzyme_sret",
+            convertSRetTypeToString(
+                call.getParamAttr(i, Attribute::StructRet).getValueAsType())));
       }
       for (auto ty : PrimalParamAttrsToPreserve)
         if (call.getAttributes().hasParamAttr(i, ty)) {
@@ -5283,20 +5272,16 @@ public:
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
             structAttrs[pre_args.size()].push_back(
-                // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret")
-                // Attribute::get(orig->getContext(), "enzyme_sret",
-                // orig->getParamAttr(ii,
-                // Attribute::StructRet).getValueAsType());
-            );
+                Attribute::get(call.getContext(), "enzyme_sret",
+                               convertSRetTypeToString(
+                                   call.getParamAttr(i, Attribute::StructRet)
+                                       .getValueAsType())));
           } else {
             structAttrs[pre_args.size()].push_back(
-                // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret_v")
-                // Attribute::get(orig->getContext(), "enzyme_sret_v",
-                // gutils->getShadowType(orig->getParamAttr(ii,
-                // Attribute::StructRet).getValueAsType()));
-            );
+                Attribute::get(call.getContext(), "enzyme_sret_v",
+                               convertSRetTypeToString(
+                                   call.getParamAttr(i, Attribute::StructRet)
+                                       .getValueAsType())));
           }
         }
         if (Mode != DerivativeMode::ReverseModePrimal) {
