@@ -978,11 +978,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
         if (checkSret) {
-          if (ConstantValues.find(I) != ConstantValues.end() ||
-              (directions == 3 &&
-               DownHypothesis->isValueInactiveFromUsers(
-                   TR, getBaseObject(cast<CallBase>(I)->getArgOperand(0)),
-                   UseActivity::None))) {
+          auto baseObj = getBaseObject(cast<CallBase>(I)->getArgOperand(0));
+          if ((I->getType()->isVoidTy() ||
+               ConstantValues.find(I) != ConstantValues.end() ||
+               DownHypothesis->isValueInactiveFromUsers(TR, I,
+                                                        UseActivity::None)) &&
+              (ConstantValues.find(baseObj) != ConstantValues.end() ||
+               (directions == 3 && DownHypothesis->isValueInactiveFromUsers(
+                                       TR, baseObj, UseActivity::None)))) {
             if (EnzymePrintActivity)
               llvm::errs() << " constant instruction[" << (int)directions
                            << "] from users instruction " << *I << "\n";
