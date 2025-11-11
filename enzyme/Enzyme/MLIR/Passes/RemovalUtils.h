@@ -834,19 +834,18 @@ struct IfLikeEnzymeOpsRemover
                                 ValueRange(falseValue));
     }
 
-    OpName newIf =
-        FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
-
     size_t idx = ifOp->getNumResults();
+    ifOp = FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
+
     for (auto grad : gradients) {
       enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
-                            newIf->getResult(idx));
+                            ifOp->getResult(idx));
       idx++;
     }
 
     for (auto &[pushedValue, info] : pushedCaches) {
       enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                             info.initOp.getResult(), newIf->getResult(idx));
+                             info.initOp.getResult(), ifOp->getResult(idx));
       rewriter.eraseOp(info.pushOp);
 
       OpBuilder::InsertionGuard guard(rewriter);
