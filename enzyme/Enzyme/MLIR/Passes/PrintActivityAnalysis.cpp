@@ -83,6 +83,8 @@ struct PrintActivityAnalysisPass
     }
   }
 
+  void inferActivitiesFromEnzymeOp();
+
   void inferArgActivitiesFromEnzymeAutodiff(
       FunctionOpInterface callee, CallOpInterface autodiff_call,
       MutableArrayRef<enzyme::Activity> argActivities,
@@ -224,6 +226,22 @@ struct PrintActivityAnalysisPass
     auto moduleOp = cast<ModuleOp>(getOperation());
 
     if (inferFromAutodiff) {
+      bool found = false;
+      moduleOp.walk([&](enzyme::AutoDiffOp autodiffOp) {
+        found = true;
+        auto callee = cast<FunctionOpInterface>(
+            moduleOp.lookupSymbol(autodiffOp.getFn()));
+        SmallVector<enzyme::Activity> argActivities = llvm::map_to_vector(
+            autodiffOp.getActivity().getAsRange<enzyme::ActivityAttr>(),
+            [](auto act) { return act.getValue(); });
+        SmallVector<enzyme::Activity> retActivities = llvm::map_to_vector(
+            autodiffOp.getRetActivity().getAsRange<enzyme::ActivityAttr>(),
+            [](auto act) { return act.getValue(); });
+        runActivityAnalysis(config, callee, argActivities, retActivities);
+      });
+
+      if (found)
+        return;
       // Infer the activity attributes from the __enzyme_autodiff call
       Operation *autodiff_decl = moduleOp.lookupSymbol("__enzyme_autodiff");
       if (!autodiff_decl) {

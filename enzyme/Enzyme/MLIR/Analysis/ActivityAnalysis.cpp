@@ -165,6 +165,7 @@ static const std::set<std::string> KnownInactiveFunctions = {
     "logb",
     "logbf",
     "logbl",
+    "_ZN4dim3C2Ejjj",
 };
 
 static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
