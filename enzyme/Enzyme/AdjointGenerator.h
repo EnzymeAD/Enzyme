@@ -4883,7 +4883,8 @@ public:
           //     call.getParamAttr(i, Attribute::StructRet).getValueAsType()));
         }
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
-                          "enzymejl_parmtype_ref", "enzyme_type"})
+                          "enzymejl_parmtype_ref", "enzyme_type",
+                          "enzymejl_sret_union_bytes"})
           if (call.getAttributes().hasParamAttr(i, attr)) {
             structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
           }
@@ -4942,13 +4943,23 @@ public:
             }
 
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
-                          "enzymejl_parmtype_ref", "enzyme_type"})
+                          "enzymejl_parmtype_ref", "enzyme_type",
+                          "enzymejl_sret_union_bytes"})
           if (call.getAttributes().hasParamAttr(i, attr)) {
             if (gutils->getWidth() == 1) {
               structAttrs[args.size()].push_back(call.getParamAttr(i, attr));
             } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[args.size()].push_back(
-                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v",
+                                 call.getAttributes()
+                                     .getParamAttr(i, "enzymejl_returnRoots")
+                                     .getValueAsString()));
+            } else if (attr == std::string("enzymejl_sret_union_bytes")) {
+              structAttrs[args.size()].push_back(Attribute::get(
+                  call.getContext(), "enzymejl_sret_union_bytes_v",
+                  call.getAttributes()
+                      .getParamAttr(i, "enzymejl_sret_union_bytes")
+                      .getValueAsString()));
             }
           }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
@@ -5163,7 +5174,8 @@ public:
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
       for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
-                        "enzymejl_parmtype_ref", "enzyme_type"})
+                        "enzymejl_parmtype_ref", "enzyme_type",
+                        "enzymejl_sret_union_bytes"})
         if (call.getAttributes().hasParamAttr(i, attr)) {
           structAttrs[pre_args.size()].push_back(call.getParamAttr(i, attr));
         }
@@ -5254,7 +5266,8 @@ public:
             }
 
         for (auto attr : {"enzymejl_returnRoots", "enzymejl_parmtype",
-                          "enzymejl_parmtype_ref", "enzyme_type"})
+                          "enzymejl_parmtype_ref", "enzyme_type",
+                          "enzymejl_sret_union_bytes"})
           if (call.getAttributes().hasParamAttr(i, attr)) {
             if (gutils->getWidth() == 1) {
               structAttrs[pre_args.size()].push_back(
@@ -5262,6 +5275,9 @@ public:
             } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[pre_args.size()].push_back(
                   Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+            } else if (attr == std::string("enzymejl_sret_union_bytes")) {
+              structAttrs[pre_args.size()].push_back(Attribute::get(
+                  call.getContext(), "enzymejl_sret_union_bytes_v"));
             }
           }
         if (call.paramHasAttr(i, Attribute::StructRet)) {

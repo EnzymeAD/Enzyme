@@ -1701,9 +1701,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     nexti++;
   }
   if (roots_AT) {
-    NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                     AttributeList::FirstArgIndex + nexti,
-                                     "enzymejl_returnRoots");
+    NewAttrs = NewAttrs.addAttribute(
+        F->getContext(), AttributeList::FirstArgIndex + nexti,
+        "enzymejl_returnRoots", std::to_string(numRooting));
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      Attribute::NoAlias);
@@ -1965,7 +1965,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       NewAttrs = NewAttrs.addAttribute(
 
           F->getContext(), AttributeList::FirstArgIndex + nexti,
-          "enzymejl_returnRoots");
+          "enzymejl_returnRoots", std::to_string(numRooting));
       nexti++;
     }
 

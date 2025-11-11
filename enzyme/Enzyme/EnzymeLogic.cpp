@@ -2855,9 +2855,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (nf->hasParamAttribute(attrIndex, Attribute::NoAlias)) {
       NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }
-    for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
-                      "enzymejl_returnRoots_v", "enzymejl_parmtype",
-                      "enzymejl_parmtype_ref", "enzyme_type"})
+    for (auto name : {
+             "enzyme_sret",
+             "enzyme_sret_v",
+             "enzymejl_returnRoots",
+             "enzymejl_returnRoots_v",
+             "enzymejl_parmtype",
+             "enzymejl_parmtype_ref",
+             "enzyme_type",
+             "enzymejl_sret_union_bytes",
+             "enzymejl_sret_union_bytes_v",
+         })
       if (nf->getAttributes().hasParamAttr(attrIndex, name)) {
         NewF->addParamAttr(attrIndex,
                            nf->getAttributes().getParamAttr(attrIndex, name));
