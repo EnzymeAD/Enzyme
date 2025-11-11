@@ -56,6 +56,20 @@ static Value createIdentityMatrix(OpBuilder &builder, Location loc,
       DenseElementsAttr::get(matrixType, ArrayRef<double>(identityData)));
 }
 
+static Value createSigmoid(OpBuilder &builder, Location loc, Value x) {
+  auto xType = cast<RankedTensorType>(x.getType());
+  auto elemType = xType.getElementType();
+
+  auto oneConst = builder.create<arith::ConstantOp>(
+      loc, xType,
+      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 1.0)));
+  auto negX = builder.create<arith::NegFOp>(loc, x);
+  auto expNegX = builder.create<math::ExpOp>(loc, negX);
+  auto onePlusExp = builder.create<arith::AddFOp>(loc, oneConst, expNegX);
+  auto result = builder.create<arith::DivFOp>(loc, oneConst, onePlusExp);
+  return result;
+}
+
 static bool computePositionSizeForAddress(Operation *op,
                                           FunctionOpInterface func,
                                           ArrayRef<Attribute> address,
@@ -1555,8 +1569,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       Value weightDiffCombine = arith::SubFOp::create(
           rewriter, loc, newLeaf.weight, subtreeIter.weight);
-      Value acceptProbCombine = enzyme::SigmoidOp::create(
-          rewriter, loc, F64TensorType, weightDiffCombine);
+      Value acceptProbCombine = createSigmoid(rewriter, loc, weightDiffCombine);
 
       // 7h.3: Select proposal with multinomial sampling.
       auto randomOpCombine = enzyme::RandomOp::create(
@@ -1723,8 +1736,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 8c. Proposal selection via multinomial sampling.
       Value weightDiffMain =
           arith::SubFOp::create(rewriter, loc, subtree.weight, treeBody.weight);
-      Value acceptProbMainRaw = enzyme::SigmoidOp::create(
-          rewriter, loc, F64TensorType, weightDiffMain);
+      Value acceptProbMainRaw = createSigmoid(rewriter, loc, weightDiffMain);
 
       // 8d. Zero accept probability to 0 if new tree is turning or diverging.
       Value acceptProbMain = arith::SelectOp::create(
