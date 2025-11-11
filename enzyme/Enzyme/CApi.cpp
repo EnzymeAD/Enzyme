@@ -1908,14 +1908,21 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto i : rroots) {
     auto arg = delArgMap[i];
     assert(arg);
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = FT->getParamType(i)->getPointerElementType();
+
+    auto snum = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+                    .getValueAsString();
+    size_t num;
+    bool failed = snum.consumeInteger(10, num);
+    (void)failed;
+    assert(!failed);
+    auto jlptr = PointerType::get(StructType::get(NewF->getContext(), {}), 10);
+    llvm::Type *T = ArrayType::get(jlptr, num);
+
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers())
+      assert(FT->getParamType(i)->getPointerElementType() == T);
 #endif
+
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     auto AL = EB.CreateAlloca(T, 0, "stack_roots");
     arg->replaceAllUsesWith(AL);
@@ -1925,14 +1932,21 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto arg = delArgMap[i];
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = AT->getElementType()->getPointerElementType();
+
+    auto snum = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
+                    .getValueAsString();
+    size_t num;
+    bool failed = snum.consumeInteger(10, num);
+    (void)failed;
+    assert(!failed);
+    auto jlptr = PointerType::get(StructType::get(NewF->getContext(), {}), 10);
+    llvm::Type *T = ArrayType::get(jlptr, num);
+
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers())
+      assert(AT->getElementType()->getPointerElementType() == T);
 #endif
+
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     Value *val = UndefValue::get(AT);
     for (size_t j = 0; j < AT->getNumElements(); j++) {
