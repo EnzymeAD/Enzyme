@@ -129,11 +129,6 @@ public:
     auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
     return body->addArgument(Ty, grad.getLoc());
   }
-
-  static void yieldNewValue(OpBuilder &builder, scf::ForOp forOp,
-                            Operation *term, Value outVal) {
-    term->insertOperands(term->getNumOperands(), ValueRange(outVal));
-  }
 };
 
 struct ForOpInterfaceReverse
@@ -756,14 +751,6 @@ struct ParallelOpEnzymeOpsRemover
     return cast<AutoDiffTypeInterface>(
                cast<enzyme::GradientType>(grad.getType()).getBasetype())
         .createNullValue(builder, grad.getLoc());
-  }
-
-  static void yieldNewValue(OpBuilder &builder, scf::ParallelOp parOp,
-                            Operation *term, Value outVal) {
-    SmallVector<Value> operands(term->getOperands());
-    operands.push_back(outVal);
-    scf::ReduceOp::create(builder, term->getLoc(), operands);
-    term->erase();
   }
 };
 
