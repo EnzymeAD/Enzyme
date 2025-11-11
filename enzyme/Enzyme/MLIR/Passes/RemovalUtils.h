@@ -52,7 +52,7 @@ struct CacheInfo {
     }
     (void)nusers;
     assert(nusers == 2); // TODO: support more uses
-  }
+ }
 
   Value pushedValue() { return pushOp.getValue(); }
   Type cachedType() {
