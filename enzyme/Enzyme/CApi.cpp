@@ -1909,8 +1909,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto arg = delArgMap[i];
     assert(arg);
 
-    auto snum =
-        F->getParamAttribute(i, "enzymejl_returnRoots").getValueAsString();
+    auto snum = Attrs
+                    .getAttribute(AttributeList::FirstArgIndex + i,
+                                  "enzymejl_returnRoots")
+                    .getValueAsString();
     size_t num;
     bool failed = snum.consumeInteger(10, num);
     (void)failed;
@@ -1933,8 +1935,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
 
-    auto snum =
-        F->getParamAttribute(i, "enzymejl_returnRoots_v").getValueAsString();
+    auto snum = Attrs
+                    .getAttribute(AttributeList::FirstArgIndex + i,
+                                  "enzymejl_returnRoots_v")
+                    .getValueAsString();
     size_t num;
     bool failed = snum.consumeInteger(10, num);
     (void)failed;
