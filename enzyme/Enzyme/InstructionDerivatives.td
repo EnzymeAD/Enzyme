@@ -955,7 +955,7 @@ def : IntrPattern<(Op $x),
                   >;
 
 def : IntrPattern<(Op $x),
-                  [["exp2"], ["nvvm_ex2_approx_ftz_f"], ["nvvm_ex2_approx_f"], ["nvvm_ex2_approx_d"]],
+                  [["exp2"], ["nvvm_ex2_approx_ftz_f", "", "21"], ["nvvm_ex2_approx_f", "", "21"], ["nvvm_ex2_approx_d", "", "21"], ["nvvm_ex2_approx_ftz", "22", ""], ["nvvm_ex2_approx", "22", ""]],
                   [(FMul (DiffeRet), (FMul (ConstantFP<"0.6931471805599453"> $x), (Call<(SameFunc)> $x)))]                  ,
                   (ForwardFromSummedReverse)
                   >;
