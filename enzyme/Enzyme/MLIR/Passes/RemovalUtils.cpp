@@ -9,6 +9,7 @@
 #include "RemovalUtils.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/IR/PatternMatch.h"
@@ -21,6 +22,55 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 #define DEBUG_TYPE "enzyme-mincut"
+
+void mlir::enzyme::localizeGradients(OpBuilder &builder,
+                                     MGradientUtilsReverse *gutils,
+                                     Block *fwd) {
+  Operation *parent = fwd->getParentOp();
+
+  auto localizeGradientValue = [&](Value val) {
+    if (gutils->isConstantValue(val))
+      return;
+    auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType());
+    if (iface && !iface.isMutable()) {
+      auto grad = gutils->getDifferential(val);
+
+      enzyme::SetOp initialSet = nullptr;
+      for (auto user : grad.getUsers()) {
+        if (!parent->isProperAncestor(user)) {
+          assert(!initialSet);
+          initialSet = dyn_cast<enzyme::SetOp>(user);
+          assert(initialSet);
+        }
+      }
+
+      auto initOp = grad.getDefiningOp<enzyme::InitOp>();
+
+      {
+        OpBuilder::InsertionGuard g(builder);
+        Value zero =
+            iface.createNullValue(builder, initialSet.getValue().getLoc());
+        builder.setInsertionPointAfter(zero.getDefiningOp());
+        enzyme::SetOp::create(builder, initialSet.getLoc(), grad, zero);
+        initialSet->erase();
+      }
+
+      builder.setInsertionPointToStart(builder.getBlock());
+      initOp->remove();
+      builder.insert(initOp);
+    }
+  };
+
+  for (auto operand : fwd->getArguments()) {
+    localizeGradientValue(operand);
+  }
+
+  for (auto &it : fwd->getOperations()) {
+    for (auto res : it.getResults()) {
+      localizeGradientValue(res);
+    }
+  }
+}
 
 void mlir::enzyme::removalBlockExplore(
     Block *block, IRMapping &mapping, PatternRewriter &rewriter,

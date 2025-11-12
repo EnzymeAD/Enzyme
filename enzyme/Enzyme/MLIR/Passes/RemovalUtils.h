@@ -9,6 +9,7 @@
 
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -163,8 +164,10 @@ public:
     for (auto &it : *body) {
       Operation *op = &it;
 
-      if (auto setOp = dyn_cast<enzyme::SetOp>(op))
-        updatedGradients.insert(setOp.getGradient());
+      if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
+        if (setOp.getGradient().getDefiningOp()->getBlock() != body)
+          updatedGradients.insert(setOp.getGradient());
+      }
 
       if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {
         CacheInfo info(pushOp.getCache());
@@ -199,15 +202,13 @@ public:
 
     SmallVector<CacheInfo> caches = caches0;
 
-    llvm::map_to_vector(cachesMap, [](auto p) { return std::get<1>(p); });
-
     // nothing to do
     if (updatedGradients.empty() && caches.empty())
       return success();
 
     DenseMap<Value, llvm::SmallVector<Operation *>> updatedGradientUsers;
 
-    for (auto &it : *body) {
+    for (auto &it : llvm::make_early_inc_range(*body)) {
       Operation *op = &it;
 
       auto getOp = dyn_cast<enzyme::GetOp>(op);
@@ -221,49 +222,50 @@ public:
       if (!getOp || updatedGradients.contains(getOp.getGradient()))
         continue;
 
-      auto outerGet = enzyme::GetOp::create(
-          rewriter, getOp->getLoc(),
-          cast<enzyme::GradientType>(getOp.getResult().getType()).getBasetype(),
-          getOp.getGradient());
+      auto outerGet = enzyme::GetOp::create(rewriter, getOp->getLoc(),
+                                            getOp.getResult().getType(),
+                                            getOp.getGradient());
 
       rewriter.replaceAllUsesWith(getOp.getResult(), outerGet.getResult());
       rewriter.eraseOp(getOp);
     }
+
+    // postadd means that the loops init is zero and that the result
+    // is added with the previous grad after the loop.
+    bool postAdd = FinalClass::mustPostAdd(forOp);
 
     auto term = body->getTerminator();
 
     SmallVector<Value> newOperands(FinalClass::getInits(forOp));
     for (auto grad : updatedGradients) {
       auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
-      auto outerGet = enzyme::GetOp::create(rewriter, grad.getLoc(), Ty, grad);
 
-      newOperands.push_back(outerGet.getResult());
-      auto newArg = body->addArgument(Ty, grad.getLoc());
+      Value newInit;
 
-      {
-        OpBuilder::InsertionGuard guard(rewriter);
-        // here we do a primitive form of mem2reg within the loop. We have a
-        // sorted (by instruction number) list of all users of the instruction.
-        Value val = newArg;
-        for (auto user : updatedGradientUsers[grad]) {
-          if (auto getOp = dyn_cast<enzyme::GetOp>(user)) {
-            rewriter.replaceOp(getOp, val);
-          } else {
-            auto setOp = cast<enzyme::SetOp>(user);
-            val = setOp.getValue();
-            rewriter.eraseOp(setOp);
-          }
-        }
-        // rewriter.setInsertionPointToStart(body);
-        // enzyme::SetOp::create(rewriter, grad.getLoc(), grad, newArg);
-
-        // rewriter.setInsertionPoint(term);
-
-        // auto outputVal =
-        //     enzyme::GetOp::create(rewriter, grad.getLoc(), Ty,
-        //     grad).getResult();
-        term->insertOperands(term->getNumOperands(), ValueRange(val));
+      if (!postAdd) {
+        newInit = enzyme::GetOp::create(rewriter, grad.getLoc(), Ty, grad);
+      } else {
+        newInit = cast<AutoDiffTypeInterface>(Ty).createNullValue(
+            rewriter, grad.getLoc());
       }
+
+      newOperands.push_back(newInit);
+
+      // here we do a primitive form of mem2reg within the loop. We have a
+      // sorted (by instruction number) list of all users of the
+      // instruction.
+      Value val = FinalClass::initialValueInBlock(rewriter, body, grad);
+      for (auto user : updatedGradientUsers[grad]) {
+        if (auto getOp = dyn_cast<enzyme::GetOp>(user)) {
+          rewriter.replaceOp(getOp, val);
+        } else {
+          auto setOp = cast<enzyme::SetOp>(user);
+          val = setOp.getValue();
+          rewriter.eraseOp(setOp);
+        }
+      }
+
+      term->insertOperands(term->getNumOperands(), ValueRange(val));
     }
 
     IRMapping fwdrevmap;
@@ -508,9 +510,17 @@ public:
     unsigned resultIdx = numInitArgs;
     for (auto grad : updatedGradients) {
       // set the updated gradient after the new for op.
-      OpBuilder::InsertionGuard guard(rewriter);
-      enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
-                            forOp->getResult(resultIdx));
+
+      Value incoming = forOp->getResult(resultIdx);
+      Value outgoing;
+      if (!postAdd) {
+        outgoing = incoming;
+      } else {
+        auto T = cast<AutoDiffTypeInterface>(incoming.getType());
+        Value current = enzyme::GetOp::create(rewriter, grad.getLoc(), T, grad);
+        outgoing = T.createAddOp(rewriter, grad.getLoc(), incoming, current);
+      }
+      enzyme::SetOp::create(rewriter, grad.getLoc(), grad, outgoing);
       ++resultIdx;
     }
 
@@ -717,6 +727,15 @@ public:
   }
 };
 
+// All values defined in fwd should have no use outside this block
+// therefore we can localize their differential to only the rev block in order
+// to simplify the work of the remove-unnecessary-enzyme-ops pass.
+//
+// The builder insertion point should be at the start of the corresponding rev
+// block.
+void localizeGradients(OpBuilder &builder, MGradientUtilsReverse *gutils,
+                       Block *fwd);
+
 void removalBlockExplore(Block *block, IRMapping &mapping,
                          PatternRewriter &rewriter,
                          llvm::SetVector<Value> &gradients,
@@ -815,19 +834,18 @@ struct IfLikeEnzymeOpsRemover
                                 ValueRange(falseValue));
     }
 
-    OpName newIf =
-        FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
-
     size_t idx = ifOp->getNumResults();
+    ifOp = FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
+
     for (auto grad : gradients) {
       enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
-                            newIf->getResult(idx));
+                            ifOp->getResult(idx));
       idx++;
     }
 
     for (auto &[pushedValue, info] : pushedCaches) {
       enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                             info.initOp.getResult(), newIf->getResult(idx));
+                             info.initOp.getResult(), ifOp->getResult(idx));
       rewriter.eraseOp(info.pushOp);
 
       OpBuilder::InsertionGuard guard(rewriter);
