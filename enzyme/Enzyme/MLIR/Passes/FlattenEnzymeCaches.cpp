@@ -149,6 +149,29 @@ struct FlattenEnzymeCaches
       loadOp.replaceAllUsesWith(flatLoad.getResult());
       loadOp.erase();
     });
+
+    // Trying to get lowering working, remember to delete this
+    llvm::errs() << "***Deleting allocations and leftover placeholders***\n";
+    getOperation()->walk([](gpu::DeallocOp deallocOp) { deallocOp.erase(); });
+
+    getOperation()->walk([](enzyme::PlaceholderOp placeholder) {
+      SmallVector<Operation *> frontier{placeholder};
+      SetVector<Operation *> visited;
+      while (!frontier.empty()) {
+        Operation *curr = frontier.pop_back_val();
+        visited.insert(curr);
+
+        for (Operation *user : curr->getUsers()) {
+          if (!visited.contains(user)) {
+            frontier.push_back(user);
+          }
+        }
+      }
+
+      for (Operation *toDelete : llvm::reverse(visited)) {
+        toDelete->erase();
+      }
+    });
   }
 };
 } // namespace
