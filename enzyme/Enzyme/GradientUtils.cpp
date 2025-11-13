@@ -4469,8 +4469,13 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
     if (cmode == DerivativeMode::ForwardMode ||
         cmode == DerivativeMode::ForwardModeError ||
         cmode == DerivativeMode::ForwardModeSplit) {
-      subretType = DIFFE_TYPE::DUP_ARG;
-      shadowReturnUsed = true;
+      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
+        subretType = DIFFE_TYPE::DUP_ARG;
+        shadowReturnUsed = true;
+      } else {
+        subretType = DIFFE_TYPE::CONSTANT;
+      }
     } else {
       if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
@@ -4516,8 +4521,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
-      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
-        assert(unnecessaryValuesP);
+      } else if ((isa<AllocaInst>(at) || isAllocationCall(at, TLI)) &&
+                 unnecessaryValuesP) {
         if (unnecessaryValuesP->count(at))
           return DIFFE_TYPE::DUP_NONEED;
       }
@@ -6350,12 +6355,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
           which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
+          // Avoid re-extracting from the same value, since multiple
+          // entries to the same phi from the same block must have the
+          // same value;
+          DenseMap<BasicBlock *, Value *> samePHI;
           for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
                     ->getTerminator());
             Value *val = invertedVals[j];
-            auto extracted_diff = extractMeta(pre, val, i);
+            Value *extracted_diff;
+            auto found = samePHI.find(phi->getIncomingBlock(j));
+            if (found == samePHI.end()) {
+              extracted_diff = extractMeta(pre, val, i);
+              samePHI[phi->getIncomingBlock(j)] = extracted_diff;
+            } else {
+              extracted_diff = found->second;
+            }
             which->addIncoming(
                 extracted_diff,
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j))));
@@ -9292,6 +9308,25 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
 
   SmallVector<BasicBlock *, 4> &vec = reverseBlocks[found->second];
   assert(vec.size());
+  if (vec.back() != currentBlock) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Error adding reverse block:\n";
+    ss << "fwdBlock: " << *found->second << "\n";
+    ss << "currentBlock: " << *currentBlock << "\n";
+    ss << "vec.back(): " << *vec.back() << "\n";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(str.c_str(), wrap((Value *)currentBlock),
+                         ErrorType::InternalError, nullptr, nullptr, nullptr);
+    } else {
+      DebugLoc loc;
+      if (auto term = found->second->getTerminator()) {
+        loc = term->getDebugLoc();
+      }
+      EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
+                  ss.str());
+    }
+  }
   assert(vec.back() == currentBlock);
 
   BasicBlock *rev =

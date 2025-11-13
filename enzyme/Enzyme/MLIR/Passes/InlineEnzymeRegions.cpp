@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -34,23 +35,15 @@ namespace {
 constexpr static llvm::StringLiteral kFnAttrsName = "fn_attrs";
 
 static StringRef getFunctionTypeAttrName(Operation *operation) {
-  return llvm::TypeSwitch<Operation *, StringRef>(operation)
-      .Case<func::FuncOp, LLVM::LLVMFuncOp>(
-          [](auto op) { return op.getFunctionTypeAttrName(); })
-      .Default([](Operation *) {
-        llvm_unreachable("expected op with a function type");
-        return "";
-      });
+  if (auto iface = dyn_cast<mlir::enzyme::AutoDiffFunctionInterface>(operation))
+    return iface.getFunctionTypeAttrName();
+  return "";
 }
 
 static StringRef getArgAttrsAttrName(Operation *operation) {
-  return llvm::TypeSwitch<Operation *, StringRef>(operation)
-      .Case<func::FuncOp, LLVM::LLVMFuncOp>(
-          [](auto op) { return op.getArgAttrsAttrName(); })
-      .Default([](Operation *) {
-        llvm_unreachable("expected op with arg attrs");
-        return "";
-      });
+  if (auto iface = dyn_cast<mlir::enzyme::AutoDiffFunctionInterface>(operation))
+    return iface.getArgAttrsAttrName();
+  return "";
 }
 
 static void serializeFunctionAttributes(Operation *fn,

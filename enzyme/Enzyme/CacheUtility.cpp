@@ -989,8 +989,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
             invgroup;
       }
+      Type *nextType = types[i + 1];
       auto freecall = freeCache(
-          containedloops.back().first.preheader, sublimits, i, alloc,
+          containedloops.back().first.preheader, sublimits, i, alloc, nextType,
           byteSizeOfType, storeInto,
           CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
       if (freecall && malloccall) {

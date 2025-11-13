@@ -290,16 +290,17 @@ TypeAnalyzer::TypeAnalyzer(
 }
 
 static SmallPtrSet<BasicBlock *, 1>
-findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT) {
+findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT,
+                SmallPtrSet<PHINode *, 1> &seen) {
   if (isa<Constant>(val))
     return {};
   if (auto CI = dyn_cast<CastInst>(val))
-    return findLoopIndices(CI->getOperand(0), LI, DT);
+    return findLoopIndices(CI->getOperand(0), LI, DT, seen);
   if (auto CI = dyn_cast<UnaryOperator>(val))
-    return findLoopIndices(CI->getOperand(0), LI, DT);
+    return findLoopIndices(CI->getOperand(0), LI, DT, seen);
   if (auto bo = dyn_cast<BinaryOperator>(val)) {
-    auto inset0 = findLoopIndices(bo->getOperand(0), LI, DT);
-    auto inset1 = findLoopIndices(bo->getOperand(1), LI, DT);
+    auto inset0 = findLoopIndices(bo->getOperand(0), LI, DT, seen);
+    auto inset1 = findLoopIndices(bo->getOperand(1), LI, DT, seen);
     inset0.insert(inset1.begin(), inset1.end());
     return inset0;
   }
@@ -334,7 +335,7 @@ findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT) {
         }
       }
       if (SI && !failed && DT.dominates(SI, LDI)) {
-        return findLoopIndices(SI->getValueOperand(), LI, DT);
+        return findLoopIndices(SI->getValueOperand(), LI, DT, seen);
       }
     }
   }
@@ -342,10 +343,13 @@ findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT) {
     auto L = LI.getLoopFor(pn->getParent());
     if (L && L->getHeader() == pn->getParent())
       return {pn->getParent()};
+    if (seen.contains(pn))
+      return {};
     SmallPtrSet<BasicBlock *, 1> ops;
+    seen.insert(pn);
     for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
       auto a = pn->getIncomingValue(i);
-      auto seti = findLoopIndices(a, LI, DT);
+      auto seti = findLoopIndices(a, LI, DT, seen);
       ops.insert(seti.begin(), seti.end());
     }
     return ops;
@@ -714,8 +718,8 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     // Constants explicitly marked as negative that aren't -1 are considered
-    // integral
-    if (ci->isNegative() && !ci->isMinusOne()) {
+    // integral if >= -4096
+    if (ci->isNegative() && !ci->isMinusOne() && ci->getValue().sge(-4096)) {
       analysis[Val].insert({-1}, BaseType::Integer);
       return;
     }
@@ -2028,7 +2032,8 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     while (true) {
       if (auto gepop = dyn_cast<GEPOperator>(ptr)) {
         for (auto I = gepop->idx_begin(), E = gepop->idx_end(); I != E; I++) {
-          for (auto loopInd : findLoopIndices(*I, LI, DT)) {
+          SmallPtrSet<PHINode *, 1> seen;
+          for (auto loopInd : findLoopIndices(*I, LI, DT, seen)) {
             previousLoopInductionHeaders.insert(loopInd);
           }
         }
@@ -2063,7 +2068,8 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     //   In this case abort
     //   TODO, in the future, mutually compute the offset together.
     if (vset.size() != 1) {
-      for (auto loopInd : findLoopIndices(pair.first, LI, DT))
+      SmallPtrSet<PHINode *, 1> seen;
+      for (auto loopInd : findLoopIndices(pair.first, LI, DT, seen))
         if (previousLoopInductionHeaders.count(loopInd))
           return;
     }

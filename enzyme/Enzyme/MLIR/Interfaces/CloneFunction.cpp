@@ -239,17 +239,12 @@ FunctionOpInterface CloneFunctionWithReturns(
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, name.str());
   SmallVector<Type> resultTypes(FTy.getResults());
-  if (isa<LLVM::LLVMFuncOp>(F)) {
-    if (resultTypes.empty()) {
-      // llvm.func ops that return no results need to explicitly return
-      // LLVMVoidType
-      resultTypes.push_back(LLVM::LLVMVoidType::get(FTy.getContext()));
-    } else if (resultTypes.size() > 1) {
-      auto structType =
-          LLVM::LLVMStructType::getLiteral(FTy.getContext(), resultTypes);
-      resultTypes.clear();
-      resultTypes.push_back(structType);
-    }
+  if (auto iface = dyn_cast<AutoDiffFunctionInterface>(*NewF)) {
+    iface.transformResultTypes(resultTypes);
+  } else {
+    llvm::errs()
+        << F << "this function does not implement AutoDiffFunctionInterface";
+    return nullptr;
   }
   NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
 
@@ -261,6 +256,11 @@ FunctionOpInterface CloneFunctionWithReturns(
   cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
 
   {
+    SmallVector<mlir::Attribute> allAttrs(F.getNumArguments(), nullptr);
+    if (auto allArgAttrs = F.getAllArgAttrs())
+      allAttrs.assign(allArgAttrs.getValue().begin(),
+                      allArgAttrs.getValue().end());
+
     auto &blk = NewF.getFunctionBody().front();
     assert(F.getFunctionBody().front().getNumArguments() == ArgActivity.size());
     for (ssize_t i = ArgActivity.size() - 1; i >= 0; i--) {
@@ -274,13 +274,17 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        if ((size_t)i == ArgActivity.size() - 1)
+        mlir::Attribute dupAttr = nullptr;
+        if ((size_t)i == ArgActivity.size() - 1) {
           dval = blk.addArgument(getShadowType(val.getType(), width),
                                  val.getLoc());
-        else
+          allAttrs.push_back(dupAttr);
+        } else {
           dval = blk.insertArgument(blk.args_begin() + i + 1,
                                     getShadowType(val.getType(), width),
                                     val.getLoc());
+          allAttrs.insert(allAttrs.begin() + i + 1, dupAttr);
+        }
         ptrInputs.map(oval, dval);
       }
     }
@@ -294,17 +298,22 @@ FunctionOpInterface CloneFunctionWithReturns(
     for (auto &&[Ty, activity] : llvm::zip(resultTypes, RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
         blk.addArgument(getShadowType(Ty, width), retloc);
+        allAttrs.push_back(nullptr);
       }
     }
+
+    NewF.setAllArgAttrs(allAttrs);
   }
 
   std::string ToClone[] = {
       "bufferization.writable",
       "mhlo.sharding",
       "mhlo.layout_mode",
+      "tt.divisibility",
       "xla_framework.input_mapping",
       "xla_framework.result_mapping",
   };
+
   size_t newxlacnt = 0;
   {
     size_t oldi = 0;
@@ -352,26 +361,23 @@ FunctionOpInterface CloneFunctionWithReturns(
     size_t newi = 0;
     while (oldi < F.getNumArguments()) {
       for (auto attrName : ToClone) {
-        NewF.removeArgAttr(newi, attrName);
-        if (auto attr = F.getArgAttr(oldi, attrName)) {
+        if (auto attr = NewF.getArgAttr(newi, attrName)) {
           if (attrName == "xla_framework.input_mapping") {
             auto iattr = cast<IntegerAttr>(attr);
             APSInt nc(iattr.getValue());
             nc = newxlacnt;
             attr = IntegerAttr::get(F->getContext(), nc);
             newxlacnt++;
+            NewF.setArgAttr(newi, attrName, attr);
           }
-          NewF.setArgAttr(newi, attrName, attr);
         }
       }
 
       newi++;
       if (ArgActivity[oldi] == DIFFE_TYPE::DUP_ARG ||
           ArgActivity[oldi] == DIFFE_TYPE::DUP_NONEED) {
-
         for (auto attrName : ToClone) {
-          NewF.removeArgAttr(newi, attrName);
-          if (auto attr = F.getArgAttr(oldi, attrName)) {
+          if (auto attr = NewF.getArgAttr(newi - 1, attrName)) {
             if (attrName == "xla_framework.input_mapping") {
               auto iattr = cast<IntegerAttr>(attr);
               APSInt nc(iattr.getValue());

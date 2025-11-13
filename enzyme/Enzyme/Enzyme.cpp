@@ -186,67 +186,98 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
   }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
     changed = true;
-#if LLVM_VERSION_MAJOR >= 16
-    F.setOnlyAccessesInaccessibleMemOrArgMem();
-#else
-    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(0, Attribute::WriteOnly);
-    if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::WriteOnly);
     }
-    if (F.getFunctionType()->getParamType(6)->isPointerTy()) {
+    if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
     }
   }
   auto name = getFuncName(&F);
   if (name == "MPI_Isend" || name == "PMPI_Isend") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
     changed = true;
-#if LLVM_VERSION_MAJOR >= 16
-    F.setOnlyAccessesInaccessibleMemOrArgMem();
-#else
-    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
-    F.addParamAttr(0, Attribute::ReadOnly);
-    if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::ReadOnly);
     }
-    F.addParamAttr(6, Attribute::WriteOnly);
+    if (FT->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
   }
   if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
       name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
     changed = true;
-#if LLVM_VERSION_MAJOR >= 16
-    F.setOnlyAccessesInaccessibleMemOrArgMem();
-#else
-    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 
-    if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
+    // OpenMPI vs MPICH
+    if (FT->getParamType(0)->isPointerTy()) {
       addFunctionNoCapture(&F, 0);
       F.addParamAttr(0, Attribute::ReadOnly);
     }
-    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+    if (FT->getParamType(1)->isPointerTy()) {
       F.addParamAttr(1, Attribute::WriteOnly);
       addFunctionNoCapture(&F, 1);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
     }
   }
   if (name == "MPI_Wait" || name == "PMPI_Wait") {

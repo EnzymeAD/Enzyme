@@ -203,8 +203,38 @@ struct SubViewOpInterfaceReverse
   }
 };
 
-class MemRefTypeInterface
-    : public AutoDiffTypeInterface::ExternalModel<MemRefTypeInterface,
+class MemRefClonableTypeInterface
+    : public ClonableTypeInterface::ExternalModel<MemRefClonableTypeInterface,
+                                                  MemRefType> {
+
+public:
+  mlir::Value cloneValue(mlir::Type self, OpBuilder &builder,
+                         Value value) const {
+    MemRefType MT = cast<MemRefType>(self);
+    SmallVector<Value> dynamicSizes;
+
+    for (auto [i, s] : llvm::enumerate(MT.getShape())) {
+      if (s == ShapedType::kDynamic) {
+        Value dim = arith::ConstantIndexOp::create(builder, value.getLoc(), i);
+        dynamicSizes.push_back(
+            memref::DimOp::create(builder, value.getLoc(), value, dim));
+      }
+    }
+
+    auto clone =
+        memref::AllocOp::create(builder, value.getLoc(), self, dynamicSizes);
+    memref::CopyOp::create(builder, value.getLoc(), value, clone);
+
+    return clone;
+  }
+
+  void freeClonedValue(mlir::Type self, OpBuilder &builder, Value value) const {
+    memref::DeallocOp::create(builder, value.getLoc(), value);
+  };
+};
+
+class MemRefAutoDiffTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<MemRefAutoDiffTypeInterface,
                                                   MemRefType> {
 public:
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
@@ -252,7 +282,8 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
     registerInterfaces(context);
-    MemRefType::attachInterface<MemRefTypeInterface>(*context);
+    MemRefType::attachInterface<MemRefAutoDiffTypeInterface>(*context);
+    MemRefType::attachInterface<MemRefClonableTypeInterface>(*context);
 
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);

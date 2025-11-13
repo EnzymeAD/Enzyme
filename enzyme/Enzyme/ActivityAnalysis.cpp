@@ -947,7 +947,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       InsertConstantInstruction(TR, I);
       return true;
     }
+  }
 
+  if (noActiveWrite ||
+      (isa<CallBase>(I) && isLocalReadOnlyOrThrow(cast<CallBase>(I)))) {
+    bool checkSret = false;
+    if (!noActiveWrite && hasSRetOrUnionSRet(cast<CallBase>(I))) {
+      checkSret = true;
+    }
     // Even if the return is nonconstant, it's worth checking explicitly the
     // users since unlike isConstantValue, returning a pointer does not make the
     // instruction active
@@ -958,7 +965,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       // If we aren't a phi node (and thus potentially recursive on uses) and
       // already equal to the current direction, we don't need to induct,
       // reducing runtime.
-      if (directions == DOWN && !isa<PHINode>(I)) {
+      if (directions == DOWN && !isa<PHINode>(I) && !checkSret) {
         if (isValueInactiveFromUsers(TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
@@ -970,8 +977,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
-        if (DownHypothesis->isValueInactiveFromUsers(TR, I,
-                                                     UseActivity::None)) {
+        if (checkSret) {
+          auto baseObj = getBaseObject(cast<CallBase>(I)->getArgOperand(0));
+          if ((I->getType()->isVoidTy() ||
+               ConstantValues.find(I) != ConstantValues.end() ||
+               DownHypothesis->isValueInactiveFromUsers(TR, I,
+                                                        UseActivity::None)) &&
+              (ConstantValues.find(baseObj) != ConstantValues.end() ||
+               (directions == 3 && DownHypothesis->isValueInactiveFromUsers(
+                                       TR, baseObj, UseActivity::None)))) {
+            if (EnzymePrintActivity)
+              llvm::errs() << " constant instruction[" << (int)directions
+                           << "] from users instruction " << *I << "\n";
+            InsertConstantInstruction(TR, I);
+            insertConstantsFrom(TR, *DownHypothesis);
+            return true;
+          }
+        } else if (DownHypothesis->isValueInactiveFromUsers(
+                       TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
                          << "] from users instruction " << *I << "\n";
@@ -980,6 +1003,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
           return true;
         }
       }
+      ReEvaluateInstIfInactiveValue[I].insert(I);
     }
   }
 
@@ -1963,7 +1987,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = ModRefInfo::NoModRef;
 
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
-        if (CB->hasStructRetAttr() &&
+        if (hasSRetOrUnionSRet(CB) &&
             getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
           ReadOnly = false;
 
@@ -3026,7 +3050,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         bool ReadOnly = isReadOnly(call, idx);
         if (!ReadOnly && isLocalReadOnlyOrThrow(call) && idx != 0 &&
-            call->hasStructRetAttr())
+            hasSRetOrUnionSRet(call))
           ReadOnly = true;
 
         mayWrite |= !ReadOnly;

@@ -372,12 +372,18 @@ def BatchOp : Enzyme_Op<"batch",
   }];
 }
 
-def PushOp : Enzyme_Op<"push"> {
+def PushOp : Enzyme_Op<"push", [
+    TypesMatchWith<"type of 'value' matches element type of 'cache'",
+                   "cache", "value",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Push value to cache";
   let arguments = (ins AnyType : $cache, AnyType : $value);
 }
 
-def PopOp : Enzyme_Op<"pop"> {
+def PopOp : Enzyme_Op<"pop", [
+    TypesMatchWith<"type of 'output' matches element type of 'cache'",
+                   "cache", "output",
+                   "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
@@ -442,7 +448,10 @@ def StoreOp : Enzyme_Op<"store",
 
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'value' matches element type of 'gradient'",
+                    "gradient", "value",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Store the current value of the gradient";
   let arguments = (ins Arg<AnyType, "the reference to store to",
                            [MemWrite]>:$gradient, AnyType : $value);
@@ -451,11 +460,14 @@ def SetOp : Enzyme_Op<"set",
 
 def GetOp : Enzyme_Op<"get",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
-     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>]> {
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
+     TypesMatchWith<"type of 'result' matches element type of 'gradient'",
+                    "gradient", "result",
+                    "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
   let summary = "Load current value of gradient";
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
-  let results = (outs AnyType);
+  let results = (outs AnyType:$result);
 }
 
 def AddToOp : Enzyme_Op<"addTo", [Pure, Terminator, ReturnLike]>,
@@ -530,7 +542,7 @@ def ExtractOp : Enzyme_Op<"extract"> {
     Extract value from batched operand at index
   }];
 
-  let arguments = (ins AnyType:$input, Index:$index);
+  let arguments = (ins AnyType:$input, I64Attr:$index);
   let results = (outs AnyType:$output);
   
   let assemblyFormat = [{

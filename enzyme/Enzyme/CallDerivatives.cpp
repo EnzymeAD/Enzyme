@@ -461,11 +461,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *request = gutils->invertPointerM(call.getArgOperand(0), Builder2);
       Value *status = gutils->invertPointerM(call.getArgOperand(1), Builder2);
 
-      if (request->getType()->isIntegerTy()) {
-        request = Builder2.CreateIntToPtr(
-            request, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
-      }
-
       Value *args[] = {/*request*/ request,
                        /*status*/ status};
 
@@ -911,7 +906,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // 2. reduce sum diff(buffer) into intermediate
   // 3. if root, set shadow(buffer) = intermediate [memcpy] then free
   // 3-e. else, set shadow(buffer) = 0 [memset]
-  if (funcName == "MPI_Bcast") {
+  if (funcName == "MPI_Bcast" || funcName == "PMPI_Bcast") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1357,7 +1352,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
   //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 
-  if (funcName == "MPI_Allreduce") {
+  if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1538,7 +1533,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype,
   //           int root, MPI_Comm comm)
 
-  if (funcName == "MPI_Gather") {
+  if (funcName == "MPI_Gather" || funcName == "PMPI_Gather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1743,7 +1738,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // sendtype,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype, int root,
   //           MPI_Comm comm)
-  if (funcName == "MPI_Scatter") {
+  if (funcName == "MPI_Scatter" || funcName == "PMPI_Scatter") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -1983,7 +1978,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype,
   //           MPI_Comm comm)
 
-  if (funcName == "MPI_Allgather") {
+  if (funcName == "MPI_Allgather" || funcName == "PMPI_Allgather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ForwardMode ||
@@ -2168,7 +2163,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
   // Adjoint of barrier is to place a barrier at the corresponding
   // location in the reverse.
-  if (funcName == "MPI_Barrier") {
+  if (funcName == "MPI_Barrier" || funcName == "PMPI_Barrier") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> Builder2(&call);

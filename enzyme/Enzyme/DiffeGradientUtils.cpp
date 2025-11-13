@@ -723,7 +723,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
 
 CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                         const SubLimitType &sublimits, int i,
-                                        AllocaInst *alloc,
+                                        AllocaInst *alloc, llvm::Type *T,
                                         ConstantInt *byteSizeOfType,
                                         Value *storeInto, MDNode *InvariantMD) {
   if (!FreeMemory)
@@ -755,16 +755,13 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 
   Value *metaforfree = unwrapM(storeInto, tbuild, antimap,
                                UnwrapMode::AttemptFullUnwrapWithLookup);
-  Type *T;
+
 #if LLVM_VERSION_MAJOR < 17
   if (metaforfree->getContext().supportsTypedPointers()) {
-    T = metaforfree->getType()->getPointerElementType();
-  } else {
-    T = PointerType::getUnqual(metaforfree->getContext());
+    assert(T == metaforfree->getType()->getPointerElementType());
   }
-#else
-  T = PointerType::getUnqual(metaforfree->getContext());
 #endif
+
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
   forfree->setMetadata(LLVMContext::MD_dereferenceable,

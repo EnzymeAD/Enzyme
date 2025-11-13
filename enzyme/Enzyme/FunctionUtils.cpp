@@ -378,15 +378,20 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
       IRBuilder<> B(CI);
-      auto nCI0 = B.CreateCast(
-          CI->getOpcode(), rep,
+      Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-          PointerType::get(CI->getType()->getPointerElementType(),
-                           cast<PointerType>(rep->getType())->getAddressSpace())
+      if (CI->getContext().supportsTypedPointers()) {
+        resTy = PointerType::get(
+            CI->getType()->getPointerElementType(),
+            cast<PointerType>(rep->getType())->getAddressSpace());
+      } else {
+        resTy = rep->getType();
+      }
 #else
-          rep->getType()
+      resTy = rep->getType();
 #endif
-      );
+
+      auto nCI0 = B.CreateCast(CI->getOpcode(), rep, resTy);
       if (auto nCI = dyn_cast<CastInst>(nCI0))
         nCI->takeName(CI);
       for (auto U : CI->users()) {
@@ -400,14 +405,18 @@ void RecursivelyReplaceAddressSpace(
       IRBuilder<> B(GEP);
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
-        rep = B.CreateAddrSpaceCast(
-            rep,
+
+        Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-            PointerType::get(rep->getType()->getPointerElementType(), 11)
+        if (GEP->getContext().supportsTypedPointers()) {
+          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+        } else {
+          resTy = PointerType::get(rep->getContext(), 11);
+        }
 #else
-            PointerType::get(rep->getContext(), 11)
+        resTy = PointerType::get(rep->getContext(), 11);
 #endif
-        );
+        rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       SmallVector<Value *, 1> ind(GEP->indices());
       auto nGEP = cast<GetElementPtrInst>(
@@ -505,14 +514,17 @@ void RecursivelyReplaceAddressSpace(
       if (EnzymeJuliaAddrLoad &&
           cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
         IRBuilder<> B(LI);
-        rep = B.CreateAddrSpaceCast(
-            rep,
+        Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-            PointerType::get(rep->getType()->getPointerElementType(), 11)
+        if (LI->getContext().supportsTypedPointers()) {
+          resTy = PointerType::get(rep->getType()->getPointerElementType(), 11);
+        } else {
+          resTy = PointerType::get(rep->getContext(), 11);
+        }
 #else
-            PointerType::get(rep->getContext(), 11)
+        resTy = PointerType::get(rep->getContext(), 11);
 #endif
-        );
+        rep = B.CreateAddrSpaceCast(rep, resTy);
       }
       LI->setOperand(0, rep);
       continue;
@@ -522,14 +534,18 @@ void RecursivelyReplaceAddressSpace(
         if (EnzymeJuliaAddrLoad &&
             cast<PointerType>(rep->getType())->getAddressSpace() == 10) {
           IRBuilder<> B(SI);
-          rep = B.CreateAddrSpaceCast(
-              rep,
+          Type *resTy;
 #if LLVM_VERSION_MAJOR < 17
-              PointerType::get(rep->getType()->getPointerElementType(), 11)
+          if (SI->getContext().supportsTypedPointers()) {
+            resTy =
+                PointerType::get(rep->getType()->getPointerElementType(), 11);
+          } else {
+            resTy = PointerType::get(rep->getContext(), 11);
+          }
 #else
-              PointerType::get(rep->getContext(), 11)
+          resTy = PointerType::get(rep->getContext(), 11);
 #endif
-          );
+          rep = B.CreateAddrSpaceCast(rep, resTy);
         }
         SI->setOperand(1, rep);
         if (EnzymeJuliaAddrLoad &&
@@ -1086,8 +1102,9 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
 #if LLVM_VERSION_MAJOR < 17
-    if (AIV->getType()->getPointerElementType() !=
-        T->getType()->getPointerElementType()) {
+    if (AIV->getContext().supportsTypedPointers() &&
+        AIV->getType()->getPointerElementType() !=
+            T->getType()->getPointerElementType()) {
       IRBuilder<> B(AI->getNextNode());
       AIV = B.CreateBitCast(
           AIV, PointerType::get(
@@ -1259,8 +1276,12 @@ Function *CreateMPIWrapper(Function *F) {
   std::string name = ("enzyme_wrapmpi$$" + F->getName() + "#").str();
   if (auto W = F->getParent()->getFunction(name))
     return W;
-  Type *types = {F->getFunctionType()->getParamType(0)};
-  auto FT = FunctionType::get(F->getReturnType(), types, false);
+
+  // MPI_Comm_rank(MPI_Comm comm, int *rank)
+  // MPI_Comm_size(MPI_Comm comm, int *size)
+  Type *ReturnType = Type::getInt32Ty(F->getContext());
+  Type *types = {F->getFunctionType()->getParamType(0)}; // MPI_Comm
+  auto FT = FunctionType::get(ReturnType, types, false);
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
@@ -1288,7 +1309,7 @@ Function *CreateMPIWrapper(Function *F) {
   W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
   BasicBlock *entry = BasicBlock::Create(W->getContext(), "entry", W);
   IRBuilder<> B(entry);
-  auto alloc = B.CreateAlloca(F->getReturnType());
+  auto alloc = B.CreateAlloca(ReturnType);
   Value *args[] = {W->arg_begin(), alloc};
 
   auto T = F->getFunctionType()->getParamType(1);
@@ -1297,7 +1318,7 @@ Function *CreateMPIWrapper(Function *F) {
     args[1] = B.CreatePtrToInt(args[1], T);
   }
   B.CreateCall(F, args);
-  B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
+  B.CreateRet(B.CreateLoad(ReturnType, alloc));
   return W;
 }
 
@@ -1720,6 +1741,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               arg->getParent()
                   ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
                                  "enzymejl_returnRoots")
+                  .isValid() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_sret_union_bytes")
                   .isValid()) {
             local = true;
             continue;
@@ -1747,6 +1772,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               arg->getParent()
                   ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
                                  "enzymejl_returnRoots")
+                  .isValid() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_sret_union_bytes")
                   .isValid()) {
             local = true;
             continue;
@@ -1783,6 +1812,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
                     ->getAttribute(arg->getArgNo() +
                                        AttributeList::FirstArgIndex,
                                    "enzymejl_returnRoots")
+                    .isValid() ||
+                arg->getParent()
+                    ->getAttribute(arg->getArgNo() +
+                                       AttributeList::FirstArgIndex,
+                                   "enzymejl_sret_union_bytes")
                     .isValid()) {
               local = true;
               continue;
@@ -1834,6 +1868,10 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
               arg->getParent()
                   ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
                                  "enzymejl_returnRoots")
+                  .isValid() ||
+              arg->getParent()
+                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
+                                 "enzymejl_sret_union_bytes")
                   .isValid()) {
             local = true;
             continue;
@@ -2769,21 +2807,19 @@ Function *PreProcessCache::CloneFunctionWithReturns(
 
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (F->hasParamAttribute(ii, Attribute::StructRet)) {
-      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
-      // TODO
-      // NewF->addParamAttr(
-      //    jj,
-      //    Attribute::get(
-      //        F->getContext(), Attribute::AttrKind::ElementType,
-      //        F->getParamAttribute(ii,
-      //        Attribute::StructRet).getValueAsType()));
+      NewF->addParamAttr(
+          jj, Attribute::get(F->getContext(), "enzyme_sret",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
     }
     if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
       NewF->addParamAttr(
           jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
-      // TODO
-      // NewF->addParamAttr(jj, F->getParamAttribute(ii,
-      // Attribute::ElementType));
+    }
+    if (F->getAttributes().hasParamAttr(ii, "enzymejl_sret_union_bytes")) {
+      NewF->addParamAttr(
+          jj, F->getAttributes().getParamAttr(ii, "enzymejl_sret_union_bytes"));
     }
     for (auto attr :
          {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
@@ -2848,35 +2884,33 @@ Function *PreProcessCache::CloneFunctionWithReturns(
           NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
                                                     "enzymejl_returnRoots_v"));
         }
-        // TODO
-        // NewF->addParamAttr(jj + 1,
-        //                   F->getParamAttribute(ii,
-        //                   Attribute::ElementType));
+      }
+      if (F->getAttributes().hasParamAttr(ii, "enzymejl_sret_union_bytes")) {
+        if (width == 1) {
+          NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
+                                         ii, "enzymejl_sret_union_bytes"));
+        } else {
+          NewF->addParamAttr(
+              jj + 1,
+              Attribute::get(F->getContext(), "enzymejl_sret_union_bytes_v"));
+        }
       }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {
-          NewF->addParamAttr(jj + 1,
-                             Attribute::get(F->getContext(), "enzyme_sret"));
-          // TODO
-          // NewF->addParamAttr(
-          //     jj + 1,
-          //     Attribute::get(F->getContext(),
-          //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii,
-          //                    Attribute::StructRet)
-          //                        .getValueAsType()));
+          NewF->addParamAttr(
+              jj + 1,
+              Attribute::get(F->getContext(), "enzyme_sret",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
         } else {
-          NewF->addParamAttr(jj + 1,
-                             Attribute::get(F->getContext(), "enzyme_sret_v"));
-          // TODO
-          // NewF->addParamAttr(
-          //     jj + 1,
-          //     Attribute::get(F->getContext(),
-          //     Attribute::AttrKind::ElementType,
-          //                    F->getParamAttribute(ii,
-          //                    Attribute::StructRet)
-          //                        .getValueAsType()));
+          NewF->addParamAttr(
+              jj + 1,
+              Attribute::get(F->getContext(), "enzyme_sret_v",
+                             convertSRetTypeToString(
+                                 F->getParamAttribute(ii, Attribute::StructRet)
+                                     .getValueAsType())));
         }
       }
 

@@ -308,11 +308,10 @@ struct PushSimplify : public OpRewritePattern<enzyme::PushOp> {
 struct InitSimplify : public OpRewritePattern<enzyme::InitOp> {
   using OpRewritePattern<enzyme::InitOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(enzyme::InitOp get,
+  LogicalResult matchAndRewrite(enzyme::InitOp init,
                                 PatternRewriter &rewriter) const final {
-
-    if (get.use_empty()) {
-      rewriter.eraseOp(get);
+    if (init.use_empty()) {
+      rewriter.eraseOp(init);
       return success();
     }
     return failure();

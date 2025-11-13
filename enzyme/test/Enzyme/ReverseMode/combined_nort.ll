@@ -685,7 +685,7 @@ attributes #21 = { willreturn }
 !74 = distinct !{!74, !"addr13"}
 !75 = !{!73, !13, !14, !16, !10}
 
-; CHECK: define internal fastcc { double } @diffea2([2 x [1 x double]]* noalias nocapture nofree writeonly align 8 dereferenceable(16) "enzyme_sret" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %arg, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %"arg'", double "enzyme_type"="{[-1]:Float@double}" "enzymejl_parmtype"="5072643312" "enzymejl_parmtype_ref"="0" %arg1, [1 x [1 x [2 x [1 x double]]]] addrspace(11)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(16) "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" "enzymejl_parmtype"="4507524432" "enzymejl_parmtype_ref"="1" %arg2)
+; CHECK: define internal fastcc { double } @diffea2([2 x [1 x double]]* noalias nocapture nofree writeonly align 8 dereferenceable(16) "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %arg, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %"arg'", double "enzyme_type"="{[-1]:Float@double}" "enzymejl_parmtype"="5072643312" "enzymejl_parmtype_ref"="0" %arg1, [1 x [1 x [2 x [1 x double]]]] addrspace(11)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(16) "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" "enzymejl_parmtype"="4507524432" "enzymejl_parmtype_ref"="1" %arg2)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"arg1'de" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arg1'de", align 8
@@ -804,7 +804,7 @@ attributes #21 = { willreturn }
 
 ; CHECK: __enzyme_memcpyadd_doubleda8sa8.exit:             ; preds = %for.body.i
 ; CHECK-NEXT:   %i57_unwrap = addrspacecast { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i to { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)*
-; CHECK-NEXT:   call fastcc void @diffea1([2 x [1 x double]]* nocapture nofree writeonly align 8 "enzyme_sret" undef, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret" %"i4'ipa", { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)* nocapture readonly align 8 %i57_unwrap)
+; CHECK-NEXT:   call fastcc void @diffea1([2 x [1 x double]]* nocapture nofree writeonly align 8 "enzyme_sret"="{{[0-9]+}}" undef, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" %"i4'ipa", { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)* nocapture readonly align 8 %i57_unwrap)
 ; CHECK-NEXT:   %7 = load double, double* %"i56'de", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i56'de", align 8
 ; CHECK-NEXT:   %8 = load double, double* %"arg1'de", align 8

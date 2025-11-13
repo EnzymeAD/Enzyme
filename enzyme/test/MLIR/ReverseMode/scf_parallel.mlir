@@ -21,10 +21,10 @@ func.func @dfoo(%x: memref<?xf32>, %dx: memref<?xf32>, %y: memref<?xf32>, %dy: m
 }
 
 // CHECK: func.func private @diffefoo(%arg0: memref<?xf32>, %arg1: memref<?xf32>, %arg2: memref<?xf32>, %arg3: memref<?xf32>) {
-// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %c4 = arith.constant 4 : index
 // CHECK-NEXT:    %c1 = arith.constant 1 : index
 // CHECK-NEXT:    %c0 = arith.constant 0 : index
+// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc() : memref<4xf32>
 // CHECK-NEXT:    scf.parallel (%arg4) = (%c0) to (%c4) step (%c1) {
 // CHECK-NEXT:      %0 = memref.load %arg0[%arg4] : memref<?xf32>

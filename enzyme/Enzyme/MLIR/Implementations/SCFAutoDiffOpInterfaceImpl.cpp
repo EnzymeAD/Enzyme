@@ -121,6 +121,14 @@ public:
   }
 
   static ValueRange getInits(scf::ForOp forOp) { return forOp.getInitArgs(); }
+
+  static bool mustPostAdd(scf::ForOp forOp) { return false; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    auto Ty = cast<enzyme::GradientType>(grad.getType()).getBasetype();
+    return body->addArgument(Ty, grad.getLoc());
+  }
 };
 
 struct ForOpInterfaceReverse
@@ -188,14 +196,23 @@ public:
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
 
+      SmallVector<Value> immutableRefs;
+      SmallVector<Value> mutableRefs;
+
+      for (auto ref : outsideRefs) {
+        if (isa<ClonableTypeInterface>(ref.getType()))
+          mutableRefs.push_back(ref);
+        else
+          immutableRefs.push_back(ref);
+      }
+
       IRMapping &mapping = gutils->originalToNewFn;
 
       assert(outsideRefs.size() == caches.size() - numIterArgs);
 
-      SmallVector<Value> cachedOutsideRefs;
-      for (auto [i, ref] : llvm::enumerate(outsideRefs)) {
-        Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
-        cachedOutsideRefs.push_back(refVal);
+      for (auto [i, ref] : llvm::enumerate(immutableRefs)) {
+        Value refVal = gutils->popCache(
+            caches[numIterArgs + mutableRefs.size() + i], builder);
         mapping.map(ref, refVal);
       }
 
@@ -212,6 +229,13 @@ public:
 
       OpBuilder::InsertionGuard guard(builder);
       builder.setInsertionPointToEnd(revOuter.getBody());
+
+      SmallVector<Value> cachedOutsideRefs;
+      for (auto [i, ref] : llvm::enumerate(mutableRefs)) {
+        Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
+        cachedOutsideRefs.push_back(refVal);
+        mapping.map(ref, refVal);
+      }
 
       Location loc = forOp.getInductionVar().getLoc();
       Value currentOuterStep = arith::SubIOp::create(
@@ -244,9 +268,6 @@ public:
       auto revInner = scf::ForOp::create(builder, forOp.getLoc(), zero,
                                          nInnerUB, one, initArgs);
       preserveAttributesButCheckpointing(revInner, forOp);
-
-      revInner->setAttrs(op->getAttrs());
-      revInner->removeAttr("enzyme.enable_checkpointing");
 
       llvm::APInt stepI;
       if (!matchPattern(forOp.getStep(), m_ConstantInt(&stepI))) {
@@ -288,6 +309,13 @@ public:
       }
 
       builder.setInsertionPointToEnd(revOuter.getBody());
+
+      for (auto outsideRef : cachedOutsideRefs) {
+        if (auto cachableT =
+                dyn_cast<ClonableTypeInterface>(outsideRef.getType())) {
+          cachableT.freeClonedValue(builder, outsideRef);
+        }
+      }
 
       auto revLoop =
           scf::ForOp::create(builder, forOp.getLoc(), zero, nInnerUB, one,
@@ -375,26 +403,11 @@ public:
         if (revBB.empty()) {
           scf::YieldOp::create(bodyBuilder, repFor->getLoc());
         }
+
+        bodyBuilder.setInsertionPointToStart(&revBB);
+        mlir::enzyme::localizeGradients(bodyBuilder, gutils, &oBB);
+
         bodyBuilder.setInsertionPoint(revBB.getTerminator());
-
-        // All values defined in the body should have no use outside this block
-        // therefore we can set their diffe to zero upon entering the reverse
-        // block to simplify the work of the remove-unnecessary-enzyme-ops pass.
-        for (auto operand : oBB.getArguments().slice(1)) {
-          if (!gutils->isConstantValue(operand)) {
-            gutils->zeroDiffe(operand, bodyBuilder);
-          }
-        }
-
-        for (auto &it : oBB.getOperations()) {
-          for (auto res : it.getResults()) {
-            if (!gutils->isConstantValue(res)) {
-              auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
-              if (iface && !iface.isMutable())
-                gutils->zeroDiffe(res, bodyBuilder);
-            }
-          }
-        }
 
         auto term = oBB.getTerminator();
 
@@ -464,6 +477,16 @@ public:
       SetVector<Value> outsideRefs;
       getUsedValuesDefinedAbove(op->getRegions(), outsideRefs);
 
+      SmallVector<Value> immutableRefs;
+      SmallVector<Value> mutableRefs;
+
+      for (auto ref : outsideRefs) {
+        if (isa<ClonableTypeInterface>(ref.getType()))
+          mutableRefs.push_back(ref);
+        else
+          immutableRefs.push_back(ref);
+      }
+
       SmallVector<Value> caches;
 
       scf::ForOp newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
@@ -496,6 +519,17 @@ public:
             makeIntConstant(loc, cacheBuilder, trailingIters, ty), nInnerCst);
       }
 
+      IRMapping &mapping = gutils->originalToNewFn;
+
+      SmallVector<Value> mutableRefsCaches;
+      for (auto ref : mutableRefs) {
+        auto iface = cast<ClonableTypeInterface>(ref.getType());
+        auto clone =
+            iface.cloneValue(cacheBuilder, mapping.lookupOrDefault(ref));
+        mutableRefsCaches.push_back(
+            gutils->initAndPushCache(clone, cacheBuilder));
+      }
+
       auto innerFwd = scf::ForOp::create(
           cacheBuilder, op->getLoc(),
           makeIntConstant(forOp.getLowerBound().getLoc(), cacheBuilder, 0, ty),
@@ -505,7 +539,6 @@ public:
       preserveAttributesButCheckpointing(innerFwd, forOp);
 
       cacheBuilder.setInsertionPointToEnd(innerFwd.getBody());
-      IRMapping &mapping = gutils->originalToNewFn;
 
       Location loc = forOp.getInductionVar().getLoc();
       auto currentIV = arith::MulIOp::create(
@@ -536,13 +569,27 @@ public:
 
       cacheBuilder.setInsertionPointAfter(outerFwd);
 
-      for (auto ref : outsideRefs)
+      caches.append(mutableRefsCaches);
+
+      for (auto ref : immutableRefs)
         caches.push_back(gutils->initAndPushCache(mapping.lookupOrDefault(ref),
                                                   cacheBuilder));
 
       gutils->replaceOrigOpWith(op, outerFwd.getResults());
       gutils->erase(newForOp);
       gutils->originalToNewFnOps[op] = outerFwd;
+
+      // caches is composed of:
+      // [
+      //  <caches of iter args>...,
+      //  <caches of mutable values>...,
+      //  <caches of immutable values>...,
+      // ]
+      //
+      // TODO: we don't need to cache refs of arith.constants
+      // ....  which we can "clone" just before the inner forward
+      // ....  in the reverse pass.
+      // ....  create an interface that mincut can also use?
 
       return caches;
     }
@@ -660,18 +707,50 @@ struct ParallelOpEnzymeOpsRemover
                                                 ArrayRef<Value> operands) {
     auto newOtherParOp = scf::ParallelOp::create(
         rewriter, otherParallelOp.getLoc(), otherParallelOp.getLowerBound(),
-        otherParallelOp.getUpperBound(), otherParallelOp.getStep(),
-        otherParallelOp.getInitVals());
+        otherParallelOp.getUpperBound(), otherParallelOp.getStep(), operands);
 
     newOtherParOp.getRegion().takeBody(otherParallelOp.getRegion());
     rewriter.replaceOp(
         otherParallelOp,
         newOtherParOp.getResults().slice(0, otherParallelOp.getNumResults()));
+
+    if (operands.size() >= 1) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      Operation *oldTerm = newOtherParOp.getBody()->getTerminator();
+      rewriter.setInsertionPointToEnd(newOtherParOp.getBody());
+      auto term = scf::ReduceOp::create(rewriter, newOtherParOp.getLoc(),
+                                        oldTerm->getOperands());
+
+      for (auto [reg, operand] :
+           llvm::zip_equal(term->getRegions(), operands)) {
+        Block *b = &reg.front();
+        rewriter.setInsertionPointToEnd(b);
+
+        auto Ty = cast<AutoDiffTypeInterface>(operand.getType());
+        Value reduced = Ty.createAddOp(rewriter, operand.getLoc(),
+                                       b->getArgument(0), b->getArgument(1));
+        scf::ReduceReturnOp::create(rewriter, reduced.getLoc(), reduced);
+      }
+
+      oldTerm->erase();
+    }
+
     return newOtherParOp;
   }
 
   static ValueRange getInits(scf::ParallelOp parallelOp) {
     return parallelOp.getInitVals();
+  }
+
+  static bool mustPostAdd(scf::ParallelOp forOp) { return false; }
+
+  static Value initialValueInBlock(OpBuilder &builder, Block *body,
+                                   Value grad) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(body);
+    return cast<AutoDiffTypeInterface>(
+               cast<enzyme::GradientType>(grad.getType()).getBasetype())
+        .createNullValue(builder, grad.getLoc());
   }
 };
 
@@ -700,30 +779,16 @@ struct ParallelOpInterfaceReverse
     bool valid = true;
     bool wasAtomic = gutils->AtomicAdd;
     gutils->AtomicAdd = true;
-    std::function<Value(Location, Type)> gradientCreator = [&](Location loc,
-                                                               Type t) {
-      auto shadowty = getShadowType(t);
-      OpBuilder builder(t.getContext());
-      // Gradients of values defined within the parallel body should be local to
-      // each iteration
-      builder.setInsertionPointToStart(revPar.getBody());
-
-      auto shadow = enzyme::InitOp::create(
-          builder, loc, enzyme::GradientType::get(t.getContext(), shadowty));
-      auto toset =
-          cast<AutoDiffTypeInterface>(shadowty).createNullValue(builder, loc);
-      enzyme::SetOp::create(builder, loc, shadow, toset);
-      return shadow;
-    };
-    gutils->registerGradientCreatorHook(gradientCreator);
-    auto scope = llvm::make_scope_exit(
-        [&]() { gutils->deregisterGradientCreatorHook(gradientCreator); });
 
     {
       Block *oBB = parallelOp.getBody();
       Block *revBB = revPar.getBody();
 
       OpBuilder bodyBuilder(revBB, revBB->end());
+
+      bodyBuilder.setInsertionPointToStart(revBB);
+      mlir::enzyme::localizeGradients(bodyBuilder, gutils, oBB);
+
       bodyBuilder.setInsertionPoint(revBB->getTerminator());
 
       auto first = oBB->rbegin();

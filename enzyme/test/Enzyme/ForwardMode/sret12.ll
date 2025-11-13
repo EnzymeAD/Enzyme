@@ -81,7 +81,7 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal void @fwddiffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret" %agg.result, %"struct.std::array"* nocapture align 8 "enzyme_sret" %"agg.result'", double %x, double %"x'") 
+; CHECK: define internal void @fwddiffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret"="{{[0-9]+}}" %agg.result, %"struct.std::array"* nocapture align 8 "enzyme_sret"="{{[0-9]+}}" %"agg.result'", double %x, double %"x'") 
 ; CHECK-NEXT: entry:  
 ; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %mul = fmul double %x, %x

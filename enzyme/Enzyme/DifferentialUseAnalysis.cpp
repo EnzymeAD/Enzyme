@@ -120,6 +120,38 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           }
         }
       }
+
+      // And runtime activity updates
+      if (gutils->runtimeActivity && SI->getPointerOperand() == val) {
+        auto &DL = gutils->newFunc->getParent()->getDataLayout();
+        auto ET = SI->getValueOperand()->getType();
+        auto storeSize = (DL.getTypeSizeInBits(ET) + 7) / 8;
+        auto vd = TR.query(const_cast<Value *>(SI->getPointerOperand()))
+                      .Lookup(storeSize, DL);
+        if (!vd.isKnown()) {
+          // It verbatim needs to replicate the same behavior as
+          // adjointgenerator. From reverse mode type analysis
+          // (https://github.com/EnzymeAD/Enzyme/blob/194875cbccd73d63cacfefbfa85c1f583c2fa1fe/enzyme/Enzyme/AdjointGenerator.h#L556)
+          if (looseTypeAnalysis || true) {
+            vd = defaultTypeTreeForLLVM(ET, const_cast<StoreInst *>(SI));
+          }
+        }
+        bool hasFloat = true;
+        for (ssize_t i = -1; i < (ssize_t)storeSize; ++i) {
+          if (vd[{(int)i}].isFloat()) {
+            hasFloat = true;
+            break;
+          }
+        }
+        if (hasFloat && !gutils->isConstantValue(const_cast<llvm::Value *>(
+                            SI->getPointerOperand()))) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need direct primal of " << *val
+                         << " in reverse from runtime active store " << *user
+                         << "\n";
+          return true;
+        }
+      }
     } else {
       bool backwardsShadow = false;
       bool forwardsShadow = true;
