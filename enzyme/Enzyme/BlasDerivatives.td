@@ -239,7 +239,7 @@ def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [
                   (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
                   ],
-		              (BFDiv (BSqrt (BlasCall<"dot"> $n, $x, (Shadow $x))), (BlasCall<"nrm2"> $n, $x))
+		              (BFDiv (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
                   >;
 
 

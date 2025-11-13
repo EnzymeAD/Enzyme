@@ -89,7 +89,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     bool strongZero, unsigned width, Function *todiff, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
     bool shadowReturn, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, Type *additionalArg, bool omp) {
+    bool returnTape, bool returnPrimal, Type *additionalArg, bool omp) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -132,7 +132,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, width, oldFunc, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnValue, retType,
+      nonconstant_values, returnvals, returnTape, returnPrimal,
+      (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn,
       prefix + oldFunc->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 
@@ -729,7 +730,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
 
 CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                         const SubLimitType &sublimits, int i,
-                                        AllocaInst *alloc,
+                                        AllocaInst *alloc, llvm::Type *T,
                                         ConstantInt *byteSizeOfType,
                                         Value *storeInto, MDNode *InvariantMD) {
   if (!FreeMemory)
@@ -761,16 +762,13 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 
   Value *metaforfree = unwrapM(storeInto, tbuild, antimap,
                                UnwrapMode::AttemptFullUnwrapWithLookup);
-  Type *T;
+
 #if LLVM_VERSION_MAJOR < 17
   if (metaforfree->getContext().supportsTypedPointers()) {
-    T = metaforfree->getType()->getPointerElementType();
-  } else {
-    T = PointerType::getUnqual(metaforfree->getContext());
+    assert(T == metaforfree->getType()->getPointerElementType());
   }
-#else
-  T = PointerType::getUnqual(metaforfree->getContext());
 #endif
+
   LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(T, metaforfree));
   forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
   forfree->setMetadata(LLVMContext::MD_dereferenceable,

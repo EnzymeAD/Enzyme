@@ -77,7 +77,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
           Value *tysize =
               MPI_TYPE_SIZE(gutils->getNewFromOriginal(call.getOperand(2)),
-                            BuilderZ, call.getType());
+                            BuilderZ, call.getType(), called);
 
           auto len_arg = BuilderZ.CreateZExtOrTrunc(
               gutils->getNewFromOriginal(call.getOperand(1)),
@@ -152,13 +152,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
-        if (Function *recvfn = called->getParent()->getFunction("PMPI_Wait")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        }
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Wait")) {
+        if (Function *recvfn = called->getParent()->getFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Wait"))) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
@@ -220,14 +215,17 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         assert(shouldFree());
 
         assert(tysize);
-        tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType());
+        tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType(), called);
 
         Value *args[] = {/*req*/ req,
                          /*status*/ IRBuilder<>(gutils->inversionAllocs)
                              .CreateAlloca(statusType)};
         FunctionCallee waitFunc = nullptr;
-        for (auto name : {"PMPI_Wait", "MPI_Wait"})
-          if (Function *recvfn = called->getParent()->getFunction(name)) {
+        for (auto name : {
+                 "MPI_Wait",
+             })
+          if (Function *recvfn = called->getParent()->getFunction(
+                  getRenamedPerCallingConv(called->getName(), name))) {
             auto statusArg = recvfn->arg_end();
             statusArg--;
             if (statusArg->getType()->isIntegerTy())
@@ -242,7 +240,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
             types[i] = args[i]->getType();
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
-          waitFunc = called->getParent()->getOrInsertFunction("MPI_Wait", FT);
+          waitFunc = called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Wait"), FT);
         }
         assert(waitFunc);
 
@@ -433,7 +432,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
       Function *dwait = getOrInsertDifferentialMPI_Wait(
-          *called->getParent(), types, call.getOperand(0)->getType());
+          *called->getParent(), types, call.getOperand(0)->getType(),
+          called->getName());
 
       // Need to preserve the shadow Request (operand 0 in wait).
       // However, this doesn't end up preserving
@@ -465,11 +465,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       Value *request = gutils->invertPointerM(call.getArgOperand(0), Builder2);
       Value *status = gutils->invertPointerM(call.getArgOperand(1), Builder2);
-
-      if (request->getType()->isIntegerTy()) {
-        request = Builder2.CreateIntToPtr(
-            request, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
-      }
 
       Value *args[] = {/*request*/ request,
                        /*status*/ status};
@@ -594,8 +589,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *types[sizeof(args) / sizeof(*args) - 1];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args) - 1; i++)
         types[i] = args[i]->getType();
-      Function *dwait = getOrInsertDifferentialMPI_Wait(*called->getParent(),
-                                                        types, req->getType());
+      Function *dwait = getOrInsertDifferentialMPI_Wait(
+          *called->getParent(), types, req->getType(), called->getName());
       // Need to preserve the shadow Request (operand 6 in isend/irecv), which
       // becomes operand 0 for iwait. However, this doesn't end up preserving
       // the underlying buffers for the adjoint. To remedy, force inline the
@@ -685,6 +680,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
+      Value *shadowOrig = shadow;
       if (shadow->getType()->isIntegerTy())
         shadow =
             Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
@@ -692,13 +688,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
       if (called->getContext().supportsTypedPointers()) {
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        } else if (Function *recvfn =
-                       called->getParent()->getFunction("PMPI_Recv")) {
+        if (Function *recvfn = called->getParent()->getFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Recv"))) {
           auto statusArg = recvfn->arg_end();
           statusArg--;
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
@@ -734,7 +725,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       if (forwardMode) {
         Value *args[] = {
-            /*buf*/ shadow,
+            /*buf*/ shadowOrig,
             /*count*/ count,
             /*datatype*/ datatype,
             /*dest*/ src,
@@ -763,7 +754,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           /*status*/
           IRBuilder<>(gutils->inversionAllocs).CreateAlloca(statusType)};
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       auto len_arg = Builder2.CreateZExtOrTrunc(
           args[1], Type::getInt64Ty(call.getContext()));
@@ -792,7 +783,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           Builder2, /*lookup*/ true);
 
       auto fcall = Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Recv", FT), args);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Recv"), FT),
+          args);
       fcall->setCallingConv(call.getCallingConv());
 
       DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
@@ -810,7 +803,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Recv" || funcName == "PMPI_Recv") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
-        Mode == DerivativeMode::ReverseModeProfiled) {
+        Mode == DerivativeMode::ReverseModeProfiled ||
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
       bool forwardMode = Mode == DerivativeMode::ForwardMode ||
                          Mode == DerivativeMode::ForwardModeError;
 
@@ -825,9 +820,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
       if (!forwardMode)
         shadow = lookup(shadow, Builder2);
-      if (shadow->getType()->isIntegerTy())
-        shadow =
-            Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(1));
       if (!forwardMode)
@@ -849,9 +841,24 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *args[] = {
-          shadow, count, datatype, source, tag, comm,
-      };
+      if (forwardMode) {
+        Value *status = gutils->getNewFromOriginal(call.getOperand(6));
+        Value *args[] = {shadow, count, datatype, source, tag, comm, status};
+
+        auto Defs = gutils->getInvertedBundles(
+            &call,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+             ValueType::Primal, ValueType::Primal, ValueType::Primal,
+             ValueType::None},
+            Builder2, /*lookup*/ !forwardMode);
+
+        auto callval = call.getCalledOperand();
+
+        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+        return;
+      }
+
+      Value *args[] = {shadow, count, datatype, source, tag, comm};
 
       auto Defs = gutils->getInvertedBundles(
           &call,
@@ -860,20 +867,15 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
            ValueType::None},
           Builder2, /*lookup*/ !forwardMode);
 
-      if (forwardMode) {
-        auto callval = call.getCalledOperand();
-
-        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
-        return;
-      }
-
       Type *types[sizeof(args) / sizeof(*args)];
       for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
         types[i] = args[i]->getType();
       FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
       auto fcall = Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Send", FT), args, Defs);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Send"), FT),
+          args, Defs);
       fcall->setCallingConv(call.getCallingConv());
 
       auto dst_arg =
@@ -881,7 +883,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
       auto len_arg = Builder2.CreateZExtOrTrunc(
           args[1], Type::getInt64Ty(call.getContext()));
-      auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      auto tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
       len_arg =
           Builder2.CreateMul(len_arg,
                              Builder2.CreateZExtOrTrunc(
@@ -914,7 +916,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // 2. reduce sum diff(buffer) into intermediate
   // 3. if root, set shadow(buffer) = intermediate [memcpy] then free
   // 3-e. else, set shadow(buffer) = 0 [memset]
-  if (funcName == "MPI_Bcast") {
+  if (funcName == "MPI_Bcast" || funcName == "PMPI_Bcast") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled ||
@@ -976,8 +978,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       auto len_arg = Builder2.CreateZExtOrTrunc(
           count, Type::getInt64Ty(call.getContext()));
@@ -1045,8 +1047,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Reduce"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, set shadow(buffer) = intermediate [memcpy]
@@ -1213,7 +1216,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1238,7 +1241,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
@@ -1305,8 +1308,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Bcast"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -1360,7 +1364,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
   //              MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 
-  if (funcName == "MPI_Allreduce") {
+  if (funcName == "MPI_Allreduce" || funcName == "PMPI_Allreduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled ||
@@ -1466,7 +1470,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         return;
       }
 
-      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(datatype, Builder2, call.getType(), called);
 
       // Get the length for the allocation of the intermediate buffer
       auto len_arg = Builder2.CreateZExtOrTrunc(
@@ -1500,8 +1504,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Allreduce", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Allreduce"),
+                FT),
+            args, BufferDefs);
       }
 
       // 3. Zero diff(recvbuffer) [memset to 0]
@@ -1540,7 +1546,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype,
   //           int root, MPI_Comm comm)
 
-  if (funcName == "MPI_Gather") {
+  if (funcName == "MPI_Gather" || funcName == "PMPI_Gather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled ||
@@ -1604,8 +1610,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1675,8 +1681,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Scatter", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Scatter"), FT),
+            args, BufferDefs);
       }
 
       // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -1702,7 +1709,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         recvlen_arg = Builder2.CreateMul(
             recvlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType()),
+                MPI_COMM_SIZE(comm, Builder2, root->getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
@@ -1745,7 +1752,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // sendtype,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype, int root,
   //           MPI_Comm comm)
-  if (funcName == "MPI_Scatter") {
+  if (funcName == "MPI_Scatter" || funcName == "PMPI_Scatter") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled ||
@@ -1809,8 +1816,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType(), called);
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -1878,7 +1885,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         sendlen_arg = Builder2.CreateMul(
             sendlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, root->getType()),
+                MPI_COMM_SIZE(comm, Builder2, root->getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
 
@@ -1922,8 +1929,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
         Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Gather", FT), args,
-            BufferDefs);
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Gather"), FT),
+            args, BufferDefs);
       }
 
       // 3. Zero diff(recvbuffer) [memset to 0]
@@ -1985,7 +1993,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   //           void *recvbuf, int recvcount, MPI_Datatype recvtype,
   //           MPI_Comm comm)
 
-  if (funcName == "MPI_Allgather") {
+  if (funcName == "MPI_Allgather" || funcName == "PMPI_Allgather") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled ||
@@ -2046,7 +2054,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (!forwardMode)
         comm = lookup(comm, Builder2);
 
-      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType());
+      Value *tysize = MPI_TYPE_SIZE(sendtype, Builder2, call.getType(), called);
 
       if (forwardMode) {
         Value *args[] = {
@@ -2121,9 +2129,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           types[i] = args[i]->getType();
 
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
-        Builder2.CreateCall(called->getParent()->getOrInsertFunction(
-                                "MPI_Reduce_scatter_block", FT),
-                            args, BufferDefs);
+        Builder2.CreateCall(
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(),
+                                         "MPI_Reduce_scatter_block"),
+                FT),
+            args, BufferDefs);
       }
 
       // 3. zero diff(recvbuffer) [memset to 0]
@@ -2138,7 +2149,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         recvlen_arg = Builder2.CreateMul(
             recvlen_arg,
             Builder2.CreateZExtOrTrunc(
-                MPI_COMM_SIZE(comm, Builder2, call.getType()),
+                MPI_COMM_SIZE(comm, Builder2, call.getType(), called),
                 Type::getInt64Ty(call.getContext())),
             "", true, true);
         auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
@@ -2168,7 +2179,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
   // Adjoint of barrier is to place a barrier at the corresponding
   // location in the reverse.
-  if (funcName == "MPI_Barrier") {
+  if (funcName == "MPI_Barrier" || funcName == "PMPI_Barrier") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined ||
         Mode == DerivativeMode::ReverseModeProfiled) {
@@ -2207,7 +2218,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       FunctionType *FT = FunctionType::get(call.getType(), types, false);
       Builder2.CreateCall(
-          called->getParent()->getOrInsertFunction("MPI_Comm_free", FT), args);
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Comm_free"), FT),
+          args);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);

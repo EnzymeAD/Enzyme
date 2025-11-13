@@ -617,12 +617,13 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return true;
 
   // only the buffer is active for mpi send/recv
-  if (Name == "MPI_Recv" || Name == "PMPI_Recv" || Name == "MPI_Send" ||
+  if (Name == "MPI_Recv" || Name == "MPI_Send" || Name == "PMPI_Recv" ||
       Name == "PMPI_Send") {
     return val != CI->getOperand(0);
   }
   // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend") {
+  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "PMPI_Irecv" ||
+      Name == "PMPI_Isend") {
     return val != CI->getOperand(0) && val != CI->getOperand(6);
   }
 
@@ -947,7 +948,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       InsertConstantInstruction(TR, I);
       return true;
     }
+  }
 
+  if (noActiveWrite ||
+      (isa<CallBase>(I) && isLocalReadOnlyOrThrow(cast<CallBase>(I)))) {
+    bool checkSret = false;
+    if (!noActiveWrite && hasSRetOrUnionSRet(cast<CallBase>(I))) {
+      checkSret = true;
+    }
     // Even if the return is nonconstant, it's worth checking explicitly the
     // users since unlike isConstantValue, returning a pointer does not make the
     // instruction active
@@ -958,7 +966,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       // If we aren't a phi node (and thus potentially recursive on uses) and
       // already equal to the current direction, we don't need to induct,
       // reducing runtime.
-      if (directions == DOWN && !isa<PHINode>(I)) {
+      if (directions == DOWN && !isa<PHINode>(I) && !checkSret) {
         if (isValueInactiveFromUsers(TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
@@ -970,8 +978,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
-        if (DownHypothesis->isValueInactiveFromUsers(TR, I,
-                                                     UseActivity::None)) {
+        if (checkSret) {
+          auto baseObj = getBaseObject(cast<CallBase>(I)->getArgOperand(0));
+          if ((I->getType()->isVoidTy() ||
+               ConstantValues.find(I) != ConstantValues.end() ||
+               DownHypothesis->isValueInactiveFromUsers(TR, I,
+                                                        UseActivity::None)) &&
+              (ConstantValues.find(baseObj) != ConstantValues.end() ||
+               (directions == 3 && DownHypothesis->isValueInactiveFromUsers(
+                                       TR, baseObj, UseActivity::None)))) {
+            if (EnzymePrintActivity)
+              llvm::errs() << " constant instruction[" << (int)directions
+                           << "] from users instruction " << *I << "\n";
+            InsertConstantInstruction(TR, I);
+            insertConstantsFrom(TR, *DownHypothesis);
+            return true;
+          }
+        } else if (DownHypothesis->isValueInactiveFromUsers(
+                       TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
             llvm::errs() << " constant instruction[" << (int)directions
                          << "] from users instruction " << *I << "\n";
@@ -980,6 +1004,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
           return true;
         }
       }
+      ReEvaluateInstIfInactiveValue[I].insert(I);
     }
   }
 
@@ -1963,7 +1988,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (CB->onlyAccessesInaccessibleMemory())
           AARes = ModRefInfo::NoModRef;
 
-        bool ReadOnly = isReadOnlyOrThrow(CB);
+        bool ReadOnly = isLocalReadOnlyOrThrow(CB);
+        if (hasSRetOrUnionSRet(CB) &&
+            getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
+          ReadOnly = false;
 
         bool WriteOnly = isWriteOnly(CB);
 
@@ -2435,6 +2463,18 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as store operand is inactive "
                      << *inst << "\n";
+      return true;
+    }
+  }
+
+  if (auto RMW = dyn_cast<AtomicRMWInst>(inst)) {
+    // if either src or dst is inactive, there cannot be a transfer of active
+    // values and thus the store is inactive
+    if (isConstantValue(TR, RMW->getPointerOperand())) {
+      if (EnzymePrintActivity)
+        llvm::errs()
+            << " constant instruction as rmw pointer operand is inactive "
+            << *inst << "\n";
       return true;
     }
   }
@@ -3010,7 +3050,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         mayCapture |= !NoCapture;
 
-        bool ReadOnly = isReadOnlyOrThrow(call) || isReadOnly(call, idx);
+        bool ReadOnly = isReadOnly(call, idx);
+        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && idx != 0 &&
+            hasSRetOrUnionSRet(call))
+          ReadOnly = true;
 
         mayWrite |= !ReadOnly;
 
@@ -3394,8 +3437,9 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
 
     if (auto inst = dyn_cast<Instruction>(a)) {
       if (!inst->mayWriteToMemory() ||
-          (isa<CallInst>(inst) && (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
-                                   isReadOnlyOrThrow(cast<CallInst>(inst))))) {
+          (isa<CallInst>(inst) &&
+           (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
+            isLocalReadOnlyOrThrow(cast<CallInst>(inst))))) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
         if (inst->getParent()->getParent() == TR.getFunction() &&

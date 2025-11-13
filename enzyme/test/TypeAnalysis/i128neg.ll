@@ -7,7 +7,9 @@ target triple = "x86_64-unknown-linux-gnu"
 define void @caller() {
 entry:
   %a.dbg.spill = alloca i128, align 16
-  store i128 -12078052328127107563834081753142289173, i128* %a.dbg.spill, align 16
+  store i128 -12, i128* %a.dbg.spill, align 16
+  %a.dbg.spill2 = alloca i128, align 16
+  store i128 -12078052328127107563834081753142289173, i128* %a.dbg.spill2, align 16
   ret void
 }
 
@@ -15,5 +17,7 @@ entry:
 ; CHECK: caller - {} |
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:  %a.dbg.spill = alloca i128, align 16: {[-1]:Pointer, [-1,-1]:Integer}
-; CHECK-NEXT:  store i128 -12078052328127107563834081753142289173, i128* %a.dbg.spill, align 16: {}
+; CHECK-NEXT:  store i128 -12, i128* %a.dbg.spill, align 16: {}
+; CHECK-NEXT:  %a.dbg.spill2 = alloca i128, align 16: {[-1]:Pointer}
+; CHECK-NEXT:  store i128 -12078052328127107563834081753142289173, i128* %a.dbg.spill2, align 16: {}
 ; CHECK-NEXT:  ret void: {}

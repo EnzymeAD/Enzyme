@@ -31,6 +31,7 @@ public:
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
+  DenseMap<Operation *, bool> readOnlyCache;
   std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
 
   MTypeAnalysis &TA;
@@ -87,6 +88,7 @@ public:
   LogicalResult visitChild(Operation *op);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);
+  void setInvertedPointer(mlir::Value origv, mlir::Value newv);
 
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
@@ -109,8 +111,13 @@ protected:
   IRMapping differentials;
 
   Block *initializationBlock;
+  SmallVector<std::function<Value(Location, Type)>> gradientCreatorHook;
 
 public:
+  void registerGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  void deregisterGradientCreatorHook(std::function<Value(Location, Type)> hook);
+  Value getNewGradient(Location loc, Type t);
+
   mlir::Value getDifferential(mlir::Value origv);
 
   void setDiffe(mlir::Value origv, mlir::Value newv, mlir::OpBuilder &builder);

@@ -9,6 +9,12 @@ on:
     - main
   merge_group:
 
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   build:
     name: Integration CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
@@ -17,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["15", "16", "17", "18", "19", "20"]
+        llvm: ["15", "16", "17", "18", "19", "20", "21"]
         build: ["Release"] # "RelWithDebInfo"
         os: [ubuntu-22.04]
     

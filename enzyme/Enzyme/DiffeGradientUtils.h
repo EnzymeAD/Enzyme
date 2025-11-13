@@ -83,8 +83,8 @@ public:
                   llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool shadowReturnArg, bool diffeReturnArg,
-                  llvm::ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, llvm::Type *additionalArg, bool omp);
+                  llvm::ArrayRef<DIFFE_TYPE> constant_args, bool returnTape,
+                  bool returnPrimal, llvm::Type *additionalArg, bool omp);
 
   llvm::AllocaInst *getDifferential(llvm::Value *val);
 
@@ -107,10 +107,12 @@ public:
   void setDiffe(llvm::Value *val, llvm::Value *toset,
                 llvm::IRBuilder<> &BuilderM);
 
-  llvm::CallInst *
-  freeCache(llvm::BasicBlock *forwardPreheader, const SubLimitType &sublimits,
-            int i, llvm::AllocaInst *alloc, llvm::ConstantInt *byteSizeOfType,
-            llvm::Value *storeInto, llvm::MDNode *InvariantMD) override;
+  llvm::CallInst *freeCache(llvm::BasicBlock *forwardPreheader,
+                            const SubLimitType &sublimits, int i,
+                            llvm::AllocaInst *alloc, llvm::Type *myType,
+                            llvm::ConstantInt *byteSizeOfType,
+                            llvm::Value *storeInto,
+                            llvm::MDNode *InvariantMD) override;
 
   /// align is the alignment that should be specified for load/store to pointer
   void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,

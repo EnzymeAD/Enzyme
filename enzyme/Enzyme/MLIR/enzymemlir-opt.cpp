@@ -24,6 +24,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/LLVMIR/Transforms/InlinerInterfaceImpl.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -36,6 +37,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "Dialect/Dialect.h"
+#include "Dialect/LLVMExt/LLVMExt.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
 
@@ -73,10 +75,12 @@ int main(int argc, char **argv) {
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();
+  registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
 
   mlir::enzyme::registerenzymePasses();
 
   mlir::func::registerInlinerExtension(registry);
+  mlir::LLVM::registerInlinerInterface(registry);
 
   // Register the standard passes we want.
   mlir::registerCSEPass();

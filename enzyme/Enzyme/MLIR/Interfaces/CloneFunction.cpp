@@ -14,18 +14,28 @@ Type getShadowType(Type type, unsigned width) {
   exit(1);
 }
 
+template <typename T>
 mlir::FunctionType
-getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
-                        unsigned width, mlir::Type additionalArg,
+getFunctionTypeForClone(T FTy, DerivativeMode mode, unsigned width,
+                        mlir::Type additionalArg,
                         const std::vector<bool> &returnPrimals,
                         const std::vector<bool> &returnShadows,
                         llvm::ArrayRef<DIFFE_TYPE> ReturnActivity,
                         llvm::ArrayRef<DIFFE_TYPE> ArgActivity) {
-
+  static_assert(llvm::is_one_of<T, FunctionType, LLVM::LLVMFunctionType>::value,
+                "Expected FunctionType or LLVMFunctionType");
   SmallVector<mlir::Type, 4> RetTypes;
+  ArrayRef<Type> origInputTypes, origResultTypes;
+  if constexpr (std::is_same<T, LLVM::LLVMFunctionType>::value) {
+    origInputTypes = FTy.getParams();
+    origResultTypes = FTy.getReturnTypes();
+  } else {
+    origInputTypes = FTy.getInputs();
+    origResultTypes = FTy.getResults();
+  }
 
   for (auto &&[Ty, returnPrimal, returnShadow, activity] : llvm::zip(
-           FTy.getResults(), returnPrimals, returnShadows, ReturnActivity)) {
+           origResultTypes, returnPrimals, returnShadows, ReturnActivity)) {
     if (returnPrimal) {
       RetTypes.push_back(Ty);
     }
@@ -38,7 +48,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
 
   SmallVector<mlir::Type, 4> ArgTypes;
 
-  for (auto &&[ITy, act] : llvm::zip(FTy.getInputs(), ArgActivity)) {
+  for (auto &&[ITy, act] : llvm::zip(origInputTypes, ArgActivity)) {
     ArgTypes.push_back(ITy);
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(getShadowType(ITy, width));
@@ -47,7 +57,7 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
     }
   }
 
-  for (auto &&[Ty, activity] : llvm::zip(FTy.getResults(), ReturnActivity)) {
+  for (auto &&[Ty, activity] : llvm::zip(origResultTypes, ReturnActivity)) {
     if (activity == DIFFE_TYPE::OUT_DIFF) {
       ArgTypes.push_back(getShadowType(Ty, width));
     }
@@ -203,9 +213,16 @@ FunctionOpInterface CloneFunctionWithReturns(
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
-  auto FTy = getFunctionTypeForClone(
-      cast<mlir::FunctionType>(F.getFunctionType()), mode, width, additionalArg,
-      returnPrimals, returnShadows, RetActivity, ArgActivity);
+  FunctionType FTy;
+  if (auto llFTy = dyn_cast<LLVM::LLVMFunctionType>(F.getFunctionType())) {
+    FTy = getFunctionTypeForClone(llFTy, mode, width, additionalArg,
+                                  returnPrimals, returnShadows, RetActivity,
+                                  ArgActivity);
+  } else {
+    FTy = getFunctionTypeForClone(cast<mlir::FunctionType>(F.getFunctionType()),
+                                  mode, width, additionalArg, returnPrimals,
+                                  returnShadows, RetActivity, ArgActivity);
+  }
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -221,7 +238,15 @@ FunctionOpInterface CloneFunctionWithReturns(
   // instead of a concrete builder for genericity.
   auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
   SymbolTable::setSymbolName(NewF, name.str());
-  NewF.setType(FTy);
+  SmallVector<Type> resultTypes(FTy.getResults());
+  if (auto iface = dyn_cast<AutoDiffFunctionInterface>(*NewF)) {
+    iface.transformResultTypes(resultTypes);
+  } else {
+    llvm::errs()
+        << F << "this function does not implement AutoDiffFunctionInterface";
+    return nullptr;
+  }
+  NewF.setType(F.cloneTypeWith(FTy.getInputs(), resultTypes));
 
   Operation *parent = F->getParentWithTrait<OpTrait::SymbolTable>();
   SymbolTable table(parent);
@@ -231,6 +256,11 @@ FunctionOpInterface CloneFunctionWithReturns(
   cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
 
   {
+    SmallVector<mlir::Attribute> allAttrs(F.getNumArguments(), nullptr);
+    if (auto allArgAttrs = F.getAllArgAttrs())
+      allAttrs.assign(allArgAttrs.getValue().begin(),
+                      allArgAttrs.getValue().end());
+
     auto &blk = NewF.getFunctionBody().front();
     assert(F.getFunctionBody().front().getNumArguments() == ArgActivity.size());
     for (ssize_t i = ArgActivity.size() - 1; i >= 0; i--) {
@@ -244,33 +274,46 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
-        if ((size_t)i == ArgActivity.size() - 1)
+        mlir::Attribute dupAttr = nullptr;
+        if ((size_t)i == ArgActivity.size() - 1) {
           dval = blk.addArgument(getShadowType(val.getType(), width),
                                  val.getLoc());
-        else
+          allAttrs.push_back(dupAttr);
+        } else {
           dval = blk.insertArgument(blk.args_begin() + i + 1,
                                     getShadowType(val.getType(), width),
                                     val.getLoc());
+          allAttrs.insert(allAttrs.begin() + i + 1, dupAttr);
+        }
         ptrInputs.map(oval, dval);
       }
     }
     auto retloc = blk.getTerminator()->getLoc();
-    for (auto &&[Ty, activity] :
-         llvm::zip(cast<mlir::FunctionType>(F.getFunctionType()).getResults(),
-                   RetActivity)) {
+    ArrayRef<Type> resultTypes;
+    if (auto llFTy = dyn_cast<LLVM::LLVMFunctionType>(F.getFunctionType()))
+      resultTypes = llFTy.getReturnTypes();
+    else
+      resultTypes = cast<mlir::FunctionType>(F.getFunctionType()).getResults();
+
+    for (auto &&[Ty, activity] : llvm::zip(resultTypes, RetActivity)) {
       if (activity == DIFFE_TYPE::OUT_DIFF) {
         blk.addArgument(getShadowType(Ty, width), retloc);
+        allAttrs.push_back(nullptr);
       }
     }
+
+    NewF.setAllArgAttrs(allAttrs);
   }
 
   std::string ToClone[] = {
       "bufferization.writable",
       "mhlo.sharding",
       "mhlo.layout_mode",
+      "tt.divisibility",
       "xla_framework.input_mapping",
       "xla_framework.result_mapping",
   };
+
   size_t newxlacnt = 0;
   {
     size_t oldi = 0;
@@ -318,26 +361,23 @@ FunctionOpInterface CloneFunctionWithReturns(
     size_t newi = 0;
     while (oldi < F.getNumArguments()) {
       for (auto attrName : ToClone) {
-        NewF.removeArgAttr(newi, attrName);
-        if (auto attr = F.getArgAttr(oldi, attrName)) {
+        if (auto attr = NewF.getArgAttr(newi, attrName)) {
           if (attrName == "xla_framework.input_mapping") {
             auto iattr = cast<IntegerAttr>(attr);
             APSInt nc(iattr.getValue());
             nc = newxlacnt;
             attr = IntegerAttr::get(F->getContext(), nc);
             newxlacnt++;
+            NewF.setArgAttr(newi, attrName, attr);
           }
-          NewF.setArgAttr(newi, attrName, attr);
         }
       }
 
       newi++;
       if (ArgActivity[oldi] == DIFFE_TYPE::DUP_ARG ||
           ArgActivity[oldi] == DIFFE_TYPE::DUP_NONEED) {
-
         for (auto attrName : ToClone) {
-          NewF.removeArgAttr(newi, attrName);
-          if (auto attr = F.getArgAttr(oldi, attrName)) {
+          if (auto attr = NewF.getArgAttr(newi - 1, attrName)) {
             if (attrName == "xla_framework.input_mapping") {
               auto iattr = cast<IntegerAttr>(attr);
               APSInt nc(iattr.getValue());

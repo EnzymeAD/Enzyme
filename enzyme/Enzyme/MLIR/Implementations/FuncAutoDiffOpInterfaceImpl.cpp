@@ -86,8 +86,8 @@ public:
         fwdArguments.push_back(gutils->invertPointerM(arg, builder));
     }
 
-    auto fwdCallOp = builder.create<func::CallOp>(
-        orig->getLoc(), cast<func::FuncOp>(forwardFn), fwdArguments);
+    auto fwdCallOp = func::CallOp::create(
+        builder, orig->getLoc(), cast<func::FuncOp>(forwardFn), fwdArguments);
 
     SmallVector<Value> primals;
     primals.reserve(nret);
@@ -151,14 +151,11 @@ public:
               : DIFFE_TYPE::OUT_DIFF);
     }
 
-    if (llvm::any_of(ArgActivity,
-                     [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; }) ||
-        llvm::any_of(RetActivity,
+    if (llvm::any_of(RetActivity,
                      [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
-      // NOTE: this current approach fails when the function is not read only.
-      //       i.e. it can modify its arguments.
-      orig->emitError() << "could not emit adjoint with mutable types in: "
-                        << *orig << "\n";
+      orig->emitError()
+          << "could not emit adjoint with mutable return types in: " << *orig
+          << "\n";
       return failure();
     }
 
@@ -179,8 +176,11 @@ public:
 
     SmallVector<Value> revArguments;
 
-    for (auto cache : caches) {
+    for (auto [arg, act, cache] :
+         llvm::zip_equal(callOp.getOperands(), ArgActivity, caches)) {
       revArguments.push_back(gutils->popCache(cache, builder));
+      if (act == DIFFE_TYPE::DUP_ARG)
+        revArguments.push_back(gutils->invertPointerM(arg, builder));
     }
 
     for (auto result : callOp.getResults()) {
@@ -189,16 +189,25 @@ public:
       revArguments.push_back(gutils->diffe(result, builder));
     }
 
-    auto revCallOp = builder.create<func::CallOp>(
-        orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
+    auto revCallOp = func::CallOp::create(
+        builder, orig->getLoc(), cast<func::FuncOp>(revFn), revArguments);
 
-    int revIndex = 0;
-    for (auto arg : callOp.getOperands()) {
+    int revIndex = 0, fwdIndex = 0;
+    for (auto [arg, act] : llvm::zip_equal(callOp.getOperands(), ArgActivity)) {
+      fwdIndex++;
+
       if (gutils->isConstantValue(arg))
         continue;
-      auto diffe = revCallOp.getResult(revIndex);
-      gutils->addToDiffe(arg, diffe, builder);
-      revIndex++;
+
+      if (act == DIFFE_TYPE::DUP_ARG) {
+        cast<ClonableTypeInterface>(arg.getType())
+            .freeClonedValue(builder, revArguments[fwdIndex - 1]);
+        fwdIndex++;
+      } else {
+        auto diffe = revCallOp.getResult(revIndex);
+        gutils->addToDiffe(arg, diffe, builder);
+        revIndex++;
+      }
     }
 
     return success();
@@ -212,8 +221,11 @@ public:
     OpBuilder cacheBuilder(newOp);
 
     for (auto arg : orig->getOperands()) {
-      Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(arg),
-                                             cacheBuilder);
+      Value toCache = gutils->getNewFromOriginal(arg);
+      if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
+        toCache = iface.cloneValue(cacheBuilder, toCache);
+      }
+      Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
       cachedArguments.push_back(cache);
     }
 
@@ -224,11 +236,30 @@ public:
                           MGradientUtilsReverse *gutils) const {}
 };
 
+class AutoDiffFuncFuncFunctionInterface
+    : public AutoDiffFunctionInterface::ExternalModel<
+          AutoDiffFuncFuncFunctionInterface, func::FuncOp> {
+public:
+  void transformResultTypes(Operation *self,
+                            SmallVectorImpl<Type> &types) const {}
+
+  Operation *createCall(Operation *self, OpBuilder &builder, Location loc,
+                        ValueRange args) const {
+    return func::CallOp::create(builder, loc, cast<func::FuncOp>(self), args);
+  }
+
+  Operation *createReturn(Operation *self, OpBuilder &builder, Location loc,
+                          ValueRange args) const {
+    return func::ReturnOp::create(builder, loc, args);
+  }
+};
+
 void mlir::enzyme::registerFuncDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, func::FuncDialect *) {
     registerInterfaces(context);
     func::CallOp::attachInterface<AutoDiffCallFwd>(*context);
     func::CallOp::attachInterface<AutoDiffCallRev>(*context);
+    func::FuncOp::attachInterface<AutoDiffFuncFuncFunctionInterface>(*context);
   });
 }

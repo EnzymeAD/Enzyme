@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops | FileCheck %s
+// RUN: %eopt %s --enzyme-wrap="infn=reduce outfn= argTys=enzyme_active,enzyme_const retTys=enzyme_active mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math --canonicalize | FileCheck %s
 
 func.func @reduce(%x: f32, %ub: index) -> (f32) {
   %lb = arith.constant 0 : index
@@ -32,30 +32,32 @@ func.func @reduce(%x: f32, %ub: index) -> (f32) {
 // CHECK-NEXT:    %alloc = memref.alloc(%arg1) : memref<?x4xf32>
 // CHECK-NEXT:    %[[v0:.+]] = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %cst) -> (f32) {
 // CHECK-NEXT:      %subview = memref.subview %alloc[%arg3, 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:      %[[v3:.+]] = scf.for %arg5 = %c0 to %c4 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
+// CHECK-NEXT:      %[[v2:.+]] = scf.for %arg5 = %c0 to %c4 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
 // CHECK-NEXT:        memref.store %arg6, %subview[%arg5] : memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:        %[[v4:.+]] = arith.mulf %arg6, %arg0 : f32
-// CHECK-NEXT:        scf.yield %[[v4]] : f32
+// CHECK-NEXT:        %[[v3:.+]] = arith.mulf %arg6, %arg0 : f32
+// CHECK-NEXT:        scf.yield %[[v3]] : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      scf.yield %[[v3]] : f32
+// CHECK-NEXT:      scf.yield %[[v2]] : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %[[v1:.+]] = arith.addf %arg2, %cst_0 : f32
-// CHECK-NEXT:    %[[v2:.+]]:4 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %[[v1]], %arg5 = %cst_0, %arg6 = %arg1, %arg7 = %cst_0) -> (f32, f32, index, f32) {
-// CHECK-NEXT:      %subview = memref.subview %alloc[%arg6, 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:      %[[v3:.+]]:4 = scf.for %arg8 = %c0 to %c4 step %c1 iter_args(%arg9 = %arg4, %arg10 = %arg5, %arg11 = %c3, %arg12 = %arg5) -> (f32, f32, index, f32) {
-// CHECK-NEXT:        %[[v6:.+]] = memref.load %subview[%arg11] : memref<4xf32, strided<[1], offset: ?>>
-// CHECK-NEXT:        %[[v7:.+]] = arith.mulf %arg9, %arg0 : f32
-// CHECK-NEXT:        %[[v8:.+]] = arith.addf %[[v7]], %cst_0 : f32
-// CHECK-NEXT:        %[[v9:.+]] = arith.mulf %arg9, %[[v6]] : f32
-// CHECK-NEXT:        %[[v10:.+]] = arith.addf %arg10, %[[v9]] : f32
-// CHECK-NEXT:        %[[v11:.+]] = arith.subi %arg11, %c1 : index
-// CHECK-NEXT:        scf.yield %[[v8]], %[[v10]], %[[v11]], %[[v10]] : f32, f32, index, f32
+// CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %arg3 = %c0 to %arg1 step %c1 iter_args(%arg4 = %arg2, %arg5 = %cst_0) -> (f32, f32) {
+
+// CHECK-NEXT:      %[[nm1:.+]] = arith.subi %arg1, %c1 : index 
+// CHECK-NEXT:      %[[idx1:.+]] = arith.subi %[[nm1]], %arg3 : index 
+
+
+// CHECK-NEXT:      %subview = memref.subview %alloc[%[[idx1]], 0] [1, 4] [1, 1] : memref<?x4xf32> to memref<4xf32, strided<[1], offset: ?>>
+// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %c4 step %c1 iter_args(%[[arg8:.+]] = %arg4, %[[arg9:.+]] = %arg5) -> (f32, f32) {
+
+// CHECK-NEXT:        %[[idx2:.+]] = arith.subi %c3, %[[arg7]] : index 
+
+// CHECK-NEXT:        %[[v4:.+]] = memref.load %subview[%[[idx2]]] : memref<4xf32, strided<[1], offset: ?>>
+// CHECK-NEXT:        %[[v5:.+]] = arith.mulf %[[arg8]], %arg0 : f32
+// CHECK-NEXT:        %[[v6:.+]] = arith.mulf %[[arg8]], %[[v4]] : f32
+// CHECK-NEXT:        %[[v7:.+]] = arith.addf %[[arg9]], %[[v6]] : f32
+// CHECK-NEXT:        scf.yield %[[v5]], %[[v7]] : f32, f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      %[[v4:.+]] = arith.addf %[[v3]]#0, %cst_0 : f32
-// CHECK-NEXT:      %[[v5:.+]] = arith.subi %arg6, %c1 : index
-// CHECK-NEXT:      scf.yield %[[v4]], %[[v3]]#1, %[[v5]], %[[v3]]#1 : f32, f32, index, f32
+// CHECK-NEXT:      scf.yield %[[v2]]#0, %[[v2]]#1 : f32, f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    memref.dealloc %alloc : memref<?x4xf32>
-// CHECK-NEXT:    return %[[v2]]#1 : f32
+// CHECK-NEXT:    return %[[v1]]#1 : f32
 // CHECK-NEXT:  }
-

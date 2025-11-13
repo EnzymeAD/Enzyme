@@ -48,13 +48,13 @@ class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto fltType = cast<ConcreteType>(self);
-    return builder.create<arith::ConstantFloatOp>(
-        loc, fltType, APFloat(fltType.getFloatSemantics(), 0));
+    return arith::ConstantFloatOp::create(
+        builder, loc, fltType, APFloat(fltType.getFloatSemantics(), 0));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    return builder.create<arith::AddFOp>(loc, a, b);
+    return arith::AddFOp::create(builder, loc, a, b);
   }
   Value createConjOp(Type self, OpBuilder &builder, Location loc,
                      Value a) const {
@@ -96,20 +96,20 @@ public:
     if (auto F = dyn_cast<FloatType>(ET)) {
       APFloat apvalue(F.getFloatSemantics(), 0);
       auto attr = DenseElementsAttr::get(tenType, apvalue);
-      return builder.create<arith::ConstantOp>(loc, tenType, attr);
+      return arith::ConstantOp::create(builder, loc, tenType, attr);
     }
     if (auto G = dyn_cast<ComplexType>(ET)) {
       if (auto F = dyn_cast<FloatType>(G.getElementType())) {
         APFloat apvalue(F.getFloatSemantics(), 0);
         std::complex<APFloat> c(apvalue, apvalue);
         auto attr = DenseElementsAttr::get(tenType, c);
-        return builder.create<arith::ConstantOp>(loc, tenType, attr);
+        return arith::ConstantOp::create(builder, loc, tenType, attr);
       }
     }
     if (auto IT = dyn_cast<IntegerType>(ET)) {
       APInt apvalue(IT.getWidth(), 0);
       auto attr = DenseElementsAttr::get(tenType, apvalue);
-      return builder.create<arith::ConstantOp>(loc, tenType, attr);
+      return arith::ConstantOp::create(builder, loc, tenType, attr);
     }
     llvm::errs() << " cannot create null value of tensor type: " << tenType
                  << "\n";
@@ -197,14 +197,14 @@ class IntegerTypeInterface
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     if (isa<IndexType>(self)) {
-      return builder.create<arith::ConstantIndexOp>(loc, 0);
+      return arith::ConstantIndexOp::create(builder, loc, 0);
     }
-    return builder.create<arith::ConstantIntOp>(loc, self, 0);
+    return arith::ConstantIntOp::create(builder, loc, self, 0);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    return builder.create<arith::AddIOp>(loc, a, b);
+    return arith::AddIOp::create(builder, loc, a, b);
   }
 
   Value createConjOp(Type self, OpBuilder &builder, Location loc,
@@ -231,6 +231,10 @@ public:
   }
 
   int64_t getApproxSize(Type self) const {
+    // Assume index is 64-bit for ease
+    if (self.isIndex())
+      return 64;
+
     return self.getIntOrFloatBitWidth();
   }
 };
@@ -244,17 +248,17 @@ public:
     mlir::Attribute attrs[2] = {
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};
-    return builder.create<complex::ConstantOp>(loc, self,
-                                               builder.getArrayAttr(attrs));
+    return complex::ConstantOp::create(builder, loc, self,
+                                       builder.getArrayAttr(attrs));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
                     Value b) const {
-    return builder.create<complex::AddOp>(loc, a, b)->getResult(0);
+    return complex::AddOp::create(builder, loc, a, b)->getResult(0);
   }
   Value createConjOp(Type self, OpBuilder &builder, Location loc,
                      Value a) const {
-    return builder.create<complex::ConjOp>(loc, a)->getResult(0);
+    return complex::ConjOp::create(builder, loc, a)->getResult(0);
   }
 
   Type getShadowType(Type self, int64_t width) const {

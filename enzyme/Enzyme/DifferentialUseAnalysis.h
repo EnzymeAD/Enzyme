@@ -180,7 +180,7 @@ inline bool is_value_needed_in_reverse(
         }
       }
 
-      if (!TR.anyFloat(const_cast<Value *>(inst)))
+      if (!TR.allFloat(const_cast<Value *>(inst)))
         if (auto IVI = dyn_cast<Instruction>(user)) {
           bool inserted = false;
           if (auto II = dyn_cast<InsertValueInst>(IVI))
@@ -216,10 +216,32 @@ inline bool is_value_needed_in_reverse(
                 }
 
                 bool partial = false;
-                if (!gutils->isConstantValue(const_cast<Instruction *>(cur))) {
-                  partial = is_value_needed_in_reverse<QueryType::Shadow>(
-                      gutils, user, mode, seen, oldUnreachable);
+                if (auto UI = dyn_cast<Instruction>(u)) {
+                  if (!gutils->isConstantValue(
+                          const_cast<Instruction *>(cur))) {
+                    bool recursiveUse = false;
+                    if (is_use_directly_needed_in_reverse(
+                            gutils, cur, mode, UI, oldUnreachable,
+                            QueryType::Shadow, &recursiveUse)) {
+                      partial = true;
+                    } else if (recursiveUse && !OneLevel) {
+                      partial = is_value_needed_in_reverse<QueryType::Shadow>(
+                          gutils, UI, mode, seen, oldUnreachable);
+                    }
+                  } else if (VT == QueryType::Shadow) {
+                    bool recursiveUse = false;
+                    if (is_use_directly_needed_in_reverse(
+                            gutils, cur, mode, UI, oldUnreachable,
+                            QueryType::ShadowByConstPrimal, &recursiveUse)) {
+                      partial = true;
+                    } else if (recursiveUse && !OneLevel) {
+                      partial = is_value_needed_in_reverse<
+                          QueryType::ShadowByConstPrimal>(gutils, UI, mode,
+                                                          seen, oldUnreachable);
+                    }
+                  }
                 }
+
                 if (partial) {
 
                   if (EnzymePrintDiffUse)
@@ -555,7 +577,8 @@ forEachDifferentialUser(llvm::function_ref<void(llvm::Value *)> f,
 
 //! Return whether or not this is a constant and should use reverse pass
 bool callShouldNotUseDerivative(const GradientUtils *gutils,
-                                llvm::CallBase &orig);
+                                llvm::CallBase &orig, QueryType qtype,
+                                const llvm::Value *val);
 
 }; // namespace DifferentialUseAnalysis
 

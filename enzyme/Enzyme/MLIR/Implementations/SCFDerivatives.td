@@ -6,8 +6,8 @@ def : ControlFlowOp<"scf", "ForOp", [{
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
     scf::ForOpAdaptor adaptor(remappedOperands);
-    auto repFor = builder.create<scf::ForOp>(
-        op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
+    auto repFor = scf::ForOp::create(
+        builder, op->getLoc(), adaptor.getLowerBound(), adaptor.getUpperBound(),
         adaptor.getStep(), adaptor.getInitArgs());
     return repFor;
   }
@@ -19,8 +19,8 @@ def : ControlFlowOp<"scf", "IfOp", [{
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
     scf::IfOpAdaptor adaptor(remappedOperands);
-    auto repIf = builder.create<scf::IfOp>(
-        op->getLoc(), rettys, adaptor.getCondition());
+    auto repIf = scf::IfOp::create(
+        builder, op->getLoc(), rettys, adaptor.getCondition());
     return repIf;
   }
 }]>;
@@ -30,8 +30,8 @@ def : ControlFlowOp<"scf", "WhileOp", [{
                                MGradientUtils *gutils, Operation *original,
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
-    return builder.create<scf::WhileOp>(original->getLoc(), rettys,
-                                        remappedOperands, original->getAttrs());
+    return scf::WhileOp::create(builder, original->getLoc(), rettys,
+                                remappedOperands, original->getAttrs());
   }
 }]>;
 
@@ -40,8 +40,8 @@ def : ControlFlowOp<"scf", "ExecuteRegionOp", [{
                                MGradientUtils *gutils, Operation *original,
                                ValueRange remappedOperands,
                                TypeRange rettys) const {
-    auto repIf = builder.create<scf::ExecuteRegionOp>(
-        op->getLoc(), rettys);
+    auto repIf = scf::ExecuteRegionOp::create(
+        builder, op->getLoc(), rettys);
     return repIf;
   }
 }]>;

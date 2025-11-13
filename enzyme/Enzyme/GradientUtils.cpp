@@ -425,7 +425,28 @@ Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
     if (auto PN = dyn_cast<PHINode>(&I)) {
       if (PN->getType() != val->getType())
         continue;
-      Value *ival = PN->getIncomingValueForBlock(lc.preheader);
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
+        continue;
+
+      int Idx = PN->getBasicBlockIndex(lc.preheader);
+      if (Idx < 0) {
+
+        std::string str;
+        raw_string_ostream ss(str);
+
+        ss << " Could not find block for index, PN: " << *PN << "\n";
+        ss << " preheader: " << *lc.preheader << "\n";
+        ss << " header: " << *lc.header << "\n";
+        ss << " fn: " << *lc.header->getParent() << "\n";
+
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(PN), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
+        } else {
+          EmitFailure("GetIndexError", PN->getDebugLoc(), PN, ss.str());
+        }
+      }
+      Value *ival = PN->getIncomingValue(Idx);
       if (auto CDV = dyn_cast<ConstantDataVector>(ival)) {
         if (CDV->isSplat())
           ival = CDV->getSplatValue();
@@ -486,6 +507,8 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
       if (PN->getNumIncomingValues() == 0)
         continue;
       if (PN->getType() != lc.incvar->getType())
+        continue;
+      if (fictiousPHIs.find(PN) != fictiousPHIs.end())
         continue;
       Value *ival = PN->getIncomingValueForBlock(lc.preheader);
       if (auto C = dyn_cast<Constant>(ival)) {
@@ -2508,7 +2531,22 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
 
   // TODO replace forwardBlock with the first block dominated by inst,
   // that dominates (or is) forwardBlock to ensuring maximum reuse
-  IRBuilder<> lcssa(&forwardBlock->front());
+  auto inspos = forwardBlock->front().getIterator();
+#if LLVM_VERSION_MAJOR >= 18
+#if LLVM_VERSION_MAJOR >= 21
+#else
+  if (forwardBlock->IsNewDbgInfoFormat)
+#endif
+  {
+    if (!inspos.getHeadBit()) {
+      auto srcmarker = forwardBlock->getMarker(inspos);
+      if (srcmarker && !srcmarker->empty()) {
+        inspos.setHeadBit(true);
+      }
+    }
+  }
+#endif
+  IRBuilder<> lcssa(forwardBlock, inspos);
   auto lcssaPHI =
       lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
   lcssaFixes[inst][forwardBlock] = lcssaPHI;
@@ -2755,14 +2793,27 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         assert(innerType == Type::getInt8Ty(malloc->getContext()));
       } else {
         if (innerType != malloc->getType()) {
-          llvm::errs() << *oldFunc << "\n";
-          llvm::errs() << *newFunc << "\n";
-          llvm::errs() << "innerType: " << *innerType << "\n";
-          llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
-          llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
-          llvm::errs() << "malloc: " << *malloc << "\n";
-          assert(0 && "illegal loop cache type");
-          llvm_unreachable("illegal loop cache type");
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Illegal loop cache type:\n";
+          ss << *oldFunc << "\n";
+          ss << *newFunc << "\n";
+          ss << "innerType: " << *innerType << "\n";
+          ss << "malloc->getType(): " << *malloc->getType() << "\n";
+          ss << "ret: " << *ret << " - " << *ret->getType() << "\n";
+          ss << "malloc: " << *malloc << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap(malloc),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
+          } else {
+            DebugLoc loc;
+            if (auto I = dyn_cast<Instruction>(malloc))
+              EmitFailure("LoopCache", I->getDebugLoc(), I, ss.str());
+            else
+              EmitFailure("LoopCache", DebugLoc(), newFunc, ss.str());
+          }
+          return UndefValue::get(malloc->getType());
         }
       }
 
@@ -4346,16 +4397,6 @@ GradientUtils *GradientUtils::CreateFromClone(
     ++returnCount;
   }
 
-  ReturnType returnValue;
-  if (returnCount == 0)
-    returnValue = ReturnType::Tape;
-  else if (returnCount == 1)
-    returnValue = ReturnType::TapeAndReturn;
-  else if (returnCount == 2)
-    returnValue = ReturnType::TapeAndTwoReturns;
-  else
-    llvm_unreachable("illegal number of elements in augmented return struct");
-
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -4374,7 +4415,8 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       DerivativeMode::ReverseModePrimal, width, oldFunc, invertedPointers,
       constant_args, constant_values, nonconstant_values, returnvals,
-      /*returnValue*/ returnValue, retType, prefix, &originalToNew,
+      /*returnTape*/ true, /*returnPrimal*/ returnUsed,
+      /*returnShadow*/ shadowReturnUsed, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
   // Convert overwritten args from the input function to the preprocessed
@@ -4434,8 +4476,13 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
     if (cmode == DerivativeMode::ForwardMode ||
         cmode == DerivativeMode::ForwardModeError ||
         cmode == DerivativeMode::ForwardModeSplit) {
-      subretType = DIFFE_TYPE::DUP_ARG;
-      shadowReturnUsed = true;
+      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
+        subretType = DIFFE_TYPE::DUP_ARG;
+        shadowReturnUsed = true;
+      } else {
+        subretType = DIFFE_TYPE::CONSTANT;
+      }
     } else {
       if (!orig->getType()->isFPOrFPVectorTy() && TR.anyPointer(orig)) {
         if (DifferentialUseAnalysis::is_value_needed_in_reverse<
@@ -4481,8 +4528,8 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
-      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
-        assert(unnecessaryValuesP);
+      } else if ((isa<AllocaInst>(at) || isAllocationCall(at, TLI)) &&
+                 unnecessaryValuesP) {
         if (unnecessaryValuesP->count(at))
           return DIFFE_TYPE::DUP_NONEED;
       }
@@ -4959,11 +5006,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         if (size == 8)
           ty = BuilderM.getInt64Ty();
         else if (size % 8 == 0)
-          ty = ArrayType::get(BuilderM.getInt64Ty(), size);
+          ty = ArrayType::get(BuilderM.getInt64Ty(), size / 8);
         else if (size == 4)
           ty = BuilderM.getInt32Ty();
         else if (size % 4 == 0)
-          ty = ArrayType::get(BuilderM.getInt32Ty(), size);
+          ty = ArrayType::get(BuilderM.getInt32Ty(), size / 4);
         else
           ty = ArrayType::get(i8, size);
 
@@ -6319,12 +6366,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
           which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
+          // Avoid re-extracting from the same value, since multiple
+          // entries to the same phi from the same block must have the
+          // same value;
+          DenseMap<BasicBlock *, Value *> samePHI;
           for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
             IRBuilder<> pre(
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
                     ->getTerminator());
             Value *val = invertedVals[j];
-            auto extracted_diff = extractMeta(pre, val, i);
+            Value *extracted_diff;
+            auto found = samePHI.find(phi->getIncomingBlock(j));
+            if (found == samePHI.end()) {
+              extracted_diff = extractMeta(pre, val, i);
+              samePHI[phi->getIncomingBlock(j)] = extracted_diff;
+            } else {
+              extracted_diff = found->second;
+            }
             which->addIncoming(
                 extracted_diff,
                 cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j))));
@@ -8332,13 +8390,47 @@ void GradientUtils::computeMinCache() {
                 QueryType::Primal,
                 /*OneLevel*/ true>(this, &I, minCutMode, OneLevelSeen,
                                    notForAnalysis);
-            if (oneneed) {
+
+            bool shadowOneNeed = false;
+            // even if the primal is not needed directly by its users, if the
+            // primal is constant and used to create a shadow insertvalue which
+            // is used, we need to save the shadow since shadow cache and primal
+            // cache are the same, we force a save of cache here.
+            // TODO(wsmoses): extend this to separate caching decisions for
+            // primal and shadow
+            if (!oneneed && isConstantValue(&I) && !TR.allFloat(&I)) {
+              SmallVector<Instruction *, 1> todo;
+              todo.push_back(&I);
+              while (todo.size()) {
+                auto cur = todo.pop_back_val();
+                for (auto u : cur->users()) {
+                  if (isa<InsertValueInst>(u) || isa<InsertElementInst>(u) ||
+                      isa<ExtractValueInst>(u) || isa<ExtractElementInst>(u)) {
+                    auto I2 = cast<Instruction>(u);
+                    if (!isConstantValue(I2)) {
+                      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                              QueryType::Shadow>(this, I2, minCutMode, FullSeen,
+                                                 notForAnalysis)) {
+                        shadowOneNeed = true;
+                        goto endOneNeed;
+                      }
+                    } else {
+                      todo.push_back(I2);
+                    }
+                  }
+                }
+              }
+            endOneNeed:;
+            }
+
+            if (oneneed || shadowOneNeed) {
               knownRecomputeHeuristic[&I] = false;
 
               CountTrackedPointers T(I.getType());
               assert(!T.derived);
-            } else
+            } else {
               Recomputes.insert(&I);
+            }
           }
         }
       }
@@ -8567,13 +8659,18 @@ bool GradientUtils::getContext(llvm::BasicBlock *BB, LoopContext &lc) {
 void GradientUtils::forceAugmentedReturns() {
   assert(TR.getFunction() == oldFunc);
 
+  // Pass 1: create BB-level contexts for the whole loop/function
   for (BasicBlock &oBB : *oldFunc) {
-    // Don't create derivatives for code that results in termination
     if (notForAnalysis.find(&oBB) != notForAnalysis.end())
       continue;
+    LoopContext LC;
+    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), LC);
+  }
 
-    LoopContext loopContext;
-    getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
+  // Pass 2: instruction processing
+  for (BasicBlock &oBB : *oldFunc) {
+    if (notForAnalysis.find(&oBB) != notForAnalysis.end())
+      continue;
 
     for (Instruction &I : oBB) {
       Instruction *inst = &I;
@@ -9229,6 +9326,25 @@ BasicBlock *GradientUtils::addReverseBlock(BasicBlock *currentBlock,
 
   SmallVector<BasicBlock *, 4> &vec = reverseBlocks[found->second];
   assert(vec.size());
+  if (vec.back() != currentBlock) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Error adding reverse block:\n";
+    ss << "fwdBlock: " << *found->second << "\n";
+    ss << "currentBlock: " << *currentBlock << "\n";
+    ss << "vec.back(): " << *vec.back() << "\n";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(str.c_str(), wrap((Value *)currentBlock),
+                         ErrorType::InternalError, nullptr, nullptr, nullptr);
+    } else {
+      DebugLoc loc;
+      if (auto term = found->second->getTerminator()) {
+        loc = term->getDebugLoc();
+      }
+      EmitFailure("AddReverseBlockError", loc, found->second->getParent(),
+                  ss.str());
+    }
+  }
   assert(vec.back() == currentBlock);
 
   BasicBlock *rev =

@@ -1,5 +1,6 @@
 #include "ActivityAnalysis.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -285,6 +286,16 @@ static bool isReadOnly(Operation *op) {
   return false;
 }
 
+bool mlir::enzyme::ActivityAnalyzer::isReadOnly(Operation *val) {
+  auto find = readOnlyCache.find(val);
+  if (find != readOnlyCache.end()) {
+    return find->second;
+  }
+  auto res = ::isReadOnly(val);
+  readOnlyCache[val] = res;
+  return res;
+}
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
@@ -389,12 +400,13 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
   }
 
   // only the buffer is active for mpi send/recv
-  if (Name == "MPI_Recv" || Name == "PMPI_Recv" || Name == "MPI_Send" ||
+  if (Name == "MPI_Recv" || Name == "MPI_Send" || Name == "PMPI_Recv" ||
       Name == "PMPI_Send") {
     return val != CI.getArgOperands()[0];
   }
   // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend") {
+  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "PMPI_Irecv" ||
+      Name == "PMPI_Isend") {
     return val != CI.getArgOperands()[0] && val != CI.getArgOperands()[6];
   }
 
@@ -1043,8 +1055,8 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
               block.getTerminator())) {
         // TODO: the interface may also tell us which regions are allowed to
         // yield parent op results, and which only branch to other regions.
-        auto successorOperands = llvm::to_vector(
-            iface.getSuccessorOperands(RegionBranchPoint::parent()));
+        auto successorOperands = llvm::to_vector(iface.getSuccessorOperands(
+            RegionSuccessor(iface.getOperation(), iface->getResults())));
         // TODO: understand/document the assumption of how operands flow.
 
         if (successorOperands.size() != owner->getNumResults()) {
@@ -1131,7 +1143,8 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
           // Find all block terminators in the predecessor region that
           // may be branching to this region, and get the operands they
           // forward.
-          for (Block &block : *predecessor.getRegionOrNull()) {
+          for (Block &block : *predecessor.getTerminatorPredecessorOrNull()
+                                   ->getParentRegion()) {
             // TODO: MLIR block without terminator
             if (auto terminator = dyn_cast<RegionBranchTerminatorOpInterface>(
                     block.getTerminator())) {
@@ -1155,7 +1168,10 @@ static SmallVector<Value> getPotentialIncomingValues(BlockArgument arg) {
     isRegionSucessorOf(iface, parentRegion, RegionBranchPoint::parent(),
                        potentialSources);
     for (Region &childRegion : parent->getRegions())
-      isRegionSucessorOf(iface, parentRegion, childRegion, potentialSources);
+      isRegionSucessorOf(iface, parentRegion,
+                         cast<RegionBranchTerminatorOpInterface>(
+                             childRegion.front().getTerminator()),
+                         potentialSources);
 
   } else {
     // Conservatively assume any op operand and any terminator operand of
@@ -1251,7 +1267,11 @@ static void allFollowersOf(Operation *op,
     if (!parentOp || isa<FunctionOpInterface>(parentOp))
       return;
 
-    addEntryBlocksOfSuccessorRegions(parentOp, current->getParent(), todo);
+    addEntryBlocksOfSuccessorRegions(
+        parentOp,
+        cast<RegionBranchTerminatorOpInterface>(
+            current->getParent()->front().getTerminator()),
+        todo);
   };
 
   std::deque<Block *> todo;

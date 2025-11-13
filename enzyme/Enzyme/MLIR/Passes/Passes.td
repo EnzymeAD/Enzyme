@@ -55,12 +55,28 @@ def ProbProgPass : Pass<"probprog"> {
       /*default=*/"",
       /*description=*/"Optimization passes to apply to generated probabilistic programs"
     >,
+    Option<
+      /*C++ variable name=*/"debugMCMC",
+      /*CLI argument=*/"debug-mcmc",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Enable debug prints for MCMC algorithms"
+    >,
   ];
 }
 
 def BatchPass : Pass<"enzyme-batch"> {
   let summary = "Batch Passes";
   let dependentDialects = [
+  ];
+}
+
+def BatchDiffPass : Pass<"enzyme-diff-batch">{
+  let summary = "Batching enzyme.fwddiff and enzyme.autodiff calls";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "tensor::TensorDialect",
+    "enzyme::EnzymeDialect",
   ];
 }
 
@@ -185,6 +201,17 @@ def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
 }
 
+def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
+  let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
+}
+
+def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
+  let summary = "Outlines enzyme.autodiff_region ops into enzyme.autodiff ops.";
+  let dependentDialects = [
+    "func::FuncDialect"
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
@@ -207,6 +234,15 @@ def AddToOpToSplitPass : Pass<"add-to-op-to-split"> {
   let summary = "Duplicate linalg.generic once for each output to remove enzyme.addTo op";
 }
 
+def EnzymeBatchToTensorPass : Pass<"enzyme-batch-to-tensor"> {
+  let summary = "Legalize batching specific operations to tensor dialect";
+  let dependentDialects = [
+    "tensor::TensorDialect", 
+    "arith::ArithDialect",
+    "enzyme::EnzymeDialect"
+  ];
+}
+
 def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
   let summary = "Remove Unnecessary Enzyme Ops";
   let dependentDialects = [
@@ -217,6 +253,27 @@ def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
 
 def SimplifyMemrefCachePass : Pass<"simplify-memref-cache"> {
   let summary = "Rewrite all cache<memref<cache<...>>> to cache<memref<...>> if possible";
+}
+
+def LowerLLVMExtPass : Pass<"lower-llvm-ext"> {
+  let summary = "Lower LLVM ext operations to the LLVM dialect.";
+  let dependentDialects = [
+    "mlir::enzyme::llvm_ext::LLVMExtDialect",
+    "LLVM::LLVMDialect",
+  ];
+  let options = [
+    Option<"lowerToAllocaThreshold", "lower-to-alloca-threshold", "uint64_t",
+           /*default=*/"0",
+           "Maximum static size at which an alloc/free is promoted to an alloca (default -1: promotion disabled)">,
+  ];
+}
+
+def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
+  let summary = "Raise LLVM operations to the LLVM Ext dialect.";
+  let dependentDialects = [
+    "mlir::enzyme::llvm_ext::LLVMExtDialect",
+    "LLVM::LLVMDialect",
+  ];
 }
 
 #endif // ENZYME_PASSES

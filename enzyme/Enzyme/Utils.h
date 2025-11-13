@@ -389,6 +389,8 @@ enum class MProbProgMode {
   Call = 0,
   Simulate = 1,
   Generate = 2,
+  Regenerate = 3,
+  Update = 4,
 };
 
 /// Classification of value as an original program
@@ -421,6 +423,11 @@ static inline std::string to_string(ValueType mode) {
   llvm_unreachable("illegal valuetype");
 }
 
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            ValueType mode) {
+  return os << to_string(mode);
+}
+
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
@@ -441,6 +448,11 @@ static inline std::string to_string(DerivativeMode mode) {
   llvm_unreachable("illegal derivative mode");
 }
 
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            DerivativeMode mode) {
+  return os << to_string(mode);
+}
+
 /// Convert DIFFE_TYPE to a string
 static inline std::string to_string(DIFFE_TYPE t) {
   switch (t) {
@@ -456,6 +468,11 @@ static inline std::string to_string(DIFFE_TYPE t) {
     assert(0 && "illegal diffetype");
     return "";
   }
+}
+
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            DIFFE_TYPE mode) {
+  return os << to_string(mode);
 }
 
 /// Convert ReturnType to a string
@@ -481,6 +498,11 @@ static inline std::string to_string(ReturnType t) {
     return "Void";
   }
   llvm_unreachable("illegal ReturnType");
+}
+
+static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
+                                            ReturnType mode) {
+  return os << to_string(mode);
 }
 
 #include <set>
@@ -625,6 +647,8 @@ static inline llvm::Type *FloatToIntTy(llvm::Type *T) {
     return llvm::IntegerType::get(T->getContext(), 64);
   if (T->isX86_FP80Ty())
     return llvm::IntegerType::get(T->getContext(), 80);
+  if (T->isFP128Ty())
+    return llvm::IntegerType::get(T->getContext(), 128);
   assert(0 && "unknown floating point type");
   return nullptr;
 }
@@ -646,6 +670,10 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
       return llvm::Type::getFloatTy(T->getContext());
     case 64:
       return llvm::Type::getDoubleTy(T->getContext());
+    case 80:
+      return llvm::Type::getX86_FP80Ty(T->getContext());
+    case 128:
+      return llvm::Type::getFP128Ty(T->getContext());
     }
   }
   assert(0 && "unknown int to floating point type");
@@ -783,7 +811,8 @@ llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 llvm::ArrayRef<llvm::Type *> T,
-                                                llvm::Type *reqType);
+                                                llvm::Type *reqType,
+                                                llvm::StringRef caller);
 
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V);
@@ -1651,6 +1680,56 @@ static inline bool isReadOnly(const llvm::CallBase *call, ssize_t arg = -1) {
   return false;
 }
 
+// Whether the function does not write to memory visible before the function in
+// all cases that it doesn't error. In other words, the legal operations here
+// are:
+//.  1) Throw [in which case any operation guaranteed to throw is valid]
+//.  2) Read from any memory
+//.  3) Write to memory which did not exist did not exist prior to the function
+// call. This means that one can write .     to memory whose allocation happened
+// within the call to F (including a local alloca, a malloc call, even if .
+// returned). This is also legal to write to an sret and/or returnroots
+// parameter (which must be an alloca).
+static inline bool isLocalReadOnlyOrThrow(const llvm::Function *F) {
+  if (isReadOnly(F))
+    return true;
+
+  if (F->hasFnAttribute("enzyme_LocalReadOnlyOrThrow") ||
+      F->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
+    return true;
+
+  return false;
+}
+
+static inline bool isLocalReadOnlyOrThrow(const llvm::CallBase *call) {
+  if (isReadOnly(call))
+    return true;
+
+  if (call->hasFnAttr("enzyme_LocalReadOnlyOrThrow") ||
+      call->hasFnAttr("enzyme_ReadOnlyOrThrow"))
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    // Do not use function attrs for if different calling conv, such as a julia
+    // call wrapping args into an array. This is because the wrapped array
+    // may be nocapure/readonly, but the actual arg (which will be put in the
+    // array) may not be.
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isLocalReadOnlyOrThrow(F))
+        return true;
+  }
+  return false;
+}
+
+// Whether the function does not write to memory visible outside the function in
+// all cases that it doesn't error. In other words, the legal operations here
+// are:
+//.  1) Throw [in which case any operation guaranteed to throw is valid]
+//.  2) Read from any memory
+//.  3) Write to memory which did not exist did not exist prior to the function
+// call. This means that one can write .     to memory whose lifetime is
+// entirely contained within F (including a local alloca, a malloc call locally
+// freed, but not .     a returned malloc call).
 static inline bool isReadOnlyOrThrow(const llvm::Function *F) {
   if (isReadOnly(F))
     return true;
@@ -2270,6 +2349,9 @@ bool isNVLoad(const llvm::Value *V);
 bool notCapturedBefore(llvm::Value *V, llvm::Instruction *inst,
                        size_t checkLoadCaptured);
 
+//! Check if value if b captured
+bool notCaptured(llvm::Value *V);
+
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
@@ -2285,5 +2367,49 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
 // Return true if the module has a triple indicating an nvptx target, false
 // otherwise.
 bool isTargetNVPTX(llvm::Module &M);
+
+static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
+tripleSplitDollar(llvm::StringRef caller) {
+  if (!startsWith(caller, "ejl")) {
+    return {"", caller, ""};
+  }
+  auto &&[prefix, todo] = caller.split("$");
+  auto &&[name, postfix] = todo.split("$");
+  return std::make_tuple(prefix, name, postfix);
+}
+
+static inline std::string getRenamedPerCallingConv(llvm::StringRef caller,
+                                                   llvm::StringRef callee) {
+  if (startsWith(caller, "ejl")) {
+    auto &&[prefix, name, postfix] = tripleSplitDollar(caller);
+    return (prefix + "$" + getRenamedPerCallingConv(name, callee) + "$" +
+            postfix)
+        .str();
+  }
+  if (startsWith(caller, "PMPI_")) {
+    assert(startsWith(callee, "MPI"));
+    return ("P" + callee).str();
+  }
+  return callee.str();
+}
+
+static inline std::string convertSRetTypeToString(llvm::Type *T) {
+  return std::to_string((size_t)T);
+}
+
+static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str) {
+  size_t idx;
+  bool failed = str.consumeInteger(10, idx);
+  (void)failed;
+  assert(!failed);
+  return (llvm::Type *)idx;
+}
+
+static inline bool hasSRetOrUnionSRet(llvm::CallBase *CB) {
+  return CB->hasStructRetAttr() ||
+         CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex,
+                                 "enzymejl_sret_union_bytes")
+             .isValid();
+}
 
 #endif // ENZYME_UTILS_H

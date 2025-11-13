@@ -61,6 +61,7 @@ typedef enum {
   DT_Unknown = 6,
   DT_X86_FP80 = 7,
   DT_BFloat16 = 8,
+  DT_FP128 = 9,
 } CConcreteType;
 
 struct CDataPair {
@@ -95,6 +96,8 @@ void EnzymeTypeTreeData0Eq(CTypeTreeRef dst);
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef dst, const char *datalayout,
                                    int64_t offset, int64_t maxSize,
                                    uint64_t addOffset);
+void EnzymeTypeTreeInsertEq(CTypeTreeRef dst, const int64_t *indices,
+                            size_t len, CConcreteType ct, LLVMContextRef ctx);
 const char *EnzymeTypeTreeToString(CTypeTreeRef src);
 void EnzymeTypeTreeToStringFree(const char *cstr);
 
@@ -154,6 +157,9 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
 void ClearTypeAnalysis(EnzymeTypeAnalysisRef);
 void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
+EnzymeLogicRef EnzymeTypeAnalysisGetLogic(EnzymeTypeAnalysisRef TAR);
+EnzymeTypeAnalysisRef EnzymeGetTypeAnalysisFromTypeAnalyzer(void *TAR);
+
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M);
 EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
     LLVMContextRef C, LLVMValueRef getTraceFunction,
@@ -169,6 +175,8 @@ CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F);
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt);
 void ClearEnzymeLogic(EnzymeLogicRef);
 void FreeEnzymeLogic(EnzymeLogicRef);
+void EnzymeLogicSetExternalContext(EnzymeLogicRef, void *ExternalContext);
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef);
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
                              uint8_t *existed, size_t len);
@@ -232,6 +240,9 @@ void EnzymeRegisterCallHandler(const char *Name,
 
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val);
+
+// TODO: Other API functions that are defined in CApi.cpp for GradientUtils
+void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils);
 
 #ifdef __cplusplus
 }

@@ -219,4 +219,62 @@ def MathSimplifyInterface : OpInterface<"MathSimplifyInterface"> {
   ];
 }
 
+def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
+  let description = [{
+    A function operation which can be automatically differentiated.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+      Transform result types.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"transformResultTypes",
+    /*args=*/(ins "SmallVectorImpl<::mlir::Type> &" : $resultTypes)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+      Get function type attr name.
+    }],
+    /*retTy=*/"StringRef",
+    /*methodName=*/"getFunctionTypeAttrName",
+    /*args=*/(ins),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return $_op.getFunctionTypeAttrName();
+    }]
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+      Get arg attrs type attr name.
+    }],
+    /*retTy=*/"StringRef",
+    /*methodName=*/"getArgAttrsAttrName",
+    /*args=*/(ins),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return $_op.getArgAttrsAttrName();
+    }]
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+      Generate call.
+    }],
+    /*retTy=*/"::mlir::Operation *",
+    /*methodName=*/"createCall",
+    /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Location" : $loc, "::mlir::ValueRange" : $args)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+      Create return.
+    }],
+    /*retTy=*/"::mlir::Operation *",
+    /*methodName=*/"createReturn",
+    /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Location" : $loc, "::mlir::ValueRange" : $args)
+    >
+  ];
+}
+
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACES

@@ -99,6 +99,8 @@ ConcreteType eunwrap(CConcreteType CDT, llvm::LLVMContext &ctx) {
     return ConcreteType(llvm::Type::getX86_FP80Ty(ctx));
   case DT_BFloat16:
     return ConcreteType(llvm::Type::getBFloatTy(ctx));
+  case DT_FP128:
+    return ConcreteType(llvm::Type::getFP128Ty(ctx));
   case DT_Unknown:
     return BaseType::Unknown;
   }
@@ -133,6 +135,8 @@ CConcreteType ewrap(const ConcreteType &CT) {
       return DT_X86_FP80;
     if (flt->isBFloatTy())
       return DT_BFloat16;
+    if (flt->isFP128Ty())
+      return DT_FP128;
   } else {
     switch (CT.SubTypeEnum) {
     case BaseType::Integer:
@@ -209,6 +213,14 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
+void EnzymeLogicSetExternalContext(EnzymeLogicRef Ref, void *ExternalContext) {
+  eunwrap(Ref).ExternalContext = ExternalContext;
+}
+
+void *EnzymeLogicGetExternalContext(EnzymeLogicRef Ref) {
+  return eunwrap(Ref).ExternalContext;
+}
+
 EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
 }
@@ -262,7 +274,8 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules) {
-  TypeAnalysis *TA = new TypeAnalysis(((EnzymeLogic *)Log)->PPC.FAM);
+  EnzymeLogic &Logic = eunwrap(Log);
+  TypeAnalysis *TA = new TypeAnalysis(Logic);
   for (size_t i = 0; i < numRules; i++) {
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
@@ -302,6 +315,10 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
   delete TA;
 }
 
+EnzymeLogicRef EnzymeTypeAnalysisGetLogic(EnzymeTypeAnalysisRef TAR) {
+  return (EnzymeLogicRef) & ((TypeAnalysis *)TAR)->Logic;
+}
+
 void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
                          LLVMValueRef F) {
   FnTypeInfo FTI(eunwrap(CTI, cast<Function>(unwrap(F))));
@@ -310,6 +327,10 @@ void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
 
 void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
   return (void *)&G->TR.analyzer;
+}
+
+EnzymeTypeAnalysisRef EnzymeGetTypeAnalysisFromTypeAnalyzer(void *TAR) {
+  return (EnzymeTypeAnalysisRef) & ((TypeAnalyzer *)TAR)->interprocedural;
 }
 
 void EnzymeGradientUtilsErase(GradientUtils *G, LLVMValueRef I) {
@@ -396,6 +417,10 @@ void EnzymeRegisterDiffUseCallHandler(char *Name,
 
 uint8_t EnzymeGradientUtilsGetRuntimeActivity(GradientUtils *gutils) {
   return gutils->runtimeActivity;
+}
+
+void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils) {
+  return gutils->Logic.ExternalContext;
 }
 
 uint8_t EnzymeGradientUtilsGetStrongZero(GradientUtils *gutils) {
@@ -870,6 +895,14 @@ void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
   DataLayout DL(datalayout);
   *(TypeTree *)CTT =
       ((TypeTree *)CTT)->ShiftIndices(DL, offset, maxSize, addOffset);
+}
+void EnzymeTypeTreeInsertEq(CTypeTreeRef CTT, const int64_t *indices,
+                            size_t len, CConcreteType ct, LLVMContextRef ctx) {
+  std::vector<int> seq;
+  for (size_t i = 0; i < len; i++) {
+    seq.push_back(indices[i]);
+  }
+  ((TypeTree *)CTT)->insert(seq, eunwrap(ct, *unwrap(ctx)));
 }
 const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
   std::string tmp = ((TypeTree *)src)->str();
@@ -1379,10 +1412,12 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
     auto T = pair.value();
     auto i = pair.index();
     bool sretv = false;
+    StringRef value;
     for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i)) {
       if (attr.isStringAttribute() &&
           attr.getKindAsString() == "enzyme_sret_v") {
         sretv = true;
+        value = attr.getValueAsString();
       } else {
         NewAttrs = NewAttrs.addAttribute(
             F->getContext(), AttributeList::FirstArgIndex + types.size(), attr);
@@ -1396,7 +1431,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
             if (sretv) {
               NewAttrs = NewAttrs.addAttribute(
                   F->getContext(), AttributeList::FirstArgIndex + types.size(),
-                  Attribute::get(F->getContext(), "enzyme_sret"));
+                  Attribute::get(F->getContext(), "enzyme_sret", value));
             }
             types.push_back(PT);
           }
@@ -1617,29 +1652,30 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   }
 
   for (auto idx : enzyme_srets) {
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    (void)idx;
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = FT->getParamType(idx)->getPointerElementType();
+    llvm::Type *SRetType = convertSRetTypeFromString(
+        Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret")
+            .getValueAsString());
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers()) {
+      auto T = FT->getParamType(idx)->getPointerElementType();
+      assert(T == SRetType);
+    }
 #endif
-    Types.push_back(T);
+    Types.push_back(SRetType);
   }
   for (auto idx : enzyme_srets_v) {
-    llvm::Type *T = nullptr;
+    llvm::Type *SRetType = convertSRetTypeFromString(
+        Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret_v")
+            .getValueAsString());
     auto AT = cast<ArrayType>(FT->getParamType(idx));
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(idx, Attribute::AttrKind::ElementType)
-    //         .getValueAsType();
-#else
-    T = AT->getElementType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers()) {
+      auto T = AT->getElementType()->getPointerElementType();
+      assert(T == SRetType);
+    }
 #endif
     for (size_t i = 0; i < AT->getNumElements(); i++)
-      Types.push_back(T);
+      Types.push_back(SRetType);
   }
 
   StructType *ST =
@@ -1668,9 +1704,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     nexti++;
   }
   if (roots_AT) {
-    NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                     AttributeList::FirstArgIndex + nexti,
-                                     "enzymejl_returnRoots");
+    NewAttrs = NewAttrs.addAttribute(
+        F->getContext(), AttributeList::FirstArgIndex + nexti,
+        "enzymejl_returnRoots", std::to_string(numRooting));
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      Attribute::NoAlias);
@@ -1872,14 +1908,23 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   for (auto i : rroots) {
     auto arg = delArgMap[i];
     assert(arg);
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = FT->getParamType(i)->getPointerElementType();
+
+    auto snum = Attrs
+                    .getAttribute(AttributeList::FirstArgIndex + i,
+                                  "enzymejl_returnRoots")
+                    .getValueAsString();
+    size_t num;
+    bool failed = snum.consumeInteger(10, num);
+    (void)failed;
+    assert(!failed);
+    auto jlptr = PointerType::get(StructType::get(NewF->getContext(), {}), 10);
+    llvm::Type *T = ArrayType::get(jlptr, num);
+
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers())
+      assert(FT->getParamType(i)->getPointerElementType() == T);
 #endif
+
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     auto AL = EB.CreateAlloca(T, 0, "stack_roots");
     arg->replaceAllUsesWith(AL);
@@ -1889,14 +1934,23 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto arg = delArgMap[i];
     assert(arg);
     auto AT = cast<ArrayType>(FT->getParamType(i));
-    llvm::Type *T = nullptr;
-#if LLVM_VERSION_MAJOR >= 17
-    llvm_unreachable("Unhandled");
-    // T = F->getParamAttribute(i, Attribute::AttrKind::ElementType)
-    //        .getValueAsType();
-#else
-    T = AT->getElementType()->getPointerElementType();
+
+    auto snum = Attrs
+                    .getAttribute(AttributeList::FirstArgIndex + i,
+                                  "enzymejl_returnRoots_v")
+                    .getValueAsString();
+    size_t num;
+    bool failed = snum.consumeInteger(10, num);
+    (void)failed;
+    assert(!failed);
+    auto jlptr = PointerType::get(StructType::get(NewF->getContext(), {}), 10);
+    llvm::Type *T = ArrayType::get(jlptr, num);
+
+#if LLVM_VERSION_MAJOR < 17
+    if (F->getContext().supportsTypedPointers())
+      assert(AT->getElementType()->getPointerElementType() == T);
 #endif
+
     IRBuilder<> EB(&NewF->getEntryBlock().front());
     Value *val = UndefValue::get(AT);
     for (size_t j = 0; j < AT->getNumElements(); j++) {
@@ -1932,7 +1986,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       NewAttrs = NewAttrs.addAttribute(
 
           F->getContext(), AttributeList::FirstArgIndex + nexti,
-          "enzymejl_returnRoots");
+          "enzymejl_returnRoots", std::to_string(numRooting));
       nexti++;
     }
 

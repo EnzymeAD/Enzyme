@@ -161,7 +161,12 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     name += ".custom@" + std::to_string((size_t)RT);
 
   FunctionType *FT = FunctionType::get(allocType, types, false);
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  AttributeList AL;
+  if (newFunc->hasFnAttribute("enzymejl_world")) {
+    AL = AL.addFnAttribute(newFunc->getContext(),
+                           newFunc->getFnAttribute("enzymejl_world"));
+  }
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT, AL).getCallee());
 
   if (!F->empty())
     return F;
@@ -1741,10 +1746,17 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
 
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 ArrayRef<llvm::Type *> T,
-                                                Type *reqType) {
+                                                Type *reqType,
+                                                StringRef caller) {
   llvm::SmallVector<llvm::Type *, 4> types(T.begin(), T.end());
   types.push_back(reqType);
+
+  auto &&[prefix, _, postfix] = tripleSplitDollar(caller);
+
   std::string name = "__enzyme_differential_mpi_wait";
+  if (prefix.size() != 0 || postfix.size() != 0) {
+    name = (Twine(name) + "$" + prefix + "$" + postfix).str();
+  }
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -1788,21 +1800,14 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   Value *d_req = buff + 7;
   d_req->setName("d_req");
 
-  bool pmpi = true;
-  auto isendfn = M.getFunction("PMPI_Isend");
-  if (!isendfn) {
-    isendfn = M.getFunction("MPI_Isend");
-    pmpi = false;
-  }
+  auto isendfn = M.getFunction(getRenamedPerCallingConv(caller, "MPI_Isend"));
   assert(isendfn);
-  auto irecvfn = M.getFunction("PMPI_Irecv");
-  if (!irecvfn)
-    irecvfn = M.getFunction("MPI_Irecv");
-  if (!irecvfn) {
-    FunctionType *FuT = isendfn->getFunctionType();
-    std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
-    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
-  }
+  // TODO: what if Isend not defined, but Irecv is?
+  FunctionType *FuT = isendfn->getFunctionType();
+
+  auto irecvfn = cast<Function>(
+      M.getOrInsertFunction(getRenamedPerCallingConv(caller, "MPI_Irecv"), FuT)
+          .getCallee());
   assert(irecvfn);
 
   IRBuilder<> B(entry);
@@ -2358,6 +2363,9 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   using namespace llvm;
   if (isa<StoreInst>(maybeReader))
     return false;
+  if (isa<FenceInst>(maybeReader)) {
+    return false;
+  }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     StringRef funcName = getFuncNameFromCall(call);
 
@@ -3867,7 +3875,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   else
     VI = VI->getNextNode();
   SmallPtrSet<BasicBlock *, 1> regionBetween;
-  {
+  if (inst) {
     SmallVector<BasicBlock *, 1> todo;
     todo.push_back(VI->getParent());
     while (todo.size()) {
@@ -3893,15 +3901,17 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     auto UI = std::get<0>(pair);
     auto level = std::get<1>(pair);
     auto prev = std::get<2>(pair);
-    if (!regionBetween.count(UI->getParent()))
-      continue;
-    if (UI->getParent() == VI->getParent()) {
-      if (UI->comesBefore(VI))
+    if (inst) {
+      if (!regionBetween.count(UI->getParent()))
         continue;
+      if (UI->getParent() == VI->getParent()) {
+        if (UI->comesBefore(VI))
+          continue;
+      }
+      if (UI->getParent() == inst->getParent())
+        if (inst->comesBefore(UI))
+          continue;
     }
-    if (UI->getParent() == inst->getParent())
-      if (inst->comesBefore(UI))
-        continue;
 
     if (isPointerArithmeticInst(UI, /*includephi*/ true,
                                 /*includebin*/ true)) {
@@ -3961,6 +3971,8 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
   return true;
 }
 
+bool notCaptured(llvm::Value *V) { return notCapturedBefore(V, nullptr, 0); }
+
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
@@ -3978,6 +3990,17 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   if (lhs == rhs) {
     return false;
   }
+  if (auto i1 = dyn_cast<Instruction>(op1))
+    if (isa<ConstantPointerNull>(op0) &&
+        hasMetadata(i1, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+  if (auto i0 = dyn_cast<Instruction>(op0))
+    if (isa<ConstantPointerNull>(op1) &&
+        hasMetadata(i0, LLVMContext::MD_nonnull)) {
+      return true;
+    }
+
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
 

@@ -77,6 +77,10 @@ namespace enzyme {
 
 #define GEN_PASS_REGISTRATION
 #include "Passes/Passes.h.inc"
+
+class AutoDiffOp;
+bool inlineAutodiffOp(enzyme::AutoDiffOp &op, RewriterBase &rewriter,
+                      SymbolTableCollection &symbolTable);
 } // namespace enzyme
 
 } // end namespace mlir

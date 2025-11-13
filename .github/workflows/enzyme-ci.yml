@@ -7,6 +7,12 @@ on:
   pull_request:
   merge_group:
 
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
 jobs:
   build-linux:
     name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ${{ matrix.os }}
@@ -62,6 +68,7 @@ jobs:
     - name: add llvm 
       run: |
           brew update
+          brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit requests
     - uses: actions/checkout@v4
@@ -97,6 +104,7 @@ jobs:
     steps:
     - name: add llvm
       run: |
+          brew uninstall cmake
           brew install llvm@${{ matrix.llvm }} make cmake gcc
           sudo python3 -m pip install --upgrade --break-system-packages --user pip lit
     - uses: actions/checkout@v4
