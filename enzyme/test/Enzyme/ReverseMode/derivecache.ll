@@ -58,14 +58,14 @@ attributes #1 = { nofree norecurse nosync nounwind speculatable willreturn memor
 ; CHECK-NEXT:   %i52 = call ptr addrspace(10) @retv(double %i51, ptr addrspace(10) %arg1)
 ; CHECK-NEXT:   %1 = icmp ne ptr addrspace(13) %i50, %0
 ; CHECK-NEXT:   br i1 %1, label %invertbb_active, label %invertbb_amerge
-; CHECK-NEXT: 
-; CHECK-NEXT: invertbb_active:                                  ; preds = %bb
+
+; CHECK: invertbb_active:                                  ; preds = %bb
 ; CHECK-NEXT:   %2 = load double, ptr addrspace(13) %0, align 8
 ; CHECK-NEXT:   %3 = fadd fast double %2, %differeturn
 ; CHECK-NEXT:   store double %3, ptr addrspace(13) %0, align 8
 ; CHECK-NEXT:   br label %invertbb_amerge
-; CHECK-NEXT: 
-; CHECK-NEXT: invertbb_amerge:                                  ; preds = %invertbb_active, %bb
+
+; CHECK: invertbb_amerge:                                  ; preds = %invertbb_active, %bb
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
