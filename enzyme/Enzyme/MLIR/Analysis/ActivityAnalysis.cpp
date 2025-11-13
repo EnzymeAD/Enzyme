@@ -167,6 +167,7 @@ static const std::set<std::string> KnownInactiveFunctions = {
     "logbf",
     "logbl",
     "_ZN4dim3C2Ejjj",
+    "cudaGetErrorString",
 };
 
 static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
