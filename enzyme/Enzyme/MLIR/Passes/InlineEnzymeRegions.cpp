@@ -27,7 +27,6 @@ namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_INLINEENZYMEINTOREGIONPASS
 #define GEN_PASS_DEF_OUTLINEENZYMEFROMREGIONPASS
-#define GEN_PASS_DEF_HOISTENZYMEFROMREGIONPASS
 #include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
@@ -376,16 +375,6 @@ struct OutlineEnzymeFromRegion
   }
 };
 
-struct HoistEnzymeFromRegion
-    : public enzyme::impl::HoistEnzymeFromRegionPassBase<
-          HoistEnzymeFromRegion> {
-  void runOnOperation() override {
-    RewritePatternSet patterns(&getContext());
-
-    GreedyRewriteConfig config;
-    (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
-  }
-};
 } // namespace
 
 bool mlir::enzyme::inlineAutodiffOp(enzyme::AutoDiffOp &op,
