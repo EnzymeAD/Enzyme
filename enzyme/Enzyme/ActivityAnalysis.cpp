@@ -633,9 +633,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
     return val != CI->getOperand(1);
 
-  if (Name == "julia.gc_loaded")
-    return val != CI->getOperand(1);
-
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -664,12 +661,6 @@ static inline void propagateArgumentInformation(
       Name == "__lgammal_r_finite") {
 
     propagateFromOperand(CI.getArgOperand(0));
-    return;
-  }
-
-  // Only the 1-st arg impacts activity
-  if (Name == "julia.gc_loaded") {
-    propagateFromOperand(CI.getArgOperand(1));
     return;
   }
 
