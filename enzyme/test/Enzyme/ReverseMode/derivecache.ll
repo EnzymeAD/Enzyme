@@ -36,7 +36,7 @@ bb:
   ret void
 }
 
-attributes #1 = { nofree norecurse nosync nounwind speculatable willreturn memory(argmem: read) "enzyme_nocache" "enzyme_shouldrecompute" "enzymejl_world"="26726" }
+attributes #1 = { nofree norecurse nosync nounwind speculatable willreturn "enzyme_nocache" "enzyme_shouldrecompute" }
 
 !14 = !{}
 
