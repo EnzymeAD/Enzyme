@@ -1261,6 +1261,9 @@ static inline bool hasNoCache(llvm::Value *op) {
       if (called->hasFnAttribute("enzyme_nocache"))
         return true;
     }
+    if (EnzymeJuliaAddrLoad && getFuncNameFromCall(CB) == "julia.gc_loaded") {
+      return true;
+    }
   }
   if (auto I = dyn_cast<Instruction>(op))
     if (hasMetadata(I, "enzyme_nocache"))

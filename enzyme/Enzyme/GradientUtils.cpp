@@ -8510,7 +8510,10 @@ void GradientUtils::computeMinCache() {
 
       if (NeedGraph.count(V) && MinReq.count(V)) {
         CountTrackedPointers T(V->getType());
-        assert(!T.derived);
+        if (T.derived) {
+          llvm::errs() << " Illegal cached pointer: " << *V << "\n";
+          assert(0);
+        }
       }
     }
   }
