@@ -9632,7 +9632,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "ijl_alloc_array_3d" || allocationfn == "jl_new_array" ||
       allocationfn == "ijl_new_array" ||
       allocationfn == "jl_alloc_genericmemory" ||
-      allocationfn == "ijl_alloc_genericmemory")
+      allocationfn == "ijl_alloc_genericmemory" ||
+      allocationfn == "jl_alloc_genericmemory_unchecked" ||
+      allocationfn == "ijl_alloc_genericmemory_unchecked")
     return nullptr;
 
   if (allocationfn == "enzyme_allocator") {
