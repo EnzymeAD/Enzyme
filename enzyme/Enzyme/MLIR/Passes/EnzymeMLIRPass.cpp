@@ -14,6 +14,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
+#include "Passes/RemovalUtils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -220,8 +221,8 @@ struct DifferentiatePass
     {
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op"
-                       << " CI: " << CI << "\n";
+          llvm::errs() << "Too few arguments to autodiff op" << " CI: " << CI
+                       << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -256,8 +257,8 @@ struct DifferentiatePass
         args.push_back(res);
         if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
           if (call_idx >= CI.getInputs().size()) {
-            llvm::errs() << "Too few arguments to autodiff op"
-                         << "CI: " << CI << "\n";
+            llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
+                         << "\n";
             return failure();
           }
           res = CI.getInputs()[call_idx];
@@ -307,8 +308,8 @@ struct DifferentiatePass
       returnShadows.push_back(false);
       if (ty == DIFFE_TYPE::OUT_DIFF) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op"
-                       << "CI: " << CI << "\n";
+          llvm::errs() << "Too few arguments to autodiff op" << "CI: " << CI
+                       << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -356,16 +357,6 @@ struct DifferentiatePass
                                         enzyme::AutoDiffSplitModePrimalOp CI) {
     auto tape = CI.getTape();
 
-    SmallVector<Operation *> reverseCalls;
-    for (auto user : tape.getUsers()) {
-      if (isa<enzyme::AutoDiffSplitModeReverseOp>(user))
-        reverseCalls.push_back(user);
-      else {
-        user->emitError() << "todo: unsupported tape usage";
-        return failure();
-      }
-    }
-
     auto &symbTable =
         symbolTable.getSymbolTable(SymbolTable::getNearestSymbolTable(CI));
 
@@ -392,8 +383,8 @@ struct DifferentiatePass
     {
       for (auto act : CI.getActivity()) {
         if (call_idx >= CI.getInputs().size()) {
-          llvm::errs() << "Too few arguments to autodiff op"
-                       << " CI: " << CI << "\n";
+          llvm::errs() << "Too few arguments to autodiff op" << " CI: " << CI
+                       << "\n";
           return failure();
         }
         mlir::Value res = CI.getInputs()[call_idx];
@@ -498,21 +489,33 @@ struct DifferentiatePass
     SetVector<Operation *> toDelete;
 
     tape = primalCall.getTape();
-    for (auto tapeUser : tape.getUsers()) {
-      if (auto revCall =
-              dyn_cast<enzyme::AutoDiffSplitModeReverseOp>(tapeUser)) {
 
-        OpBuilder builder(revCall);
-        auto newRevCall = enzyme::CallCustomReverseOp::create(
-            builder, revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
-            revCall.getInputs(), tape);
-        revCall.replaceAllUsesWith(newRevCall.getResults());
+    SmallVector<Value, 2> tapeWorklist = {tape};
+    while (!tapeWorklist.empty()) {
+      tape = tapeWorklist.back();
+      tapeWorklist.pop_back();
+      for (auto tapeUser : tape.getUsers()) {
+        if (auto revCall =
+                dyn_cast<enzyme::AutoDiffSplitModeReverseOp>(tapeUser)) {
 
-        toDelete.insert(revCall);
-      } else {
-        tapeUser->emitError()
-            << "todo: support tape going through this operation";
-        return failure();
+          OpBuilder builder(revCall);
+          auto newRevCall = enzyme::CallCustomReverseOp::create(
+              builder, revCall.getLoc(), revCall.getResultTypes(), ruleToCall,
+              revCall.getInputs(), tape);
+          revCall.replaceAllUsesWith(newRevCall.getResults());
+
+          toDelete.insert(revCall);
+        } else if (auto pushOp = dyn_cast<enzyme::PushOp>(tapeUser)) {
+          assert(pushOp.getValue() == tape);
+
+          CacheInfo info(pushOp.getCache());
+
+          tapeWorklist.push_back(info.popOp.getResult());
+        } else {
+          tapeUser->emitError()
+              << "todo: support tape going through this operation";
+          return failure();
+        }
       }
     }
 

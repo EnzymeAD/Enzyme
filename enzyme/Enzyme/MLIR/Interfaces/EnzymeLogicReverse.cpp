@@ -412,14 +412,26 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       strongZero);
 
   gutils->createReverseModeBlocks(fn.getFunctionBody(), reverse.getBody());
-  gutils->registerCacheCreatorHook([&](Type ty) -> std::pair<Value, Value> {
+  std::function<std::pair<Value, Value>(Type)> cacheCreatorHook =
+      [&](Type ty) -> std::pair<Value, Value> {
     Value cache = enzyme::InitOp::create(ruleBuilder, fn.getLoc(), ty);
     return {cache, cache};
-  });
-  gutils->registerGradientCreatorHook([&](Location loc, Type ty) -> Value {
+  };
+  gutils->registerCacheCreatorHook(cacheCreatorHook);
+  std::function<Value(Location, Type)> gradientCreatorHook =
+      [&](Location loc, Type ty) -> Value {
+    auto shadowType =
+        cast<AutoDiffTypeInterface>(ty).getShadowType(gutils->width);
+    auto gradientType = enzyme::GradientType::get(ty.getContext(), shadowType);
     auto reverseEntry = &reverse.getBody().front();
     OpBuilder gBuilder(reverseEntry, reverseEntry->begin());
-    return enzyme::InitOp::create(gBuilder, loc, ty);
+    return enzyme::InitOp::create(gBuilder, loc, gradientType);
+  };
+  gutils->registerGradientCreatorHook(gradientCreatorHook);
+
+  auto scope = llvm::make_scope_exit([&]() {
+    gutils->deregisterCacheCreatorHook(cacheCreatorHook);
+    gutils->deregisterGradientCreatorHook(gradientCreatorHook);
   });
 
   bool valid = true;
