@@ -160,3 +160,24 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
 // CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %[[LOAD]], %arg1 : f64
 // CHECK-NEXT:    return %[[MUL]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
+  %0 = enzyme.autodiff_region(%arg0, %arg1) {
+  ^bb0(%arg2: f64):
+    %1 = arith.mulf %arg0, %arg2 : f64
+    enzyme.yield %1 : f64
+  } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  return %0 : f64
+}
+
+
+// CHECK:  func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    return %0 : f64
+// CHECK-NEXT:  }
+// CHECK:  func.func @dsquare_to_diff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:    return %0 : f64
+// CHECK-NEXT:  }
