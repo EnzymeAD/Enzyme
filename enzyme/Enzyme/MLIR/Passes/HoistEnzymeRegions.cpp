@@ -31,14 +31,27 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
+#define DEBUG_TYPE "enzyme-hoist"
+#define ENZYME_DBGS llvm::dbgs() << "[" << DEBUG_TYPE << "]"
+
 namespace {
 
 struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
   using OpRewritePattern<enzyme::AutoDiffRegionOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(enzyme::AutoDiffRegionOp op,
                                 PatternRewriter &rewriter) const override {
+
+    SmallVector<Value> primalArgs = op.getPrimalInputs(); 
+    Region &body = op.getBody();
+    SmallVector<Value> primalBlockArgs(body.getArguments());
     
-    return success();
+    if (primalArgs.size() != primalBlockArgs.size())
+      return failure();
+
+    SmallVector<Operation *> moveList, dontmoveList;
+    ;
+
+    return failure();
   }
 };
 
