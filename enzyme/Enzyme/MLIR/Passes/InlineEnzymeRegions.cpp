@@ -124,11 +124,23 @@ outlineAutoDiffFunc(enzyme::AutoDiffRegionOp op, StringRef funcName,
   llvm::SetVector<Value> freeValues;
   getUsedValuesDefinedAbove(autodiffRegion, freeValues);
 
+  llvm::SmallVector<Value> primalValuesAbove = op.getPrimalInputs();
+  llvm::SmallVector<Value> blockArgs(autodiffRegion.getArguments());
   for (Value value : freeValues) {
-    inputs.push_back(value);
-    argTypes.push_back(value.getType());
-    argLocs.push_back(value.getLoc());
-    argActivities.push_back(enzyme::Activity::enzyme_const);
+    bool isPrimal = false;
+    for (auto [pval, bval] : llvm::zip(primalValuesAbove, blockArgs)) {
+      if (value == pval) {
+        isPrimal = true;
+        value.replaceAllUsesWith(bval);
+      }
+    }
+
+    if (!isPrimal) {
+      inputs.push_back(value);
+      argTypes.push_back(value.getType());
+      argLocs.push_back(value.getLoc());
+      argActivities.push_back(enzyme::Activity::enzyme_const);
+    }
   }
   auto fnType = builder.getFunctionType(argTypes, resultTypes);
 
