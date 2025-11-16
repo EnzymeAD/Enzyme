@@ -1699,6 +1699,137 @@ void SplitPHIs(llvm::Function &F) {
   }
 }
 
+// returns if newly changed, subject to the pending calls
+bool DetectPointerArgOfFn(llvm::Function &F,
+                             SmallPtrSetImpl<Function *> &calls_todo) {
+  if (F.empty())
+    return false;
+  bool changed = false;
+  for (auto &arg : F.getArguments()) {
+    if (!arg.getType().isPointerTy()) continue;
+    // Store list of values we need to check
+    std::deque<Value*> todo = { arg };
+    SmallPtrSet<Value*, 1> seen;
+
+    bool captured = false;
+    bool read = false;
+    bool written = false;
+
+
+    AttributeList Attrs = arg->getParent()->getAttributes();
+
+    // We have already hit the max state.
+
+    if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
+        Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture))
+      continue;
+
+    while (!todo.empty()) {
+      auto cur = todo.pop_back_val();
+      if (seen.contains(cur))
+        continue;
+      seen.insert(cur);
+      for (auto &U : cur.uses()) {
+        auto I = cast<Instruction>(U.getUser());
+        if (isPointerArithmeticInst(I)) {
+          todo.push_back(I);
+          continue;
+        }
+        if (isa<LoadInst>(I)) {
+          read = true;
+          continue;
+        }
+        if (auto SI = dyn_cast<StoreInst>(I)) {
+          if (SI.getValueOperand() == cur) {
+            captured = true;
+            read = true;
+            written = true;
+            break;
+          }
+          if (SI.getPointerOperand() == cur) {
+            written = true;
+            continue;
+          }
+        }
+        if (auto CB = dyn_cast<CallBase>(I)) {
+
+          if (CB->getCalledOperand() == cur) {
+            continue;
+          }
+
+          auto F2 = dyn_cast<Function>(CB->getCalledOperand());
+
+          if (F2 == &F && U.getOperandNo() == arg.getArgNo()) {
+            continue;
+          }
+
+          // Used as operand bundle
+          if (U.getOperandNo() >= CB->getNumArgOperands()) {
+            captured = true;
+            read = true;
+            written = true;
+            break;
+          }
+
+          if (!isNoCapture(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
+            captured = true;
+            if (F2)
+              calls_todo.insert(F2);
+          }
+
+          if (!isReadOnly(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
+            written = true;
+            if (F2)
+              calls_todo.insert(F2);
+          }
+
+          if (!isWriteOnly(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+            read = true;
+            if (F2)
+              calls_todo.insert(F2);
+          }
+          continue;
+        }
+
+        captured = true;
+        read = true;
+        written = true;
+        break;
+      }
+    }
+
+
+    if (!captured && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
+      arg.addAttr(Attribute::NoCapture);
+      changed = true;
+    }
+
+    if (!read && !written || Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+      if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+        if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
+          arg.removeAttr(Attribute::ReadOnly);
+        }
+        if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+          arg.removeAttr(Attribute::WriteOnly);
+        }
+        arg.addAttr(Attribute::ReadNone);
+        changed = true;
+      }
+    } else if (!written) {
+      if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
+        arg.addAttr(Attribute::ReadOnly);
+        changed = true;
+      }
+    } else if (!read) {
+      if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+        arg.addAttr(Attribute::WriteOnly);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -1915,6 +2046,48 @@ bool DetectReadonlyOrThrow(Module &M) {
 
   bool changed = false;
 
+  {
+    // Set of functions newly deduced readonly/nocapture/etc by this pass
+    SmallVector<llvm::Function *> todo;
+
+    // Map of functions which could be readonly if all functions in the set are
+    // marked readonly
+    DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
+
+    for (Function &F : M) {
+      SmallPtrSet<Function *, 1> calls_todo;
+      if (DetectPointerArgOfFn(F, calls_todo)) {
+        changed = true;
+      }
+      for (auto tocheck : calls_todo) {
+        todo_map[tocheck].insert(&F);
+        todo.push_back(tocheck);
+      }
+    }
+
+    while (!todo.empty()) {
+      auto cur = todo.pop_back_val();
+
+      SmallPtrSet<Function *, 1> calls_todo;
+
+      if (!DetectPointerArgOfFn(cur, calls_todo))
+        continue;
+
+      for (auto F2 : todo_map[cur]) {
+        todo.push_back(F2);
+      }
+
+      todo_map.erase(cur);
+
+      for (auto tocheck : calls_todo) {
+        todo_map[tocheck].insert(&F);
+        todo.push_back(tocheck);
+      }
+
+      changed = true;
+    }
+  }
+
   PassBuilder PB;
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
@@ -1938,6 +2111,7 @@ bool DetectReadonlyOrThrow(Module &M) {
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
   SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
+
 
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;

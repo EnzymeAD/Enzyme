@@ -4074,3 +4074,128 @@ bool isTargetNVPTX(llvm::Module &M) {
   return M.getTargetTriple().find("nvptx") != std::string::npos;
 #endif
 }
+
+static Value* constantInBoundsGEPHelper(llvm::IRBuilder&B, llvm::Type *type, llvm::Value* value, ArrayRef<unsigned> path) {
+  SmallVector<Value*, 2> vals;
+  vals.push_back(ConstantInt::get(B.getInt64Ty(), 0));
+  for (auto v : path) {
+    vals.push_back(ConstantInt::get(B.getInt32Ty(), v));
+  }
+  return B.CreateInBoundsGEP(jltype, value, vals);
+}
+
+llvm::Value* moveSRetToFromRoots(llvm::IRBuilder&B, llvm::Type *jltype, llvm::Value* sret, llvm::Type* root_ty, llvm::Value* rootRet, size_t rootOffset, SRetRootMovement direction) {
+  std::deque<std::pair<llvm::Type*, std::vector<unsigned>>> todo;
+  SmallVector<Value*> extracted;
+  Value *val = sret;
+  auto rootOffset0 = rootOffset;
+  while (!todo.empty()) {
+    auto cur = std::move(todo[0]);
+    todo.pop_front();
+    auto path = std::move(cur.second);
+    auto ty = cur.first;
+
+    if (auto PT = dyn_cast<PointerType>(ty)) {
+      if (!isSpecialPtr(PT)) continue;
+
+      Value *loc = nullptr;
+      switch (direction) {
+      case SRetRootMovement::SRetPointerToRootPointer:
+      case SRetRootMovement::SRetValueToRootPointer:
+      case SRetRootMovement::RootPointerToSRetPointer:
+      case SRetRootMovement::RootPointerToSRetValue:
+        loc = constantInBoundsGEPHelper(B, root_ty, rootRet, rootOffset);
+      default:
+        llvm_unreachable("Unhandled");
+      }
+
+      switch (direction) {
+      case SRetRootMovement::SRetPointerToRootPointer:{
+        Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
+        outloc = B.CreateLoad(ty, outloc);
+        B.CreateStore(outloc, loc);
+        break;
+      }
+      case SRetRootMovement::SRetValueToRootPointer:{
+        Value *outloc = GradientUtils::extractMeta(builder, sret, path);
+        B.CreateStore(outloc, loc);
+        break;
+      }
+      case SRetRootMovement::RootPointerToSRetValue:{
+        loc = B.CreateLoad(ty, loc);
+        val = B.CreateInsertValue(val, loc, path);
+        break;
+      }
+      case SRetRootMovement::NullifySRetValue:{
+        loc = getUndefinedValueForType(B.GetInsertBlock()->getParent()->getParent(), ty, false);
+        val = B.CreateInsertValue(val, loc, path);
+        break;
+      }
+      case SRetRootMovement::RootPointerToSRetPointer:{
+        Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
+        loc = B.CreateLoad(ty, loc);
+        extracted.push_back(loc);
+        B.CreateStore(loc, outloc);
+      }
+      default:
+        llvm_unreachable("Unhandled");
+      }
+
+      rootOffset += 1;
+      continue;
+    }
+
+    if (auto AT = dyn_cast<ArrayType>(ty)) {
+      for (size_t i=0; i<AT->getNumElements(); i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(i);
+        todo.emplace_back(AT->getElementType(), path2);
+      }
+      continue;
+    }
+
+    if (auto VT = dyn_cast<VectorType>(ty)) {
+      for (size_t i=0; i<VT->getElementCount().getKnownMinValue(); i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(i);
+        todo.emplace_back(VT->getElementType(), path2);
+      }
+      continue;
+    }
+
+    if (auto ST = dyn_cast<StructType>(ty)) {
+      for (size_t i=0; i<ST->getNumElements(); i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(i);
+        todo.emplace_back(ST->getTypeAtIndex(i), path2);
+      }
+      continue;
+    }
+
+  }
+
+
+  if (direction == SRetRootMovement::RootPointerToSRetPointer) {
+    auto obj = getBaseObject(sret);
+    auto PT = cast<PointerType>(obj->getType());
+    assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
+    if (PT->getAddressSpace() == 10 && extracted.size()) {
+      extracted.push_front(obj);
+      auto JLT =
+          PointerType::get(StructType::get(SI->getContext(), {}), 10);
+      auto FT = FunctionType::get(JLT, {}, true);
+      auto wb = B.GetInsertBlock()
+                    ->getParent()
+                    ->getParent()
+                    ->getOrInsertFunction("julia.write_barrier", FT);
+      assert(obj->getType() == JLT);      
+      B.CreateCall(wb, subvals);
+    }
+  }
+  
+  CountTrackedPointers tracked(jltype);
+  assert(rootOffset - rootOffset0 == tracked.count);
+
+  return val;
+}
+

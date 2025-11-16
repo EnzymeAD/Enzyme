@@ -9159,9 +9159,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           // separately handled in a GC postprocessing pass. Moreover these
           // values are never `needed` in the reverse pass (just we need to mark
           // those values as being GC'd by the function).
-          bool returnRoots =
-              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots") ||
-              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots_v");
+          bool returnRoots = false;
+          //    CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots") ||
+          //    CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots_v");
           if (primalNeededInReverse && !returnRoots) {
             promotable = false;
             EmitWarning("NotPromotable", *cur, " Could not promote allocation ",

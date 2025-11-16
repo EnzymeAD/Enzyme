@@ -943,7 +943,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   if (noActiveWrite ||
       (isa<CallBase>(I) && isLocalReadOnlyOrThrow(cast<CallBase>(I)))) {
     bool checkSret = false;
-    if (!noActiveWrite && hasSRetOrUnionSRet(cast<CallBase>(I))) {
+    if (!noActiveWrite && hasSRetRRootsOrUnionSRet(cast<CallBase>(I))) {
       checkSret = true;
     }
     // Even if the return is nonconstant, it's worth checking explicitly the
@@ -969,14 +969,38 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             new ActivityAnalyzer(*this, DOWN));
         DownHypothesis->ConstantInstructions.insert(I);
         if (checkSret) {
-          auto baseObj = getBaseObject(cast<CallBase>(I)->getArgOperand(0));
-          if ((I->getType()->isVoidTy() ||
+          auto CB = cast<CallBase>(I);
+          bool legal = false;
+          for (size_t i=0; i<CB->getNumArgOperands(); i++) {
+            if (i == 0 && CB->hasStructRetAttr()) {
+            } else if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                         "enzymejl_sret_union_bytes")
+                     .isValid()) {
+            } else if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                         "enzymejl_returnRoots")
+                     .isValid()) {
+            } else {
+              continue;
+            }
+            Value *obj = getBaseObject(CB->getArgOperand(i));
+            if (ConstantValues.find(obj) != ConstantValues.end()) {
+              continue;
+            }
+            if (directions != 3) {
+              legal = false;
+              break;
+            }
+            if (!DownHypothesis->isValueInactiveFromUsers(
+                                       TR, baseObj, UseActivity::None)) {
+              legal = false;
+              break;
+            }
+          }
+
+          if (legal && (I->getType()->isVoidTy() ||
                ConstantValues.find(I) != ConstantValues.end() ||
                DownHypothesis->isValueInactiveFromUsers(TR, I,
-                                                        UseActivity::None)) &&
-              (ConstantValues.find(baseObj) != ConstantValues.end() ||
-               (directions == 3 && DownHypothesis->isValueInactiveFromUsers(
-                                       TR, baseObj, UseActivity::None)))) {
+                                                        UseActivity::None))) {
             if (EnzymePrintActivity)
               llvm::errs() << " constant instruction[" << (int)directions
                            << "] from users instruction " << *I << "\n";
@@ -1978,9 +2002,33 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           AARes = ModRefInfo::NoModRef;
 
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
-        if (hasSRetOrUnionSRet(CB) &&
-            getBaseObject(CB->getArgOperand(0)) == getBaseObject(Val))
-          ReadOnly = false;
+        if (ReadOnly) {
+          auto BaseVal = getBaseObject(Val);
+          for (size_t i=0; i<CB->getNumArgOperands(); i++) {
+            if (i == 0 && CB->hasStructRetAttr()) {
+              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
+                ReadOnly = false;
+                break;
+              }
+            }
+            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                         "enzymejl_sret_union_bytes")
+                     .isValid()) {
+              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
+                ReadOnly = false;
+                break;
+              }
+            }
+            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                         "enzymejl_returnRoots")
+                     .isValid()) {
+              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
+                ReadOnly = false;
+                break;
+              }
+            }
+          }
+        }
 
         bool WriteOnly = isWriteOnly(CB);
 
@@ -3040,9 +3088,17 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         mayCapture |= !NoCapture;
 
         bool ReadOnly = isReadOnly(call, idx);
-        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && idx != 0 &&
-            hasSRetOrUnionSRet(call))
+
+        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && !(CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
+                                         "enzymejl_sret_union_bytes")
+                     .isValid()) &&
+          !(CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
+                                         "enzymejl_returnRoots")
+                     .isValid()) &&
+          !(idx == 0 && CB->hasStructRetAttr())
+          ) {
           ReadOnly = true;
+        }
 
         mayWrite |= !ReadOnly;
 
