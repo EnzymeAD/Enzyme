@@ -185,10 +185,14 @@ bool accuracyDPSolver(
     SmallVector<CandidateOutput, 4> &COs,
     SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    double errorTol) {
   bool changed = false;
   llvm::errs() << "Starting accuracy DP solver with computation budget: "
                << FPOptComputationCostBudget << "\n";
+  if (errorTol > 0.0) {
+    llvm::errs() << "Absolute error tolerance: " << errorTol << "\n";
+  }
 
   using CostMap = std::map<InstructionCost, double>;
   using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
@@ -799,23 +803,57 @@ bool accuracyDPSolver(
 
   double minAccCost = std::numeric_limits<double>::infinity();
   InstructionCost bestCompCost = 0;
-  for (const auto &pair : costToAccuracyMap) {
-    InstructionCost compCost = pair.first;
-    double accCost = pair.second;
 
-    if (compCost <= FPOptComputationCostBudget && accCost < minAccCost) {
-      minAccCost = accCost;
-      bestCompCost = compCost;
+  if (errorTol > 0.0) {
+    InstructionCost minCompCost = std::numeric_limits<InstructionCost>::max();
+    bool foundSolution = false;
+
+    for (const auto &pair : costToAccuracyMap) {
+      InstructionCost compCost = pair.first;
+      double accCost = pair.second;
+
+      if (accCost <= errorTol) {
+        if (compCost < minCompCost) {
+          minCompCost = compCost;
+          minAccCost = accCost;
+          bestCompCost = compCost;
+          foundSolution = true;
+        }
+      }
     }
-  }
 
-  if (minAccCost == std::numeric_limits<double>::infinity()) {
-    llvm::errs() << "No solution found within the computation cost budget!\n";
-    return changed;
-  }
+    if (!foundSolution) {
+      llvm::errs() << "No solution found that meets accuracy tolerance "
+                   << errorTol << "!\n";
+      llvm::errs() << "Best achievable accuracy in DP table: "
+                   << costToAccuracyMap.begin()->second << "\n";
+      return changed;
+    }
 
-  llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost << "\n";
-  llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
+    llvm::errs() << "Found solution meeting accuracy tolerance " << errorTol
+                 << "\n";
+    llvm::errs() << "Accuracy cost achieved: " << minAccCost << "\n";
+    llvm::errs() << "Computation cost required: " << bestCompCost << "\n";
+  } else {
+    for (const auto &pair : costToAccuracyMap) {
+      InstructionCost compCost = pair.first;
+      double accCost = pair.second;
+
+      if (compCost <= FPOptComputationCostBudget && accCost < minAccCost) {
+        minAccCost = accCost;
+        bestCompCost = compCost;
+      }
+    }
+
+    if (minAccCost == std::numeric_limits<double>::infinity()) {
+      llvm::errs() << "No solution found within the computation cost budget!\n";
+      return changed;
+    }
+
+    llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost
+                 << "\n";
+    llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
+  }
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "FPOpt DP solver: expected a solution!");

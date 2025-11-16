@@ -48,6 +48,7 @@ bool accuracyDPSolver(
     SmallVector<CandidateOutput, 4> &COs,
     SmallVector<CandidateSubgraph, 4> &CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap);
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    double errorTol = 0.0);
 
 #endif // ENZYME_POSEIDON_SOLVERS_H

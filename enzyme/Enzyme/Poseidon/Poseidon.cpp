@@ -347,8 +347,7 @@ void preprocessForPoseidon(Function *F) {
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
-bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
-                double relErrorTol) {
+bool fpOptimize(Function &F, const TargetTransformInfo &TTI, double errorTol) {
   bool changed = false;
 
   // llvm::errs() << "FPOpt: Starting optimization for " << F.getName() << "\n";
@@ -1179,8 +1178,8 @@ B2:
       changed =
           accuracyGreedySolver(COs, CSs, valueToNodeMap, symbolToValueMap);
     } else if (FPOptSolverType == "dp") {
-      changed =
-          accuracyDPSolver(F, TTI, COs, CSs, valueToNodeMap, symbolToValueMap);
+      changed = accuracyDPSolver(F, TTI, COs, CSs, valueToNodeMap,
+                                 symbolToValueMap, errorTol);
     } else {
       llvm::errs() << "FPOpt: Unknown solver type: " << FPOptSolverType << "\n";
       return false;

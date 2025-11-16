@@ -30,7 +30,7 @@ bool Poseidonable(const Value &V);
 void setPoseidonMetadata(Function &F);
 void preprocessForPoseidon(Function *F);
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI,
-                double relErrorTol = 0.0);
+                double errorTol = 0.0);
 
 class FPOpt final : public FunctionPass {
 public:
