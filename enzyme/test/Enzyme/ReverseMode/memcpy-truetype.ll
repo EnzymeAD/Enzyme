@@ -28,7 +28,7 @@ attributes #2 = { noinline nounwind uwtable }
 !0 = !{!"Float@float", i64 0, !"Integer", i64 8, !"Float@float", i64 50000, !"Integer", i64 50008}
 
 
-; CHECK: define internal void @diffememcpy_float(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'")
+; CHECK: define internal void @diffememcpy_float(i8* nocapture writeonly %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = getelementptr inbounds i8, i8* %"dst'", i64 8
 ; CHECK-NEXT:   %1 = getelementptr inbounds i8, i8* %"src'", i64 8

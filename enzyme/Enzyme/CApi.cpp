@@ -2168,11 +2168,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                        AttributeList::FunctionIndex, attr);
 
-    SmallVector<Value *, 1> sret_vals;
-    SmallVector<Value *, 1> sretv_vals;
-
-    SmallVector<Value *, 1> rroot_vals;
-    SmallVector<Value *, 1> rrootv_vals;
+    SmallVector<std::tuple<Value *, Value *, Type *>> preCallReplacements;
+    SmallVector<std::tuple<Value *, Value *, Type *>> postCallReplacements;
 
     {
       size_t local_root_count =
@@ -2186,7 +2183,26 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
 
         if (enzyme_srets.count(i)) {
-          sret_vals.push_back(CI->getArgOperand(i));
+
+          auto val = CI->getArgOperand(i);
+
+          IRBuilder<> AIB(cast<Instruction>(val));
+          Value *gep = sret;
+          if (ST) {
+            gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+          }
+
+          if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
+            AI->replaceAllUsesWith(gep);
+            AI->eraseFromParent();
+          } else {
+            assert(!isa<UndefValue>(val));
+            assert(!isa<PoisonValue>(val));
+            assert(!isa<ConstantPointerNull>(val));
+            // TODO consider doing pre-emptive pre zero of the section?
+            postCallReplacements.emplace_back(val, gep, Types[sretCount]);
+            preCallReplacements.emplace_back(val, gep, Types[sretCount]);
+          }
 
           if (reroot_enzyme_srets.count(i)) {
             local_root_count += CountTrackedPointers(Types[sretCount]).count;
@@ -2197,86 +2213,115 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         }
 
         if (enzyme_srets_v.count(i)) {
-          sretv_vals.push_back(CI->getArgOperand(i));
-
-          auto AT = cast<ArrayType>(CI->getArgOperand(i)->getType());
+          auto VAT = cast<ArrayType>(CI->getArgOperand(i)->getType());
 
           if (reroot_enzyme_srets_v.count(i)) {
             local_root_count += CountTrackedPointers(Types[sretCount]).count *
-                                AT->getNumElements();
+                                VAT->getNumElements();
           }
 
-          sretCount += AT->getNumElements();
+          for (size_t j = 0; j < VAT->getNumElements(); j++) {
+
+            IRBuilder<> AIB(
+                cast<Instruction>(CI->getArgOperand(i))->getNextNode());
+            auto val = GradientUtils::extractMeta(AIB, CI->getArgOperand(i), j);
+
+            Value *gep = sret;
+            if (ST) {
+              gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+            }
+            if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+            } else {
+              assert(!isa<UndefValue>(val));
+              assert(!isa<PoisonValue>(val));
+              assert(!isa<ConstantPointerNull>(val));
+              // TODO consider doing pre-emptive pre zero of the section?
+              postCallReplacements.emplace_back(val, gep, Types[sretCount]);
+              preCallReplacements.emplace_back(val, gep, Types[sretCount]);
+            }
+
+            sretCount++;
+          }
 
           continue;
         }
 
         if (rroots.count(i)) {
-          rroot_vals.push_back(CI->getArgOperand(i));
-
           auto val = CI->getArgOperand(i);
-          if (auto AI = dyn_cast<AllocaInst>(val)) {
-            auto AT = cast<ArrayType>(AI->getAllocatedType());
-            IRBuilder<> AIB(AI);
+          IRBuilder<> AIB(cast<Instruction>(val));
+
+          Value *gep = roots;
+          if (local_root_count != 0) {
+            gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
+                                                 local_root_count);
+            }
+
+            size_t subCount = convertRRootCountFromString(
+                Attrs
+                    .getAttribute(AttributeList::FirstArgIndex + i,
+                                  "enzymejl_returnRoots")
+                    .getValueAsString());
+
+            if (subCount != numRooting) {
+              gep = AIB.CreatePointerCast(
+                  gep, PointerType::getUnqual(
+                           ArrayType::get(T_prjlvalue, subCount)));
+            }
+            local_root_count += subCount;
+
+            if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+            } else {
+              assert(!isa<UndefValue>(val));
+              assert(!isa<PoisonValue>(val));
+              assert(!isa<ConstantPointerNull>(val));
+              // TODO consider doing pre-emptive pre zero of the section?
+              preCallReplacements.emplace_back(
+                  val, gep, ArrayType::get(T_prjlvalue, subCount));
+              postCallReplacements.emplace_back(
+                  val, gep, ArrayType::get(T_prjlvalue, subCount));
+            }
+        }
+
+        if (rroots_v.count(i)) {
+
+          size_t subCount = convertRRootCountFromString(
+              Attrs
+                  .getAttribute(AttributeList::FirstArgIndex + i,
+                                "enzymejl_returnRoots")
+                  .getValueAsString());
+
+          auto VAT = dyn_cast<ArrayType>(CI->getArgOperand(i)->getType());
+          for (size_t j = 0; j < VAT->getNumElements(); j++) {
+
+            IRBuilder<> AIB(
+                cast<Instruction>(CI->getArgOperand(i))->getNextNode());
+            auto val = GradientUtils::extractMeta(EB, CI->getArgOperand(i), j);
 
             Value *gep = roots;
             if (local_root_count != 0) {
               gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
                                                    local_root_count);
             }
-            if (AT->getNumElements() != numRooting) {
-              gep = AIB.CreatePointerCast(
-                  gep, PointerType::getUnqual(
-                           ArrayType::get(T_prjlvalue, AT->getNumElements())));
-            }
-
-            AI->replaceAllUsesWith(gep);
-            AI->eraseFromParent();
-            local_root_count += AT->getNumElements();
-          } else {
-            assert(!isa<UndefValue>(val));
-            assert(!isa<PoisonValue>(val));
-            assert(!isa<ConstantPointerNull>(val));
-            llvm::errs() << *CI->getParent()->getParent() << "\n";
-            llvm::errs() << " CI: " << *CI << " val: " << *val << "\n";
-            llvm_unreachable("Root was not an alloca inst");
-          }
-        }
-
-        if (rroots_v.count(i)) {
-          rrootv_vals.push_back(CI->getArgOperand(i));
-
-          auto VAT = dyn_cast<ArrayType>(CI->getArgOperand(i)->getType());
-          for (size_t j = 0; j < VAT->getNumElements(); j++) {
-
-            auto val = GradientUtils::extractMeta(EB, CI->getArgOperand(i), j);
-            if (auto AI = dyn_cast<AllocaInst>(val)) {
-              assert(AI);
-
-              auto AT = dyn_cast<ArrayType>(AI->getAllocatedType());
-              IRBuilder<> AIB(AI);
-
-              Value *gep = roots;
-              if (local_root_count != 0) {
-                gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
-                                                     local_root_count);
-              }
-              if (AT->getNumElements() != numRooting) {
-                gep = AIB.CreatePointerCast(
-                    gep, PointerType::getUnqual(ArrayType::get(
-                             T_prjlvalue, AT->getNumElements())));
-              }
-
+            gep = AIB.CreatePointerCast(
+                gep,
+                PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+            local_root_count += subCount;
+            if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
-              local_root_count += AT->getNumElements();
             } else {
               assert(!isa<UndefValue>(val));
               assert(!isa<PoisonValue>(val));
               assert(!isa<ConstantPointerNull>(val));
-              llvm::errs() << *CI->getParent()->getParent() << "\n";
-              llvm::errs() << " CI: " << *CI << " val: " << *val << "\n";
-              llvm_unreachable("Root_v was not an alloca inst");
+              // TODO consider doing pre-emptive pre zero of the section?
+              preCallReplacements.emplace_back(
+                  val, gep, ArrayType::get(T_prjlvalue, subCount));
+              postCallReplacements.emplace_back(
+                  val, gep, ArrayType::get(T_prjlvalue, subCount));
             }
           }
           continue;
@@ -2297,33 +2342,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     // pass in the values that were actually there before the call
     // TODO we can optimize this further and avoid the copy in the primal and/or
     // forward mode as the copy is _only_ needed for the adjoint.
-    {
-      size_t sretCount = 0;
-      if (!RT->isVoidTy()) {
-        sretCount++;
-      }
-
-      for (Value *ptr : sret_vals) {
-        copyNonJLValueInto(
-            B, Types[sretCount], sretTy, sret,
-            ST ? ArrayRef<unsigned>(std::vector<unsigned>{(unsigned)sretCount})
-               : ArrayRef<unsigned>(),
-            Types[sretCount], ptr, {}, /*shouldZero*/ true);
-        sretCount++;
-      }
-
-      for (Value *ptr_v : sretv_vals) {
-        auto AT = cast<ArrayType>(ptr_v->getType());
-        for (size_t j = 0; j < AT->getNumElements(); j++) {
-          auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
-          assert(ST);
-          copyNonJLValueInto(B, Types[sretCount], sretTy, sret,
-                             {(unsigned)(sretCount + j)}, Types[sretCount], ptr,
-                             {}, /*shouldZero*/ true);
-        }
-        sretCount += AT->getNumElements();
-      }
-      assert(sretCount == Types.size());
+    for (auto &&[val, gep, ty] : preCallReplacements) {
+      copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {}, /*shouldZero*/ true);
     }
 
     // Actually perform the call, copying over relevant information.
@@ -2344,7 +2364,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       NC->copyMetadata(*CI, toCopy);
     NC->setDebugLoc(CI->getDebugLoc());
 
-    size_t sretCount = 0;
     if (!RT->isVoidTy()) {
       auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
       auto ld = B.CreateLoad(RT, gep);
@@ -2362,38 +2381,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       //}
 
       CI->replaceAllUsesWith(replacement);
-      sretCount++;
     }
 
-    for (auto ptr : sret_vals) {
-      assert(!isa<UndefValue>(ptr));
-      assert(!isa<PoisonValue>(ptr));
-      assert(!isa<ConstantPointerNull>(ptr));
-      if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
-        auto gep =
-            ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
-        auto ld = B.CreateLoad(Types[sretCount], gep);
-        auto SI = B.CreateStore(ld, ptr);
-        PostCacheStore(SI, B);
-      }
-      sretCount++;
-    }
-    for (auto ptr_v : sretv_vals) {
-      auto AT = cast<ArrayType>(ptr_v->getType());
-      for (size_t j = 0; j < AT->getNumElements(); j++) {
-        auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
-                      : sret;
-        auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
-        if (!isa<UndefValue>(ptr) && !isa<PoisonValue>(ptr)) {
-          auto ld = B.CreateLoad(Types[sretCount], gep);
-          auto SI = B.CreateStore(ld, ptr);
-          PostCacheStore(SI, B);
-        }
-      }
-      sretCount += AT->getNumElements();
+    for (auto &&[val, gep, ty] : postCallReplacements) {
+      auto ld = B.CreateLoad(ty, gep);
+      auto SI = B.CreateStore(ld, val);
+      PostCacheStore(SI, B);
     }
 
-    assert(sretCount == Types.size());
     NC->setCallingConv(CI->getCallingConv());
     CI->eraseFromParent();
   }

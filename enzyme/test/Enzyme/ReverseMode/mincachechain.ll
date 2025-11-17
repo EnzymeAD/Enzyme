@@ -57,7 +57,7 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @augmented_mid(double* %mid, double* %"mid'")
+; CHECK: define internal void @augmented_mid(double* nocapture %mid, double* nocapture %"mid'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %ld = load double, double* %mid, align 8
 ; CHECK-NEXT:   %next = fadd double %ld, 1.000000e+00
@@ -93,7 +93,7 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffemid(double* %mid, double* %"mid'")
+; CHECK: define internal void @diffemid(double* nocapture %mid, double* nocapture %"mid'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %"mid'", align 8
 ; CHECK-NEXT:   store double %0, double* %"mid'", align 8

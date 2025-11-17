@@ -1752,15 +1752,39 @@ bool DetectPointerArgOfFn(llvm::Function &F,
             continue;
           }
         }
+        if (auto MSI = dyn_cast<MemSetInst>(I)) {
+          if (MSI->getRawDest() == cur) {
+            written = true;
+          }
+          continue;
+        }
+        if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+          if (MTI->getRawDest() == cur) {
+            written = true;
+          }
+          if (MTI->getRawSource() == cur) {
+            read = true;
+          }
+          continue;
+        }
         if (auto CB = dyn_cast<CallBase>(I)) {
 
           if (CB->getCalledOperand() == cur) {
-            continue;
+            captured = true;
+            read = true;
+            written = true;
+            break;
           }
 
           auto F2 = dyn_cast<Function>(CB->getCalledOperand());
 
           if (F2 == &F && U.getOperandNo() == arg.getArgNo()) {
+            continue;
+          }
+
+          auto name = getFuncNameFromCall(CB);
+
+          if (name == "julia.write_barrier") {
             continue;
           }
 

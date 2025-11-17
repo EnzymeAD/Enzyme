@@ -20,7 +20,7 @@ entry:
 ; Function Attrs: nounwind
 declare double @__enzyme_autodiff(double (double*)*, ...)
 
-; CHECK: define internal void @diffetester(double* %xp, double* %"xp'", double %differeturn) 
+; CHECK: define internal void @diffetester(double* nocapture readonly %xp, double* nocapture %"xp'", double %differeturn) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   fence syncscope("singlethread") seq_cst
 ; CHECK-NEXT:   %x = load double, double* %xp, align 8
