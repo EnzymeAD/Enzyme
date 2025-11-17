@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -S -enzyme-julia-addr-load --enzyme-detect-readthrow=0 | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load --enzyme-detect-readthrow=0 | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -S -enzyme-julia-addr-load | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load | FileCheck %s
 
 source_filename = "start"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -209,45 +209,41 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 
 ; CHECK: define internal fastcc void @diffea0
 ; CHECK-NEXT: bb:
-; CHECK-NEXT:   %malloccall1 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 2
-; CHECK-NEXT:   %i2 = bitcast i8* %malloccall1 to { [1 x [2 x double]], double }*, !enzyme_caststack !7
-; CHECK-NEXT:   %i3 = call {}*** @julia.get_pgcstack() #13
-; CHECK-NEXT:   %"i5'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 1
-; CHECK-NEXT:   %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
-; CHECK-NEXT:   %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
-; CHECK-NEXT:   %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
-; CHECK-NEXT:   %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'il_phi" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:   %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc", align 8, !tbaa !11, !alias.scope !102, !noalias !105, !nonnull !7
-; CHECK-NEXT:   %i15 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 3
-; CHECK-NEXT:   %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg", align 16, !tbaa !11, !alias.scope !107, !noalias !110, !nonnull !7
-; CHECK-NEXT:   %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
-; CHECK-NEXT:   %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
-; CHECK-NEXT:   %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
-; CHECK-NEXT:   %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
-; CHECK-NEXT:   %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
-; CHECK-NEXT:   %i24 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 4
-; CHECK-NEXT:   %"i25'ipiv" = insertvalue [3 x {} addrspace(10)*] undef, {} addrspace(10)* %i24, 0
-; CHECK-NEXT:   %i27 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 5
-; CHECK-NEXT:   %"i28'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i25'ipiv", {} addrspace(10)* %i27, 1
-; CHECK-NEXT:   %"i30'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, i8*, double, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 0
-; CHECK-NEXT:   %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'il_phi", 2
-; CHECK-NEXT:   %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
-; CHECK-NEXT:   %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
-; CHECK-NEXT:   %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:   %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc", align 8, !tbaa !11, !alias.scope !112, !noalias !115, !nonnull !7
-; CHECK-NEXT:   %i37 = load double, double* %i11, align 8, !tbaa !35, !alias.scope !117, !noalias !120, !enzyme_type !34, !enzymejl_byref_BITS_VALUE !7, !enzymejl_source_type_Float64 !7
-; CHECK-NEXT:   %0 = fmul fast double %differeturn, %i37
-; CHECK-NEXT:   %1 = load double, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !122, !noalias !125
-; CHECK-NEXT:   %2 = fadd fast double %1, %0
-; CHECK-NEXT:   store double %2, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !122, !noalias !125
-; CHECK-NEXT:   store double 0.000000e+00, double addrspace(13)* %"i20'ipc", align 8, !tbaa !26, !alias.scope !127, !noalias !130
-; CHECK-NEXT:   %3 = load double, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !127, !noalias !130
-; CHECK-NEXT:   store double 0.000000e+00, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !127, !noalias !130
-; CHECK-NEXT:   %4 = fmul fast double %3, %i15
-; CHECK-NEXT:   %5 = load double, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !132, !noalias !135
-; CHECK-NEXT:   %6 = fadd fast double %5, %4
-; CHECK-NEXT:   store double %6, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !132, !noalias !135
-; CHECK-NEXT:   call void @free(i8* %malloccall1)
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
+; CHECK-NEXT:  %i2 = alloca { [1 x [2 x double]], double }, i64 1, align 8, !enzymejl_allocart !2, !enzyme_type !3, !enzymejl_allocart_name !6
+; CHECK-NEXT:  %i3 = call {}*** @julia.get_pgcstack() #13
+; CHECK-NEXT:  %"i5'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 1
+; CHECK-NEXT:  %"i6'ipc" = addrspacecast {} addrspace(10)* %"arg'" to { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)*
+; CHECK-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
+; CHECK-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
+; CHECK-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'il_phi" to double addrspace(13)* addrspace(11)*
+; CHECK-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc", align 8, !tbaa !11, !alias.scope !101, !noalias !104, !nonnull !7
+; CHECK-NEXT:  %i15 = load double, double* %i11, align 8, !tbaa !35, !alias.scope !106, !noalias !109, !enzyme_type !34, !enzymejl_byref_BITS_VALUE !7, !enzymejl_source_type_Float64 !7  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg", align 16, !tbaa !11, !alias.scope !111, !noalias !114, !nonnull !7
+; CHECK-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
+; CHECK-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
+; CHECK-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
+; CHECK-NEXT:  %i21 = getelementptr inbounds [2 x [3 x {} addrspace(10)*]], [2 x [3 x {} addrspace(10)*]] addrspace(11)* %arg1, i64 0, i64 1
+; CHECK-NEXT:  %i22 = icmp eq [3 x {} addrspace(10)*] addrspace(11)* %i21, null
+; CHECK-NEXT:  %i24 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 2
+; CHECK-NEXT:  %"i25'ipiv" = insertvalue [3 x {} addrspace(10)*] undef, {} addrspace(10)* %i24, 0
+; CHECK-NEXT:  %i27 = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 3
+; CHECK-NEXT:  %"i28'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i25'ipiv", {} addrspace(10)* %i27, 1
+; CHECK-NEXT:  %"i30'il_phi" = extractvalue { {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)*, {} addrspace(10)* } %tapeArg, 0
+; CHECK-NEXT:  %"i31'ipiv" = insertvalue [3 x {} addrspace(10)*] %"i28'ipiv", {} addrspace(10)* %"i30'il_phi", 2
+; CHECK-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
+; CHECK-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
+; CHECK-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
+; CHECK-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc", align 8, !tbaa !11, !alias.scope !116, !noalias !119, !nonnull !7
+; CHECK-NEXT:  %i37 = load double, double* %i11, align 8, !tbaa !35, !alias.scope !106, !noalias !109, !enzyme_type !34, !enzymejl_byref_BITS_VALUE !7, !enzymejl_source_type_Float64 !7  %0 = fmul fast double %differeturn, %i37
+; CHECK-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !121, !noalias !124
+; CHECK-NEXT:  %2 = fadd fast double %1, %0
+; CHECK-NEXT:  store double %2, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !121, !noalias !124
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
+; CHECK-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
+; CHECK-NEXT:  %4 = fmul fast double %3, %i15
+; CHECK-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !131, !noalias !134
+; CHECK-NEXT:  %6 = fadd fast double %5, %4
+; CHECK-NEXT:  store double %6, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !131, !noalias !134
+; CHECK-NEXT:  ret void
+; CHECK-NEXT:}
 
