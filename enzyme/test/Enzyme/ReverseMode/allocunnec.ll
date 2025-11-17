@@ -119,7 +119,7 @@ attributes #12 = { nounwind memory(readwrite) "enzyme_no_escaping_allocation" }
 !41 = !{!34, !12, !13, !14, !15}
 !42 = !{!34, !12, !13, !9, !15}
 
-; CHECK: define internal fastcc { ptr addrspace(10), double } @augmented_perm(ptr %i208, ptr %"i208'", ptr addrspace(10) noalias noundef nonnull align 8 dereferenceable(24) %arg1, ptr addrspace(10) align 8 %"arg1'", ptr %i196, ptr %"i196'")
+; CHECK: define internal fastcc { ptr addrspace(10), double } @augmented_perm(ptr nocapture readnone %i208, ptr nocapture readnone %"i208'", ptr addrspace(10) noalias noundef nonnull align 8 dereferenceable(24) %arg1, ptr addrspace(10) align 8 %"arg1'", ptr nocapture readonly %i196, ptr nocapture %"i196'")
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %0 = alloca { ptr addrspace(10), double }, align 8
 ; CHECK-NEXT:   %"i197'mi" = call noalias nonnull align 8 dereferenceable(24) ptr addrspace(10) @julia.gc_alloc_obj(ptr nonnull undef, i64 noundef 24, ptr addrspace(10) noundef addrspacecast (ptr inttoptr (i64 127227706936608 to ptr) to ptr addrspace(10)))
@@ -140,7 +140,7 @@ attributes #12 = { nounwind memory(readwrite) "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:   ret { ptr addrspace(10), double } %2
 ; CHECK-NEXT: }
 
-; CHECK: define internal fastcc void @diffeperm(ptr %i208, ptr %"i208'", ptr addrspace(10) noalias align 8 dereferenceable(24) %arg1, ptr addrspace(10) align 8 %"arg1'", ptr %i196, ptr %"i196'", double %differeturn, ptr addrspace(10) %"i193'ip_phi") 
+; CHECK: define internal fastcc void @diffeperm(ptr nocapture readnone %i208, ptr nocapture readnone %"i208'", ptr addrspace(10) noalias align 8 dereferenceable(24) %arg1, ptr addrspace(10) align 8 %"arg1'", ptr nocapture readonly %i196, ptr nocapture %"i196'", double %differeturn, ptr addrspace(10) %"i193'ip_phi")
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"i197'mi" = call noalias nonnull align 8 dereferenceable(24) ptr addrspace(10) @julia.gc_alloc_obj(ptr nonnull undef, i64 noundef 24, ptr addrspace(10) noundef addrspacecast (ptr inttoptr (i64 127227706936608 to ptr) to ptr addrspace(10)))
 ; CHECK-NEXT:   call void @llvm.memset.p10.i64(ptr addrspace(10) nonnull dereferenceable(24) dereferenceable_or_null(24) %"i197'mi", i8 0, i64 24, i1 false)
