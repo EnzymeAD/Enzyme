@@ -42,7 +42,7 @@ exit:                                             ; preds = %if.end3.i
   ret void
 }
 
-; CHECK: define internal void @diffefn(%"struct.std::__detail::_Hash_node"* %a4, %"struct.std::__detail::_Hash_node"* %"a4'", i1 %cmp.i)
+; CHECK: define internal void @diffefn(%"struct.std::__detail::_Hash_node"* nocapture readonly %a4, %"struct.std::__detail::_Hash_node"* %"a4'", i1 %cmp.i)
 ; CHECK-NEXT:   %"iv'ac" = alloca i64
 ; CHECK-NEXT:   br i1 %cmp.i, label %land.rhs.i, label %if.end3.i.preheader
 

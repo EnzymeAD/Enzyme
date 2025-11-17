@@ -31,7 +31,7 @@ entry:
 
 declare <2 x double> @__enzyme_autodiff.f64(...) 
 
-; CHECK: define internal { <2 x double> } @diffeloader(i1 %cmp, <2 x double>* %ptr, <2 x double>* %"ptr'", <2 x i64> %mask0, <2 x double> %other, <2 x double> %differeturn)
+; CHECK: define internal { <2 x double> } @diffeloader(i1 %cmp, <2 x double>* readonly %ptr, <2 x double>* %"ptr'", <2 x i64> %mask0, <2 x double> %other, <2 x double> %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"other'de" = alloca <2 x double>
 ; CHECK-NEXT:   store <2 x double> zeroinitializer, <2 x double>* %"other'de"

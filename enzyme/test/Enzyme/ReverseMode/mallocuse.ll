@@ -29,7 +29,7 @@ define double @_take(ptr %a0, i1 %a1) {
   br label %.lr.ph
 }
 
-; CHECK: define internal { ptr, double } @augmented__take(ptr %a0, ptr %"a0'", i1 %a1)
+; CHECK: define internal { ptr, double } @augmented__take(ptr nocapture writeonly %a0, ptr nocapture %"a0'", i1 %a1)
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) ptr @malloc(i64 8)
 ; CHECK-NEXT:   %a3 = tail call ptr @malloc(i64 10)
 ; CHECK-NEXT:   %a4 = tail call ptr @malloc(i64 10)
