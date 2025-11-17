@@ -26,7 +26,7 @@ entry:
   ret void
 }
 
-; CHECK: define internal void @diffecoupled_springs(double* noundef %K, double* %"K'", double* nocapture readnone %m, double* noundef %x0, double* %"x0'", double* noundef %v0, double* %"v0'", double %T, i32 noundef %N, double 
+; CHECK: define internal void @diffecoupled_springs(double* nocapture noundef readonly %K, double* nocapture %"K'", double* nocapture readnone %m, double* nocapture noundef readonly %x0, double* nocapture %"x0'", double* nocapture noundef %v0, double* nocapture %"v0'", double %T, i32 noundef %N, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'de" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'de", align 8

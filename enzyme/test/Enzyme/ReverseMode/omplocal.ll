@@ -73,7 +73,7 @@ attributes #1 = { argmemonly }
 !11 = !{!12}
 !12 = !{i64 2, i64 -1, i64 -1, i1 true}
 
-; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., double* noalias nocapture readonly %x, double* nocapture %"x'", double* noalias nocapture %out, double* nocapture %"out'")
+; CHECK: define internal void @diffe.omp_outlined.(i32* noalias nocapture readnone %.global_tid., i32* noalias nocapture readnone %.bound_tid., double* noalias nocapture readonly %x, double* nocapture %"x'", double* noalias nocapture writeonly %out, double* nocapture %"out'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"m'ai" = alloca double, i64 1, align 16
 ; CHECK-NEXT:   %0 = bitcast double* %"m'ai" to i8*
