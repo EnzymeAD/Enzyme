@@ -1766,7 +1766,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto T_jlvalue = StructType::get(F->getContext(), {});
   auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
 
-  size_t numRooting = 0;
+  size_t numRooting = RT->isVoidTy() ? 0 : CountTrackedPointers(RT).count;
 
   for (auto idx : enzyme_srets) {
     llvm::Type *SRetType = convertSRetTypeFromString(
