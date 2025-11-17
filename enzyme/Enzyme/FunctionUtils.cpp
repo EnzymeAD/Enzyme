@@ -2719,7 +2719,8 @@ FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
   if (RetTypes.size() == 0)
     RetType = Type::getVoidTy(RetType->getContext());
   else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) &&
-           mode != DerivativeMode::ReverseModeCombined)
+           mode != DerivativeMode::ReverseModeCombined &&
+           mode != DerivativeMode::ReverseModeProfiled)
     RetType = RetTypes[0];
   else
     RetType = StructType::get(FTy->getContext(), RetTypes);

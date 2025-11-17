@@ -1058,7 +1058,8 @@ public:
     IRBuilder<> Builder2(&I);
     BasicBlock *merge = nullptr;
     if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined)
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeProfiled)
       getReverseBuilder(Builder2);
 
     while (1) {
