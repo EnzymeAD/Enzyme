@@ -1721,7 +1721,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
     // We have already hit the max state.
 
     if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
-        Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture))
+        arg.hasNoCaptureAttr())
       continue;
 
     while (!todo.empty()) {
@@ -1796,8 +1796,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
             break;
           }
 
-          if (!isNoCapture(CB, U.getOperandNo()) &&
-              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
+          if (!isNoCapture(CB, U.getOperandNo()) && !arg.hasNoCaptureAttr()) {
             captured = true;
             if (F2)
               calls_todo.insert(F2);
@@ -1828,9 +1827,8 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       }
     }
 
-    if (!captured &&
-        !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
-      arg.addAttr(Attribute::NoCapture);
+    if (!captured && !arg.hasNoCaptureAttr()) {
+      addFunctionNoCapture(arg.getParent(), arg.getArgNo());
       changed = true;
     }
 
