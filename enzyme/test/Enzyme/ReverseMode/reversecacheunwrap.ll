@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED ; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM13,SHARED
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED ; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM13,SHARED
 
 ; ModuleID = 'orig.ll'
 source_filename = "../benchmarks/hand/hand.cpp"

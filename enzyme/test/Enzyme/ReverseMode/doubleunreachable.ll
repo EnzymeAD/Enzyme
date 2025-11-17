@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -opaque-pointers -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -enzyme-detect-readthrow=0 -opaque-pointers -S | FileCheck %s
 
 declare ptr @__enzyme_virtualreverse(...)
 

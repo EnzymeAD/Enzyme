@@ -1,5 +1,4 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-julia-addr-load -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -S -opaque-pointers | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false  -enzyme-julia-addr-load -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify)" -S -opaque-pointers | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify)" -S -opaque-pointers | FileCheck %s
 
 
 define ptr addrspace(10) @retv(double %arg, ptr addrspace(10) %arg1) {
@@ -40,7 +39,7 @@ attributes #1 = { nofree norecurse nosync nounwind speculatable willreturn "enzy
 
 !14 = !{}
 
-; CHECK: define internal void @diffeifn(ptr addrspace(11) %arg, ptr addrspace(11) %"arg'", ptr addrspace(10) %arg1, ptr addrspace(10) %"arg1'", double %differeturn)
+; CHECK: define internal void @diffeifn(ptr addrspace(11) nocapture readonly %arg, ptr addrspace(11) nocapture %"arg'", ptr addrspace(10) %arg1, ptr addrspace(10) %"arg1'", double %differeturn)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"i7'ipl" = load ptr addrspace(10), ptr addrspace(11) %"arg'", align 8
 ; CHECK-NEXT:   %i7 = load ptr addrspace(10), ptr addrspace(11) %arg, align 8

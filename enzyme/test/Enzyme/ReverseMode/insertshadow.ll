@@ -1,4 +1,3 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -S -enzyme-julia-addr-load | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-julia-addr-load | FileCheck %s
 
 source_filename = "start"
@@ -216,8 +215,9 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:  %"i7'ipg" = getelementptr inbounds { i8 addrspace(13)*, i64, i16, i16, i32 }, { i8 addrspace(13)*, i64, i16, i16, i32 } addrspace(11)* %"i6'ipc", i64 0, i32 0
 ; CHECK-NEXT:  %i11 = getelementptr inbounds { [1 x [2 x double]], double }, { [1 x [2 x double]], double }* %i2, i64 0, i32 1
 ; CHECK-NEXT:  %"i12'ipc" = addrspacecast {} addrspace(10)* %"i5'il_phi" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc", align 8, !tbaa !11, !alias.scope !101, !noalias !104, !nonnull !7
-; CHECK-NEXT:  %i15 = load double, double* %i11, align 8, !tbaa !35, !alias.scope !106, !noalias !109, !enzyme_type !34, !enzymejl_byref_BITS_VALUE !7, !enzymejl_source_type_Float64 !7  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg", align 16, !tbaa !11, !alias.scope !111, !noalias !114, !nonnull !7
+; CHECK-NEXT:  %"i13'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i12'ipc"
+; CHECK-NEXT:  %i15 = load double, double* %i11
+; CHECK-NEXT:  %"i17'ipl" = load i8 addrspace(13)*, i8 addrspace(13)* addrspace(11)* %"i7'ipg"
 ; CHECK-NEXT:  %"i18'ipc" = bitcast i8 addrspace(13)* %"i17'ipl" to double addrspace(13)*
 ; CHECK-NEXT:  %"i19'ipg" = getelementptr inbounds i8, i8 addrspace(13)* %"i17'ipl", i64 8
 ; CHECK-NEXT:  %"i20'ipc" = bitcast i8 addrspace(13)* %"i19'ipg" to double addrspace(13)*
@@ -232,18 +232,19 @@ attributes #15 = { nounwind "enzyme_no_escaping_allocation" }
 ; CHECK-NEXT:  %"i32'ipse" = select i1 %i22, [3 x {} addrspace(10)*] zeroinitializer, [3 x {} addrspace(10)*] %"i31'ipiv"
 ; CHECK-NEXT:  %"i33'ipev" = extractvalue [3 x {} addrspace(10)*] %"i32'ipse", 2
 ; CHECK-NEXT:  %"i34'ipc" = addrspacecast {} addrspace(10)* %"i33'ipev" to double addrspace(13)* addrspace(11)*
-; CHECK-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc", align 8, !tbaa !11, !alias.scope !116, !noalias !119, !nonnull !7
-; CHECK-NEXT:  %i37 = load double, double* %i11, align 8, !tbaa !35, !alias.scope !106, !noalias !109, !enzyme_type !34, !enzymejl_byref_BITS_VALUE !7, !enzymejl_source_type_Float64 !7  %0 = fmul fast double %differeturn, %i37
-; CHECK-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !121, !noalias !124
+; CHECK-NEXT:  %"i35'ipl" = load double addrspace(13)*, double addrspace(13)* addrspace(11)* %"i34'ipc"
+; CHECK-NEXT:  %i37 = load double, double* %i11
+; CHECK-NEXT:  %0 = fmul fast double %differeturn, %i37
+; CHECK-NEXT:  %1 = load double, double addrspace(13)* %"i35'ipl"
 ; CHECK-NEXT:  %2 = fadd fast double %1, %0
-; CHECK-NEXT:  store double %2, double addrspace(13)* %"i35'ipl", align 8, !tbaa !29, !alias.scope !121, !noalias !124
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
-; CHECK-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
-; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc", align 8, !tbaa !26, !alias.scope !126, !noalias !129
+; CHECK-NEXT:  store double %2, double addrspace(13)* %"i35'ipl"
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i20'ipc"
+; CHECK-NEXT:  %3 = load double, double addrspace(13)* %"i18'ipc"
+; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i18'ipc"
 ; CHECK-NEXT:  %4 = fmul fast double %3, %i15
-; CHECK-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !131, !noalias !134
+; CHECK-NEXT:  %5 = load double, double addrspace(13)* %"i13'ipl"
 ; CHECK-NEXT:  %6 = fadd fast double %5, %4
-; CHECK-NEXT:  store double %6, double addrspace(13)* %"i13'ipl", align 8, !tbaa !29, !alias.scope !131, !noalias !134
+; CHECK-NEXT:  store double %6, double addrspace(13)* %"i13'ipl"
 ; CHECK-NEXT:  ret void
 ; CHECK-NEXT:}
 

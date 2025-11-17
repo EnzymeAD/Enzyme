@@ -1,8 +1,8 @@
-; RUN: if [ %llvmver -lt 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: if [ %llvmver -lt 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
 
-; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,early-cse,instcombine,%simplifycfg,adce)" -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,early-cse,instcombine,%simplifycfg,adce)" -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,sroa,early-cse,instcombine,%simplifycfg,adce)" -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,sroa,early-cse,instcombine,%simplifycfg,adce)" -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
 
 define double @caller(double* %data, i64* %a4) {
 entry:
