@@ -2412,31 +2412,38 @@ static inline size_t convertRRootCountFromString(llvm::StringRef str) {
 }
 
 static inline bool hasSRetRRootsOrUnionSRet(llvm::CallBase *CB) {
-  if (CB->hasStructRetAttr()) return true;
-  for (size_t i=0; i<CB->arg_size(); i++) {
+  if (CB->hasStructRetAttr())
+    return true;
+  for (size_t i = 0; i < CB->arg_size(); i++) {
     if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                 "enzymejl_sret_union_bytes")
-             .isValid())
+                                "enzymejl_sret_union_bytes")
+            .isValid())
       return true;
     if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                 "enzymejl_returnRoots")
-             .isValid())
+                                "enzymejl_returnRoots")
+            .isValid())
       return true;
   }
   return false;
 }
 
 enum class SRetRootMovement {
-    SRetPointerToRootPointer = 0,
-    SRetValueToRootPointer = 1,
-    RootPointerToSRetValue = 2,
-    RootPointerToSRetPointer = 3,
-    NullifySRetValue = 4,
+  SRetPointerToRootPointer = 0,
+  SRetValueToRootPointer = 1,
+  RootPointerToSRetValue = 2,
+  RootPointerToSRetPointer = 3,
+  NullifySRetValue = 4,
 };
 
-llvm::Value* moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype, llvm::Value* sret, llvm::Type* root_ty, llvm::Value* rootRet, size_t rootOffset, SRetRootMovement direction);
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+                                 llvm::Value *sret, llvm::Type *root_ty,
+                                 llvm::Value *rootRet, size_t rootOffset,
+                                 SRetRootMovement direction);
 
-void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type* curType, llvm::Type *dstType, llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType, llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix, bool shouldZero);
-
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType,
+                        llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix,
+                        bool shouldZero);
 
 #endif // ENZYME_UTILS_H

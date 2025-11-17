@@ -4075,8 +4075,10 @@ bool isTargetNVPTX(llvm::Module &M) {
 #endif
 }
 
-static Value* constantInBoundsGEPHelper(llvm::IRBuilder <>&B, llvm::Type *type, llvm::Value* value, ArrayRef<unsigned> path) {
-  SmallVector<Value*, 2> vals;
+static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
+                                        llvm::Value *value,
+                                        ArrayRef<unsigned> path) {
+  SmallVector<Value *, 2> vals;
   vals.push_back(ConstantInt::get(B.getInt64Ty(), 0));
   for (auto v : path) {
     vals.push_back(ConstantInt::get(B.getInt32Ty(), v));
@@ -4084,9 +4086,12 @@ static Value* constantInBoundsGEPHelper(llvm::IRBuilder <>&B, llvm::Type *type, 
   return B.CreateInBoundsGEP(type, value, vals);
 }
 
-llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm::Value* sret, llvm::Type* root_ty, llvm::Value* rootRet, size_t rootOffset, SRetRootMovement direction) {
-  std::deque<std::pair<llvm::Type*, std::vector<unsigned>>> todo;
-  SmallVector<Value*> extracted;
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+                                 llvm::Value *sret, llvm::Type *root_ty,
+                                 llvm::Value *rootRet, size_t rootOffset,
+                                 SRetRootMovement direction) {
+  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo;
+  SmallVector<Value *> extracted;
   Value *val = sret;
   auto rootOffset0 = rootOffset;
   while (!todo.empty()) {
@@ -4096,7 +4101,8 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
     auto ty = cur.first;
 
     if (auto PT = dyn_cast<PointerType>(ty)) {
-      if (!isSpecialPtr(PT)) continue;
+      if (!isSpecialPtr(PT))
+        continue;
 
       Value *loc = nullptr;
       switch (direction) {
@@ -4110,28 +4116,29 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
       }
 
       switch (direction) {
-      case SRetRootMovement::SRetPointerToRootPointer:{
+      case SRetRootMovement::SRetPointerToRootPointer: {
         Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
         outloc = B.CreateLoad(ty, outloc);
         B.CreateStore(outloc, loc);
         break;
       }
-      case SRetRootMovement::SRetValueToRootPointer:{
+      case SRetRootMovement::SRetValueToRootPointer: {
         Value *outloc = GradientUtils::extractMeta(B, sret, path);
         B.CreateStore(outloc, loc);
         break;
       }
-      case SRetRootMovement::RootPointerToSRetValue:{
+      case SRetRootMovement::RootPointerToSRetValue: {
         loc = B.CreateLoad(ty, loc);
         val = B.CreateInsertValue(val, loc, path);
         break;
       }
-      case SRetRootMovement::NullifySRetValue:{
-        loc = getUndefinedValueForType(*B.GetInsertBlock()->getParent()->getParent(), ty, false);
+      case SRetRootMovement::NullifySRetValue: {
+        loc = getUndefinedValueForType(
+            *B.GetInsertBlock()->getParent()->getParent(), ty, false);
         val = B.CreateInsertValue(val, loc, path);
         break;
       }
-      case SRetRootMovement::RootPointerToSRetPointer:{
+      case SRetRootMovement::RootPointerToSRetPointer: {
         Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
         loc = B.CreateLoad(ty, loc);
         extracted.push_back(loc);
@@ -4146,7 +4153,7 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
     }
 
     if (auto AT = dyn_cast<ArrayType>(ty)) {
-      for (size_t i=0; i<AT->getNumElements(); i++) {
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
         std::vector<unsigned> path2(path);
         path2.push_back(i);
         todo.emplace_back(AT->getElementType(), path2);
@@ -4155,7 +4162,7 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
     }
 
     if (auto VT = dyn_cast<VectorType>(ty)) {
-      for (size_t i=0; i<VT->getElementCount().getKnownMinValue(); i++) {
+      for (size_t i = 0; i < VT->getElementCount().getKnownMinValue(); i++) {
         std::vector<unsigned> path2(path);
         path2.push_back(i);
         todo.emplace_back(VT->getElementType(), path2);
@@ -4164,16 +4171,14 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
     }
 
     if (auto ST = dyn_cast<StructType>(ty)) {
-      for (size_t i=0; i<ST->getNumElements(); i++) {
+      for (size_t i = 0; i < ST->getNumElements(); i++) {
         std::vector<unsigned> path2(path);
         path2.push_back(i);
         todo.emplace_back(ST->getTypeAtIndex(i), path2);
       }
       continue;
     }
-
   }
-
 
   if (direction == SRetRootMovement::RootPointerToSRetPointer) {
     auto obj = getBaseObject(sret);
@@ -4181,28 +4186,32 @@ llvm::Value* moveSRetToFromRoots(llvm::IRBuilder <>&B, llvm::Type *jltype, llvm:
     assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
     if (PT->getAddressSpace() == 10 && extracted.size()) {
       extracted.insert(extracted.begin(), obj);
-      auto JLT =
-          PointerType::get(StructType::get(PT->getContext(), {}), 10);
+      auto JLT = PointerType::get(StructType::get(PT->getContext(), {}), 10);
       auto FT = FunctionType::get(JLT, {}, true);
-      auto wb = B.GetInsertBlock()
-                    ->getParent()
-                    ->getParent()
-                    ->getOrInsertFunction("julia.write_barrier", FT);
-      assert(obj->getType() == JLT);      
+      auto wb =
+          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+              "julia.write_barrier", FT);
+      assert(obj->getType() == JLT);
       B.CreateCall(wb, extracted);
     }
   }
-  
+
   CountTrackedPointers tracked(jltype);
   assert(rootOffset - rootOffset0 == tracked.count);
 
   return val;
 }
 
-void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType, llvm::Type* dstType, llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix0, llvm::Type* srcType, llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix0, bool shouldZero) {
-  std::deque<std::tuple<llvm::Type*, std::vector<unsigned>, std::vector<unsigned>>> todo = {
-    { curType, std::vector<unsigned>(dstPrefix0.begin(), dstPrefix0.end()), std::vector<unsigned>(srcPrefix0.begin(), srcPrefix0.end()) }
-  };
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix0,
+                        llvm::Type *srcType, llvm::Value *src,
+                        llvm::ArrayRef<unsigned> srcPrefix0, bool shouldZero) {
+  std::deque<
+      std::tuple<llvm::Type *, std::vector<unsigned>, std::vector<unsigned>>>
+      todo = {{curType,
+               std::vector<unsigned>(dstPrefix0.begin(), dstPrefix0.end()),
+               std::vector<unsigned>(srcPrefix0.begin(), srcPrefix0.end())}};
 
   auto &M = *B.GetInsertBlock()->getParent()->getParent();
 
@@ -4233,7 +4242,8 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType, llvm::Type* d
         std::vector<unsigned> nextSrc(srcPrefix);
         nextDst.push_back(i);
         nextSrc.push_back(i);
-        todo.emplace_back(AT->getElementType(), std::move(nextDst), std::move(nextSrc));
+        todo.emplace_back(AT->getElementType(), std::move(nextDst),
+                          std::move(nextSrc));
       }
       continue;
     }
@@ -4244,11 +4254,11 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType, llvm::Type* d
         std::vector<unsigned> nextSrc(srcPrefix);
         nextDst.push_back(i);
         nextSrc.push_back(i);
-        todo.emplace_back(ST->getElementType(i), std::move(nextDst), std::move(nextSrc));
+        todo.emplace_back(ST->getElementType(i), std::move(nextDst),
+                          std::move(nextSrc));
       }
       continue;
     }
-
 
     Value *out = dst;
     if (dstPrefix.size() > 0)
@@ -4261,7 +4271,7 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType, llvm::Type* d
     auto ld = B.CreateLoad(ty, in);
     B.CreateStore(ld, out);
   }
-  
+
   CountTrackedPointers tracked(curType);
   assert(numRootsSeen == tracked.count);
   (void)tracked;

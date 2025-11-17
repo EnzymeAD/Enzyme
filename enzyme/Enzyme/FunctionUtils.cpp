@@ -1701,20 +1701,20 @@ void SplitPHIs(llvm::Function &F) {
 
 // returns if newly changed, subject to the pending calls
 bool DetectPointerArgOfFn(llvm::Function &F,
-                             SmallPtrSetImpl<Function *> &calls_todo) {
+                          SmallPtrSetImpl<Function *> &calls_todo) {
   if (F.empty())
     return false;
   bool changed = false;
   for (auto &arg : F.args()) {
-    if (!arg.getType()->isPointerTy()) continue;
+    if (!arg.getType()->isPointerTy())
+      continue;
     // Store list of values we need to check
-    std::deque<Value*> todo = { &arg };
-    SmallPtrSet<Value*, 1> seen;
+    std::deque<Value *> todo = {&arg};
+    SmallPtrSet<Value *, 1> seen;
 
     bool captured = false;
     bool read = false;
     bool written = false;
-
 
     AttributeList Attrs = arg.getParent()->getAttributes();
 
@@ -1772,19 +1772,24 @@ bool DetectPointerArgOfFn(llvm::Function &F,
             break;
           }
 
-          if (!isNoCapture(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
+          if (!isNoCapture(CB, U.getOperandNo()) &&
+              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
             captured = true;
             if (F2)
               calls_todo.insert(F2);
           }
 
-          if (!isReadOnly(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
+          if (!isReadOnly(CB, U.getOperandNo()) &&
+              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
+              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
             written = true;
             if (F2)
               calls_todo.insert(F2);
           }
 
-          if (!isWriteOnly(CB, U.getOperandNo()) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
+          if (!isWriteOnly(CB, U.getOperandNo()) &&
+              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
+              !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
             read = true;
             if (F2)
               calls_todo.insert(F2);
@@ -1799,13 +1804,14 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       }
     }
 
-
-    if (!captured && !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
+    if (!captured &&
+        !Attrs.hasParamAttr(arg.getArgNo(), Attribute::NoCapture)) {
       arg.addAttr(Attribute::NoCapture);
       changed = true;
     }
 
-    if ((!read && !written) || Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+    if ((!read && !written) ||
+        Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
           arg.removeAttr(Attribute::ReadOnly);
@@ -2112,7 +2118,6 @@ bool DetectReadonlyOrThrow(Module &M) {
   DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> inverse_todo_map;
 
   SmallPtrSet<Function *, 1> LocalReadOnlyFunctions;
-
 
   for (Function &F : M) {
     SmallPtrSet<Function *, 1> calls_todo;

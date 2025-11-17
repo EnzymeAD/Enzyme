@@ -971,14 +971,16 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         if (checkSret) {
           auto CB = cast<CallBase>(I);
           bool legal = false;
-          for (size_t i=0; i<CB->arg_size(); i++) {
+          for (size_t i = 0; i < CB->arg_size(); i++) {
             if (i == 0 && CB->hasStructRetAttr()) {
-            } else if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                         "enzymejl_sret_union_bytes")
-                     .isValid()) {
-            } else if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                         "enzymejl_returnRoots")
-                     .isValid()) {
+            } else if (CB->getAttributeAtIndex(
+                             llvm::AttributeList::FirstArgIndex + i,
+                             "enzymejl_sret_union_bytes")
+                           .isValid()) {
+            } else if (CB->getAttributeAtIndex(
+                             llvm::AttributeList::FirstArgIndex + i,
+                             "enzymejl_returnRoots")
+                           .isValid()) {
             } else {
               continue;
             }
@@ -990,17 +992,17 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
               legal = false;
               break;
             }
-            if (!DownHypothesis->isValueInactiveFromUsers(
-                                       TR, obj, UseActivity::None)) {
+            if (!DownHypothesis->isValueInactiveFromUsers(TR, obj,
+                                                          UseActivity::None)) {
               legal = false;
               break;
             }
           }
 
           if (legal && (I->getType()->isVoidTy() ||
-               ConstantValues.find(I) != ConstantValues.end() ||
-               DownHypothesis->isValueInactiveFromUsers(TR, I,
-                                                        UseActivity::None))) {
+                        ConstantValues.find(I) != ConstantValues.end() ||
+                        DownHypothesis->isValueInactiveFromUsers(
+                            TR, I, UseActivity::None))) {
             if (EnzymePrintActivity)
               llvm::errs() << " constant instruction[" << (int)directions
                            << "] from users instruction " << *I << "\n";
@@ -2004,7 +2006,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
         if (ReadOnly) {
           auto BaseVal = getBaseObject(Val);
-          for (size_t i=0; i<CB->arg_size(); i++) {
+          for (size_t i = 0; i < CB->arg_size(); i++) {
             if (i == 0 && CB->hasStructRetAttr()) {
               if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
                 ReadOnly = false;
@@ -2012,16 +2014,16 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               }
             }
             if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                         "enzymejl_sret_union_bytes")
-                     .isValid()) {
+                                        "enzymejl_sret_union_bytes")
+                    .isValid()) {
               if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
                 ReadOnly = false;
                 break;
               }
             }
             if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                         "enzymejl_returnRoots")
-                     .isValid()) {
+                                        "enzymejl_returnRoots")
+                    .isValid()) {
               if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
                 ReadOnly = false;
                 break;
@@ -3089,14 +3091,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         bool ReadOnly = isReadOnly(call, idx);
 
-        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
-                                         "enzymejl_sret_union_bytes")
-                     .isValid()) &&
-          !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
-                                         "enzymejl_returnRoots")
-                     .isValid()) &&
-          !(idx == 0 && call->hasStructRetAttr())
-          ) {
+        if (!ReadOnly && isLocalReadOnlyOrThrow(call) &&
+            !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
+                                            idx,
+                                        "enzymejl_sret_union_bytes")
+                  .isValid()) &&
+            !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
+                                            idx,
+                                        "enzymejl_returnRoots")
+                  .isValid()) &&
+            !(idx == 0 && call->hasStructRetAttr())) {
           ReadOnly = true;
         }
 
