@@ -2087,6 +2087,10 @@ bool DetectReadonlyOrThrow(Module &M) {
       SmallPtrSet<Function *, 1> calls_todo;
       if (DetectPointerArgOfFn(F, calls_todo)) {
         changed = true;
+        for (auto F2 : todo_map[&F]) {
+          todo.push_back(F2);
+        }
+        todo_map.erase(&F);
       }
       for (auto tocheck : calls_todo) {
         todo_map[tocheck].insert(&F);

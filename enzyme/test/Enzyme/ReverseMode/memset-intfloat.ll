@@ -27,7 +27,7 @@ define void @df(double* %x, double* %xp) {
 !5 = !{!"omnipotent char", !6, i64 0}
 !6 = !{!"Simple C++ TBAA"}
 
-; CHECK: define internal void @diffef(i8* %x, i8* %"x'") 
+; CHECK: define internal void @diffef(i8* nocapture %x, i8* nocapture %"x'") 
 ; CHECK-NEXT: invert:
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %x, i8 0, i64 16, i1 false)
 ; CHECK-NEXT:   %0 = getelementptr inbounds i8, i8* %"x'", i32 8

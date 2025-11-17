@@ -1186,8 +1186,6 @@ attributes #10 = { noreturn nounwind }
 !49 = distinct !{!49, !50}
 !50 = !{!"llvm.loop.unroll.disable"}
 
-; CHECK: define internal i8* @augmented_subfn(float** nocapture writeonly %m_data.i.i, float* nocapture readonly %K, float* nocapture %"K'") unnamed_addr #13 align 2 {
-
 ; CHECK: define internal { i8*, i8* } @augmented_subfn(float** %m_data.i.i, float** %"m_data.i.i'", float* %K, float* %"K'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(36) dereferenceable_or_null(36) i8* @malloc(i64 36)
