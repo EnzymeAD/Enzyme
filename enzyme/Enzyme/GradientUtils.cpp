@@ -4523,8 +4523,13 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
         }
       } else if ((isa<AllocaInst>(at) || isAllocationCall(at, TLI)) &&
                  unnecessaryValuesP) {
-        if (unnecessaryValuesP->count(at))
-          return DIFFE_TYPE::DUP_NONEED;
+        if (unnecessaryValuesP->count(at)) {
+          // Just because we chose to cahce the variable (and thus the value is
+          // unnecessary) for saving, does not mean we are no need.
+          auto found = knownRecomputeHeuristic.find(at);
+          if (found == knownRecomputeHeuristic.end() || found->second)
+            return DIFFE_TYPE::DUP_NONEED;
+        }
       }
     }
     return DIFFE_TYPE::DUP_ARG;
