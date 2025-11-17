@@ -971,7 +971,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         if (checkSret) {
           auto CB = cast<CallBase>(I);
           bool legal = false;
-          for (size_t i=0; i<CB->getNumArgOperands(); i++) {
+          for (size_t i=0; i<CB->arg_size(); i++) {
             if (i == 0 && CB->hasStructRetAttr()) {
             } else if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
                                          "enzymejl_sret_union_bytes")
@@ -991,7 +991,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
               break;
             }
             if (!DownHypothesis->isValueInactiveFromUsers(
-                                       TR, baseObj, UseActivity::None)) {
+                                       TR, obj, UseActivity::None)) {
               legal = false;
               break;
             }
@@ -2004,7 +2004,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         bool ReadOnly = isLocalReadOnlyOrThrow(CB);
         if (ReadOnly) {
           auto BaseVal = getBaseObject(Val);
-          for (size_t i=0; i<CB->getNumArgOperands(); i++) {
+          for (size_t i=0; i<CB->arg_size(); i++) {
             if (i == 0 && CB->hasStructRetAttr()) {
               if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
                 ReadOnly = false;
@@ -3089,13 +3089,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         bool ReadOnly = isReadOnly(call, idx);
 
-        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && !(CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
+        if (!ReadOnly && isLocalReadOnlyOrThrow(call) && !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
                                          "enzymejl_sret_union_bytes")
                      .isValid()) &&
-          !(CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
+          !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + idx,
                                          "enzymejl_returnRoots")
                      .isValid()) &&
-          !(idx == 0 && CB->hasStructRetAttr())
+          !(idx == 0 && call->hasStructRetAttr())
           ) {
           ReadOnly = true;
         }

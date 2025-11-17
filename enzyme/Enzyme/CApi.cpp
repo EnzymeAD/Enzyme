@@ -1383,18 +1383,6 @@ LLVMValueRef EnzymeComputeByteOffsetOfGEP(LLVMBuilderRef B_r, LLVMValueRef V_r,
 }
 }
 
-static size_t num_rooting(llvm::Type *T, llvm::Function *F) {
-  CountTrackedPointers tracked(T);
-  if (tracked.derived) {
-    llvm::errs() << *F << "\n";
-    llvm::errs() << "Invalid Derived Type: " << *T << "\n";
-  }
-  assert(!tracked.derived);
-  if (tracked.count != 0 && !tracked.all)
-    return tracked.count;
-  return 0;
-}
-
 extern "C" {
 
 void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
@@ -1605,18 +1593,18 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
 
   if (!is_v)
     SRetType = convertSRetTypeFromString(
-      Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret")
+      Attrs.getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(), "enzyme_sret")
           .getValueAsString());
   else
     SRetType = convertSRetTypeFromString(
-      Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret_v")
+      Attrs.getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(), "enzyme_sret_v")
           .getValueAsString());
 
-  if (CountTrackedPointers(SRetType) == 0) {
+  if (CountTrackedPointers(SRetType).count == 0) {
     return false;
   }
 
-  SmallVector<std::pair<bool, Value*>> todo = { { arg, is_v } };
+  SmallVector<std::pair<bool, Value*>> todo = { { is_v, arg } };
 
  
   SmallVector<Value*> storedValues;
@@ -1624,7 +1612,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
   while (!todo.empty()) {
     auto curv = todo.pop_back_val();
     auto &&[local_isv, cur] = curv;
-    for (auto &U : cur.getUses()) {
+    for (auto &U : cur->uses()) {
       auto I = cast<Instruction>(U.getUser());
       
       if (is_v) {
@@ -1635,7 +1623,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       }
 
       if (isPointerArithmeticInst(I)) {
-        todo.push_back(I);
+        todo.emplace_back(is_v, I);
         continue;
       }
       if (isa<LoadInst>(I)) {
@@ -1651,7 +1639,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
         continue;
       }
 
-      llvm::errs() << *CI->getParent()->getParent() << "\n";
+      llvm::errs() << *arg->getParent() << "\n";
       llvm::errs() << " arg: " << *arg << " cur: " << *cur << "\n";
       llvm::errs() <<"  I: " << *I << "\n";
       llvm_unreachable("Use of sret was not known");
@@ -1664,9 +1652,9 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     llvm::errs() << " sv: " << *sv << "\n";
     assert(isSpecialPtr(cast<PointerType>(sv->getType())));
     bool foundUse = false;
-    for (auto U : sv->users()) {
+    for (auto &U : sv->uses()) {
       if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
-        if (ST->getValueOperand() == sv) {
+        if (SI->getValueOperand() == sv) {
           auto base = getBaseObject(SI->getPointerOperand());
           if (base == arg) {
             continue;
@@ -1675,7 +1663,9 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
             base = evi->getAggregateOperand();
           }
           if (auto arg2 = dyn_cast<Argument>(base)) {
-            if (arg2->hasAttr("enzymejl_returnRoots") || arg2->hasAttr("enzymejl_returnRoots_v")) {
+            if (Attrs.getAttribute(AttributeList::FirstArgIndex + arg2->getArgNo(), "enzymejl_returnRoots").isValid() ||
+            	Attrs.getAttribute(AttributeList::FirstArgIndex + arg2->getArgNo(), "enzymejl_returnRoots_v").isValid()
+			    ) {
               foundUse = true;
               break;
             }
@@ -1721,14 +1711,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       srets.insert(i);
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")) {
       enzyme_srets.insert(i);
-      if (needsReRooting(F->getArgument(i), false)) {
-        reroot_enzyme_srets.insert(i)
+      if (needsReRooting(F->getArg(i), false)) {
+        reroot_enzyme_srets.insert(i);
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret_v")) {
       enzyme_srets_v.insert(i);
-      if (needsReRooting(F->getArgument(i), true)) {
-        reroot_enzyme_srets.insert(i)
+      if (needsReRooting(F->getArg(i), true)) {
+        reroot_enzyme_srets.insert(i);
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
@@ -1768,7 +1758,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
 
 
-  size_t numRooting = 0
+  size_t numRooting = 0;
 
   for (auto idx : enzyme_srets) {
     llvm::Type *SRetType = convertSRetTypeFromString(
@@ -1781,8 +1771,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     }
 #endif
     Types.push_back(SRetType);
-    if (reroot_enzyme_srets.count(i)) {
-      numRooting += CountTrackedPointers(SRetType);
+    if (reroot_enzyme_srets.count(idx)) {
+      numRooting += CountTrackedPointers(SRetType).count;
     }
   }
   for (auto idx : rroots) {
@@ -1810,8 +1800,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 #endif
     for (size_t i = 0; i < AT->getNumElements(); i++) {
       Types.push_back(SRetType);
-      if (reroot_enzyme_srets_v.count(i)) {
-        numRooting += CountTrackedPointers(SRetType);
+      if (reroot_enzyme_srets_v.count(idx)) {
+        numRooting += CountTrackedPointers(SRetType).count;
       }
     }
   }
@@ -1995,7 +1985,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       assert(roots);
       assert(roots_AT);
 
-      size_t subCount == convertRRootCountFromString(
+      size_t subCount = convertRRootCountFromString(
             Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzymejl_returnRoots")
                 .getValueAsString());
 
@@ -2017,7 +2007,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         gep = EB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, curOffset);
       }
       if (subCount != numRooting) {
-        gep = EB.CreatePointerCast(PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)), gep);
+        gep = EB.CreatePointerCast(gep, PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
       }
       for (size_t i = 0; i < uses.size(); i++) {
         uses[i]->setOperand(op[i], gep);
@@ -2076,7 +2066,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       assert(roots);
       assert(roots_AT);
 
-      size_t subCount == convertRRootCountFromString(
+      size_t subCount = convertRRootCountFromString(
             Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzymejl_returnRoots_v")
                 .getValueAsString());
 
@@ -2101,7 +2091,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
           gep = EB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, curOffset + j * subCount);
         }
         if (subCount != numRooting) {
-          gep = EB.CreatePointerCast(PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)), gep);
+          gep = EB.CreatePointerCast(gep, PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
         }
         val = EB.CreateInsertValue(val, gep, j);
       }
@@ -2205,7 +2195,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, local_root_count);
           }
           if (AT->getNumElements() != numRooting) {
-            gep = AIB.CreatePointerCast(PointerType::getUnqual(ArrayType::get(T_prjlvalue, AT->getNumElements())), gep);
+            gep = AIB.CreatePointerCast(gep, PointerType::getUnqual(ArrayType::get(T_prjlvalue, AT->getNumElements())));
           }
 
           AI->replaceAllUsesWith(gep);
