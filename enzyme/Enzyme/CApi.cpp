@@ -2256,34 +2256,34 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
           if (local_root_count != 0) {
             gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
                                                  local_root_count);
-            }
+          }
 
-            size_t subCount = convertRRootCountFromString(
-                Attrs
-                    .getAttribute(AttributeList::FirstArgIndex + i,
-                                  "enzymejl_returnRoots")
-                    .getValueAsString());
+          size_t subCount = convertRRootCountFromString(
+              Attrs
+                  .getAttribute(AttributeList::FirstArgIndex + i,
+                                "enzymejl_returnRoots")
+                  .getValueAsString());
 
-            if (subCount != numRooting) {
-              gep = AIB.CreatePointerCast(
-                  gep, PointerType::getUnqual(
-                           ArrayType::get(T_prjlvalue, subCount)));
-            }
-            local_root_count += subCount;
+          if (subCount != numRooting) {
+            gep = AIB.CreatePointerCast(
+                gep,
+                PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+          }
+          local_root_count += subCount;
 
-            if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-              AI->replaceAllUsesWith(gep);
-              AI->eraseFromParent();
-            } else {
-              assert(!isa<UndefValue>(val));
-              assert(!isa<PoisonValue>(val));
-              assert(!isa<ConstantPointerNull>(val));
-              // TODO consider doing pre-emptive pre zero of the section?
-              preCallReplacements.emplace_back(
-                  val, gep, ArrayType::get(T_prjlvalue, subCount));
-              postCallReplacements.emplace_back(
-                  val, gep, ArrayType::get(T_prjlvalue, subCount));
-            }
+          if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
+            AI->replaceAllUsesWith(gep);
+            AI->eraseFromParent();
+          } else {
+            assert(!isa<UndefValue>(val));
+            assert(!isa<PoisonValue>(val));
+            assert(!isa<ConstantPointerNull>(val));
+            // TODO consider doing pre-emptive pre zero of the section?
+            preCallReplacements.emplace_back(
+                val, gep, ArrayType::get(T_prjlvalue, subCount));
+            postCallReplacements.emplace_back(
+                val, gep, ArrayType::get(T_prjlvalue, subCount));
+          }
         }
 
         if (rroots_v.count(i)) {

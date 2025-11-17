@@ -72,10 +72,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %y = alloca double, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipa", align 8
 ; CHECK-NEXT:   store double %x, double* %x.addr, align 8
-; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* {{(undef|poison)}}, double* %"y'ipa")
-; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"y'ipa", align 8
-; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"'ipl", %[[i0]]
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %"'ipl", %[[i0]]
+; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* %y, double* %"y'ipa")
+; CHECK-NEXT:   %[[ipl:.+]] = load double, double* %"y'ipa", align 8
+; CHECK-NEXT:   %[[i0:.+]] = load double, double* %y
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[ipl]], %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[ipl]], %[[i0]]
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i1]], %[[i2]]
 ; CHECK-NEXT:   ret double %[[i3]]
 ; CHECK-NEXT: }
