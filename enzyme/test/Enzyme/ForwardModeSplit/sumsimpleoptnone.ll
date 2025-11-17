@@ -37,8 +37,7 @@ declare dso_local double @__enzyme_fwdsplit(...)
 
 attributes #0 = { noinline nounwind uwtable optnone }
 
-
-; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n, i8* %tapeArg)
+; CHECK: define internal void @fwddiffef(double* nocapture readonly %x, double* nocapture %"x'", double** nocapture readonly %y, double** nocapture %"y'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double***
 ; CHECK-NEXT:   %truetape = load double**, double*** %0
