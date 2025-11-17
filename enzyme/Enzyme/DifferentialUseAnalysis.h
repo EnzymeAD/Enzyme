@@ -265,8 +265,8 @@ inline bool is_value_needed_in_reverse(
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
                                                     oldUnreachable)) {
       if (EnzymePrintDiffUse)
-        llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                     << " in reverse as sub-need " << *user << "\n";
+        llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                     << *inst << " in reverse as sub-need " << *user << "\n";
       return seen[idx] = true;
     }
 

@@ -656,23 +656,34 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-    for (size_t i = 0; i < CI->arg_size(); i++) {
-      if (val == CI->getArgOperand(i)) {
-        if (!isNoCapture(CI, i)) {
-          writeOnlyNoCapture = false;
-          break;
-        }
-        if (!isWriteOnly(CI, i)) {
-          writeOnlyNoCapture = false;
-          break;
+    // Outside of forward mode, we don't need to keep a primal around in reverse
+    // just for the deallocation
+    if (!(mode == DerivativeMode::ForwardMode ||
+          mode == DerivativeMode::ForwardModeError) &&
+        isDeallocationFunction(funcName, gutils->TLI)) {
+    } else {
+      for (size_t i = 0; i < CI->arg_size(); i++) {
+        if (val == CI->getArgOperand(i)) {
+          if (!isNoCapture(CI, i)) {
+            writeOnlyNoCapture = false;
+            break;
+          }
+          if (!isWriteOnly(CI, i)) {
+            writeOnlyNoCapture = false;
+            break;
+          }
         }
       }
     }
 
     // Don't need the primal argument if it is write only and not captured
     if (!shadow)
-      if (writeOnlyNoCapture)
+      if (writeOnlyNoCapture) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " No Need: primal of " << *val
+                       << " per write-only no-capture use in " << *CI << "\n";
         return false;
+      }
 
     if (shadow) {
       // Don't need the shadow argument if it is a pointer to pointers, which
@@ -763,7 +774,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
   if (neededFB) {
     if (EnzymePrintDiffUse)
-      llvm::errs() << " Need direct primal of " << *val
+      llvm::errs() << " Need direct primal(" << mode << ") of " << *val
                    << " in reverse from fallback " << *user << "\n";
   }
   return neededFB;

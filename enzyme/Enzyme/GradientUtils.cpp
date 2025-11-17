@@ -8350,7 +8350,8 @@ void GradientUtils::computeMinCache() {
       }
     }
 
-    auto minCutMode = (mode == DerivativeMode::ReverseModePrimal)
+    auto minCutMode = (mode == DerivativeMode::ReverseModePrimal ||
+                       mode == DerivativeMode::ReverseModeCombined)
                           ? DerivativeMode::ReverseModeGradient
                           : mode;
 
@@ -9134,7 +9135,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           shadowpromotable = false;
           promotable = false;
           EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
-                      *V, " due to unknown capturing call ", *cur);
+                      *V, " due to unknown capturing call ", *cur,
+                      " at idx=", idx, " prev=", *prev);
           idx++;
           continue;
         }

@@ -39,7 +39,8 @@ entry:
   call void @square_(double* nonnull %x.addr, double* nonnull %y)
   %1 = load double, double* %y, align 8
   call void @llvm.lifetime.end.p0i8(i64 8, i8* nonnull %0) #4
-  ret double %1
+  %r = fmul double %1, %1
+  ret double %r
 }
 
 declare void @llvm.lifetime.start.p0i8(i64, i8* nocapture) #2
@@ -68,20 +69,26 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %x.addr = alloca double, align 8
 ; CHECK-NEXT:   %"y'ipa" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"y'ipa", align 8
+; CHECK-NEXT:   %y = alloca double, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipa", align 8
 ; CHECK-NEXT:   store double %x, double* %x.addr, align 8
 ; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* {{(undef|poison)}}, double* %"y'ipa")
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"y'ipa", align 8
-; CHECK-NEXT:   ret double %[[i0]]
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"'ipl", %[[i0]]
+; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %"'ipl", %[[i0]]
+; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %[[i1]], %[[i2]]
+; CHECK-NEXT:   ret double %[[i3]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @fwddiffesquare_(double* nocapture readonly %src, double* nocapture %"src'", double* nocapture writeonly %dest, double* nocapture %"dest'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"src'", align 8
 ; CHECK-NEXT:   %0 = load double, double* %src, align 8
+; CHECK-NEXT:   %mul = fmul double %0, %0
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %0
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i2]], %[[i3]]
 ; CHECK-NEXT:   store double %[[i4]], double* %"dest'", align 8
+; CHECK-NEXT:   store double %mul, double* %dest
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
