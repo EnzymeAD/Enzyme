@@ -1618,7 +1618,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       if (is_v) {
         auto EVI = cast<ExtractValueInst>(cur);
         assert(EVI->getType()->isPointerTy());
-        todo.emplace_back(EVI, !is_v);
+        todo.emplace_back(!is_v, EVI);
         continue;
       }
 
@@ -2229,7 +2229,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
               gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, local_root_count);
             }
             if (AT->getNumElements() != numRooting) {
-              gep = AIB.CreatePointerCast(PointerType::getUnqual(ArrayType::get(T_prjlvalue, AT->getNumElements())), gep);
+              gep = AIB.CreatePointerCast(gep, PointerType::getUnqual(ArrayType::get(T_prjlvalue, AT->getNumElements())));
             }
 
             AI->replaceAllUsesWith(gep);
@@ -2268,7 +2268,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       }
 
       for (Value *ptr : sret_vals) {
-        copyNonJLValueInto(B, Types[sretCount], sretTy, sret, ST ? {sretCount} : {}, Types[sretCount], ptr, {}, /*shouldZero*/true);
+        copyNonJLValueInto(B, Types[sretCount], sretTy, sret, ST ? ArrayRef<unsigned>(std::vector<unsigned>{(unsigned)sretCount}) : ArrayRef<unsigned>(), Types[sretCount], ptr, {}, /*shouldZero*/true);
         sretCount++;
       }
 
@@ -2276,7 +2276,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         auto AT = cast<ArrayType>(ptr_v->getType());
         for (size_t j = 0; j < AT->getNumElements(); j++) {
           auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
-          copyNonJLValueInto(B, Types[sretCount], sretTy, sret, ST ? {sretCount + j} : {}, Types[sretCount], ptr, {}, /*shouldZero*/true);
+	  assert(ST);
+          copyNonJLValueInto(B, Types[sretCount], sretTy, sret, {(unsigned)(sretCount + j)}, Types[sretCount], ptr, {}, /*shouldZero*/true);
         }
         sretCount += AT->getNumElements();
       }
@@ -2301,14 +2302,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       NC->copyMetadata(*CI, toCopy);
     NC->setDebugLoc(CI->getDebugLoc());
 
-    sretCount = 0;
+    size_t sretCount = 0;
     if (!RT->isVoidTy()) {
       auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
       auto ld = B.CreateLoad(RT, gep);
       if (auto MD = CI->getMetadata(LLVMContext::MD_range))
         ld->setMetadata(LLVMContext::MD_range, MD);
       ld->takeName(CI);
-      Value replacement = ld
+      Value *replacement = ld;
       
       // We don't need to override the jlvalue_t's with the rooted versions here since we already stored the full value into the sret
       // above.
@@ -2348,6 +2349,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       sretCount += AT->getNumElements();
     }
 
+    assert(sretCount == Types.size());
     NC->setCallingConv(CI->getCallingConv());
     CI->eraseFromParent();
   }

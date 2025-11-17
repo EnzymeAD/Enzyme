@@ -2436,7 +2436,7 @@ enum class SRetRootMovement {
 
 llvm::Value* moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype, llvm::Value* sret, llvm::Type* root_ty, llvm::Value* rootRet, size_t rootOffset, SRetRootMovement direction);
 
-void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *dstType, llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType, llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix);
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type* curType, llvm::Type *dstType, llvm::Value *dst, llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType, llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix, bool shouldZero);
 
 
 #endif // ENZYME_UTILS_H

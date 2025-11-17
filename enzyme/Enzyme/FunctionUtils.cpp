@@ -1705,10 +1705,10 @@ bool DetectPointerArgOfFn(llvm::Function &F,
   if (F.empty())
     return false;
   bool changed = false;
-  for (auto &arg : F.getArguments()) {
-    if (!arg.getType().isPointerTy()) continue;
+  for (auto &arg : F.args()) {
+    if (!arg.getType()->isPointerTy()) continue;
     // Store list of values we need to check
-    std::deque<Value*> todo = { arg };
+    std::deque<Value*> todo = { &arg };
     SmallPtrSet<Value*, 1> seen;
 
     bool captured = false;
@@ -1716,7 +1716,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
     bool written = false;
 
 
-    AttributeList Attrs = arg->getParent()->getAttributes();
+    AttributeList Attrs = arg.getParent()->getAttributes();
 
     // We have already hit the max state.
 
@@ -1725,11 +1725,12 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       continue;
 
     while (!todo.empty()) {
-      auto cur = todo.pop_back_val();
+      auto cur = todo.back();
+      todo.pop_back();
       if (seen.contains(cur))
         continue;
       seen.insert(cur);
-      for (auto &U : cur.uses()) {
+      for (auto &U : cur->uses()) {
         auto I = cast<Instruction>(U.getUser());
         if (isPointerArithmeticInst(I)) {
           todo.push_back(I);
@@ -1740,13 +1741,13 @@ bool DetectPointerArgOfFn(llvm::Function &F,
           continue;
         }
         if (auto SI = dyn_cast<StoreInst>(I)) {
-          if (SI.getValueOperand() == cur) {
+          if (SI->getValueOperand() == cur) {
             captured = true;
             read = true;
             written = true;
             break;
           }
-          if (SI.getPointerOperand() == cur) {
+          if (SI->getPointerOperand() == cur) {
             written = true;
             continue;
           }
@@ -1764,7 +1765,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
           }
 
           // Used as operand bundle
-          if (U.getOperandNo() >= CB->getNumArgOperands()) {
+          if (U.getOperandNo() >= CB->arg_size()) {
             captured = true;
             read = true;
             written = true;
@@ -1804,7 +1805,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
       changed = true;
     }
 
-    if (!read && !written || Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
+    if ((!read && !written) || Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone)) {
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
           arg.removeAttr(Attribute::ReadOnly);
@@ -2070,7 +2071,7 @@ bool DetectReadonlyOrThrow(Module &M) {
 
       SmallPtrSet<Function *, 1> calls_todo;
 
-      if (!DetectPointerArgOfFn(cur, calls_todo))
+      if (!DetectPointerArgOfFn(*cur, calls_todo))
         continue;
 
       for (auto F2 : todo_map[cur]) {
@@ -2080,7 +2081,7 @@ bool DetectReadonlyOrThrow(Module &M) {
       todo_map.erase(cur);
 
       for (auto tocheck : calls_todo) {
-        todo_map[tocheck].insert(&F);
+        todo_map[tocheck].insert(cur);
         todo.push_back(tocheck);
       }
 
