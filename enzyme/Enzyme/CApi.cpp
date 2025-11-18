@@ -1632,7 +1632,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       if (isa<LoadInst>(I)) {
         continue;
       }
-      if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (auto SI = dyn_cast<StoreInst>(I)) {
         assert(SI->getValueOperand() != cur);
 
         if (CountTrackedPointers(SI->getValueOperand()->getType()).count == 0)
