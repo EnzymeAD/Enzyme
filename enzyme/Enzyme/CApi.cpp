@@ -1604,7 +1604,8 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
                           "enzyme_sret_v")
             .getValueAsString());
 
-  if (CountTrackedPointers(SRetType).count == 0) {
+  CountTrackedPointers tracked(SRetType);
+  if (tracked.count == 0 || tracked.all) {
     return false;
   }
 
@@ -1655,6 +1656,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     assert(isSpecialPtr(cast<PointerType>(sv->getType())));
     bool foundUse = false;
     for (auto &U : sv->uses()) {
+      llvm::errs() <<" trying: " << *U.getUser() <<"\n";
       if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
         if (SI->getValueOperand() == sv) {
           auto base = getBaseObject(SI->getPointerOperand());
@@ -1676,6 +1678,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
                                   "enzymejl_returnRoots_v")
                     .isValid()) {
               foundUse = true;
+              llvm::errs() << "++found\n";
               break;
             }
           }
@@ -1683,7 +1686,11 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       }
     }
     if (!foundUse) {
+      llvm::errs() << *arg->getParent() << "\n";
+      llvm::errs() << " arg: " << *arg << "\n";
+      llvm::errs() << " + did not find use\n";
       legal = false;
+      break;
     }
   }
 
