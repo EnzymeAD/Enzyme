@@ -95,15 +95,19 @@ module {
   }
 
   func.func @ff_dup(%a: !llvm.ptr, %b: !llvm.ptr) -> f32 {
+    %tape_cache = "enzyme.init"() : () -> !enzyme.Cache<!enzyme.Tape>
+
     %r, %tape = enzyme.autodiff_split_mode.primal @f_dup(%a, %b) {
       activity=[#enzyme<activity enzyme_dup>],
       ret_activity=[#enzyme<activity enzyme_active>]
     } : (!llvm.ptr, !llvm.ptr) -> (f32, !enzyme.Tape)
+    "enzyme.push"(%tape_cache, %tape) : (!enzyme.Cache<!enzyme.Tape>, !enzyme.Tape) -> ()
 
     //
 
+    %popped_tape = "enzyme.pop"(%tape_cache) : (!enzyme.Cache<!enzyme.Tape>) -> !enzyme.Tape
     %dres = arith.constant 1.0 : f32
-    enzyme.autodiff_split_mode.reverse @f_dup(%dres, %tape) {
+    enzyme.autodiff_split_mode.reverse @f_dup(%dres, %popped_tape) {
       activity=[#enzyme<activity enzyme_dup>],
       ret_activity=[#enzyme<activity enzyme_active>]
     } : (f32, !enzyme.Tape) -> ()

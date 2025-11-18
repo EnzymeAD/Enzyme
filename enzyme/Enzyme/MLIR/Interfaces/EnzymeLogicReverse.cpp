@@ -291,12 +291,19 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
 static mlir::enzyme::ActivityAttr activityFromDiffeType(mlir::MLIRContext *ctx,
                                                         DIFFE_TYPE ty) {
-  auto activity = mlir::enzyme::Activity::enzyme_active;
+  mlir::enzyme::Activity activity;
   switch (ty) {
   case DIFFE_TYPE::DUP_ARG:
     activity = mlir::enzyme::Activity::enzyme_dup;
-  default:
     break;
+  case DIFFE_TYPE::CONSTANT:
+    activity = mlir::enzyme::Activity::enzyme_const;
+    break;
+  case DIFFE_TYPE::OUT_DIFF:
+    activity = mlir::enzyme::Activity::enzyme_active;
+    break;
+  default:
+    llvm_unreachable("todo");
   };
   return mlir::enzyme::ActivityAttr::get(ctx, activity);
 }
@@ -331,9 +338,17 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   auto name = fn.getName();
 
+  SmallVector<mlir::Attribute> argAttrs;
+  if (auto prevArgAttrs = fn.getAllArgAttrs())
+    argAttrs.assign(prevArgAttrs.begin(), prevArgAttrs.end());
+
   SmallVector<Attribute> argActivityAttrs;
-  for (auto act : constants)
+  for (auto [i, act] : llvm::enumerate(constants)) {
     argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
+
+    if (!argAttrs.empty() && act == DIFFE_TYPE::DUP_ARG)
+      argAttrs.insert(argAttrs.begin() + i + 1 - (argAttrs.size() - fn.getNumArguments()), nullptr);
+  }
 
   SmallVector<Attribute> retActivityAttrs;
   for (auto act : retType)
@@ -371,7 +386,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
       FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
 
   auto reverse = enzyme::CustomReverseRuleReverseOp::create(
-      ruleBuilder, fn.getLoc(), revFuncType);
+      ruleBuilder, fn.getLoc(), revFuncType, /* argAttrs */ nullptr, /* resAttrs */ nullptr);
   enzyme::YieldOp::create(ruleBuilder, fn.getLoc(), ValueRange{});
 
   ruleBuilder.setInsertionPoint(reverse);
@@ -473,7 +488,7 @@ FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
 
   ruleBuilder.setInsertionPoint(reverse);
   auto augmentedPrimal = enzyme::CustomReverseRuleAugmentedPrimalOp::create(
-      ruleBuilder, fn.getLoc(), primalFuncType);
+      ruleBuilder, fn.getLoc(), primalFuncType, /*argAttrs*/ nullptr, /*resAttrs*/ nullptr);
   augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
   for (Block &b : augmentedPrimal.getBody()) {
     if (b.getNumSuccessors() == 0) {
