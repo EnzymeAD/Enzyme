@@ -526,7 +526,7 @@ public:
             }
 
             SmallVector<Value> dynSizes;
-            for (size_t i = inductionVariable.size(); i < dynamicDims.size();
+            for (int i = inductionVariable.size(); i < dynamicDims.size();
                  ++i) {
               dynSizes.push_back(dynamicDims[i]);
             }
@@ -784,7 +784,11 @@ public:
           sizes.append(shape.begin(), shape.end());
 
           SmallVector<Value> dynSizes;
+<<<<<<< HEAD
           for (size_t i = reversedIndex.size(); i < newShape.size(); ++i) {
+=======
+          for (int i = reversedIndex.size(); i < newShape.size(); ++i) {
+>>>>>>> dfb080b4 (mlir: single memref cache allocation for dynamic sizes)
             // we use memref.dim here to know the size, hopefully further
             // optimization/canonicalizations can just forward the right size
             // here.
