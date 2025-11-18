@@ -4090,7 +4090,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction) {
-  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo;
+  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = { { jltype, {} } };
   SmallVector<Value *> extracted;
   Value *val = sret;
   auto rootOffset0 = rootOffset;
@@ -4111,6 +4111,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       case SRetRootMovement::RootPointerToSRetPointer:
       case SRetRootMovement::RootPointerToSRetValue:
         loc = constantInBoundsGEPHelper(B, root_ty, rootRet, rootOffset);
+        break;
       default:
         llvm_unreachable("Unhandled");
       }
@@ -4248,7 +4249,7 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
       continue;
     }
 
-    if (auto ST = dyn_cast<StructType>(curType)) {
+    if (auto ST = dyn_cast<StructType>(ty)) {
       for (size_t i = 0; i < ST->getNumElements(); i++) {
         std::vector<unsigned> nextDst(dstPrefix);
         std::vector<unsigned> nextSrc(srcPrefix);
