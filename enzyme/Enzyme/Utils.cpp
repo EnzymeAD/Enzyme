@@ -4090,7 +4090,8 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
                                  llvm::Value *sret, llvm::Type *root_ty,
                                  llvm::Value *rootRet, size_t rootOffset,
                                  SRetRootMovement direction) {
-  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = { { jltype, {} } };
+  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = {
+      {jltype, {}}};
   SmallVector<Value *> extracted;
   Value *val = sret;
   auto rootOffset0 = rootOffset;

@@ -1656,7 +1656,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     assert(isSpecialPtr(cast<PointerType>(sv->getType())));
     bool foundUse = false;
     for (auto &U : sv->uses()) {
-      llvm::errs() <<" trying: " << *U.getUser() <<"\n";
+      llvm::errs() << " trying: " << *U.getUser() << "\n";
       if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
         if (SI->getValueOperand() == sv) {
           auto base = getBaseObject(SI->getPointerOperand());
@@ -1695,7 +1695,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
   }
 
 #if LLVM_VERSION_MAJOR < 18
-  //assert(legal);
+  // assert(legal);
 #else
   assert(!legal);
 #endif
@@ -2291,6 +2291,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             postCallReplacements.emplace_back(
                 val, gep, ArrayType::get(T_prjlvalue, subCount));
           }
+          continue;
         }
 
         if (rroots_v.count(i)) {
@@ -2357,6 +2358,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     SmallVector<OperandBundleDef, 1> Bundles;
     for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
       Bundles.emplace_back(CI->getOperandBundleAt(I));
+
+    if (!NewF->getFunctionType()->isVarArg() &&
+        NewF->getFunctionType()->getNumParams() != vals.size()) {
+      llvm::errs() << "NewF: " << *NewF << "\n";
+      for (size_t i = 0; i < vals.size(); i++) {
+        llvm::errs() << " Args[" << i << "] = " << *vals[i] << "\n";
+      }
+    }
     auto NC = B.CreateCall(NewF, vals, Bundles);
     NC->setAttributes(NewAttrs);
 
