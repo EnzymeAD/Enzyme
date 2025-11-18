@@ -15,6 +15,8 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -75,6 +77,10 @@ static LoopCacheType getCacheType(Operation *op) {
 
 static bool hasMinCut(Operation *op) {
   return !op->hasAttr("enzyme.disable_mincut");
+}
+
+static bool hasLICM(Operation *op) {
+  return !op->hasAttr("enzyme.disable_licm");
 }
 
 template <typename FinalClass, typename OpName>
@@ -145,6 +151,14 @@ public:
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
     auto forOp = cast<OpName>(op);
+
+    if (hasLICM(op)) { // perform licm
+      auto loopLike = dyn_cast<LoopLikeOpInterface>(op);
+
+      if (loopLike) {
+        mlir::moveLoopInvariantCode(loopLike);
+      }
+    }
 
     OpName otherForOp = nullptr; // where caches pops are
 
@@ -330,8 +344,9 @@ public:
       rewriter.setInsertionPointToStart(forOp.getBody());
     for (auto &info : caches) {
 
+      Value pushedValue = info.pushedValue();
       if (mincut)
-        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
+        assert(pushedValue.getParentRegion() == &forOp.getRegion());
 
       // Otherwise, add a new variable to keep track.
       if (!inductionVariable.size()) {
@@ -375,10 +390,24 @@ public:
 
       bool multiDim = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-              return dim != ShapedType::kDynamic;
+        auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
+        if (cacheType == LoopCacheType::MEMREF && allocOp &&
+            allocOp.getSymbolOperands().empty() &&
+            llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
+              return !forOp.getRegion().isAncestor(dynSize.getParentRegion());
             })) {
           multiDim = true;
+
+          dynamicDims.append(allocOp.getDynamicSizes().begin(),
+                             allocOp.getDynamicSizes().end());
+
+        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+                     return dim != ShapedType::kDynamic;
+                   })) {
+          multiDim = true;
+        }
+
+        if (multiDim) {
           newShape.append(ST.getShape().begin(), ST.getShape().end());
           ET = ST.getElementType();
         }
@@ -387,14 +416,6 @@ public:
       auto newType = cacheType == LoopCacheType::TENSOR
                          ? cast<ShapedType>(RankedTensorType::get(newShape, ET))
                          : cast<ShapedType>(MemRefType::get(newShape, ET));
-
-      for (size_t i = fwdNumIters.size(); i < newShape.size(); i++) {
-        if (newShape[i] == mlir::ShapedType::kDynamic) {
-          return info.initOp->emitError()
-                 << "Cached type uses dynamic index, unsupported presently "
-                    "from forhandler";
-        }
-      }
 
       if (cacheType == LoopCacheType::TENSOR) {
         {
@@ -463,14 +484,22 @@ public:
             auto memref = info.pushOp.getValue();
             auto shape = MT.getShape();
 
-            SmallVector<int64_t> offsets(shape.size() + 1, 0);
-            offsets[0] = ShapedType::kDynamic;
-
+            SmallVector<int64_t> offsets(newShape.size(), 0);
             SmallVector<int64_t> sizes;
-            sizes.push_back(1);
+            for (auto [i, _] : llvm::enumerate(inductionVariable)) {
+              offsets[i] = ShapedType::kDynamic;
+              sizes.push_back(1);
+            }
+
+            SmallVector<Value> dynSizes;
+            for (int i = inductionVariable.size(); i < dynamicDims.size();
+                 ++i) {
+              dynSizes.push_back(dynamicDims[i]);
+            }
+
             sizes.append(shape.begin(), shape.end());
 
-            SmallVector<int64_t> strides(shape.size() + 1, 1);
+            SmallVector<int64_t> strides(newShape.size(), 1);
 
             auto RT = memref::SubViewOp::inferRankReducedResultType(
                 MT.getShape(), cast<MemRefType>(initValue.getType()), offsets,
@@ -480,7 +509,7 @@ public:
             rewriter.replaceOpWithNewOp<memref::SubViewOp>(
                 memref.getDefiningOp(), RT, initValue,
                 /*offsets*/ inductionVariable,
-                /*sizes*/ ValueRange(),
+                /*sizes*/ dynSizes,
                 /*strides*/ ValueRange(),
                 /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
                 /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
@@ -609,10 +638,16 @@ public:
 
       bool multiDim = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
-        if (llvm::all_of(ST.getShape(), [](int64_t dim) {
-              return dim != ShapedType::kDynamic;
-            })) {
+        auto svOp = info.pushedValue().getDefiningOp<memref::SubViewOp>();
+        if (cacheType == LoopCacheType::MEMREF && svOp) {
           multiDim = true;
+        } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
+                     return dim != ShapedType::kDynamic;
+                   })) {
+          multiDim = true;
+        }
+
+        if (multiDim) {
           newShape.append(ST.getShape().begin(), ST.getShape().end());
           ET = ST.getElementType();
         }
@@ -682,13 +717,26 @@ public:
         if (multiDim && MT) {
           auto shape = MT.getShape();
 
-          SmallVector<int64_t> offsets(shape.size() + 1, 0);
-          offsets[0] = ShapedType::kDynamic;
-
+          SmallVector<int64_t> offsets(newShape.size(), 0);
           SmallVector<int64_t> sizes;
-          sizes.reserve(shape.size() + 1);
-          sizes.push_back(1);
+          for (auto [i, _] : llvm::enumerate(reversedIndex)) {
+            offsets[i] = ShapedType::kDynamic;
+            sizes.push_back(1);
+          }
+
           sizes.append(shape.begin(), shape.end());
+
+          SmallVector<Value> dynSizes;
+          for (int i = reversedIndex.size(); i < newShape.size(); ++i) {
+            // we use memref.dim here to know the size, hopefully further
+            // optimization/canonicalizations can just forward the right size
+            // here.
+            if (newShape[i] == ShapedType::kDynamic)
+              dynSizes.push_back(memref::DimOp::create(
+                  rewriter, popNewValue.getLoc(), popNewValue,
+                  arith::ConstantIndexOp::create(rewriter, popNewValue.getLoc(),
+                                                 i)));
+          }
 
           SmallVector<int64_t> strides(shape.size() + 1, 1);
 
@@ -699,7 +747,7 @@ public:
           popValue = memref::SubViewOp::create(
               rewriter, info.popOp->getLoc(), RT, popNewValue,
               /*offsets*/ reversedIndex,
-              /*sizes*/ ValueRange(),
+              /*sizes*/ dynSizes,
               /*strides*/ ValueRange(),
               /*static_offsets*/ rewriter.getDenseI64ArrayAttr(offsets),
               /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
