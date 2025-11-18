@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,early-cse)" -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,early-cse)" -S -opaque-pointers | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 
