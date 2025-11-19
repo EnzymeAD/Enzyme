@@ -1609,10 +1609,11 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     return false;
   }
 
-  SmallVector<std::pair<bool, Value *>> todo = {{is_v, arg}};
+  SmallVector<std::tuple<bool, Value *>> todo = {{is_v, arg}};
 
   SmallVector<Value *> storedValues;
 
+  bool legal = true;
   while (!todo.empty()) {
     auto curv = todo.pop_back_val();
     auto &&[local_isv, cur] = curv;
@@ -1643,20 +1644,21 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
         continue;
       }
 
-      llvm::errs() << *arg->getParent() << "\n";
-      llvm::errs() << " arg: " << *arg << " cur: " << *cur << "\n";
-      llvm::errs() << "  I: " << *I << "\n";
-      llvm_unreachable("Use of sret was not known");
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Unknown user of sret-like argument\n";
+      CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
+                           wrap(cur), wrap(arg), nullptr);
+      legal = false;
+      break;
     }
   }
 
-  bool legal = true;
+  if (legal)
   for (auto sv : storedValues) {
-    llvm::errs() << " sv: " << *sv << "\n";
     assert(isSpecialPtr(cast<PointerType>(sv->getType())));
     bool foundUse = false;
     for (auto &U : sv->uses()) {
-      llvm::errs() << " trying: " << *U.getUser() << "\n";
       if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
         if (SI->getValueOperand() == sv) {
           auto base = getBaseObject(SI->getPointerOperand());
@@ -1678,7 +1680,6 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
                                   "enzymejl_returnRoots_v")
                     .isValid()) {
               foundUse = true;
-              llvm::errs() << "++found\n";
               break;
             }
           }
@@ -1686,9 +1687,11 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       }
     }
     if (!foundUse) {
-      llvm::errs() << *arg->getParent() << "\n";
-      llvm::errs() << " arg: " << *arg << "\n";
-      llvm::errs() << " + did not find use\n";
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Could not find use of stored value\n";
+      CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+                         nullptr, wrap(arg), nullptr);
       legal = false;
       break;
     }

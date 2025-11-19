@@ -86,6 +86,7 @@ enum class ErrorType {
   IllegalReplaceFicticiousPHIs = 8,
   GetIndexError = 9,
   NoTruncate = 10,
+  GCRewrite = 11,
 };
 
 extern "C" {
