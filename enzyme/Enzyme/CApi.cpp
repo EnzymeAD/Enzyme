@@ -1585,7 +1585,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
   F->eraseFromParent();
 }
 
-bool needsReRooting(llvm::Argument *arg, bool is_v) {
+bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
 
   llvm::Type *SRetType;
 
@@ -1607,6 +1607,17 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
   CountTrackedPointers tracked(SRetType);
   if (tracked.count == 0) {
     return false;
+  }
+
+  bool hasReturnRootingAfterArg = false;
+  for (size_t i = arg->getArgNo(); i < arg->getParent()->arg_size(); i++) {
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                           "enzymejl_returnRoots") ||
+        Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                           "enzymejl_returnRoots_v")) {
+      hasReturnRootingAfterArg = true;
+      break;
+    }
   }
 
   SmallVector<std::tuple<bool, Value *>> todo = {{is_v, arg}};
@@ -1641,6 +1652,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
           continue;
 
         storedValues.push_back(SI->getValueOperand());
+        anyJLStore = true;
         continue;
       }
 
@@ -1650,6 +1662,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
                          wrap(cur), wrap(arg), nullptr);
       legal = false;
+      anyJLStore = true;
       break;
     }
   }
@@ -1706,11 +1719,14 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
           llvm::errs() << "Pointer of wrong type: " << *sv << "\n";
           assert(0);
         }
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << "Could not find use of stored value\n";
-        CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                           nullptr, wrap(arg), nullptr);
+
+        if (hasReturnRootingAfterArg) {
+          std::string s;
+          llvm::raw_string_ostream ss(s);
+          ss << "Could not find use of stored value\n";
+          CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+                             nullptr, wrap(arg), nullptr);
+        }
         legal = false;
         break;
       }
@@ -1718,7 +1734,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
   }
 
 #if LLVM_VERSION_MAJOR < 18
-    // assert(legal);
+  // assert(legal);
 #else
   assert(!legal);
 #endif
@@ -1749,15 +1765,21 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                            Attribute::StructRet))
       srets.insert(i);
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")) {
-      enzyme_srets.insert(i);
-      if (needsReRooting(F->getArg(i), false)) {
+      bool anyJLStore = false;
+      if (needsReRooting(F->getArg(i), false, anyJLStore)) {
         reroot_enzyme_srets.insert(i);
+        enzyme_srets.insert(i);
+      } else if (anyJLStore) {
+        enzyme_srets.insert(i);
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret_v")) {
-      enzyme_srets_v.insert(i);
-      if (needsReRooting(F->getArg(i), true)) {
+      bool anyJLStore = false;
+      if (needsReRooting(F->getArg(i), true, anyJLStore)) {
         reroot_enzyme_srets.insert(i);
+        enzyme_srets_v.insert(i);
+      } else if (anyJLStore) {
+        enzyme_srets_v.insert(i);
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
@@ -1870,11 +1892,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   ArrayType *roots_AT =
       numRooting ? ArrayType::get(T_prjlvalue, numRooting) : nullptr;
 
-  if (CountTrackedPointers(sretTy).all) {
+  CountTrackedPointers countF(sretTy);
+  if (countF.all) {
     roots_AT = nullptr;
     numRooting = 0;
     reroot_enzyme_srets.clear();
     reroot_enzyme_srets_v.clear();
+  } else if (countF.count) {
+    assert(roots_AT);
+    assert(numRooting == countF.count);
   }
 
   AttributeList NewAttrs;
@@ -1908,9 +1934,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         rroots_v.count(i))
       continue;
 
-    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i)) {
+      if (attr.isStringAttribute())
+        if (attr.getKindAsString() == "enzyme_sret" ||
+            attr.getKindAsString() == "enzyme_sret_v") {
+          continue;
+        }
       NewAttrs = NewAttrs.addAttribute(
           F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    }
     types.push_back(F->getFunctionType()->getParamType(i));
     nexti++;
   }
