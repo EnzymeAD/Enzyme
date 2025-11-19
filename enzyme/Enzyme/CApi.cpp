@@ -1605,7 +1605,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
             .getValueAsString());
 
   CountTrackedPointers tracked(SRetType);
-  if (tracked.count == 0 || tracked.all) {
+  if (tracked.count == 0) {
     return false;
   }
 
@@ -1654,9 +1654,9 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     }
   }
 
-  if (legal)
-    for (auto sv : storedValues) {
-      assert(isSpecialPtr(cast<PointerType>(sv->getType())));
+  if (legal) {
+    while (!storedValues.empty()) {
+      auto sv = storedValues.pop_back_val();
       bool foundUse = false;
       for (auto &U : sv->uses()) {
         if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
@@ -1687,6 +1687,25 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
         }
       }
       if (!foundUse) {
+        if (auto IVI = dyn_cast<InsertValueInst>(sv)) {
+          CountTrackedPointers tracked(
+              IVI->getInsertedValueOperand()->getType());
+          if (tracked.count == 0) {
+            storedValues.push_back(IVI->getAggregateOperand());
+            continue;
+          }
+          if (isa<UndefValue>(IVI->getAggregateOperand()) ||
+              isa<PoisonValue>(IVI->getAggregateOperand()) ||
+              isa<ConstantAggregateZero>(IVI->getAggregateOperand())) {
+            storedValues.push_back(IVI->getInsertedValueOperand());
+            continue;
+          }
+        }
+        if (!isa<PointerType>(sv->getType()) ||
+            !isSpecialPtr(cast<PointerType>(sv->getType()))) {
+          llvm::errs() << "Pointer of wrong type: " << *sv << "\n";
+          assert(0);
+        }
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << "Could not find use of stored value\n";
@@ -1696,6 +1715,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
         break;
       }
     }
+  }
 
 #if LLVM_VERSION_MAJOR < 18
     // assert(legal);
@@ -1703,7 +1723,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
   assert(!legal);
 #endif
 
-  return legal;
+  return !legal;
 }
 
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
@@ -1849,6 +1869,13 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   ArrayType *roots_AT =
       numRooting ? ArrayType::get(T_prjlvalue, numRooting) : nullptr;
+
+  if (CountTrackedPointers(sretTy).all) {
+    roots_AT = nullptr;
+    numRooting = 0;
+    reroot_enzyme_srets.clear();
+    reroot_enzyme_srets_v.clear();
+  }
 
   AttributeList NewAttrs;
   SmallVector<Type *, 1> types;
