@@ -1698,7 +1698,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
     }
 
 #if LLVM_VERSION_MAJOR < 18
-  // assert(legal);
+    // assert(legal);
 #else
   assert(!legal);
 #endif
