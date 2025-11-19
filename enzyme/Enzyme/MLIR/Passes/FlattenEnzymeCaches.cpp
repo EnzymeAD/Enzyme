@@ -151,8 +151,7 @@ struct FlattenEnzymeCaches
     });
 
     // Trying to get lowering working, remember to delete this
-    llvm::errs() << "***Deleting allocations and leftover placeholders***\n";
-    getOperation()->walk([](gpu::DeallocOp deallocOp) { deallocOp.erase(); });
+    llvm::errs() << "***Deleting leftover placeholders***\n";
 
     getOperation()->walk([](enzyme::PlaceholderOp placeholder) {
       SmallVector<Operation *> frontier{placeholder};
