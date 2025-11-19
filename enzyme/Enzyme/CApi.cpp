@@ -1648,54 +1648,54 @@ bool needsReRooting(llvm::Argument *arg, bool is_v) {
       llvm::raw_string_ostream ss(s);
       ss << "Unknown user of sret-like argument\n";
       CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
-                           wrap(cur), wrap(arg), nullptr);
+                         wrap(cur), wrap(arg), nullptr);
       legal = false;
       break;
     }
   }
 
   if (legal)
-  for (auto sv : storedValues) {
-    assert(isSpecialPtr(cast<PointerType>(sv->getType())));
-    bool foundUse = false;
-    for (auto &U : sv->uses()) {
-      if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
-        if (SI->getValueOperand() == sv) {
-          auto base = getBaseObject(SI->getPointerOperand());
-          if (base == arg) {
-            continue;
-          }
-          if (auto evi = dyn_cast<ExtractValueInst>(base)) {
-            base = evi->getAggregateOperand();
-          }
-          if (auto arg2 = dyn_cast<Argument>(base)) {
-            if (Attrs
-                    .getAttribute(AttributeList::FirstArgIndex +
-                                      arg2->getArgNo(),
-                                  "enzymejl_returnRoots")
-                    .isValid() ||
-                Attrs
-                    .getAttribute(AttributeList::FirstArgIndex +
-                                      arg2->getArgNo(),
-                                  "enzymejl_returnRoots_v")
-                    .isValid()) {
-              foundUse = true;
-              break;
+    for (auto sv : storedValues) {
+      assert(isSpecialPtr(cast<PointerType>(sv->getType())));
+      bool foundUse = false;
+      for (auto &U : sv->uses()) {
+        if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
+          if (SI->getValueOperand() == sv) {
+            auto base = getBaseObject(SI->getPointerOperand());
+            if (base == arg) {
+              continue;
+            }
+            if (auto evi = dyn_cast<ExtractValueInst>(base)) {
+              base = evi->getAggregateOperand();
+            }
+            if (auto arg2 = dyn_cast<Argument>(base)) {
+              if (Attrs
+                      .getAttribute(AttributeList::FirstArgIndex +
+                                        arg2->getArgNo(),
+                                    "enzymejl_returnRoots")
+                      .isValid() ||
+                  Attrs
+                      .getAttribute(AttributeList::FirstArgIndex +
+                                        arg2->getArgNo(),
+                                    "enzymejl_returnRoots_v")
+                      .isValid()) {
+                foundUse = true;
+                break;
+              }
             }
           }
         }
       }
+      if (!foundUse) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Could not find use of stored value\n";
+        CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
+                           nullptr, wrap(arg), nullptr);
+        legal = false;
+        break;
+      }
     }
-    if (!foundUse) {
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "Could not find use of stored value\n";
-      CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
-                         nullptr, wrap(arg), nullptr);
-      legal = false;
-      break;
-    }
-  }
 
 #if LLVM_VERSION_MAJOR < 18
   // assert(legal);
