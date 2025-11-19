@@ -970,7 +970,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         DownHypothesis->ConstantInstructions.insert(I);
         if (checkSret) {
           auto CB = cast<CallBase>(I);
-          bool legal = false;
+          bool legal = true;
           for (size_t i = 0; i < CB->arg_size(); i++) {
             if (i == 0 && CB->hasStructRetAttr()) {
             } else if (CB->getAttributeAtIndex(
@@ -994,6 +994,11 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
             }
             if (!DownHypothesis->isValueInactiveFromUsers(TR, obj,
                                                           UseActivity::None)) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " possible active user of sret-like value ["
+                             << (int)directions << "] from users instruction "
+                             << *I << " obj: " << obj << "\n";
+              ReEvaluateInstIfInactiveValue[obj].insert(I);
               legal = false;
               break;
             }
