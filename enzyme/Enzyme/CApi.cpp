@@ -1907,25 +1907,27 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   ArrayType *roots_AT =
       numRooting ? ArrayType::get(T_prjlvalue, numRooting) : nullptr;
 
-  CountTrackedPointers countF(sretTy);
-  if (countF.all) {
-    roots_AT = nullptr;
-    numRooting = 0;
-    reroot_enzyme_srets.clear();
-    reroot_enzyme_srets_v.clear();
-  } else if (countF.count) {
-    if (!roots_AT) {
-      llvm::errs() << " sretTy: " << *sretTy << "\n";
-      llvm::errs() << " numRooting: " << numRooting << "\n";
-      llvm::errs() << " tracked.count: " << countF.count << "\n";
+  if (sretTy) {
+    CountTrackedPointers countF(sretTy);
+    if (countF.all) {
+      roots_AT = nullptr;
+      numRooting = 0;
+      reroot_enzyme_srets.clear();
+      reroot_enzyme_srets_v.clear();
+    } else if (countF.count) {
+      if (!roots_AT) {
+        llvm::errs() << " sretTy: " << *sretTy << "\n";
+        llvm::errs() << " numRooting: " << numRooting << "\n";
+        llvm::errs() << " tracked.count: " << countF.count << "\n";
+      }
+      assert(roots_AT);
+      if (numRooting != countF.count) {
+        llvm::errs() << " sretTy: " << *sretTy << "\n";
+        llvm::errs() << " numRooting: " << numRooting << "\n";
+        llvm::errs() << " tracked.count: " << countF.count << "\n";
+      }
+      assert(numRooting == countF.count);
     }
-    assert(roots_AT);
-    if (numRooting != countF.count) {
-      llvm::errs() << " sretTy: " << *sretTy << "\n";
-      llvm::errs() << " numRooting: " << numRooting << "\n";
-      llvm::errs() << " tracked.count: " << countF.count << "\n";
-    }
-    assert(numRooting == countF.count);
   }
 
   AttributeList NewAttrs;
