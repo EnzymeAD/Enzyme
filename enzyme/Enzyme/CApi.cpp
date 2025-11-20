@@ -1901,9 +1901,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   } else if (countF.count) {
     assert(roots_AT);
     if (numRooting != countF.count) {
-        llvm::errs() << " sretTy: " << *sretTy << "\n";
-        llvm::errs() << " numRooting: " << numRooting << "\n";
-        llvm::errs() << " tracked.count: " << countF.count << "\n";
+      llvm::errs() << " sretTy: " << *sretTy << "\n";
+      llvm::errs() << " numRooting: " << numRooting << "\n";
+      llvm::errs() << " tracked.count: " << countF.count << "\n";
     }
     assert(numRooting == countF.count);
   }
