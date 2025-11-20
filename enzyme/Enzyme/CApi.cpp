@@ -1610,7 +1610,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
   }
 
   bool hasReturnRootingAfterArg = false;
-  for (size_t i = arg->getArgNo(); i < arg->getParent()->arg_size(); i++) {
+  for (size_t i = arg->getArgNo() + 1; i < arg->getParent()->arg_size(); i++) {
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
                            "enzymejl_returnRoots") ||
         Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
@@ -1900,6 +1900,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     reroot_enzyme_srets_v.clear();
   } else if (countF.count) {
     assert(roots_AT);
+    if (numRooting != countF.count) {
+        llvm::errs() << " sretTy: " << *sretTy << "\n";
+        llvm::errs() << " numRooting: " << numRooting << "\n";
+        llvm::errs() << " tracked.count: " << countF.count << "\n";
+    }
     assert(numRooting == countF.count);
   }
 
