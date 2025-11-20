@@ -1799,12 +1799,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       assert(rroots.size() == 1);
       assert(*rroots.begin() == 1);
     }
-    return;
-  }
-  // No sret/rooting, no intervention needed.
-  if (srets.size() == 0 && enzyme_srets.size() == 0 &&
-      enzyme_srets_v.size() == 0 && rroots.size() == 0 &&
-      rroots_v.size() == 0) {
+    llvm::Type *SRetType = F->getParamStructRetType(0);
+    if (CountTrackedPointers(SRetType).count) {
+      if (rroots.size())
+        return;
+    }
+  } else if (srets.size() == 0 && enzyme_srets.size() == 0 &&
+             enzyme_srets_v.size() == 0 && rroots.size() == 0 &&
+             rroots_v.size() == 0) {
+    // No sret/rooting, no intervention needed.
     return;
   }
 
