@@ -1754,24 +1754,6 @@ bool needsReReturning(llvm::Argument *arg, bool is_v) {
 
   auto Attrs = arg->getParent()->getAttributes();
 
-  if (!is_v)
-    SRetType = convertSRetTypeFromString(
-        Attrs
-            .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
-                          "enzymejl_returnRoots")
-            .getValueAsString());
-  else
-    SRetType = convertSRetTypeFromString(
-        Attrs
-            .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
-                          "enzymejl_returnRoots_v")
-            .getValueAsString());
-
-  CountTrackedPointers tracked(SRetType);
-  if (tracked.count == 0) {
-    return false;
-  }
-
   bool hasSRetBeforeArg = false;
   for (size_t i = 0; i < arg->getArgNo(); i++) {
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret") ||
