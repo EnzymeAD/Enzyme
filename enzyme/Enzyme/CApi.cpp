@@ -1620,6 +1620,11 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
     }
   }
 
+  // If there is no returnRoots, we _must_ reroot the arg.
+  if (!hasReturnRootingAfterArg) {
+    return true;
+  }
+
   SmallVector<std::tuple<bool, Value *>> todo = {{is_v, arg}};
 
   SmallVector<Value *> storedValues;
@@ -1716,6 +1721,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
         }
         if (!isa<PointerType>(sv->getType()) ||
             !isSpecialPtr(cast<PointerType>(sv->getType()))) {
+          llvm::errs() << " sf: " << *arg->getParent() << "\n";
           llvm::errs() << "Pointer of wrong type: " << *sv << "\n";
           assert(0);
         }
