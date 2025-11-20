@@ -13,7 +13,7 @@ def : MLIRDerivative<"math", "ExpOp", (Op $x),
 def : MLIRDerivative<"math", "SinOp", (Op $x), 
                     [
                       (CheckedMulF (DiffeRet), (CosF $x))
-                      ]
+                    ]
                   >;
 def : MLIRDerivative<"math", "SqrtOp", (Op $x),
                     [
