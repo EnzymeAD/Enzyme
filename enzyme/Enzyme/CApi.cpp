@@ -1807,15 +1807,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
                                       convertSRetTypeToString(SRetType)));
     Attrs = F->getAttributes();
-    srets.clear();  
+    srets.clear();
     bool anyJLStore = false;
     size_t i = 0;
-      if (needsReRooting(F->getArg(i), false, anyJLStore)) {
-        reroot_enzyme_srets.insert(i);
-        enzyme_srets.insert(i);
-      } else if (anyJLStore) {
-        enzyme_srets.insert(i);
-      }
+    if (needsReRooting(F->getArg(i), false, anyJLStore)) {
+      reroot_enzyme_srets.insert(i);
+      enzyme_srets.insert(i);
+    } else if (anyJLStore) {
+      enzyme_srets.insert(i);
+    }
   } else if (srets.size() == 0 && enzyme_srets.size() == 0 &&
              enzyme_srets_v.size() == 0 && rroots.size() == 0 &&
              rroots_v.size() == 0) {
