@@ -1749,9 +1749,6 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
 }
 
 bool needsReReturning(llvm::Argument *arg, bool is_v) {
-
-  llvm::Type *SRetType;
-
   auto Attrs = arg->getParent()->getAttributes();
 
   bool hasSRetBeforeArg = false;
@@ -2179,7 +2176,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                 PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
           }
           curOffset += subCount;
-
+          if (reret_roots.count(i))
+            sretCount++;
         } else {
           assert(sret);
           gep =
@@ -2283,6 +2281,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                            ArrayType::get(T_prjlvalue, subCount)));
             }
             curOffset += subCount;
+            if (reret_roots.count(i))
+              sretCount++;
           } else {
             assert(reret_roots_v.count(i));
             assert(sret);
