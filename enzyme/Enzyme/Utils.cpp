@@ -4126,6 +4126,9 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       }
       case SRetRootMovement::SRetValueToRootPointer: {
         Value *outloc = GradientUtils::extractMeta(B, sret, path);
+        outloc = B.CreatePointerCast(
+            outloc, PointerType::get(StructType::get(outloc->getContext(), {}),
+                                     Tracked));
         B.CreateStore(outloc, loc);
         break;
       }
