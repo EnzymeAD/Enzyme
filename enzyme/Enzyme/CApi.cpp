@@ -1804,6 +1804,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       if (rroots.size())
         return;
     }
+    F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
+                                      convertSRetTypeToString(SRetType)));
+    Attrs = F->getAttributes();
+    enzyme_srets = std::move(srets);
   } else if (srets.size() == 0 && enzyme_srets.size() == 0 &&
              enzyme_srets_v.size() == 0 && rroots.size() == 0 &&
              rroots_v.size() == 0) {
