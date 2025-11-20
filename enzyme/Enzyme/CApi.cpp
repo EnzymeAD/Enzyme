@@ -2443,6 +2443,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                            ArrayType::get(T_prjlvalue, subCount)));
             }
             local_root_count += subCount;
+            if (reret_roots_v.count(i))
+              sretCount++;
           } else {
             assert(reret_roots.count(i));
             assert(sret);
@@ -2497,6 +2499,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                   gep, PointerType::getUnqual(
                            ArrayType::get(T_prjlvalue, subCount)));
               local_root_count += subCount;
+              if (reret_roots_v.count(i))
+                sretCount++;
             } else {
               assert(reret_roots_v.count(i));
               assert(sret);
