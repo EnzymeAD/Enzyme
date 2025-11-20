@@ -326,6 +326,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                  << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
             }
             os << curIndent << "}";
+            vecValue = true;
           }
         }
 

@@ -136,6 +136,12 @@ class ConstantFP<string val, string dialect_, string op_, string type_=""> : Ope
 }
 
 def ResultTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "op->getResultTypes()">;
+def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
+  SmallVector<Type> shadowTypes(op->getResultTypes());
+  for (Type &ty : shadowTypes)
+    ty = cast<AutoDiffTypeInterface>(ty).getShadowType(gutils->width);
+  shadowTypes;
+}]>;
 
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
