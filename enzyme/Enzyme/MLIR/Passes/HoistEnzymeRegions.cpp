@@ -43,7 +43,7 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
   using OpRewritePattern<enzyme::AutoDiffRegionOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(enzyme::AutoDiffRegionOp rootOp,
                                 PatternRewriter &rewriter) const override {
-    DominanceInfo dInfo;
+    DominanceInfo dominance(rootOp);
     Region &autodiffRegion = rootOp.getBody();
     SmallVector<Value> primalArgs = rootOp.getPrimalInputs();
     SmallVector<Value> regionPrimalArgs(autodiffRegion.getArguments());
@@ -76,8 +76,8 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
       }
     }
 
-    llvm::SmallVector<Operation *> liftOps;
-    llvm::SmallVector<Operation *> stationaryOps;
+    llvm::SetVector<Operation *> liftOps;
+    llvm::SetVector<Operation *> stationaryOps;
     llvm::SmallVector<MemoryEffects::EffectInstance> stationaryEffects;
 
     for (Operation &bodyOp : rootOp.getBody().getOps()) {
@@ -88,38 +88,40 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
 
       if (!couldCollectEffects)
         canLift = false;
+
       if (bodyOp.hasTrait<OpTrait::ReturnLike>() ||
           bodyOp.hasTrait<OpTrait::IsTerminator>())
         canLift = false;
 
-      // establish dominance of values
-      for (Value op_arg : bodyOp.getOperands()) {
-        if (auto op_argBA = dyn_cast<BlockArgument>(op_arg)) {
-          if (!dInfo.properlyDominates(op_arg, rootOp)) {
-            canLift = false;
-            break;
-          }
-        } else if (auto op_argOR = dyn_cast<OpResult>(op_arg)) {
-          if (!dInfo.properlyDominates(op_arg, rootOp)) {
-            if (!llvm::is_contained(liftOps, op_arg.getDefiningOp())) {
-              canLift = false;
-              break;
-            }
-          }
+      for (auto value : bodyOp.getOperands()) {
+        if (dominance.properlyDominates(value, rootOp)) {
+          continue;
+        }
+
+        // Block arguments within autodiff_region are not supported
+        // TODO: add support for enzyme_const block arguments
+        if (isa<BlockArgument>(value)) {
+          canLift = false;
+          break;
+        }
+
+        if (!llvm::is_contained(liftOps, value.getDefiningOp())) {
+          canLift = false;
+          break;
         }
       }
 
       // Check for memory conflicts with current set of stationary ops
-      for (auto st_eff : stationaryEffects) {
-        for (auto op_eff : bodyOpEffects) {
-          if ((isa<MemoryEffects::Write>(st_eff.getEffect()) &&
-               isa<MemoryEffects::Read>(op_eff.getEffect())) ||
-              (isa<MemoryEffects::Read>(st_eff.getEffect()) &&
-               isa<MemoryEffects::Write>(op_eff.getEffect())) ||
-              (isa<MemoryEffects::Write>(st_eff.getEffect()) &&
-               isa<MemoryEffects::Write>(op_eff.getEffect()))) {
+      for (auto stationaryEffect : stationaryEffects) {
+        for (auto bodyOpEffect : bodyOpEffects) {
+          if ((isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+               isa<MemoryEffects::Read>(bodyOpEffect.getEffect())) ||
+              (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
+               isa<MemoryEffects::Write>(bodyOpEffect.getEffect())) ||
+              (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+               isa<MemoryEffects::Write>(bodyOpEffect.getEffect()))) {
 
-            if (enzyme::oputils::mayAlias(op_eff, st_eff)) {
+            if (enzyme::oputils::mayAlias(bodyOpEffect, stationaryEffect)) {
               canLift = false;
               break;
             }
@@ -128,13 +130,17 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
       }
 
       if (canLift) {
-        liftOps.push_back(&bodyOp);
+        liftOps.insert(&bodyOp);
       } else {
-        stationaryOps.push_back(&bodyOp);
+        stationaryOps.insert(&bodyOp);
         stationaryEffects.append(bodyOpEffects.begin(), bodyOpEffects.end());
       }
     }
 
+    // Clone the op to the parent to avoid possible SSA redefinitions
+    for (Operation *op : llvm::make_early_inc_range(liftOps)) {
+      rewriter.moveOpBefore(op, rootOp);
+    }
     return success();
   }
 };
