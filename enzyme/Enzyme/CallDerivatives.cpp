@@ -44,8 +44,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   BuilderZ.setFastMathFlags(getFast());
 
   // MPI send / recv can only send float/integers
-  if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
-      funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
+  if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" || funcName == "PMPI_Send_init" || funcName == "MPI_Send_init" ||
+      funcName == "PMPI_Irecv" || funcName == "MPI_Irecv" || funcName == "PMPI_Recv_init" || funcName == "MPI_Recv_init") {
     if (!gutils->isConstantInstruction(&call)) {
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -73,7 +73,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc, impi));
         BuilderZ.CreateStore(impialloc, d_req);
 
-        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend" ||
+            funcName == "MPI_Send_init" || funcName == "PMPI_Send_init") {
           Value *tysize =
               MPI_TYPE_SIZE(gutils->getNewFromOriginal(call.getOperand(2)),
                             BuilderZ, call.getType(), called);
@@ -134,12 +135,22 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             BuilderZ.CreatePointerCast(comm, getInt8PtrTy(call.getContext())),
             getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc, impi));
 
+        MPI_CallType callType;
+        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
+          callType = MPI_CallType::ISEND;
+        else if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv")
+          callType = MPI_CallType::IRECV;
+        else if (funcName == "MPI_Send_init" || funcName == "PMPI_Send_init")
+          callType = MPI_CallType::SEND_INIT;
+        else if (funcName == "MPI_Recv_init" || funcName == "PMPI_Recv_init")
+          callType = MPI_CallType::RECV_INIT;
+        else
+          assert(0 && "illegal mpi");
+
         BuilderZ.CreateStore(
             ConstantInt::get(
                 Type::getInt8Ty(impialloc->getContext()),
-                (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
-                    ? (int)MPI_CallType::ISEND
-                    : (int)MPI_CallType::IRECV),
+                (int)callType),
             getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc, impi));
         // TODO old
       }
@@ -2164,6 +2175,23 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // Adjoint of barrier is to place a barrier at the corresponding
   // location in the reverse.
   if (funcName == "MPI_Barrier" || funcName == "PMPI_Barrier") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      auto callval = call.getCalledOperand();
+      Value *args[] = {
+          lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2)};
+      Builder2.CreateCall(call.getFunctionType(), callval, args);
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // Adjoint of MPI_Send is to place a MPI_send at the corresponding
+  // location in the reverse.
+  if (func == "MPI_Send" || func == "PMPI_Send") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> Builder2(&call);
