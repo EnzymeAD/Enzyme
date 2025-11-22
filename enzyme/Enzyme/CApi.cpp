@@ -1761,7 +1761,13 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
 #if LLVM_VERSION_MAJOR < 18
   // assert(legal);
 #else
-  assert(!legal);
+  if (legal) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Found unexpected use of all arguments stored values\n";
+    CustomErrorHandler(ss.str().c_str(), wrap(arg), ErrorType::GCRewrite,
+                       nullptr, wrap(arg), nullptr);
+  }
 #endif
 
   return !legal;
