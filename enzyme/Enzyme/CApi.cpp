@@ -445,6 +445,17 @@ LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
   return wrap(gutils->getNewFromOriginal(unwrap(val)));
 }
 
+void EnzymeReplaceOriginalToNew(GradientUtils *gutils, LLVMValueRef origC, LLVMValueRef repC) {
+  auto orig = cast<Instruction>(unwrap(origC));
+  auto rep = cast<Instruction>(unwrap(repC));
+  auto found = gutils->originalToNewFn.find(orig);
+  assert(found != gutils->originalToNewFn.end());
+  auto newCall = found->second;
+  gutils->originalToNewFn[orig] = rep;
+  gutils->newToOriginalFn.erase(newCall);
+  gutils->newToOriginalFn[rep] = orig;
+}
+
 CDerivativeMode EnzymeGradientUtilsGetMode(GradientUtils *gutils) {
   return (CDerivativeMode)gutils->mode;
 }
