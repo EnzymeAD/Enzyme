@@ -1400,11 +1400,18 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
     auto T = pair.value();
     auto i = pair.index();
     bool sretv = false;
+    StringRef kind;
     StringRef value;
     for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i)) {
       if (attr.isStringAttribute() &&
           attr.getKindAsString() == "enzyme_sret_v") {
         sretv = true;
+        kind = "enzyme_sret";
+        value = attr.getValueAsString();
+      } else if (attr.isStringAttribute() &&
+                 attr.getKindAsString() == "enzymejl_rooted_typ_v") {
+        sretv = true;
+        kind = "enzymejl_rooted_typ";
         value = attr.getValueAsString();
       } else {
         NewAttrs = NewAttrs.addAttribute(
@@ -1419,7 +1426,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
             if (sretv) {
               NewAttrs = NewAttrs.addAttribute(
                   F->getContext(), AttributeList::FirstArgIndex + types.size(),
-                  Attribute::get(F->getContext(), "enzyme_sret", value));
+                  Attribute::get(F->getContext(), kind, value));
             }
             types.push_back(PT);
           }
