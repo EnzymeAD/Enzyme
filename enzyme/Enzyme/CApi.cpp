@@ -1994,10 +1994,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       }
       assert(roots_AT);
       if (numRooting != countF.count) {
-        llvm::errs() << " sretTy: " << *sretTy << "\n";
-        llvm::errs() << " numRooting: " << numRooting << "\n";
-        llvm::errs() << " tracked.count: " << countF.count << "\n";
-
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << "Illegal GC setup in which numRooting (" << numRooting
