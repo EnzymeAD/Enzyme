@@ -1758,22 +1758,11 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
     }
   }
 
-#if LLVM_VERSION_MAJOR < 18
-  // assert(legal);
-#else
-  if (legal) {
-    std::string s;
-    llvm::raw_string_ostream ss(s);
-    ss << "Found unexpected use of all arguments stored values\n";
-    CustomErrorHandler(ss.str().c_str(), wrap(arg), ErrorType::GCRewrite,
-                       nullptr, wrap(arg), nullptr);
-  }
-#endif
-
   return !legal;
 }
 
-bool needsReReturning(llvm::Argument *arg, bool is_v) {
+bool needsReReturning(llvm::Argument *arg, bool is_v,
+                      size_t &srets_without_stores) {
   auto Attrs = arg->getParent()->getAttributes();
 
   bool hasSRetBeforeArg = false;
@@ -1786,10 +1775,33 @@ bool needsReReturning(llvm::Argument *arg, bool is_v) {
   }
 
   if (!hasSRetBeforeArg) {
+    assert(srets_without_stores == 0);
     return true;
   }
 
-  return false;
+  size_t subCount = 0;
+
+  if (is_v)
+    subCount =
+        convertRRootCountFromString(
+            Attrs
+                .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
+                              "enzymejl_returnRoots_v")
+                .getValueAsString()) *
+        cast<ArrayType>(arg->getType())->getNumElements();
+  else
+    subCount = convertRRootCountFromString(
+        Attrs
+            .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
+                          "enzymejl_returnRoots")
+            .getValueAsString());
+
+  if (srets_without_stores > subCount) {
+    srets_without_stores -= subCount;
+    return false;
+  }
+
+  return true;
 }
 
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
@@ -1814,6 +1826,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   auto FT = F->getFunctionType();
   auto Attrs = F->getAttributes();
+
+  size_t srets_without_stores = 0;
   for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
                            Attribute::StructRet))
@@ -1825,6 +1839,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         enzyme_srets.insert(i);
       } else if (anyJLStore) {
         enzyme_srets.insert(i);
+      } else {
+        llvm::Type *SRetType = convertSRetTypeFromString(
+            Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")
+                .getValueAsString());
+        srets_without_stores += CountTrackedPointers(SRetType).count;
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret_v")) {
@@ -1834,19 +1853,27 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         enzyme_srets_v.insert(i);
       } else if (anyJLStore) {
         enzyme_srets_v.insert(i);
+      } else {
+        llvm::Type *SRetType = convertSRetTypeFromString(
+            Attrs
+                .getAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret_v")
+                .getValueAsString());
+        srets_without_stores +=
+            CountTrackedPointers(SRetType).count *
+            cast<ArrayType>(F->getArg(i)->getType())->getNumElements();
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
                            "enzymejl_returnRoots")) {
       rroots.insert(i);
-      if (needsReReturning(F->getArg(i), false)) {
+      if (needsReReturning(F->getArg(i), false, srets_without_stores)) {
         reret_roots.insert(i);
       }
     }
     if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
                            "enzymejl_returnRoots_v")) {
       rroots_v.insert(i);
-      if (needsReReturning(F->getArg(i), true)) {
+      if (needsReReturning(F->getArg(i), true, srets_without_stores)) {
         reret_roots_v.insert(i);
       }
     }
