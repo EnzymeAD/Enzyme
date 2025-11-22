@@ -3025,11 +3025,11 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->getAttributes().hasParamAttr(ii, attr)) {
         NewF->addParamAttr(jj, F->getAttributes().getParamAttr(ii, attr));
       }
-        for (auto ty : PrimalParamAttrsToPreserve)
-          if (F->getAttributes().hasParamAttr(ii, ty)) {
-            auto attr = F->getAttributes().getParamAttr(ii, ty);
-            NewF->addParamAttr(jj, attr);
-          }
+    for (auto ty : PrimalParamAttrsToPreserve)
+      if (F->getAttributes().hasParamAttr(ii, ty)) {
+        auto attr = F->getAttributes().getParamAttr(ii, ty);
+        NewF->addParamAttr(jj, attr);
+      }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
         constants.insert(i);
