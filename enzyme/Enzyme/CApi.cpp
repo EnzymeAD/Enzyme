@@ -1997,6 +1997,19 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         llvm::errs() << " sretTy: " << *sretTy << "\n";
         llvm::errs() << " numRooting: " << numRooting << "\n";
         llvm::errs() << " tracked.count: " << countF.count << "\n";
+
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Illegal GC setup in which numRooting (" << numRooting
+           << ") != tracked.count (" << countF.count << ")\n";
+        ss << " sretTy: " << *sretTy << "\n";
+        ss << " Types.size(): " << Types.size() << "\n";
+        for (size_t i = 0; i < Types.size(); i++) {
+          ss << "    + Types[" << i << "] = " << *Types[i] << "\n";
+        }
+        ss << " F: " << *F << "\n";
+        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
+                           nullptr, nullptr, nullptr);
       }
       assert(numRooting == countF.count);
     }
@@ -2208,7 +2221,17 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
           gep =
               ST ? EB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
 
-          assert(reret_roots.count(i));
+          if (!reret_roots.count(i)) {
+
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Illegal GC setup in which there was no roots_AT, but a new "
+                  "sret ("
+               << *sret << "), but no rereturned roots at index i=" << i
+               << "\n";
+            CustomErrorHandler(s.c_str(), wrap(gep), ErrorType::InternalError,
+                               nullptr, nullptr, nullptr);
+          }
 
           sretCount++;
         }
