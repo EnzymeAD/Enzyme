@@ -198,9 +198,13 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
 def lacpy : CallBlasPattern<(Op $layout, $uplo, $m, $n, $A, $lda, $B, $ldb),
                   ["B"],[cblas_layout, uplo, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
                   [
-                  (AssertingInactiveArg), // from
+                  (InactiveArg),// copy moves A into B, so x is never modified.
                   (AssertingInactiveArg), // to
-                  ]
+                  // (BlasCall<"axpy"> $n, Constant<"1.0">, (Shadow $A), (Shadow $B))
+                  ],
+                  (Seq<[], [], 1>
+                    (BlasCall<"lacpy"> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B))
+                  )
                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
