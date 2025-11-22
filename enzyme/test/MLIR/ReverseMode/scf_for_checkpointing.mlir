@@ -35,10 +35,10 @@ module {
 // CHECK-NEXT:      }
 // CHECK-NEXT:      scf.yield %[[v3]], %inserted : f32, tensor<3xf32>
 // CHECK-NEXT:    }
+// CHECK-NEXT:    %[[v3:.+]] = tensor.empty() : tensor<3xf32>
 // CHECK-NEXT:    %[[v2:.+]]:4 = scf.for %arg2 = %c0 to %c3 step %c1 iter_args(%arg3 = %arg1, %arg4 = %[[zero]], %arg5 = %[[zero]], %arg6 = %[[zero]]) -> (f32, f32, f32, f32) {
 // CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c2, %arg2 : index
 // CHECK-NEXT:      %extracted = tensor.extract %[[v1]]#1[%[[ridx]]] : tensor<3xf32>
-// CHECK-NEXT:      %[[v3:.+]] = tensor.empty() : tensor<3xf32>
 // CHECK-NEXT:      %[[v5:.+]]:2 = scf.for %[[arg8:.+]] = %c0 to %c3 step %c1 iter_args(%[[arg9:.+]] = %extracted, %[[arg10:.+]] = %[[v3]]) -> (f32, tensor<3xf32>) {
 // CHECK-NEXT:        %inserted = tensor.insert %[[arg9]] into %[[arg10:.+]][%[[arg8]]] : tensor<3xf32>
 // CHECK-NEXT:        %[[v8:.+]] = arith.mulf %[[arg9]], %[[arg9]] : f32
