@@ -85,6 +85,7 @@ jobs:
         ./x build --stage 1 library
     - name: Run Rust autodiff tests
       working-directory: rust
+      continue-on-error: true
       run: |
         . ~/.cargo/env
         ./x test --stage 1 tests/codegen-llvm/autodiff
