@@ -1798,10 +1798,10 @@ bool needsReReturning(llvm::Argument *arg, bool is_v,
 
   if (srets_without_stores > subCount) {
     srets_without_stores -= subCount;
-    return true;
+    return false;
   }
 
-  return false;
+  return true;
 }
 
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
