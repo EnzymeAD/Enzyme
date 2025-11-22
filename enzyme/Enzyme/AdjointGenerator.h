@@ -587,7 +587,7 @@ public:
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self, BuilderZ));
         (void)inst;
-        assert(inst->getType() == type);
+        assert(inst->getType() == I.getType());
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ForwardModeSplit ||
