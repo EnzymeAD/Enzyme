@@ -2412,10 +2412,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     SmallVector<std::tuple<Value *, Value *, Type *>> postCallReplacements;
 
     {
-      size_t local_root_count =
-          RT->isVoidTy() ? 0 : CountTrackedPointers(RT).count;
+      size_t local_root_count = 0;
       size_t sretCount = 0;
       if (!RT->isVoidTy()) {
+        if (roots_AT) {
+          local_root_count += CountTrackedPointers(RT).count;
+        }
         sretCount++;
       }
 
@@ -2444,7 +2446,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             preCallReplacements.emplace_back(val, gep, Types[sretCount]);
           }
 
-          if (reroot_enzyme_srets.count(i)) {
+          if (roots_AT && reroot_enzyme_srets.count(i)) {
             local_root_count += CountTrackedPointers(Types[sretCount]).count;
           }
 
@@ -2455,7 +2457,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         if (enzyme_srets_v.count(i)) {
           auto VAT = cast<ArrayType>(CI->getArgOperand(i)->getType());
 
-          if (reroot_enzyme_srets_v.count(i)) {
+          if (roots_AT && reroot_enzyme_srets_v.count(i)) {
             local_root_count += CountTrackedPointers(Types[sretCount]).count *
                                 VAT->getNumElements();
           }
