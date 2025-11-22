@@ -3019,23 +3019,16 @@ Function *PreProcessCache::CloneFunctionWithReturns(
                                  F->getParamAttribute(ii, Attribute::StructRet)
                                      .getValueAsType())));
     }
-    if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-      NewF->addParamAttr(
-          jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
-    }
-    if (F->getAttributes().hasParamAttr(ii, "enzymejl_sret_union_bytes")) {
-      NewF->addParamAttr(
-          jj, F->getAttributes().getParamAttr(ii, "enzymejl_sret_union_bytes"));
-    }
-    for (auto attr :
-         {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
+    for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
+                      "enzyme_type", "enzymejl_rooted_typ",
+                      "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
       if (F->getAttributes().hasParamAttr(ii, attr)) {
         NewF->addParamAttr(jj, F->getAttributes().getParamAttr(ii, attr));
-        for (auto ty : PrimalParamAttrsToPreserve)
-          if (F->getAttributes().hasParamAttr(ii, ty)) {
-            auto attr = F->getAttributes().getParamAttr(ii, ty);
-            NewF->addParamAttr(jj, attr);
-          }
+      }
+    for (auto ty : PrimalParamAttrsToPreserve)
+      if (F->getAttributes().hasParamAttr(ii, ty)) {
+        auto attr = F->getAttributes().getParamAttr(ii, ty);
+        NewF->addParamAttr(jj, attr);
       }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
@@ -3074,33 +3067,21 @@ Function *PreProcessCache::CloneFunctionWithReturns(
             NewF->addParamAttr(jj + 1, attr);
           }
 
-      for (auto attr :
-           {"enzymejl_parmtype", "enzymejl_parmtype_ref", "enzyme_type"})
+      for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
+                        "enzyme_type", "enzymejl_rooted_typ",
+                        "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
           if (width == 1)
             NewF->addParamAttr(jj + 1,
                                F->getAttributes().getParamAttr(ii, attr));
+          else
+            NewF->addParamAttr(jj + 1,
+                               Attribute::get(F->getContext(),
+                                              attr + std::string("_v"),
+                                              F->getAttributes()
+                                                  .getParamAttr(ii, attr)
+                                                  .getValueAsString()));
         }
-
-      if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
-        if (width == 1) {
-          NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
-                                         ii, "enzymejl_returnRoots"));
-        } else {
-          NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
-                                                    "enzymejl_returnRoots_v"));
-        }
-      }
-      if (F->getAttributes().hasParamAttr(ii, "enzymejl_sret_union_bytes")) {
-        if (width == 1) {
-          NewF->addParamAttr(jj + 1, F->getAttributes().getParamAttr(
-                                         ii, "enzymejl_sret_union_bytes"));
-        } else {
-          NewF->addParamAttr(
-              jj + 1,
-              Attribute::get(F->getContext(), "enzymejl_sret_union_bytes_v"));
-        }
-      }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {

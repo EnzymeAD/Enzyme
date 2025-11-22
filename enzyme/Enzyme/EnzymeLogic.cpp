@@ -2865,6 +2865,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
              "enzyme_type",
              "enzymejl_sret_union_bytes",
              "enzymejl_sret_union_bytes_v",
+             "enzymejl_rooted_typ",
+             "enzymejl_rooted_typ_v",
          })
       if (nf->getAttributes().hasParamAttr(attrIndex, name)) {
         NewF->addParamAttr(attrIndex,
