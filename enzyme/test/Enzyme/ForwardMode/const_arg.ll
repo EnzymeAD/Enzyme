@@ -19,7 +19,7 @@ top:
 define double @julia_g_6797_inner.1(double %a0, i8* %a1) {
 entry:
   %a2 = bitcast i8* %a1 to [1 x double]*
-  %a7 = call double @julia_f_kw__kw_6800([1 x double]* %a2, double %a0) readnone
+  %a7 = call double @julia_f_kw__kw_6800([1 x double]* %a2, double %a0) readnone nounwind
   ret double %a7
 }
 
