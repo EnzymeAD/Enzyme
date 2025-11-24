@@ -1859,6 +1859,45 @@ bool DetectPointerArgOfFn(llvm::Function &F,
   return changed;
 }
 
+// returns if newly changed, subject to the pending calls
+bool DetectNoUnwindOfFn(llvm::Function &F,
+                        SmallPtrSetImpl<Function *> &calls_todo) {
+  if (F.empty())
+    return false;
+  if (F.doesNotThrow())
+    return false;
+
+  bool mayThrow = false;
+
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+#if LLVM_VERSION_MAJOR >= 16
+      if (!I.mayThrow(/*IncludePhaseOneUnwind*/ true)) {
+        continue;
+      }
+#else
+      if (!I.mayThrow()) {
+        continue;
+      }
+#endif
+      if (auto CB = dyn_cast<CallBase>(&I)) {
+        if (auto F2 = CB->getCalledFunction()) {
+          if (F2 == &F)
+            continue;
+          assert(!F2->doesNotThrow());
+          calls_todo.insert(F2);
+        }
+      }
+      mayThrow = true;
+      break;
+    }
+  }
+  if (mayThrow)
+    return false;
+  F.setDoesNotThrow();
+  return true;
+}
+
 // returns if newly legal, subject to the pending calls
 bool DetectReadonlyOrThrowFn(llvm::Function &F,
                              SmallPtrSetImpl<Function *> &calls_todo,
@@ -2074,6 +2113,52 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
 bool DetectReadonlyOrThrow(Module &M) {
 
   bool changed = false;
+
+  {
+    // Set of functions newly deduced readonly/nocapture/etc by this pass
+    SmallVector<llvm::Function *> todo;
+
+    // Map of functions which could be readonly if all functions in the set are
+    // marked readonly
+    DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
+
+    for (Function &F : M) {
+      SmallPtrSet<Function *, 1> calls_todo;
+      if (DetectNoUnwindOfFn(F, calls_todo)) {
+        changed = true;
+        for (auto F2 : todo_map[&F]) {
+          todo.push_back(F2);
+        }
+        todo_map.erase(&F);
+      }
+      for (auto tocheck : calls_todo) {
+        todo_map[tocheck].insert(&F);
+        todo.push_back(tocheck);
+      }
+    }
+
+    while (!todo.empty()) {
+      auto cur = todo.pop_back_val();
+
+      SmallPtrSet<Function *, 1> calls_todo;
+
+      if (!DetectNoUnwindOfFn(*cur, calls_todo))
+        continue;
+
+      for (auto F2 : todo_map[cur]) {
+        todo.push_back(F2);
+      }
+
+      todo_map.erase(cur);
+
+      for (auto tocheck : calls_todo) {
+        todo_map[tocheck].insert(cur);
+        todo.push_back(tocheck);
+      }
+
+      changed = true;
+    }
+  }
 
   {
     // Set of functions newly deduced readonly/nocapture/etc by this pass

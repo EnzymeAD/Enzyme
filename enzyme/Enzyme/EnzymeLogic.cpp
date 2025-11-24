@@ -1056,7 +1056,7 @@ void calculateUnusedValuesInFunction(
              mode == DerivativeMode::ReverseModeCombined ||
              mode == DerivativeMode::ForwardMode ||
              mode == DerivativeMode::ForwardModeError) &&
-            mayWriteToMemory) {
+            (mayWriteToMemory || inst->mayThrow())) {
           return UseReq::Need;
         }
         // Don't erase any store that needs to be preserved for a
