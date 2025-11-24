@@ -47,7 +47,7 @@ template <typename SourceOp, bool filterGrad, bool includeShadows = true,
           bool includeDifferentialReturns = true>
 llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
   llvm::SmallVector<mlir::Value, 2> outs;
-  auto in_idx = 0;
+  size_t in_idx = 0;
 
   for (auto act : uop.getActivity()) {
     auto iattr = cast<ActivityAttr>(act);

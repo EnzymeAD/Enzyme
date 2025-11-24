@@ -39,7 +39,7 @@ struct BatchDiffCacheKey {
       return false;
 
     // Sizes are equal, so compare elements
-    for (auto i = 0; i < inputs.size(); ++i) {
+    for (size_t i = 0; i < inputs.size(); ++i) {
       auto lhs_ptr = inputs[i].getAsOpaquePointer();
       auto rhs_ptr = other.inputs[i].getAsOpaquePointer();
       if (lhs_ptr < rhs_ptr)
@@ -96,11 +96,10 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
 
 Type getConcatType(Value val, int64_t width);
 
-Value getConcatValue(OpBuilder &builder, Location &loc,
-                     SmallVector<Value> &argList);
+Value getConcatValue(OpBuilder &builder, Location loc, ArrayRef<Value> argList);
 
-Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
-                      Value &val, int64_t index);
+Value getExtractValue(OpBuilder &builder, Location loc, Type argTy, Value val,
+                      int64_t index);
 
 template <typename SourceOp,
           std::enable_if_t<
@@ -120,7 +119,7 @@ SmallVector<MemoryEffects::EffectInstance> findCallerEffects(
     }
 
     // Find primal argument corresponding to effect value
-    auto primalArgPos = 0;
+    size_t primalArgPos = 0;
     bool foundPrimal = false;
     if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
       if (llvm::is_contained(innerFnOp.getArguments(), effBA)) {
