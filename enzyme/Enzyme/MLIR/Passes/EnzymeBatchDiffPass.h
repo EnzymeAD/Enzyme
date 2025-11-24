@@ -94,13 +94,6 @@ BatchDiffCacheKey createDiffCacheKey(SourceOp uop, FunctionOpInterface fn) {
   return key;
 }
 
-Type getConcatType(Value val, int64_t width);
-
-Value getConcatValue(OpBuilder &builder, Location loc, ArrayRef<Value> argList);
-
-Value getExtractValue(OpBuilder &builder, Location loc, Type argTy, Value val,
-                      int64_t index);
-
 template <typename SourceOp,
           std::enable_if_t<
               llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
