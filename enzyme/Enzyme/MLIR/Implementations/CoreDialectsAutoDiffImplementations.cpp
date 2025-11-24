@@ -176,7 +176,6 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
     shadows.push_back(shadow);
   } else {
     for (size_t w = 0; w < gutils->width; w++) {
-      Operation *shadow = builder.clone(*primal);
       SmallVector<Value> newOperands2(newOperands);
       for (size_t i = 0; i < newOperands.size(); i++) {
         if (!inverted[i])
@@ -185,6 +184,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
             builder, orig->getLoc(), orig->getOperands()[i].getType(),
             newOperands2[i], w);
       }
+      Operation *shadow = builder.clone(*primal);
       shadow->setOperands(newOperands2);
       shadows.push_back(shadow);
     }
