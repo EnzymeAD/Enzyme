@@ -62,16 +62,16 @@ Type getConcatType(Value val, int64_t width) {
   }
 }
 
-Value getConcatValue(OpBuilder &builder, Location &loc,
-                     SmallVector<Value> &argList) {
+Value getConcatValue(OpBuilder &builder, Location loc,
+                     ArrayRef<Value> argList) {
   int64_t width = argList.size();
   Type out_type = getConcatType(argList.front(), width);
   mlir::Value out = enzyme::ConcatOp::create(builder, loc, out_type, argList);
   return out;
 }
 
-Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
-                      Value &val, int64_t index) {
+Value getExtractValue(OpBuilder &builder, Location loc, Type argTy, Value val,
+                      int64_t index) {
   // Extract the original output from the tensorized output at the given index.
   IntegerAttr indexAttr = builder.getI64IntegerAttr(index);
   Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexAttr);
@@ -165,7 +165,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // Find primal argument corresponding to effect value
-          auto primalArgPos = 0;
+          size_t primalArgPos = 0;
           bool foundPrimal = false;
           if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
             if (llvm::is_contained(key.function.getArguments(), effBA)) {
@@ -199,7 +199,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
           if (primalIsDup) {
-            auto gradArgPos = 0;
+            size_t gradArgPos = 0;
             for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
               ++gradArgPos;
 
@@ -503,7 +503,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // Find primal argument corresponding to effect value
-          auto primalArgPos = 0;
+          size_t primalArgPos = 0;
           bool foundPrimal = false;
           if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
             if (llvm::is_contained(key.function.getArguments(), effBA)) {
@@ -537,7 +537,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
           if (primalIsDup) {
-            auto gradArgPos = 0;
+            size_t gradArgPos = 0;
             for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
               ++gradArgPos;
 
@@ -592,7 +592,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           SmallVector<mlir::Type, 2> out_ty;
 
           // fill in_args using inputs
-          auto call_idx = 0;
+          size_t call_idx = 0;
           for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
             auto iattr = ActivityAttr::get(context, act);
             inActivityAttrs.push_back(iattr);
@@ -621,7 +621,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // fill in_args using d<out>, fill out_ty using out
-          auto out_idx = 0;
+          size_t out_idx = 0;
           for (auto ract : key.retActivity) {
             auto iattr = ActivityAttr::get(context, ract);
             retActivityAttrs.push_back(iattr);

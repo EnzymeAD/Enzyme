@@ -16,6 +16,8 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Passes/EnzymeBatchDiffPass.h"
+
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -133,6 +135,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
 
   SmallVector<Value> newOperands;
   newOperands.reserve(orig->getNumOperands());
+  SmallVector<bool> inverted(orig->getNumOperands(), false);
   for (OpOperand &operand : orig->getOpOperands()) {
     if (iface.isArgInactive(operand.getOperandNumber())) {
       newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
@@ -158,6 +161,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
             << operand.getOperandNumber() << ", op=" << operand.get() << ")\n";
         return failure();
       }
+      inverted[newOperands.size()] = true;
       newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
     }
   }
@@ -165,10 +169,38 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
   // Assuming shadows following the originals are fine.
   // TODO: consider extending to have a ShadowableTerminatorOpInterface
   Operation *primal = gutils->getNewFromOriginal(orig);
-  Operation *shadow = builder.clone(*primal);
-  shadow->setOperands(newOperands);
-  for (auto &&[oval, sval] :
-       llvm::zip(orig->getResults(), shadow->getResults())) {
+  SmallVector<Operation *, 1> shadows;
+  if (gutils->width == 1) {
+    Operation *shadow = builder.clone(*primal);
+    shadow->setOperands(newOperands);
+    shadows.push_back(shadow);
+  } else {
+    for (size_t w = 0; w < gutils->width; w++) {
+      SmallVector<Value> newOperands2(newOperands);
+      for (size_t i = 0; i < newOperands.size(); i++) {
+        if (!inverted[i])
+          continue;
+        newOperands2[i] = enzyme::batchutils::getExtractValue(
+            builder, orig->getLoc(), orig->getOperands()[i].getType(),
+            newOperands2[i], w);
+      }
+      Operation *shadow = builder.clone(*primal);
+      shadow->setOperands(newOperands2);
+      shadows.push_back(shadow);
+    }
+  }
+  for (auto &&[i, oval] : llvm::enumerate(orig->getResults())) {
+    Value sval;
+    if (gutils->width == 1) {
+      sval = shadows[0]->getResult(i);
+    } else {
+      SmallVector<Value> shadowRes;
+      for (auto s : shadows) {
+        shadowRes.push_back(s->getResult(i));
+      }
+      sval = enzyme::batchutils::getConcatValue(builder, orig->getLoc(),
+                                                shadowRes);
+    }
     gutils->setDiffe(oval, sval, builder);
   }
 
