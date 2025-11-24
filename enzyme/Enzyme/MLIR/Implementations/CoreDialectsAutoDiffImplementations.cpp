@@ -16,7 +16,7 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
-#include "Passes/EnzymeBatchDiffPass.h"
+#include "Passes/Utils.h"
 
 #include "mlir/IR/Matchers.h"
 
@@ -180,7 +180,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
       for (size_t i = 0; i < newOperands.size(); i++) {
         if (!inverted[i])
           continue;
-        newOperands2[i] = enzyme::batchutils::getExtractValue(
+        newOperands2[i] = enzyme::getExtractValue(
             builder, orig->getLoc(), orig->getOperands()[i].getType(),
             newOperands2[i], w);
       }
@@ -198,8 +198,7 @@ LogicalResult mlir::enzyme::detail::memoryIdentityForwardHandler(
       for (auto s : shadows) {
         shadowRes.push_back(s->getResult(i));
       }
-      sval = enzyme::batchutils::getConcatValue(builder, orig->getLoc(),
-                                                shadowRes);
+      sval = enzyme::getConcatValue(builder, orig->getLoc(), shadowRes);
     }
     gutils->setDiffe(oval, sval, builder);
   }
