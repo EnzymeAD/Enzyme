@@ -1884,7 +1884,8 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
         if (auto F2 = CB->getCalledFunction()) {
           if (F2 == &F)
             continue;
-          assert(!F2->doesNotThrow());
+          if (F2->doesNotThrow())
+            continue;
           calls_todo.insert(F2);
         }
       }
