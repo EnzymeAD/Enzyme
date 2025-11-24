@@ -957,6 +957,7 @@ void calculateUnusedValuesInFunction(
         }
 
         bool mayWriteToMemory = inst->mayWriteToMemory();
+        bool mayThrow = inst->mayThrow();
         if (unnecessaryValues.count(inst) && isAllocationCall(inst, TLI))
           return UseReq::Recur;
 
@@ -983,7 +984,15 @@ void calculateUnusedValuesInFunction(
             }
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
+          if (isMemFreeLibMFunction(funcName, &ID)) {
+            mayWriteToMemory = false;
+            // Assume MemFreeLibMFunction is no throw if empty
+            if (auto Fn = getFunctionFromCall(obj_op)) {
+              if (Fn->empty()) {
+                mayThrow = false;
+              }
+            }
+          } else if (isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
           if (funcName == "memset" || funcName == "memset_pattern16" ||
@@ -1056,7 +1065,7 @@ void calculateUnusedValuesInFunction(
              mode == DerivativeMode::ReverseModeCombined ||
              mode == DerivativeMode::ForwardMode ||
              mode == DerivativeMode::ForwardModeError) &&
-            (mayWriteToMemory || inst->mayThrow())) {
+            (mayWriteToMemory || mayThrow)) {
           return UseReq::Need;
         }
         // Don't erase any store that needs to be preserved for a

@@ -1871,7 +1871,7 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
 
   for (auto &BB : F) {
     for (auto &I : BB) {
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 17
       if (!I.mayThrow(/*IncludePhaseOneUnwind*/ true)) {
         continue;
       }
