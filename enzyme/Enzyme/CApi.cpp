@@ -1654,6 +1654,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
     auto &&[local_isv, cur] = curv;
     for (auto &U : cur->uses()) {
       auto I = cast<Instruction>(U.getUser());
+      assert(I->getParent()->getParent() == arg->getParent());
 
       if (is_v) {
         auto EVI = cast<ExtractValueInst>(cur);
@@ -1694,6 +1695,9 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
   if (legal) {
     while (!storedValues.empty()) {
       auto sv = storedValues.pop_back_val();
+      if (auto I = dyn_cast<Instruction>(sv)) {
+        assert(I->getParent()->getParent() == arg->getParent());
+      }
       bool foundUse = false;
       for (auto &U : sv->uses()) {
         if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
@@ -1741,6 +1745,7 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
         if (!isa<PointerType>(sv->getType()) ||
             !isSpecialPtr(cast<PointerType>(sv->getType()))) {
           llvm::errs() << " sf: " << *arg->getParent() << "\n";
+          llvm::errs() << " arg: " << *arg << "\n";
           llvm::errs() << "Pointer of wrong type: " << *sv << "\n";
           assert(0);
         }
