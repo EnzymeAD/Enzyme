@@ -1055,6 +1055,10 @@ void EnzymeDumpModuleRef(LLVMModuleRef M) {
   llvm::errs() << *unwrap(M) << "\n";
 }
 
+void EnzymeDumpValueRef(LLVMValueRef M) { llvm::errs() << *unwrap(M) << "\n"; }
+
+void EnzymeDumpTypeRef(LLVMTypeRef M) { llvm::errs() << *unwrap(M) << "\n"; }
+
 static bool runAttributorOnFunctions(InformationCache &InfoCache,
                                      SetVector<Function *> &Functions,
                                      AnalysisGetter &AG,
