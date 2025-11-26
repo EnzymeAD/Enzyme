@@ -1950,9 +1950,20 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   // is valid. We could make it always valid by checking the pointer
   // operand explicitly is a pointer.
   if (direction & UP) {
-    if (gep.isInBounds() || (!EnzymeStrictAliasing &&
-                             pointerAnalysis.Inner0() == BaseType::Pointer &&
-                             getAnalysis(&gep).Inner0() == BaseType::Pointer)) {
+    bool has_non_const_idx = false;
+    for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
+      auto ind = I->get();
+      if (!isa<ConstantInt>(ind)) {
+        has_non_const_idx = true;
+        break;
+      }
+    }
+
+    if (has_non_const_idx &&
+        (gep.isInBounds() ||
+         (!EnzymeStrictAliasing &&
+          pointerAnalysis.Inner0() == BaseType::Pointer &&
+          getAnalysis(&gep).Inner0() == BaseType::Pointer))) {
       for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
         auto ind = I->get();
         updateAnalysis(ind, TypeTree(BaseType::Integer).Only(-1, inst), &gep);
