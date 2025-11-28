@@ -513,6 +513,260 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       return value;
     }
 
+    /// Computes v = M^-1 @ p
+    Value applyInverseMassMatrix(OpBuilder &builder, Location loc,
+                                 Value invMass, Value momentum,
+                                 RankedTensorType positionType) const {
+      if (!invMass) {
+        return momentum;
+      }
+
+      auto invMassType = cast<RankedTensorType>(invMass.getType());
+
+      if (invMassType.getRank() == 1) {
+        // Diagonal: element-wise
+        return arith::MulFOp::create(builder, loc, invMass, momentum);
+      } else if (invMassType.getRank() == 2) {
+        // Dense: v = invMass @ p
+        return enzyme::DotOp::create(builder, loc, positionType, invMass,
+                                     momentum, builder.getDenseI64ArrayAttr({}),
+                                     builder.getDenseI64ArrayAttr({}),
+                                     builder.getDenseI64ArrayAttr({1}),
+                                     builder.getDenseI64ArrayAttr({0}));
+      }
+
+      emitError(loc,
+                "ProbProg: Provided invMass must have rank 1 or 2, got rank " +
+                    std::to_string(invMassType.getRank()));
+      return nullptr;
+    }
+
+    /// Computes K = 0.5 * p^T @ M^-1 @ p
+    Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
+                               Value invMass, Value halfConst,
+                               RankedTensorType scalarType,
+                               RankedTensorType positionType) const {
+      // v = M^-1 @ p
+      Value v =
+          applyInverseMassMatrix(builder, loc, invMass, momentum, positionType);
+
+      // K = 0.5 * p^T @ v
+      auto pDotV = enzyme::DotOp::create(
+          builder, loc, scalarType, momentum, v,
+          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
+          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
+
+      return arith::MulFOp::create(builder, loc, halfConst, pDotV);
+    }
+
+    /// Samples momentum from N(0, M) where M = invMass^-1
+    /// Returns (momentum, updated RNG state)
+    std::pair<Value, Value>
+    sampleMomentum(OpBuilder &builder, Location loc, Value rngState,
+                   Value invMass, Value zeroConst, Value oneConst,
+                   RankedTensorType positionType) const {
+
+      // Sample eps ~ N(0, I)
+      auto randomOp = enzyme::RandomOp::create(
+          builder, loc, TypeRange{rngState.getType(), positionType}, rngState,
+          zeroConst, oneConst,
+          enzyme::RngDistributionAttr::get(builder.getContext(),
+                                           enzyme::RngDistribution::NORMAL));
+
+      Value rngOut = randomOp.getOutputRngState();
+      Value eps = randomOp.getResult();
+
+      if (!invMass) {
+        return {eps, rngOut};
+      }
+
+      auto invMassType = cast<RankedTensorType>(invMass.getType());
+
+      if (invMassType.getRank() == 1) {
+        // Diagonal: p = (1/sqrt(invMass)) * eps = sqrt(M) * eps
+        auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
+        auto onesVector = arith::ConstantOp::create(
+            builder, loc, invMassType,
+            DenseElementsAttr::get(invMassType, builder.getF64FloatAttr(1.0)));
+        auto massMatrixSqrt =
+            arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
+        Value p = arith::MulFOp::create(builder, loc, massMatrixSqrt, eps);
+        return {p, rngOut};
+      } else {
+        // Dense: p = chol(M) @ eps where M = inv(invMass)
+        auto identityMatrix = createIdentityMatrix(builder, loc, invMassType);
+        auto massMatrixSqrt = enzyme::CholeskySolveOp::create(
+            builder, loc, invMassType, invMass, identityMatrix);
+        Value p = enzyme::DotOp::create(
+            builder, loc, positionType, massMatrixSqrt, eps,
+            builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
+            builder.getDenseI64ArrayAttr({1}),
+            builder.getDenseI64ArrayAttr({0}));
+        return {p, rngOut};
+      }
+    }
+
+    struct GradientResult {
+      Value potential; // U(q) = -log p(q)
+      Value gradient;  // dU/dq
+      Value rngOut;    // Updated RNG state
+    };
+
+    /// Computes potential energy U(q) and its gradient dU/dq
+    GradientResult computePotentialAndGradient(
+        OpBuilder &builder, Location loc, Value position, Value rng,
+        FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs, Value originalTrace,
+        ArrayAttr selection, enzyme::TraceType traceType,
+        RankedTensorType scalarType, RankedTensorType positionType) const {
+
+      auto gradSeed = arith::ConstantOp::create(
+          builder, loc, scalarType,
+          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(1.0)));
+
+      auto autodiffOp = enzyme::AutoDiffRegionOp::create(
+          builder, loc, TypeRange{scalarType, rng.getType(), positionType},
+          ValueRange{position, gradSeed},
+          builder.getArrayAttr({enzyme::ActivityAttr::get(
+              builder.getContext(), enzyme::Activity::enzyme_active)}),
+          builder.getArrayAttr(
+              {enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_active),
+               enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_const)}),
+          builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
+
+      Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
+      autodiffBlock->addArgument(positionType, loc);
+
+      builder.setInsertionPointToStart(autodiffBlock);
+      Value qArg = autodiffBlock->getArgument(0);
+
+      SmallVector<Value> updateInputs;
+      updateInputs.push_back(rng);
+      updateInputs.append(fnInputs.begin(), fnInputs.end());
+
+      auto updateOp = enzyme::UpdateOp::create(
+          builder, loc, TypeRange{traceType, scalarType, rng.getType()}, fn,
+          updateInputs, originalTrace, qArg, selection,
+          builder.getStringAttr(""));
+
+      Value U = arith::NegFOp::create(builder, loc, updateOp.getWeight());
+
+      enzyme::YieldOp::create(builder, loc,
+                              ValueRange{U, updateOp.getOutputRngState()});
+
+      builder.setInsertionPointAfter(autodiffOp);
+
+      return {
+          autodiffOp.getResult(0), // potential
+          autodiffOp.getResult(2), // gradient
+          autodiffOp.getResult(1)  // rngOut
+      };
+    }
+
+    struct LeapfrogResult {
+      Value q_new;
+      Value p_new;
+      Value grad_new;
+      Value U_new;
+      Value rng_out;
+    };
+
+    /// One leapfrog integration step
+    ///   p_half = p - (eps/2) * grad
+    ///   q_new = q + eps * M^-1 * p_half
+    ///   grad_new = dU/dq(q_new)
+    ///   p_new = p_half - (eps/2) * grad_new
+    LeapfrogResult leapfrogStep(OpBuilder &builder, Location loc, Value q,
+                                Value p, Value grad, Value rng, Value stepSize,
+                                Value invMass, FlatSymbolRefAttr fn,
+                                ArrayRef<Value> fnInputs, Value originalTrace,
+                                ArrayAttr selection,
+                                enzyme::TraceType traceType,
+                                RankedTensorType scalarType,
+                                RankedTensorType positionType) const {
+
+      auto halfConst = arith::ConstantOp::create(
+          builder, loc, scalarType,
+          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(0.5)));
+
+      ArrayRef<int64_t> shape = positionType.getShape();
+      auto stepSizeBroadcast =
+          enzyme::BroadcastOp::create(builder, loc, positionType, stepSize,
+                                      builder.getDenseI64ArrayAttr(shape));
+      auto halfStep = arith::MulFOp::create(builder, loc, halfConst, stepSize);
+      auto halfStepBroadcast =
+          enzyme::BroadcastOp::create(builder, loc, positionType, halfStep,
+                                      builder.getDenseI64ArrayAttr(shape));
+
+      // 1. Half step momentum: p_half = p - 0.5 * eps * grad
+      auto deltaP1 =
+          arith::MulFOp::create(builder, loc, halfStepBroadcast, grad);
+      Value pHalf = arith::SubFOp::create(builder, loc, p, deltaP1);
+
+      // 2. Full step position: q_new = q + eps * M^-1 * p_half
+      Value v =
+          applyInverseMassMatrix(builder, loc, invMass, pHalf, positionType);
+      auto deltaQ = arith::MulFOp::create(builder, loc, stepSizeBroadcast, v);
+      Value qNew = arith::AddFOp::create(builder, loc, q, deltaQ);
+
+      // 3. Compute gradient at new position
+      auto gradResult = computePotentialAndGradient(
+          builder, loc, qNew, rng, fn, fnInputs, originalTrace, selection,
+          traceType, scalarType, positionType);
+
+      // 4. Final half step momentum: p_new = p_half - 0.5 * eps * grad_new
+      auto deltaP2 = arith::MulFOp::create(builder, loc, halfStepBroadcast,
+                                           gradResult.gradient);
+      Value pNew = arith::SubFOp::create(builder, loc, pHalf, deltaP2);
+
+      return {qNew, pNew, gradResult.gradient, gradResult.potential,
+              gradResult.rngOut};
+    }
+
+    /// NUTS termination check (U-turn)
+    /// https://github.com/pyro-ppl/numpyro/blob/47335b83dd02726fb142e61d79193eb761009ba7/numpyro/infer/hmc_util.py#L710-L746
+    Value checkTurning(OpBuilder &builder, Location loc, Value invMass,
+                       Value pLeft, Value pRight, Value pSum, Value zeroConst,
+                       RankedTensorType scalarType,
+                       RankedTensorType positionType) const {
+
+      Value vLeft =
+          applyInverseMassMatrix(builder, loc, invMass, pLeft, positionType);
+      Value vRight =
+          applyInverseMassMatrix(builder, loc, invMass, pRight, positionType);
+
+      // p_sum_centered = p_sum - (p_left + p_right) / 2
+      auto halfConst = arith::ConstantOp::create(
+          builder, loc, scalarType,
+          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(0.5)));
+      auto halfBroadcast = enzyme::BroadcastOp::create(
+          builder, loc, positionType, halfConst,
+          builder.getDenseI64ArrayAttr(positionType.getShape()));
+
+      auto pLeftPlusPRight = arith::AddFOp::create(builder, loc, pLeft, pRight);
+      auto halfSum =
+          arith::MulFOp::create(builder, loc, halfBroadcast, pLeftPlusPRight);
+      Value pSumCentered = arith::SubFOp::create(builder, loc, pSum, halfSum);
+
+      auto leftAngle = enzyme::DotOp::create(
+          builder, loc, scalarType, vLeft, pSumCentered,
+          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
+          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
+      auto rightAngle = enzyme::DotOp::create(
+          builder, loc, scalarType, vRight, pSumCentered,
+          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
+          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
+
+      // turning = (left_angle <= 0) OR (right_angle <= 0)
+      auto leftNeg = arith::CmpFOp::create(
+          builder, loc, arith::CmpFPredicate::OLE, leftAngle, zeroConst);
+      auto rightNeg = arith::CmpFOp::create(
+          builder, loc, arith::CmpFPredicate::OLE, rightAngle, zeroConst);
+
+      return arith::OrIOp::create(builder, loc, leftNeg, rightNeg);
+    }
+
     LogicalResult lowerHMC(enzyme::MCMCOp mcmcOp,
                            PatternRewriter &rewriter) const {
       SymbolTableCollection symbolTable;
@@ -589,57 +843,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         p0 = initialMomentum;
         rng1 = rngState;
       } else {
-        if (invMass) {
-          auto invMassType = cast<RankedTensorType>(invMass.getType());
-          if (invMassType.getRank() == 1) {
-            // Diagonal case: p0 = 1 / sqrt(invMass) * eps where eps ~ N(0, I)
-            auto sqrtInvMass = math::SqrtOp::create(rewriter, loc, invMass);
-            auto onesVector = arith::ConstantOp::create(
-                rewriter, loc, invMassType,
-                DenseElementsAttr::get(invMassType,
-                                       rewriter.getF64FloatAttr(1.0)));
-            auto massMatrixSqrt =
-                arith::DivFOp::create(rewriter, loc, onesVector, sqrtInvMass);
-            auto randomOp = enzyme::RandomOp::create(
-                rewriter, loc, TypeRange{rngState.getType(), positionType},
-                rngState, zeroConst, oneConst,
-                enzyme::RngDistributionAttr::get(
-                    rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-            rng1 = randomOp.getOutputRngState();
-            auto eps = randomOp.getResult();
-            p0 = arith::MulFOp::create(rewriter, loc, massMatrixSqrt, eps);
-          } else {
-            // Dense case: p0 = mass_matrix_sqrt @ eps where eps ~ N(0, I)
-            auto identityMatrix =
-                createIdentityMatrix(rewriter, loc, invMassType);
-            auto massMatrixSqrt = enzyme::CholeskySolveOp::create(
-                rewriter, loc, invMassType, invMass, identityMatrix);
-            auto randomOp = enzyme::RandomOp::create(
-                rewriter, loc, TypeRange{rngState.getType(), positionType},
-                rngState, zeroConst, oneConst,
-                enzyme::RngDistributionAttr::get(
-                    rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-            rng1 = randomOp.getOutputRngState();
-            auto eps = randomOp.getResult();
-            p0 = enzyme::DotOp::create(
-                rewriter, loc, positionType, massMatrixSqrt, eps,
-                /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-                /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-                /*lhs_contracting_dimensions=*/
-                rewriter.getDenseI64ArrayAttr({1}),
-                /*rhs_contracting_dimensions=*/
-                rewriter.getDenseI64ArrayAttr({0}));
-          }
-        } else {
-          // Assume identity mass matrix: p0 ~ N(0, I)
-          auto randomOp = enzyme::RandomOp::create(
-              rewriter, loc, TypeRange{rngState.getType(), positionType},
-              rngState, zeroConst, oneConst,
-              enzyme::RngDistributionAttr::get(
-                  rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-          rng1 = randomOp.getOutputRngState();
-          p0 = randomOp.getResult();
-        }
+        std::tie(p0, rng1) = sampleMomentum(rewriter, loc, rngState, invMass,
+                                            zeroConst, oneConst, positionType);
       }
 
       auto halfConst = arith::ConstantOp::create(
@@ -647,45 +852,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
-      Value K0;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        Value invMassP0;
-
-        if (invMassType.getRank() == 1) {
-          invMassP0 = arith::MulFOp::create(rewriter, loc, invMass, p0);
-        } else {
-          invMassP0 = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, p0,
-              /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({1}),
-              /*rhs_contracting_dimensions=*/
-              rewriter.getDenseI64ArrayAttr({0}));
-        }
-
-        auto p0DotInvMassP0 = enzyme::DotOp::create(
-            rewriter, loc, tensorType, p0, invMassP0,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotInvMassP0),
-            "HMC: initial kinetic energy K0");
-      } else {
-        auto p0DotP0 = enzyme::DotOp::create(
-            rewriter, loc, tensorType, p0, p0,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotP0),
-            "HMC: initial kinetic energy K0");
-      }
+      Value K0 = conditionalDump(rewriter, loc,
+                                 computeKineticEnergy(rewriter, loc, p0,
+                                                      invMass, halfConst,
+                                                      tensorType, positionType),
+                                 "HMC: initial kinetic energy K0");
 
       Value H0 = conditionalDump(rewriter, loc,
                                  arith::AddFOp::create(rewriter, loc, U0, K0),
@@ -784,24 +955,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           "Leapfrog: momentum p(t + eps/2)");
 
       // 6.2 Full step on position: q += eps * M^-1 * p1
-      Value v1;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-
-        if (invMassType.getRank() == 1) {
-          v1 = arith::MulFOp::create(rewriter, loc, invMass, p1);
-        } else {
-          v1 = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, p1,
-              /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({1}),
-              /*rhs_contracting_dimensions=*/
-              rewriter.getDenseI64ArrayAttr({0}));
-        }
-      } else {
-        v1 = p1;
-      }
+      Value v1 =
+          applyInverseMassMatrix(rewriter, loc, invMass, p1, positionType);
 
       auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v1);
       Value q1 = conditionalDump(
@@ -886,45 +1041,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           "HMC: final potential energy U1");
 
       // K1 = 0.5 * pL^T * M^-1 * pL
-      Value K1;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        Value invMassPL;
-
-        if (invMassType.getRank() == 1) {
-          invMassPL = arith::MulFOp::create(rewriter, loc, invMass, pL);
-        } else {
-          invMassPL = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, pL,
-              /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({1}),
-              /*rhs_contracting_dimensions=*/
-              rewriter.getDenseI64ArrayAttr({0}));
-        }
-
-        auto pLDotInvMassPL = enzyme::DotOp::create(
-            rewriter, loc, tensorType, pL, invMassPL,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K1 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, pLDotInvMassPL),
-            "HMC: final kinetic energy K1");
-      } else {
-        auto pLDotPL = enzyme::DotOp::create(
-            rewriter, loc, tensorType, pL, pL,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K1 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, pLDotPL),
-            "HMC: final kinetic energy K1");
-      }
+      Value K1 = conditionalDump(rewriter, loc,
+                                 computeKineticEnergy(rewriter, loc, pL,
+                                                      invMass, halfConst,
+                                                      tensorType, positionType),
+                                 "HMC: final kinetic energy K1");
 
       Value H1 = conditionalDump(
           rewriter, loc, arith::AddFOp::create(rewriter, loc, U1_final, K1),
@@ -1034,57 +1155,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         pInit = initialMomentum;
         rng1 = rngState;
       } else {
-        if (invMass) {
-          auto invMassType = cast<RankedTensorType>(invMass.getType());
-          if (invMassType.getRank() == 1) {
-            // Diagonal case: p0 = 1 / sqrt(invMass) * eps where eps ~ N(0, I)
-            auto sqrtInvMass = math::SqrtOp::create(rewriter, loc, invMass);
-            auto onesVector = arith::ConstantOp::create(
-                rewriter, loc, invMassType,
-                DenseElementsAttr::get(invMassType,
-                                       rewriter.getF64FloatAttr(1.0)));
-            auto massMatrixSqrt =
-                arith::DivFOp::create(rewriter, loc, onesVector, sqrtInvMass);
-            auto randomOp = enzyme::RandomOp::create(
-                rewriter, loc, TypeRange{rngState.getType(), positionType},
-                rngState, zeroConst, oneConst,
-                enzyme::RngDistributionAttr::get(
-                    rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-            rng1 = randomOp.getOutputRngState();
-            Value eps = randomOp.getResult();
-            pInit = arith::MulFOp::create(rewriter, loc, massMatrixSqrt, eps);
-          } else {
-            // Dense case: p0 = mass_matrix_sqrt @ eps where eps ~ N(0, I)
-            auto identityMatrix =
-                createIdentityMatrix(rewriter, loc, invMassType);
-            auto massMatrixSqrt = enzyme::CholeskySolveOp::create(
-                rewriter, loc, invMassType, invMass, identityMatrix);
-            auto randomOp = enzyme::RandomOp::create(
-                rewriter, loc, TypeRange{rngState.getType(), positionType},
-                rngState, zeroConst, oneConst,
-                enzyme::RngDistributionAttr::get(
-                    rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-            rng1 = randomOp.getOutputRngState();
-            Value eps = randomOp.getResult();
-            pInit = enzyme::DotOp::create(
-                rewriter, loc, positionType, massMatrixSqrt, eps,
-                /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-                /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-                /*lhs_contracting_dimensions=*/
-                rewriter.getDenseI64ArrayAttr({1}),
-                /*rhs_contracting_dimensions=*/
-                rewriter.getDenseI64ArrayAttr({0}));
-          }
-        } else {
-          // Assume identity mass matrix: p0 ~ N(0, I)
-          auto randomOp = enzyme::RandomOp::create(
-              rewriter, loc, TypeRange{rngState.getType(), positionType},
-              rngState, zeroConst, oneConst,
-              enzyme::RngDistributionAttr::get(
-                  rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-          rng1 = randomOp.getOutputRngState();
-          pInit = randomOp.getResult();
-        }
+        std::tie(pInit, rng1) =
+            sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
+                           oneConst, positionType);
       }
 
       auto halfConst = arith::ConstantOp::create(
@@ -1092,45 +1165,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
-      Value K0;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        Value invMassP0;
-
-        if (invMassType.getRank() == 1) {
-          invMassP0 = arith::MulFOp::create(rewriter, loc, invMass, pInit);
-        } else {
-          invMassP0 = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, pInit,
-              /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-              /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({1}),
-              /*rhs_contracting_dimensions=*/
-              rewriter.getDenseI64ArrayAttr({0}));
-        }
-
-        auto p0DotInvMassP0 = enzyme::DotOp::create(
-            rewriter, loc, F64TensorType, pInit, invMassP0,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotInvMassP0),
-            "NUTS: initial kinetic energy K0");
-      } else {
-        auto p0DotP0 = enzyme::DotOp::create(
-            rewriter, loc, F64TensorType, pInit, pInit,
-            /*lhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*rhs_batching_dimensions=*/rewriter.getDenseI64ArrayAttr({}),
-            /*lhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}),
-            /*rhs_contracting_dimensions=*/rewriter.getDenseI64ArrayAttr({0}));
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotP0),
-            "NUTS: initial kinetic energy K0");
-      }
+      Value K0 = conditionalDump(
+          rewriter, loc,
+          computeKineticEnergy(rewriter, loc, pInit, invMass, halfConst,
+                               F64TensorType, positionType),
+          "NUTS: initial kinetic energy K0");
 
       Value H0 = conditionalDump(rewriter, loc,
                                  arith::AddFOp::create(rewriter, loc, U0, K0),
@@ -1410,24 +1449,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pHalf = arith::SubFOp::create(rewriter, loc, leafP, deltaP1);
 
       // Full step position: q_new = q + eps * M^-1 * p_half
-      Value v;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        if (invMassType.getRank() == 1) {
-          v = arith::MulFOp::create(rewriter, loc, invMass, pHalf);
-        } else if (invMassType.getRank() == 2) {
-          v = enzyme::DotOp::create(rewriter, loc, positionType, invMass, pHalf,
-                                    rewriter.getDenseI64ArrayAttr({}),
-                                    rewriter.getDenseI64ArrayAttr({}),
-                                    rewriter.getDenseI64ArrayAttr({1}),
-                                    rewriter.getDenseI64ArrayAttr({0}));
-        } else {
-          mcmcOp.emitError("ProbProg: Unsupported rank for invMass");
-          return failure();
-        }
-      } else {
-        v = pHalf;
-      }
+      Value v =
+          applyInverseMassMatrix(rewriter, loc, invMass, pHalf, positionType);
 
       auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v);
       Value qNew = arith::AddFOp::create(rewriter, loc, leafQ, deltaQ);
@@ -1484,30 +1507,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pNew = arith::SubFOp::create(rewriter, loc, pHalf, deltaP2);
 
       // Body 7d: Compute kinetic energy.
-      Value invMassPNew;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        if (invMassType.getRank() == 1) {
-          invMassPNew = arith::MulFOp::create(rewriter, loc, invMass, pNew);
-        } else {
-          invMassPNew =
-              enzyme::DotOp::create(rewriter, loc, positionType, invMass, pNew,
-                                    rewriter.getDenseI64ArrayAttr({}),
-                                    rewriter.getDenseI64ArrayAttr({}),
-                                    rewriter.getDenseI64ArrayAttr({1}),
-                                    rewriter.getDenseI64ArrayAttr({0}));
-        }
-      } else {
-        invMassPNew = pNew;
-      }
-
-      auto pDotInvMassP = enzyme::DotOp::create(
-          rewriter, loc, F64TensorType, pNew, invMassPNew,
-          rewriter.getDenseI64ArrayAttr({}), rewriter.getDenseI64ArrayAttr({}),
-          rewriter.getDenseI64ArrayAttr({0}),
-          rewriter.getDenseI64ArrayAttr({0}));
-      Value KNew =
-          arith::MulFOp::create(rewriter, loc, halfConst, pDotInvMassP);
+      Value KNew = computeKineticEnergy(rewriter, loc, pNew, invMass, halfConst,
+                                        F64TensorType, positionType);
       Value ENew = arith::AddFOp::create(rewriter, loc, UNew, KNew);
 
       // Body 7e: Various checks.
@@ -1636,54 +1637,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                  .p_sum = pSum};
 
       // Body 7i: Check and update turning flag.
-      // Turning criterion: (p_left + p_right) · M^-1 · p_left >= 0
-      //                AND (p_left + p_right) · M^-1 · p_right >= 0
-      Value invMassPLeft, invMassPRight;
-      if (invMass) {
-        auto invMassType = cast<RankedTensorType>(invMass.getType());
-        if (invMassType.getRank() == 1) {
-          invMassPLeft = arith::MulFOp::create(rewriter, loc, invMass,
-                                               updatedSubtree.p_left);
-          invMassPRight = arith::MulFOp::create(rewriter, loc, invMass,
-                                                updatedSubtree.p_right);
-        } else {
-          invMassPLeft = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, updatedSubtree.p_left,
-              rewriter.getDenseI64ArrayAttr({}),
-              rewriter.getDenseI64ArrayAttr({}),
-              rewriter.getDenseI64ArrayAttr({1}),
-              rewriter.getDenseI64ArrayAttr({0}));
-          invMassPRight = enzyme::DotOp::create(
-              rewriter, loc, positionType, invMass, updatedSubtree.p_right,
-              rewriter.getDenseI64ArrayAttr({}),
-              rewriter.getDenseI64ArrayAttr({}),
-              rewriter.getDenseI64ArrayAttr({1}),
-              rewriter.getDenseI64ArrayAttr({0}));
-        }
-      } else {
-        invMassPLeft = updatedSubtree.p_left;
-        invMassPRight = updatedSubtree.p_right;
-      }
-
-      auto dotLeft = enzyme::DotOp::create(
-          rewriter, loc, F64TensorType, updatedSubtree.p_sum, invMassPLeft,
-          rewriter.getDenseI64ArrayAttr({}), rewriter.getDenseI64ArrayAttr({}),
-          rewriter.getDenseI64ArrayAttr({0}),
-          rewriter.getDenseI64ArrayAttr({0}));
-      auto dotRight = enzyme::DotOp::create(
-          rewriter, loc, F64TensorType, updatedSubtree.p_sum, invMassPRight,
-          rewriter.getDenseI64ArrayAttr({}), rewriter.getDenseI64ArrayAttr({}),
-          rewriter.getDenseI64ArrayAttr({0}),
-          rewriter.getDenseI64ArrayAttr({0}));
-      auto leftNegative = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, dotLeft, zeroConst);
-      auto rightNegative = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, dotRight, zeroConst);
-
-      auto turning = arith::OrIOp::create(
-          rewriter, loc, leftNegative.getResult(), rightNegative.getResult());
-
-      updatedSubtree.turning = turning.getResult();
+      updatedSubtree.turning = checkTurning(
+          rewriter, loc, invMass, updatedSubtree.p_left, updatedSubtree.p_right,
+          updatedSubtree.p_sum, zeroConst, F64TensorType, positionType);
 
       SmallVector<Value> yieldVals = updatedSubtree.toValues();
       yieldVals.push_back(rngIter);
@@ -1838,38 +1794,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value finalTrace = finalUpdateOp.getUpdatedTrace();
       Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
-      Value UFinal = conditionalDump(
-          rewriter, loc,
-          arith::NegFOp::create(rewriter, loc, finalUpdateOp.getWeight()),
-          "NUTS: final potential energy UFinal");
+      auto acceptedTensor = arith::ConstantOp::create(
+          rewriter, loc, i1TensorType,
+          DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(true)));
 
-      // 11. Metropolis-Hastings accept/reject step.
-      Value HFinal = conditionalDump(rewriter, loc, finalTree.H_proposal,
-                                     "NUTS: final Hamiltonian HFinal");
-
-      auto dH = arith::SubFOp::create(rewriter, loc, H0, HFinal);
-      auto accProbRaw = math::ExpOp::create(rewriter, loc, dH);
-      Value accProb = conditionalDump(
-          rewriter, loc,
-          arith::MinimumFOp::create(rewriter, loc, oneConst, accProbRaw),
-          "NUTS: acceptance probability α");
-
-      auto randomOp2 = enzyme::RandomOp::create(
-          rewriter, loc, TypeRange{rngAfterUpdate.getType(), F64TensorType},
-          rngAfterUpdate, zeroConst, oneConst,
-          enzyme::RngDistributionAttr::get(rewriter.getContext(),
-                                           enzyme::RngDistribution::UNIFORM));
-      Value rngFinalMH = randomOp2.getOutputRngState();
-      Value randUniform = randomOp2.getResult();
-
-      auto acceptedTensor = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
-
-      // 12. Select trace based on acceptance
-      auto selectedTrace = enzyme::SelectTraceOp::create(
-          rewriter, loc, traceType, acceptedTensor, finalTrace, originalTrace);
-
-      rewriter.replaceOp(mcmcOp, {selectedTrace, acceptedTensor, rngFinalMH});
+      rewriter.replaceOp(mcmcOp, {finalTrace, acceptedTensor, rngAfterUpdate});
 
       return success();
     }
