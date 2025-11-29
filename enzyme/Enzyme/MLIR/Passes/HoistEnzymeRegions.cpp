@@ -1,4 +1,5 @@
-//===- HoistEnzymeRegions.cpp -LICM for  enzyme.autodiff_region ----------=== //
+//===- HoistEnzymeRegions.cpp - Invariant code motion ------------===//
+//===- within enzyme.autodiff_region                   ----------=== //
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -16,6 +17,7 @@
 #include "Interfaces/Utils.h"
 #include "Passes/Passes.h"
 
+#include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
@@ -39,26 +41,33 @@ namespace enzyme {
 
 namespace {
 
+static bool checkRangeDominance(enzyme::AutoDiffRegionOp &rootOp,
+                                SetVector<Operation *> &specialOps,
+                                ValueRange values) {
+  DominanceInfo dominance(rootOp);
+  for (auto value : values) {
+    if (dominance.properlyDominates(value, rootOp))
+      continue;
+    // Block arguments within autodiff_region are not supported
+    // TODO: add support for enzyme_const block arguments
+    if (isa<BlockArgument>(value)) {
+      return false;
+    }
+    if (!llvm::is_contained(specialOps, value.getDefiningOp())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
   using OpRewritePattern<enzyme::AutoDiffRegionOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(enzyme::AutoDiffRegionOp rootOp,
                                 PatternRewriter &rewriter) const override {
-    DominanceInfo dominance(rootOp);
     Region &autodiffRegion = rootOp.getBody();
     SmallVector<Value> primalArgs = rootOp.getPrimalInputs();
     SmallVector<Value> regionPrimalArgs(autodiffRegion.getArguments());
 
-    // int cnt = 0;
-    // for(auto &op : autodiffRegion.getOps()){
-    //   ENZYME_DBGS << (++cnt) << " : " << op << "\n ---- \n";
-    // }
-    //
-    // ENZYME_DBGS << "======\n";
-    // auto barrierOp = mlir::NVVM::Barrier0Op::create(rewriter,
-    // rootOp->getLoc()); SmallVector<MemoryEffects::EffectInstance> bEffects;
-    // bool couldCollect = enzyme::oputils::collectOpEffects(barrierOp,
-    // bEffects); ENZYME_DBGS << "barrier: " << couldCollect <<  " effects" <<
-    // "\n"; return failure();
     if (primalArgs.size() != regionPrimalArgs.size())
       return failure();
 
@@ -79,68 +88,57 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
     llvm::SetVector<Operation *> liftOps;
     llvm::SetVector<Operation *> stationaryOps;
     llvm::SmallVector<MemoryEffects::EffectInstance> stationaryEffects;
+    for (Block &blk : autodiffRegion.getBlocks()) {
+      for (Operation &bodyOp : blk.without_terminator()) {
+        bool canLift = true;
+        llvm::SmallVector<MemoryEffects::EffectInstance> bodyOpEffects;
+        bool couldCollectEffects =
+            enzyme::oputils::collectOpEffects(&bodyOp, bodyOpEffects);
 
-    for (Operation &bodyOp : rootOp.getBody().getOps()) {
-      bool canLift = true;
-      llvm::SmallVector<MemoryEffects::EffectInstance> bodyOpEffects;
-      bool couldCollectEffects =
-          enzyme::oputils::collectOpEffects(&bodyOp, bodyOpEffects);
-
-      if (!couldCollectEffects)
-        canLift = false;
-
-      if (bodyOp.hasTrait<OpTrait::ReturnLike>() ||
-          bodyOp.hasTrait<OpTrait::IsTerminator>())
-        canLift = false;
-
-      for (auto value : bodyOp.getOperands()) {
-        if (dominance.properlyDominates(value, rootOp)) {
-          continue;
-        }
-
-        // Block arguments within autodiff_region are not supported
-        // TODO: add support for enzyme_const block arguments
-        if (isa<BlockArgument>(value)) {
+        if (!couldCollectEffects)
           canLift = false;
-          break;
-        }
 
-        if (!llvm::is_contained(liftOps, value.getDefiningOp())) {
+        canLift = checkRangeDominance(rootOp, liftOps, bodyOp.getOperands());
+
+        if (bodyOp.getNumRegions()) {
           canLift = false;
-          break;
+          llvm::SetVector<Value> values;
+          getUsedValuesDefinedAbove(bodyOp.getRegions(), values);
+          canLift = checkRangeDominance(rootOp, liftOps, values.getArrayRef());
         }
-      }
 
-      // Check for memory conflicts with current set of stationary ops
-      for (auto stationaryEffect : stationaryEffects) {
-        for (auto bodyOpEffect : bodyOpEffects) {
-          if ((isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
-               isa<MemoryEffects::Read>(bodyOpEffect.getEffect())) ||
-              (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
-               isa<MemoryEffects::Write>(bodyOpEffect.getEffect())) ||
-              (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
-               isa<MemoryEffects::Write>(bodyOpEffect.getEffect()))) {
+        // Check for memory conflicts with current set of stationary ops
+        for (auto stationaryEffect : stationaryEffects) {
+          for (auto bodyOpEffect : bodyOpEffects) {
+            if ((isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+                 isa<MemoryEffects::Read>(bodyOpEffect.getEffect())) ||
+                (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
+                 isa<MemoryEffects::Write>(bodyOpEffect.getEffect())) ||
+                (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+                 isa<MemoryEffects::Write>(bodyOpEffect.getEffect()))) {
 
-            if (enzyme::oputils::mayAlias(bodyOpEffect, stationaryEffect)) {
-              canLift = false;
-              break;
+              if (enzyme::oputils::mayAlias(bodyOpEffect, stationaryEffect)) {
+                canLift = false;
+                break;
+              }
             }
           }
         }
-      }
 
-      if (canLift) {
-        liftOps.insert(&bodyOp);
-      } else {
-        stationaryOps.insert(&bodyOp);
-        stationaryEffects.append(bodyOpEffects.begin(), bodyOpEffects.end());
+        if (canLift) {
+          liftOps.insert(&bodyOp);
+        } else {
+          stationaryOps.insert(&bodyOp);
+          stationaryEffects.append(bodyOpEffects.begin(), bodyOpEffects.end());
+        }
       }
     }
 
-    // Clone the op to the parent to avoid possible SSA redefinitions
+    // Lift operations
     for (Operation *op : llvm::make_early_inc_range(liftOps)) {
       rewriter.moveOpBefore(op, rootOp);
     }
+
     return success();
   }
 };
