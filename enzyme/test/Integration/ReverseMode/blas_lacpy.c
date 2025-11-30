@@ -46,6 +46,8 @@ void dump(double *dx, const char *name) {
   printf("\n");
 }
 
+double fabs (double a);
+
 #define dump(A) dump(A, #A)
 
 int min(int a, int b) {
