@@ -159,6 +159,10 @@ class CopyLowerToUpper<string _tmp> {
   string unused = _tmp;
 }
 
+class MemcpyMatAdd<string _tmp> {
+  string unused = _tmp;
+}
+
 class For<string idx_, bit offset_> {
   string idx = idx_;
   bit offset = offset_;
@@ -195,12 +199,19 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   (Seq<[], [], 1> (BlasCall<"scal"> $n, $alpha, (Shadow $x)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $x)))
                   >;
 
+// B is dst, A is src, B .= A
+// in reverse mode this becomes
+// dA .+= dB
+// dB  .= 0
 def lacpy : CallBlasPattern<(Op $layout, $uplo, $m, $n, $A, $lda, $B, $ldb),
                   ["B"],[cblas_layout, uplo, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
                   [
-                  (AssertingInactiveArg), // from
-                  (AssertingInactiveArg), // to
-                  ]
+                  (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $m, $n, (Shadow $B), Alloca<1>),
+                  (MemcpyMatAdd<""> $layout, $uplo, $m, $n, (Shadow $B), (Shadow $A))
+                  ],
+                  (Seq<[], [], 1>
+                    (BlasCall<"lacpy"> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B))
+                  )
                   >;
 
 def lascl : CallBlasPattern<(Op $layout, $type, $kl, $ku, $cfrom, $cto, $m, $n, $A, $lda, $info),
