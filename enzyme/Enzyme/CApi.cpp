@@ -1746,6 +1746,34 @@ bool needsReRooting(llvm::Argument *arg, bool is_v, bool &anyJLStore) {
             continue;
           }
         }
+        if (auto ST = dyn_cast<StructType>(sv->getType())) {
+          bool legal = true;
+          for (size_t i = 0; i < ST->getNumElements(); i++) {
+
+            CountTrackedPointers tracked(ST->getElementType(i));
+            if (tracked.count == 0) {
+              continue;
+            }
+            Value *ev = nullptr;
+            for (auto u : sv->users()) {
+              if (auto ev0 = dyn_cast<ExtractValueInst>(u)) {
+                if (ev0->getNumIndices() == 1 && ev0->getIndices()[0] == i) {
+                  ev = ev0;
+                  break;
+                }
+              }
+            }
+            if (ev) {
+              storedValues.push_back(ev);
+            } else {
+              legal = false;
+              break;
+            }
+          }
+          if (legal) {
+            continue;
+          }
+        }
         if (!isa<PointerType>(sv->getType()) ||
             !isSpecialPtr(cast<PointerType>(sv->getType()))) {
           llvm::errs() << " sf: " << *arg->getParent() << "\n";
