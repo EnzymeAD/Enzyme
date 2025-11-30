@@ -1188,12 +1188,14 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
 
       os << "    auto derivcall_" << dfnc_name
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-         << "  blas.prefix + blas.floatType + \"" << dfnc_name;
+         << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
+            "blas.floatType + \""
+         << dfnc_name;
 
       if (dfnc_name == "copy")
-        os << "\" + cublasv2 ? \"\" : blas.suffix, FT" << dfnc_name << ");\n";
+        os << "\" + cublasv2 ? \"\" : blas.suffix), FT" << dfnc_name << ");\n";
       else
-        os << "\" + blas.suffix, FT" << dfnc_name << ");\n";
+        os << "\" + blas.suffix), FT" << dfnc_name << ");\n";
 
       os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
          << ".getCallee()))\n"
