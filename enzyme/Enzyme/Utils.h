@@ -795,6 +795,11 @@ llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
                                      llvm::IntegerType *IT, unsigned dstalign,
                                      unsigned srcalign);
 
+llvm::Function *getOrInsertDifferentialFloatMemcpyMat(
+    llvm::Module &M, llvm::Type *elementType, llvm::PointerType *PT,
+    llvm::IntegerType *IT, llvm::IntegerType *CT, unsigned dstalign,
+    unsigned srcalign);
+
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemmove(

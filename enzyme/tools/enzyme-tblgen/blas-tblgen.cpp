@@ -1906,6 +1906,44 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "        }\n";
     return;
   }
+  if (Def->isSubClassOf("MemcpyMatAdd")) {
+
+    assert(!forward);
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
+    auto ty = ArgType::len;
+    os << "        {\n";
+    if (!forward && !runtimeChecked)
+      emit_runtime_condition(ruleDag, argName, "        ", "Builder2",
+                             (ty == ArgType::fp), os);
+    os << "      // MemcpyMatAdd\n";
+    rev_call_args(forward, argPrefix, pattern, ruleDag, os, "", ty, vars);
+    os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+       << ValueType_helper(pattern, actArg, ruleDag)
+       << "}, Builder2, /* lookup */ " << (!forward) << ");\n";
+
+    for (int i : {0, 1, 2, 4, 6})
+      os << "        " << argPrefix << "[" << i << "] = load_if_ref(Builder2, "
+         << ((i == 0) ? "charType" : "intType") << ", " << argPrefix << "[" << i
+         << "], byRef);\n";
+
+    os << "        auto dmemcpymat = "
+          "getOrInsertDifferentialFloatMemcpyMat(*gutils->oldFunc->getParent(),"
+          " fpType, cast<PointerType>("
+       << argPrefix << "[" << argPrefix
+       << ".size() - 2]->getType()), intType, charType, 0, 0);\n";
+
+    os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(dmemcpymat, "
+       << argPrefix << ", Defs));\n";
+
+    if (!forward && !runtimeChecked)
+      emit_runtime_continue(ruleDag, argName, "        ", "Builder2",
+                            (ty == ArgType::fp), os);
+    os << "        }\n";
+    if (forward)
+      os << "        }\n";
+    return;
+  }
   if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
     os << "        {\n";
     os << "      // FirstUse\n";
@@ -2293,9 +2331,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
-    // trtrs does in reversed arg order.
-    size_t i = (pattern.getName() != "trtrs") ? iteri
-                                              : (activeArgs.size() - 1 - iteri);
+    // trtrs and lacpy do in reversed arg order.
+    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "lacpy")
+                   ? iteri
+                   : (activeArgs.size() - 1 - iteri);
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
