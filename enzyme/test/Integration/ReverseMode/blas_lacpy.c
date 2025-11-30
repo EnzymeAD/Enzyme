@@ -1,10 +1,7 @@
-// a clang plugin properly without segfaulting on exit. This is fine on
-// Ubuntu 20.04 or later LLVM versions... RUN: if [ %llvmver -ge 12 ]; then
-// %clang -O0 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi RUN: if [
-// %llvmver -ge 12 ]; then %clang -O1 %s -S -emit-llvm -o - %loadClangEnzyme |
-// %lli - ; fi RUN: if [ %llvmver -ge 12 ]; then %clang -O2 %s -S -emit-llvm -o
-// - %loadClangEnzyme | %lli - ; fi RUN: if [ %llvmver -ge 12 ]; then %clang -O3
-// %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -O0 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -O1 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -O2 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 12 ]; then %clang -O3 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
 
 #include "../blas_inline.h"
 #include "../test_utils.h"
