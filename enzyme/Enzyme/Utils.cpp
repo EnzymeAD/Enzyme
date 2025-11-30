@@ -1466,9 +1466,10 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 
   {
     IRBuilder<> B(entry);
-    Value *l = B.CreateAdd(M, N, "mul", true, true);
+    Value *l0 = B.CreateICmpEQ(M, ConstantInt::get(IT, 0));
+    Value *l1 = B.CreateICmpEQ(N, ConstantInt::get(IT, 0));
     // Don't copy a 0*0 matrix
-    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)), end, init);
+    B.CreateCondBr(B.CreateOr(l0, l1), end, init);
   }
 
   PHINode *j;
@@ -1527,7 +1528,7 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 
 Function *getOrInsertDifferentialFloatMemcpyMat(
     Module &Mod, Type *elementType, PointerType *PT, IntegerType *IT,
-    IntegerType *CT, unsigned dstalign, unsigned srcalign) {
+    IntegerType *CT, unsigned dstalign, unsigned srcalign, bool zeroSrc) {
   assert(elementType->isFPOrFPVectorTy());
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
@@ -1542,7 +1543,8 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 #endif
 #endif
   std::string name = "__enzyme_dmemcpy_" + tofltstr(elementType) + "_mat_" +
-                     std::to_string(cast<IntegerType>(IT)->getBitWidth());
+                     std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
+                     (zeroSrc ? "_zero" : "");
   FunctionType *FT = FunctionType::get(Type::getVoidTy(Mod.getContext()),
                                        {CT, IT, IT, PT, IT, PT, IT}, false);
 
@@ -1587,9 +1589,10 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 
   {
     IRBuilder<> B(entry);
-    Value *l = B.CreateAdd(M, N, "mul", true, true);
+    Value *l0 = B.CreateICmpEQ(M, ConstantInt::get(IT, 0));
+    Value *l1 = B.CreateICmpEQ(N, ConstantInt::get(IT, 0));
     // Don't copy a 0*0 matrix
-    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)), end, swtch);
+    B.CreateCondBr(B.CreateOr(l0, l1), end, swtch);
   }
 
   {
@@ -1607,26 +1610,35 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
     BasicBlock *body = BasicBlock::Create(F->getContext(), dir + "for.body", F);
     BasicBlock *initend =
         BasicBlock::Create(F->getContext(), dir + "init.end", F);
+
+    Value *istart = ConstantInt::get(IT, 0);
+    Value *iend = M;
+
     PHINode *j;
     {
       IRBuilder<> B(init);
       j = B.CreatePHI(IT, 2, dir + "j");
       j->addIncoming(ConstantInt::get(IT, 0), swtch);
+
+      if (direction == 'L') {
+        istart = j;
+      } else if (direction == 'U') {
+        auto jp1 = B.CreateAdd(j, ConstantInt::get(IT, 1), "", true, true);
+        iend = B.CreateSelect(B.CreateICmpULT(jp1, M), jp1, M);
+      }
+
       B.CreateBr(body);
     }
 
     {
       IRBuilder<> B(body);
       PHINode *i = B.CreatePHI(IT, 2, dir + "i");
-      Value *istart = ConstantInt::get(IT, 0);
-      if (direction == 'L')
-        istart = j;
       i->addIncoming(istart, init);
 
       Value *srci = B.CreateInBoundsGEP(
           elementType, src,
           B.CreateAdd(i, B.CreateMul(j, lsrc, "", true, true), "", true, true),
-          dir + "dst.i");
+          dir + "src.i");
 
       Value *dsti = B.CreateInBoundsGEP(
           elementType, dst,
@@ -1636,24 +1648,22 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
       LoadInst *dstl = B.CreateLoad(elementType, dsti, dir + "dst.i.l");
       auto res = B.CreateFAdd(srcl, dstl);
       StoreInst *dsts = B.CreateStore(res, dsti);
-      // StoreInst *srcs = B.CreateStore(Constant::getNullValue(res->getType()),
-      // srci);
+      StoreInst *srcs = nullptr;
+      if (zeroSrc)
+        srcs = B.CreateStore(Constant::getNullValue(res->getType()), srci);
       if (dstalign) {
         dsts->setAlignment(Align(dstalign));
         dstl->setAlignment(Align(dstalign));
       }
       if (srcalign) {
-        // srcs->setAlignment(Align(srcalign));
+        if (zeroSrc)
+          srcs->setAlignment(Align(srcalign));
         srcl->setAlignment(Align(srcalign));
       }
 
       Value *nexti =
           B.CreateAdd(i, ConstantInt::get(IT, 1), dir + "i.next", true, true);
       i->addIncoming(nexti, body);
-      Value *iend = M;
-      if (direction == 'U') {
-        iend = B.CreateSelect(B.CreateICmpULT(j, M), j, M);
-      }
       B.CreateCondBr(B.CreateICmpEQ(nexti, iend), initend, body);
     }
 

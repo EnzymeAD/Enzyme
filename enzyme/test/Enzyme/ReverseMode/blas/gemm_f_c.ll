@@ -105,9 +105,12 @@ entry:
 ; CHECK-NEXT:   %[[i10:.+]] = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %[[i11:.+]] = load i64, i64* %[[i10]]
 ; CHECK-NEXT:   %[[i12:.+]] = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %[[i13:.+]] = icmp eq i64 %mul.i, 0
-; CHECK-NEXT:   br i1 %[[i13]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[a14:.+]] = icmp eq i64 %[[i7]], 0
+; CHECK-NEXT:   %[[a15:.+]] = icmp eq i64 %[[i8]], 0
+; CHECK-NEXT:   %[[a16:.+]] = or i1 %[[a14]], %[[a15]]
+; CHECK-NEXT:   br i1 %[[a16]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %entry
 ; CHECK-NEXT:   %j.i = phi i64 [ 0, %entry ], [ %j.next.i, %init.end.i ]
@@ -150,9 +153,12 @@ entry:
 ; CHECK-NEXT:   %[[i30:.+]] = bitcast i8* %ldb_p to i64*
 ; CHECK-NEXT:   %[[i31:.+]] = load i64, i64* %[[i30]]
 ; CHECK-NEXT:   %[[i32:.+]] = bitcast i8* %B to double*
-; CHECK:   %[[mul_i8:.+]] = add nuw nsw i64 %[[i27]], %[[i28]]
-; CHECK-NEXT:   %[[i33:.+]] = icmp eq i64 %[[mul_i8]], 0
-; CHECK-NEXT:   br i1 %[[i33]], label %[[enzyme_memcpy_double_mat_64_exit21:.+]], label %[[init_idx:.+]]
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[a36:.+]] = icmp eq i64 %[[i27]], 0
+; CHECK-NEXT:   %[[a37:.+]] = icmp eq i64 %[[i28]], 0
+; CHECK-NEXT:   %[[a38:.+]] = or i1 %[[a36]], %[[a37]]
+; CHECK-NEXT:   br i1 %[[a38]], label %[[enzyme_memcpy_double_mat_64_exit21:.+]], label %[[init_idx:.+]]
 
 ; CHECK: [[init_idx]]:                                      ; preds = %[[init_end_i18:.+]], %__enzyme_memcpy_double_mat_64.exit
 ; CHECK-NEXT:   %[[j_i9:.+]] = phi i64 [ 0, %__enzyme_memcpy_double_mat_64.exit ], [ %[[j_next_i17:.+]], %[[init_end_i18]] ]

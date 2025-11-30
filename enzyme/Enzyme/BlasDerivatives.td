@@ -159,8 +159,8 @@ class CopyLowerToUpper<string _tmp> {
   string unused = _tmp;
 }
 
-class MemcpyMatAdd<string _tmp> {
-  string unused = _tmp;
+class MemcpyMatAdd<bit _shouldZero> {
+  bit shouldZero = _shouldZero;
 }
 
 class For<string idx_, bit offset_> {
@@ -206,8 +206,8 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
 def lacpy : CallBlasPattern<(Op $layout, $uplo, $m, $n, $A, $lda, $B, $ldb),
                   ["B"],[cblas_layout, uplo, len, len, mld<["m", "n"]>, mld<["m", "n"]>],
                   [
+                  (MemcpyMatAdd<true> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B)),
                   (BlasCall<"lascl"> $layout, $uplo, ConstantInt<0>, ConstantInt<0>, Constant<"1.0">, Constant<"0.0">, $m, $n, (Shadow $B), Alloca<1>),
-                  (MemcpyMatAdd<""> $layout, $uplo, $m, $n, (Shadow $B), (Shadow $A))
                   ],
                   (Seq<[], [], 1>
                     (BlasCall<"lacpy"> $layout, $uplo, $m, $n, (Shadow $A), (Shadow $B))

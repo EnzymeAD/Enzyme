@@ -34,8 +34,10 @@ entry:
 ; CHECK-NEXT:   %mallocsize19 = mul nuw nsw i32 %0, 8
 ; CHECK-NEXT:   %malloccall20 = tail call noalias nonnull i8* @malloc(i32 %mallocsize19)
 ; CHECK-NEXT:   %cache.A21 = bitcast i8* %malloccall20 to double*
-; CHECK:   %mul.i = add nuw nsw i32 %N, %N
-; CHECK-NEXT:   %1 = icmp eq i32 %mul.i, 0
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %1 = icmp eq i32 %N, 0
+; CHECK-NEXT:   %2 = icmp eq i32 %N, 0
 ; CHECK-NEXT:   br i1 %1, label %__enzyme_memcpy_double_mat_32.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %entry
@@ -44,22 +46,22 @@ entry:
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %init.idx.i
 ; CHECK-NEXT:   %i.i = phi i32 [ 0, %init.idx.i ], [ %i.next.i, %for.body.i ]
-; CHECK-NEXT:   %2 = mul nuw nsw i32 %j.i, %N
-; CHECK-NEXT:   %3 = add nuw nsw i32 %i.i, %2
-; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A21, i32 %3
-; CHECK-NEXT:   %4 = mul nuw nsw i32 %j.i, %N
-; CHECK-NEXT:   %5 = add nuw nsw i32 %i.i, %4
-; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %K, i32 %5
+; CHECK-NEXT:   %[[i2:.+]] = mul nuw nsw i32 %j.i, %N
+; CHECK-NEXT:   %[[i3:.+]] = add nuw nsw i32 %i.i, %[[i2]]
+; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %cache.A21, i32 %[[i3]]
+; CHECK-NEXT:   %[[i4:.+]] = mul nuw nsw i32 %j.i, %N
+; CHECK-NEXT:   %[[i5:.+]] = add nuw nsw i32 %i.i, %[[i4]]
+; CHECK-NEXT:   %dst.i1.i = getelementptr inbounds double, double* %K, i32 %[[i5]]
 ; CHECK-NEXT:   %src.i.l.i = load double, double* %dst.i1.i, align 8
 ; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i, align 8
 ; CHECK-NEXT:   %i.next.i = add nuw nsw i32 %i.i, 1
-; CHECK-NEXT:   %6 = icmp eq i32 %i.next.i, %N
-; CHECK-NEXT:   br i1 %6, label %init.end.i, label %for.body.i
+; CHECK-NEXT:   %[[i6:.+]] = icmp eq i32 %i.next.i, %N
+; CHECK-NEXT:   br i1 %[[i6]], label %init.end.i, label %for.body.i
 
 ; CHECK: init.end.i:                                       ; preds = %for.body.i
 ; CHECK-NEXT:   %j.next.i = add nuw nsw i32 %j.i, 1
-; CHECK-NEXT:   %7 = icmp eq i32 %j.next.i, %N
-; CHECK-NEXT:   br i1 %7, label %__enzyme_memcpy_double_mat_32.exit, label %init.idx.i
+; CHECK-NEXT:   %[[i7:.+]] = icmp eq i32 %j.next.i, %N
+; CHECK-NEXT:   br i1 %[[i7]], label %__enzyme_memcpy_double_mat_32.exit, label %init.idx.i
 
 ; CHECK: __enzyme_memcpy_double_mat_32.exit:               ; preds = %entry, %init.end.i
 ; CHECK-NEXT:   %mallocsize22 = mul nuw nsw i32 %N, 8
@@ -71,34 +73,36 @@ entry:
 ; CHECK-NEXT:   %mallocsize11 = mul nuw nsw i32 %[[i11]], 8
 ; CHECK-NEXT:   %malloccall12 = tail call noalias nonnull i8* @malloc(i32 %mallocsize11)
 ; CHECK-NEXT:   %cache.A13 = bitcast i8* %malloccall12 to double*
-; CHECK:   %mul.i27 = add nuw nsw i32 %N, %N
-; CHECK-NEXT:   %[[i12:.+]] = icmp eq i32 %mul.i27, 0
-; CHECK-NEXT:   br i1 %[[i12]], label %__enzyme_memcpy_double_mat_32.exit38, label %init.idx.i29
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[z1:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   %[[z2:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   br i1 %[[z1]], label %__enzyme_memcpy_double_mat_32.exit37, label %init.idx.i28
 
-; CHECK: init.idx.i29:                                     ; preds = %init.end.i37, %__enzyme_memcpy_double_mat_32.exit
-; CHECK-NEXT:   %j.i28 = phi i32 [ 0, %__enzyme_memcpy_double_mat_32.exit ], [ %j.next.i36, %init.end.i37 ]
-; CHECK-NEXT:   br label %for.body.i35
+; CHECK: init.idx.i28:
+; CHECK-NEXT:   %[[i28:.+]] = phi i32 [ 0, %__enzyme_memcpy_double_mat_32.exit ], [ %[[i35:.+]], %init.end.i36 ] 
+; CHECK-NEXT:   br label %for.body.i34
 
-; CHECK: for.body.i35:                                     ; preds = %for.body.i35, %init.idx.i29
-; CHECK-NEXT:   %i.i30 = phi i32 [ 0, %init.idx.i29 ], [ %i.next.i34, %for.body.i35 ]
-; CHECK-NEXT:   %[[i13:.+]] = mul nuw nsw i32 %j.i28, %N
-; CHECK-NEXT:   %[[i14:.+]] = add nuw nsw i32 %i.i30, %[[i13]]
-; CHECK-NEXT:   %dst.i.i31 = getelementptr inbounds double, double* %cache.A13, i32 %[[i14]]
-; CHECK-NEXT:   %[[i15:.+]] = mul nuw nsw i32 %j.i28, %N
-; CHECK-NEXT:   %[[i16:.+]] = add nuw nsw i32 %i.i30, %[[i15]]
-; CHECK-NEXT:   %dst.i1.i32 = getelementptr inbounds double, double* %K, i32 %[[i16]]
-; CHECK-NEXT:   %src.i.l.i33 = load double, double* %dst.i1.i32, align 8
-; CHECK-NEXT:   store double %src.i.l.i33, double* %dst.i.i31, align 8
-; CHECK-NEXT:   %i.next.i34 = add nuw nsw i32 %i.i30, 1
-; CHECK-NEXT:   %[[i17:.+]] = icmp eq i32 %i.next.i34, %N
-; CHECK-NEXT:   br i1 %[[i17]], label %init.end.i37, label %for.body.i35
+; CHECK: for.body.i34:
+; CHECK-NEXT:   %[[i30:.+]] = phi i32 [ 0, %init.idx.i28 ], [ %[[inext34:.+]], %for.body.i34 ]
+; CHECK-NEXT:   %[[i13:.+]] = mul nuw nsw i32 %[[i28]], %N
+; CHECK-NEXT:   %[[i14:.+]] = add nuw nsw i32 %[[i30]], %[[i13]]
+; CHECK-NEXT:   %[[i31:.+]] = getelementptr inbounds double, double* %cache.A13, i32 %[[i14]]
+; CHECK-NEXT:   %[[i15:.+]] = mul nuw nsw i32 %[[i28]], %N
+; CHECK-NEXT:   %[[i16:.+]] = add nuw nsw i32 %[[i30]], %[[i15]]
+; CHECK-NEXT:   %[[i32:.+]] = getelementptr inbounds double, double* %K, i32 %[[i16]]
+; CHECK-NEXT:   %[[i33:.+]] = load double, double* %[[i32]], align 8
+; CHECK-NEXT:   store double %[[i33]], double* %[[i31]], align 8
+; CHECK-NEXT:   %[[inext34]] = add nuw nsw i32 %[[i30]], 1
+; CHECK-NEXT:   %[[i17:.+]] = icmp eq i32 %[[inext34]], %N
+; CHECK-NEXT:   br i1 %[[i17]], label %[[initendi37:.+]], label %for.body.i34
 
-; CHECK: init.end.i37:                                     ; preds = %for.body.i35
-; CHECK-NEXT:   %j.next.i36 = add nuw nsw i32 %j.i28, 1
-; CHECK-NEXT:   %[[i18:.+]] = icmp eq i32 %j.next.i36, %N
-; CHECK-NEXT:   br i1 %[[i18:.+]], label %__enzyme_memcpy_double_mat_32.exit38, label %init.idx.i29
+; CHECK: [[initendi37]]:
+; CHECK-NEXT:   %[[i35]] = add nuw nsw i32 %[[i28]], 1
+; CHECK-NEXT:   %[[i18:.+]] = icmp eq i32 %[[i35]], %N
+; CHECK-NEXT:   br i1 %[[i18:.+]], label %__enzyme_memcpy_double_mat_32.exit37, label %init.idx.i28
 
-; CHECK: __enzyme_memcpy_double_mat_32.exit38:             ; preds = %__enzyme_memcpy_double_mat_32.exit, %init.end.i37
+; CHECK: __enzyme_memcpy_double_mat_32.exit37:    
 ; CHECK-NEXT:   %mallocsize14 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall15 = tail call noalias nonnull i8* @malloc(i32 %mallocsize14)
 ; CHECK-NEXT:   %cache.x16 = bitcast i8* %malloccall15 to double*
@@ -108,34 +112,36 @@ entry:
 ; CHECK-NEXT:   %mallocsize3 = mul nuw nsw i32 %[[i22]], 8
 ; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull i8* @malloc(i32 %mallocsize3)
 ; CHECK-NEXT:   %cache.A5 = bitcast i8* %malloccall4 to double*
-; CHECK:   %mul.i39 = add nuw nsw i32 %N, %N
-; CHECK-NEXT:   %[[i23:.+]] = icmp eq i32 %mul.i39, 0
-; CHECK-NEXT:   br i1 %[[i23]], label %__enzyme_memcpy_double_mat_32.exit50, label %init.idx.i41
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[i23:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   %[[i24:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   br i1 %[[i23]], label %[[__enzyme_memcpy_double_mat_32exit50:.+]], label %[[initidxi41:.+]]
 
-; CHECK: init.idx.i41:                                     ; preds = %init.end.i49, %__enzyme_memcpy_double_mat_32.exit38
-; CHECK-NEXT:   %j.i40 = phi i32 [ 0, %__enzyme_memcpy_double_mat_32.exit38 ], [ %j.next.i48, %init.end.i49 ]
-; CHECK-NEXT:   br label %for.body.i47
+; CHECK: [[initidxi41]]:
+; CHECK-NEXT:   %[[i40:.+]] = phi i32 [ 0, %__enzyme_memcpy_double_mat_32.exit37 ], [ %[[i48:.+]], %[[initendi49:.+]] ]
+; CHECK-NEXT:   br label %[[forbodyi47:.+]]
 
-; CHECK: for.body.i47:                                     ; preds = %for.body.i47, %init.idx.i41
-; CHECK-NEXT:   %i.i42 = phi i32 [ 0, %init.idx.i41 ], [ %i.next.i46, %for.body.i47 ]
-; CHECK-NEXT:   %[[i24:.+]] = mul nuw nsw i32 %j.i40, %N
-; CHECK-NEXT:   %[[i25:.+]] = add nuw nsw i32 %i.i42, %[[i24]]
-; CHECK-NEXT:   %dst.i.i43 = getelementptr inbounds double, double* %cache.A5, i32 %[[i25]]
-; CHECK-NEXT:   %[[i26:.+]] = mul nuw nsw i32 %j.i40, %N
-; CHECK-NEXT:   %[[i27:.+]] = add nuw nsw i32 %i.i42, %[[i26]]
-; CHECK-NEXT:   %dst.i1.i44 = getelementptr inbounds double, double* %K, i32 %[[i27]]
-; CHECK-NEXT:   %src.i.l.i45 = load double, double* %dst.i1.i44, align 8
-; CHECK-NEXT:   store double %src.i.l.i45, double* %dst.i.i43, align 8
-; CHECK-NEXT:   %i.next.i46 = add nuw nsw i32 %i.i42, 1
-; CHECK-NEXT:   %[[i28:.+]] = icmp eq i32 %i.next.i46, %N
-; CHECK-NEXT:   br i1 %[[i28]], label %init.end.i49, label %for.body.i47
+; CHECK: [[forbodyi47]]: 
+; CHECK-NEXT:   %[[i42:.+]] = phi i32 [ 0, %[[initidxi41]] ], [ %[[i46:.+]], %[[i47:.+]] ]
+; CHECK-NEXT:   %[[i24:.+]] = mul nuw nsw i32 %[[i40]], %N
+; CHECK-NEXT:   %[[i25:.+]] = add nuw nsw i32 %[[i42]], %[[i24]]
+; CHECK-NEXT:   %[[dsti43:.+]] = getelementptr inbounds double, double* %cache.A5, i32 %[[i25]]
+; CHECK-NEXT:   %[[i26:.+]] = mul nuw nsw i32 %[[i40]], %N
+; CHECK-NEXT:   %[[i27:.+]] = add nuw nsw i32 %[[i42]], %[[i26]]
+; CHECK-NEXT:   %[[dsti1i44:.+]] = getelementptr inbounds double, double* %K, i32 %[[i27]]
+; CHECK-NEXT:   %[[srcili45:.+]] = load double, double* %[[dsti1i44]], align 8
+; CHECK-NEXT:   store double %[[srcili45]], double* %[[dsti43]], align 8
+; CHECK-NEXT:   %[[i46]] = add nuw nsw i32 %[[i42]], 1
+; CHECK-NEXT:   %[[i28:.+]] = icmp eq i32 %[[i46]], %N
+; CHECK-NEXT:   br i1 %[[i28]], label %[[initendi49]], label %[[i47]]
 
-; CHECK: init.end.i49:                                     ; preds = %for.body.i47
-; CHECK-NEXT:   %j.next.i48 = add nuw nsw i32 %j.i40, 1
-; CHECK-NEXT:   %[[i29:.+]] = icmp eq i32 %j.next.i48, %N
-; CHECK-NEXT:   br i1 %[[i29]], label %__enzyme_memcpy_double_mat_32.exit50, label %init.idx.i41
+; CHECK: [[initendi49]]:
+; CHECK-NEXT:   %[[i48]] = add nuw nsw i32 %[[i40]], 1
+; CHECK-NEXT:   %[[i29:.+]] = icmp eq i32 %[[i48]], %N
+; CHECK-NEXT:   br i1 %[[i29]], label %[[__enzyme_memcpy_double_mat_32exit50]], label %[[initidxi41]]
 
-; CHECK: __enzyme_memcpy_double_mat_32.exit50:             ; preds = %__enzyme_memcpy_double_mat_32.exit38, %init.end.i49
+; CHECK: [[__enzyme_memcpy_double_mat_32exit50]]:
 ; CHECK-NEXT:   %mallocsize6 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall7 = tail call noalias nonnull i8* @malloc(i32 %mallocsize6)
 ; CHECK-NEXT:   %cache.x8 = bitcast i8* %malloccall7 to double*
@@ -145,34 +151,36 @@ entry:
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i32 %[[i33]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i32 %mallocsize)
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall to double*
-; CHECK:   %mul.i51 = add nuw nsw i32 %N, %N
-; CHECK-NEXT:   %[[i34:.+]] = icmp eq i32 %mul.i51, 0
-; CHECK-NEXT:   br i1 %[[i34]], label %__enzyme_memcpy_double_mat_32.exit62, label %init.idx.i53
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[i34:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   %[[j34:.+]] = icmp eq i32 %N, 0
+; CHECK-NEXT:   br i1 %[[i34]], label %[[__enzyme_memcpy_double_mat_32exit62:.+]], label %[[initidxi53:.+]]
 
-; CHECK: init.idx.i53:                                     ; preds = %init.end.i61, %__enzyme_memcpy_double_mat_32.exit50
-; CHECK-NEXT:   %j.i52 = phi i32 [ 0, %__enzyme_memcpy_double_mat_32.exit50 ], [ %j.next.i60, %init.end.i61 ]
-; CHECK-NEXT:   br label %for.body.i59
+; CHECK: [[initidxi53]]:
+; CHECK-NEXT:   %[[i52:.+]] = phi i32 [ 0, %[[__enzyme_memcpy_double_mat_32exit50]] ], [ %[[i60:.+]], %[[initendi61:.+]] ]
+; CHECK-NEXT:   br label %[[forbodyi59:.+]]
 
-; CHECK: for.body.i59:                                     ; preds = %for.body.i59, %init.idx.i53
-; CHECK-NEXT:   %i.i54 = phi i32 [ 0, %init.idx.i53 ], [ %i.next.i58, %for.body.i59 ]
-; CHECK-NEXT:   %[[i35:.+]] = mul nuw nsw i32 %j.i52, %N
-; CHECK-NEXT:   %[[i36:.+]] = add nuw nsw i32 %i.i54, %[[i35]]
-; CHECK-NEXT:   %dst.i.i55 = getelementptr inbounds double, double* %cache.A, i32 %[[i36]]
-; CHECK-NEXT:   %[[i37:.+]] = mul nuw nsw i32 %j.i52, %N
-; CHECK-NEXT:   %[[i38:.+]] = add nuw nsw i32 %i.i54, %[[i37]]
-; CHECK-NEXT:   %dst.i1.i56 = getelementptr inbounds double, double* %K, i32 %[[i38]]
-; CHECK-NEXT:   %src.i.l.i57 = load double, double* %dst.i1.i56, align 8
-; CHECK-NEXT:   store double %src.i.l.i57, double* %dst.i.i55, align 8
-; CHECK-NEXT:   %i.next.i58 = add nuw nsw i32 %i.i54, 1
-; CHECK-NEXT:   %[[i39:.+]] = icmp eq i32 %i.next.i58, %N
-; CHECK-NEXT:   br i1 %[[i39]], label %init.end.i61, label %for.body.i59
+; CHECK: [[forbodyi59]]:
+; CHECK-NEXT:   %[[i54:.+]] = phi i32 [ 0, %[[initidxi53]] ], [ %[[i58:.+]], %[[forbodyi59]] ]
+; CHECK-NEXT:   %[[i35:.+]] = mul nuw nsw i32 %[[i52]], %N
+; CHECK-NEXT:   %[[i36:.+]] = add nuw nsw i32 %[[i54]], %[[i35]]
+; CHECK-NEXT:   %[[dstii55:.+]] = getelementptr inbounds double, double* %cache.A, i32 %[[i36]]
+; CHECK-NEXT:   %[[i37:.+]] = mul nuw nsw i32 %[[i52]], %N
+; CHECK-NEXT:   %[[i38:.+]] = add nuw nsw i32 %[[i54]], %[[i37]]
+; CHECK-NEXT:   %[[dsti1i56:.+]] = getelementptr inbounds double, double* %K, i32 %[[i38]]
+; CHECK-NEXT:   %[[srcili57:.+]] = load double, double* %[[dsti1i56]], align 8
+; CHECK-NEXT:   store double %[[srcili57]], double* %[[dstii55]], align 8
+; CHECK-NEXT:   %[[i58]] = add nuw nsw i32 %[[i54]], 1
+; CHECK-NEXT:   %[[i39:.+]] = icmp eq i32 %[[i58]], %N
+; CHECK-NEXT:   br i1 %[[i39]], label %[[initendi61]], label %[[forbodyi59]]
 
-; CHECK: init.end.i61:                                     ; preds = %for.body.i59
-; CHECK-NEXT:   %j.next.i60 = add nuw nsw i32 %j.i52, 1
-; CHECK-NEXT:   %[[i40:.+]] = icmp eq i32 %j.next.i60, %N
-; CHECK-NEXT:   br i1 %[[i40]], label %__enzyme_memcpy_double_mat_32.exit62, label %init.idx.i53
+; CHECK: [[initendi61]]:
+; CHECK-NEXT:   %[[i60]] = add nuw nsw i32 %[[i52]], 1
+; CHECK-NEXT:   %[[i40:.+]] = icmp eq i32 %[[i60]], %N
+; CHECK-NEXT:   br i1 %[[i40]], label %[[__enzyme_memcpy_double_mat_32exit62]], label %[[initidxi53]]
 
-; CHECK: __enzyme_memcpy_double_mat_32.exit62:             ; preds = %__enzyme_memcpy_double_mat_32.exit50, %init.end.i61
+; CHECK: [[__enzyme_memcpy_double_mat_32exit62]]:
 ; CHECK-NEXT:   %mallocsize1 = mul nuw nsw i32 %N, 8
 ; CHECK-NEXT:   %malloccall2 = tail call noalias nonnull i8* @malloc(i32 %mallocsize1)
 ; CHECK-NEXT:   %cache.x = bitcast i8* %malloccall2 to double*
@@ -181,7 +189,7 @@ entry:
 ; CHECK-NEXT:   tail call void @cblas_dgemv(i32 noundef 101, i32 noundef 111, i32 noundef %N, i32 noundef %N, double noundef 1.000000e-03, double* noundef %K, i32 noundef %N, double* noundef %x0, i32 noundef 1, double noundef 1.000000e+00, double* noundef %v0, i32 noundef 1)
 ; CHECK-NEXT:   br label %invertentry
 
-; CHECK: invertentry:                                      ; preds = %__enzyme_memcpy_double_mat_32.exit62
+; CHECK: invertentry:
 ; CHECK-NEXT:   store double %differeturn, double* %"'de", align 8
 ; CHECK-NEXT:   %[[i44:.+]] = load double, double* %"'de", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'de", align 8

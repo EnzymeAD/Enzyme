@@ -1188,12 +1188,14 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
 
       os << "    auto derivcall_" << dfnc_name
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-         << "  blas.prefix + blas.floatType + \"" << dfnc_name;
+         << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
+            "blas.floatType + \""
+         << dfnc_name;
 
       if (dfnc_name == "copy")
-        os << "\" + cublasv2 ? \"\" : blas.suffix, FT" << dfnc_name << ");\n";
+        os << "\" + cublasv2 ? \"\" : blas.suffix), FT" << dfnc_name << ");\n";
       else
-        os << "\" + blas.suffix, FT" << dfnc_name << ");\n";
+        os << "\" + blas.suffix), FT" << dfnc_name << ");\n";
 
       os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
          << ".getCallee()))\n"
@@ -1490,12 +1492,14 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   if (n != 0) {
     os << "    auto tmpF_" << func
        << " = gutils->oldFunc->getParent()->getFunction(\n"
-       << "  blas.prefix + blas.floatType + \"" << func;
+       << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
+          "blas.floatType + \""
+       << func;
 
     if (func == "copy")
-      os << "\" + (cublasv2 ? \"\" : blas.suffix));\n";
+      os << "\" + (cublasv2 ? \"\" : blas.suffix)));\n";
     else
-      os << "\" + blas.suffix);\n";
+      os << "\" + blas.suffix));\n";
 
     for (int i = 0; i < n; i++)
       os << "           " << argName << ".push_back(ConstantInt::get((tmpF_"
@@ -1671,7 +1675,8 @@ void if_rule_condition_inner(const TGPattern &pattern, const DagInit *ruleDag,
 // primal arguments are always available,
 // shadow arguments (d_<X>) might not, so check if they are active
 void emit_if_rule_condition(const TGPattern &pattern, const DagInit *ruleDag,
-                            StringRef name, StringRef tab, raw_ostream &os) {
+                            StringRef name, StringRef tab, raw_ostream &os,
+                            StringRef extraCond = "") {
   llvm::StringSet<> seen = llvm::StringSet<>();
 
   if_rule_condition_inner(pattern, ruleDag, name, tab, os, seen);
@@ -1688,6 +1693,11 @@ void emit_if_rule_condition(const TGPattern &pattern, const DagInit *ruleDag,
       os << " && ";
     os << "d_" << name.str();
     seenAnd = true;
+  }
+  if (extraCond.size()) {
+    if (seenAnd)
+      os << " && ";
+    os << extraCond;
   }
   os << ") {\n";
 }
@@ -1742,12 +1752,14 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
 
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "  blas.prefix + blas.floatType + \"" << dfnc_name;
+       << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
+          "blas.floatType + \""
+       << dfnc_name;
 
     if (dfnc_name == "copy")
-      os << "\" + (cublasv2 ? \"\" : blas.suffix), FT" << dfnc_name << ");\n";
+      os << "\" + (cublasv2 ? \"\" : blas.suffix)), FT" << dfnc_name << ");\n";
     else
-      os << "\" + blas.suffix, FT" << dfnc_name << ");\n";
+      os << "\" + blas.suffix), FT" << dfnc_name << ");\n";
 
     os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
@@ -1931,7 +1943,8 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
           "getOrInsertDifferentialFloatMemcpyMat(*gutils->oldFunc->getParent(),"
           " fpType, cast<PointerType>("
        << argPrefix << "[" << argPrefix
-       << ".size() - 2]->getType()), intType, charType, 0, 0);\n";
+       << ".size() - 2]->getType()), intType, charType, 0, 0, "
+       << Def->getValueAsBit("shouldZero") << ");\n";
 
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(dmemcpymat, "
        << argPrefix << ", Defs));\n";
@@ -2331,10 +2344,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
-    // trtrs and lacpy do in reversed arg order.
-    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "lacpy")
-                   ? iteri
-                   : (activeArgs.size() - 1 - iteri);
+    // trtrs do in reversed arg order.
+    size_t i = (pattern.getName() != "trtrs") ? iteri
+                                              : (activeArgs.size() - 1 - iteri);
+    StringRef extraCond;
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
     const auto ruleDag = rule.getRuleDag();
@@ -2343,7 +2356,14 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     const auto ty = typeMap.lookup(actArg);
     const auto opName = ruleDag->getOperator()->getAsString();
 
-    emit_if_rule_condition(pattern, ruleDag, name, "      ", os);
+    if (pattern.getName() == "lacpy") {
+      llvm::errs() << "name: " << name << "\n";
+      if (name == "B") {
+        extraCond = "!active_A";
+      }
+    }
+
+    emit_if_rule_condition(pattern, ruleDag, name, "      ", os, extraCond);
     os << "        Value *toadd = nullptr;\n";
     StringMap<Twine> vars;
     emit_dag(/*forward*/ false, "toadd", ruleDag, "args1", os, name, actArg,
