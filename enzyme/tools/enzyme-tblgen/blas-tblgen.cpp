@@ -1492,13 +1492,14 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   if (n != 0) {
     os << "    auto tmpF_" << func
        << " = gutils->oldFunc->getParent()->getFunction(\n"
-       << "  getRenamedPerCallingConv(blas.prefix + blas.floatType + \""
+       << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
+          "blas.floatType + \""
        << func;
 
     if (func == "copy")
-      os << "\" + (cublasv2 ? \"\" : blas.suffix));\n";
+      os << "\" + (cublasv2 ? \"\" : blas.suffix)));\n";
     else
-      os << "\" + blas.suffix);\n";
+      os << "\" + blas.suffix));\n";
 
     for (int i = 0; i < n; i++)
       os << "           " << argName << ".push_back(ConstantInt::get((tmpF_"
