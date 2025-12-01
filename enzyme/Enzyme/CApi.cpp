@@ -2334,10 +2334,16 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
             gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
           }
 
+          bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-            AI->replaceAllUsesWith(gep);
-            AI->eraseFromParent();
-          } else {
+            if (AI->getAllocatedType() == Types[sretCount]) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+              handled = true;
+            }
+          }
+
+          if (!handled) {
             assert(!isa<UndefValue>(val));
             assert(!isa<PoisonValue>(val));
             assert(!isa<ConstantPointerNull>(val));
@@ -2404,10 +2410,17 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
             sretCount++;
           }
 
+          bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-            AI->replaceAllUsesWith(gep);
-            AI->eraseFromParent();
-          } else {
+            if (AI->getAllocatedType() ==
+                ArrayType::get(T_prjlvalue, subCount)) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+              handled = true;
+            }
+          }
+
+          if (!handled) {
             assert(!isa<UndefValue>(val));
             assert(!isa<PoisonValue>(val));
             assert(!isa<ConstantPointerNull>(val));
