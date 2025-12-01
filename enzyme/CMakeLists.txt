@@ -296,8 +296,18 @@ endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if (ENZYME_ENABLE_PLUGINS AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
-    add_subdirectory(benchmarks)
+if (ENZYME_ENABLE_PLUGINS)
+	include (FetchContent)
+	FetchContent_Declare(cpu_benchmarks
+	    GIT_REPOSITORY https://github.com/EnzymeAD/enzyme-benchmarks
+	    GIT_TAG        "9f4532e58da310c1c62830f3afb3a18161224654"
+	)
+
+	if(NOT cpu_benchmarks_POPULATED)
+	  FetchContent_Populate(cpu_benchmarks)
+
+	  add_subdirectory(${cpu_benchmarks_SOURCE_DIR} ${cpu_benchmarks_BINARY_DIR} EXCLUDE_FROM_ALL)
+	endif()
 endif()
 
 # Make relative paths absolute (needed later on)
