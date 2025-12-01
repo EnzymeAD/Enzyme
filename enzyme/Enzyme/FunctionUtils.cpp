@@ -649,9 +649,23 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
-    if (auto I = dyn_cast<Instruction>(inst))
-      llvm::errs() << *I->getParent()->getParent() << "\n";
-    llvm::errs() << " inst: " << *inst << "\n";
+
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Illegal address space propagation\n";
+    ss << " + rep: " << *rep << "\n";
+    ss << " + prev: " << *prev << "\n";
+    ss << " + inst: " << *inst << "\n";
+
+    if (CustomErrorHandler) {
+      CustomErrorHandler(s.c_str(), wrap(inst), ErrorType::InternalError,
+                         nullptr, nullptr, nullptr);
+    } else {
+      auto instI = cast<Instruction>(inst);
+      ss << *instI->getParent()->getParent() << "\n";
+      EmitFailure("IllegalAddressSpacePropagation", instI->getDebugLoc(), instI,
+                  ss.str());
+    }
     llvm_unreachable("Illegal address space propagation");
   }
 
