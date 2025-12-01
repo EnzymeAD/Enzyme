@@ -2202,12 +2202,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
       }
 
       if (rroots.count(i)) {
-
-        size_t subCount = convertRRootCountFromString(
-            Attrs
-                .getAttribute(AttributeList::FirstArgIndex + i,
-                              "enzymejl_returnRoots")
-                .getValueAsString());
+        auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
+                                       "enzymejl_returnRoots");
+        auto attrv = attr.getValueAsString();
+        assert(attrv.size());
+        size_t subCount = convertRRootCountFromString(attrv);
 
         auto argFound = delArgMap.find(i);
         assert(argFound != delArgMap.end());
@@ -2367,11 +2366,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
           auto val = CI->getArgOperand(i);
           IRBuilder<> AIB(cast<Instruction>(val));
 
-          size_t subCount = convertRRootCountFromString(
-              Attrs
-                  .getAttribute(AttributeList::FirstArgIndex + i,
-                                "enzymejl_returnRoots")
-                  .getValueAsString());
+          auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
+                                         "enzymejl_returnRoots");
+          auto attrv = attr.getValueAsString();
+          assert(attrv.size());
+          size_t subCount = convertRRootCountFromString(attrv);
 
           Value *gep = nullptr;
 
