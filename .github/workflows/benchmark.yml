@@ -35,7 +35,7 @@ jobs:
           apt-get install -y lsb-release software-properties-common
           apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           apt-get  --allow-unauthenticated install -y python3-pip autoconf cmake gcc g++ libtool gfortran libblas-dev llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libeigen3-dev libboost-dev libzstd-dev
-          python3 -m pip install lit pathlib
+          python3 -m pip install lit pathlib --break-system-packages
           touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
     - uses: actions/checkout@v4
     - name: mkdir
