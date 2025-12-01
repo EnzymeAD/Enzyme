@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["16", "17", "18"]
+        llvm: ["15"]
         build: ["Release"] #, "Debug" "RelWithDebInfo"
         os: ["linux-x86-n2-32"]
     timeout-minutes: 120 
