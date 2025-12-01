@@ -1777,6 +1777,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore) {
             if (ev) {
               storedValues.push_back(ev);
             } else {
+              llvm::errs() << " failed to find extracted pointer for " << *sv
+                           << " at index " << i << "\n";
               legal = false;
               break;
             }
