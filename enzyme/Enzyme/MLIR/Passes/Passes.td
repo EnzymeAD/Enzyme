@@ -212,6 +212,14 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   ];
 }
 
+def LowerEnzymeCustomRulesToFuncPass : Pass<"lower-enzyme-custom-rules-to-func"> {
+  let summary = "Lower enzyme custom rules";
+  let dependentDialects = [
+    "func::FuncDialect",
+    "enzyme::EnzymeDialect"
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
