@@ -17,13 +17,15 @@ jobs:
   build:
     name: Benchmark Test on os ${{ matrix.os }} and llvm ${{ matrix.llvm }} mode ${{ matrix.build }} 
     runs-on: ${{ matrix.os }}
-    
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:91e1edb7a7c869d5a70db06e417f22907be0e67ca86641d48adcea221fedc674' ) || '' }}
+
     strategy:
       fail-fast: false
       matrix:
         llvm: ["16", "17", "18"]
         build: ["Release"] #, "Debug" "RelWithDebInfo"
-        os: [] # [openstack22]
+        os: ["linux-x86-n2-32"]
     timeout-minutes: 120 
     steps:
     - name: add llvm 
@@ -46,4 +48,5 @@ jobs:
       working-directory: build
       run: make bench-enzyme
     - name: results
-      run: cat enzyme/benchmarks/*/*/results.txt
+      working-directory: build
+      run: cat _deps/cpu_benchmarks-src/*/*/results.txt
