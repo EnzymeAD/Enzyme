@@ -49,4 +49,4 @@ jobs:
       run: make bench-enzyme
     - name: results
       working-directory: build
-      run: cat _deps/cpu_benchmarks-src/*/*/results.txt
+      run: cat _deps/cpu_benchmarks-src/*/*/results.json
