@@ -1856,10 +1856,12 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
 
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
 // sret If so, confirm that those values are saved elsewhere in a returnroot
-void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
+void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
+                                       uint8_t sret_jlvalue_C) {
   auto F = cast<Function>(unwrap(F_C));
   if (F->empty())
     return;
+  auto sret_jlvalue = sret_jlvalue_C != 0;
 
   auto RT = F->getReturnType();
   std::set<size_t> srets;
@@ -2303,7 +2305,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
                                        AttributeList::FunctionIndex, attr);
 
     SmallVector<std::tuple<Value *, Value *, Type *>> preCallReplacements;
-    SmallVector<std::tuple<Value *, Value *, Type *>> postCallReplacements;
+    SmallVector<std::tuple<Value *, Value *, Type *, bool>>
+        postCallReplacements;
 
     {
       size_t local_root_count = 0;
@@ -2335,8 +2338,20 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             assert(!isa<UndefValue>(val));
             assert(!isa<PoisonValue>(val));
             assert(!isa<ConstantPointerNull>(val));
-            // TODO consider doing pre-emptive pre zero of the section?
-            postCallReplacements.emplace_back(val, gep, Types[sretCount]);
+
+            // On Julia 1.12+, the sret does not actually contain the jlvaluet
+            // (and it should not). However, if the sret does not contain a
+            // return roots (per tracked pointers), we do still need to perform
+            // the store.
+            bool should_sret = sret_jlvalue;
+            if (!should_sret) {
+              CountTrackedPointers tracked(Types[sretCount]);
+              if (tracked.count && tracked.all)
+                should_sret = true;
+            }
+
+            postCallReplacements.emplace_back(val, gep, Types[sretCount],
+                                              sret_jlvalue);
             preCallReplacements.emplace_back(val, gep, Types[sretCount]);
           }
 
@@ -2397,7 +2412,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
             preCallReplacements.emplace_back(
                 val, gep, ArrayType::get(T_prjlvalue, subCount));
             postCallReplacements.emplace_back(
-                val, gep, ArrayType::get(T_prjlvalue, subCount));
+                val, gep, ArrayType::get(T_prjlvalue, subCount), true);
           }
           continue;
         }
@@ -2466,10 +2481,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       CI->replaceAllUsesWith(replacement);
     }
 
-    for (auto &&[val, gep, ty] : postCallReplacements) {
-      auto ld = B.CreateLoad(ty, gep);
-      auto SI = B.CreateStore(ld, val);
-      PostCacheStore(SI, B);
+    for (auto &&[val, gep, ty, jlvalue] : postCallReplacements) {
+      if (jlvalue) {
+        auto ld = B.CreateLoad(ty, gep);
+        auto SI = B.CreateStore(ld, val);
+        PostCacheStore(SI, B);
+      } else {
+        copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {},
+                           /*shouldZero*/ true);
+      }
     }
 
     NC->setCallingConv(CI->getCallingConv());
