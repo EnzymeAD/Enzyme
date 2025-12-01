@@ -1926,7 +1926,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
                                "enzymejl_returnRoots_v"));
   }
 
-  assert(srets_without_stores.size() == 0);
   // Regular julia function, needing no intervention
   if (srets.size() == 1) {
     assert(*srets.begin() == 0);
@@ -1960,6 +1959,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
              rroots.size() == 0) {
     // No sret/rooting, no intervention needed.
     return;
+  }
+
+  // Number of additional roots, which contain actually no data at all.
+  // Consider this additional rerooting of the sret, except this time
+  // just fill it with 0's
+  for (auto &pair : srets_without_stores) {
+    assert(pair.second);
+    reroot_enzyme_srets.insert(pair.first);
   }
 
   assert(srets.size() == 0);
@@ -2190,13 +2197,22 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
 
         if (reroot_enzyme_srets.count(i)) {
           assert(roots_AT);
+          auto cnt = CountTrackedPointers(Types[sretCount]).count;
           for (auto &RT : Returns) {
             IRBuilder<> B(RT);
-            moveSRetToFromRoots(B, Types[sretCount], gep, roots_AT, roots,
-                                curOffset,
-                                SRetRootMovement::SRetPointerToRootPointer);
+            if (noroot_enzyme_srets.count(i)) {
+              for (size_t i = 0; i < cnt; i++) {
+                B.CreateStore(ConstantPointerNull::get(T_prjlvalue),
+                              B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
+                                                           i + curOffset));
+              }
+            } else {
+              moveSRetToFromRoots(B, Types[sretCount], gep, roots_AT, roots,
+                                  curOffset,
+                                  SRetRootMovement::SRetPointerToRootPointer);
+            }
           }
-          curOffset += CountTrackedPointers(Types[sretCount]).count;
+          curOffset += cnt;
         }
 
         delete arg;
