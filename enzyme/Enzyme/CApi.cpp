@@ -1946,11 +1946,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     srets.clear();
     bool anyJLStore = false;
     size_t i = 0;
+    enzyme_srets.insert(i);
     if (needsReRooting(F->getArg(i), anyJLStore)) {
       reroot_enzyme_srets.insert(i);
-      enzyme_srets.insert(i);
     } else if (anyJLStore) {
-      enzyme_srets.insert(i);
+    } else {
+      if (auto count = CountTrackedPointers(SRetType).count) {
+        srets_without_stores[i] = count;
+        noroot_enzyme_srets.insert(i);
+      }
     }
   } else if (srets.size() == 0 && enzyme_srets.size() == 0 &&
              rroots.size() == 0) {
@@ -2330,10 +2334,16 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
             gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
           }
 
+          bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-            AI->replaceAllUsesWith(gep);
-            AI->eraseFromParent();
-          } else {
+            if (AI->getAllocatedType() == Types[sretCount]) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+              handled = true;
+            }
+          }
+
+          if (!handled) {
             assert(!isa<UndefValue>(val));
             assert(!isa<PoisonValue>(val));
             assert(!isa<ConstantPointerNull>(val));
@@ -2400,10 +2410,17 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
             sretCount++;
           }
 
+          bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-            AI->replaceAllUsesWith(gep);
-            AI->eraseFromParent();
-          } else {
+            if (AI->getAllocatedType() ==
+                ArrayType::get(T_prjlvalue, subCount)) {
+              AI->replaceAllUsesWith(gep);
+              AI->eraseFromParent();
+              handled = true;
+            }
+          }
+
+          if (!handled) {
             assert(!isa<UndefValue>(val));
             assert(!isa<PoisonValue>(val));
             assert(!isa<ConstantPointerNull>(val));
