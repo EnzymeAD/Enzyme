@@ -135,8 +135,9 @@ typedef enum {
   DEM_ReverseModePrimal = 1,
   DEM_ReverseModeGradient = 2,
   DEM_ReverseModeCombined = 3,
-  DEM_ForwardModeSplit = 4,
-  DEM_ForwardModeError = 5
+  DEM_ReverseModeProfiled = 4,
+  DEM_ForwardModeSplit = 5,
+  DEM_ForwardModeError = 6
 } CDerivativeMode;
 
 typedef enum {

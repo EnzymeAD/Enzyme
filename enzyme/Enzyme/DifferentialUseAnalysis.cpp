@@ -178,7 +178,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
               (mode == DerivativeMode::ReverseModeGradient &&
                backwardsShadow) ||
               (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
-              (mode == DerivativeMode::ReverseModeCombined &&
+              ((mode == DerivativeMode::ReverseModeCombined ||
+                mode == DerivativeMode::ReverseModeProfiled) &&
                (forwardsShadow || backwardsShadow)) ||
               mode == DerivativeMode::ForwardMode ||
               mode == DerivativeMode::ForwardModeError))
@@ -194,7 +195,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                 (mode == DerivativeMode::ReverseModeGradient &&
                  backwardsShadow) ||
                 (mode == DerivativeMode::ForwardModeSplit && backwardsShadow) ||
-                (mode == DerivativeMode::ReverseModeCombined &&
+                ((mode == DerivativeMode::ReverseModeCombined ||
+                  mode == DerivativeMode::ReverseModeProfiled) &&
                  (forwardsShadow || backwardsShadow)) ||
                 mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeError))

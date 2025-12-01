@@ -204,6 +204,7 @@ const StringSet<> KnownInactiveFunctions = {
     "memcmp",
     "memchr",
     "gettimeofday",
+    "getrusage",
     "stat",
     "mkdir",
     "compress2",
@@ -1084,7 +1085,8 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
     for (auto u : cur->users()) {
       if (isa<ReturnInst>(u))
         return true;
-      if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
+      if (isa<ConstantExpr>(u) ||
+          !cast<Instruction>(u)->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
       }
