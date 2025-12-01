@@ -1186,20 +1186,22 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
          << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
          << ", tys, false);\n";
 
+      os << "    auto str_" << dfnc_name
+         << " = blas.prefix + blas.floatType + \"" << dfnc_name;
+      if (dfnc_name == "copy")
+        os << "\" + cublasv2 ? \"\" : blas.suffix;\n";
+      else
+        os << "\" + blas.suffix;\n";
+
       os << "    auto derivcall_" << dfnc_name
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-         << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
-            "blas.floatType + \""
-         << dfnc_name;
-
-      if (dfnc_name == "copy")
-        os << "\" + cublasv2 ? \"\" : blas.suffix), FT" << dfnc_name << ");\n";
-      else
-        os << "\" + blas.suffix), FT" << dfnc_name << ");\n";
+         << "  getRenamedPerCallingConv(called->getName(), str_" << dfnc_name
+         << "), FT" << dfnc_name << ");\n";
 
       os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
          << ".getCallee()))\n"
          << "    {\n"
+         << "      F->addFnAttr(\"enzyme_math\", str_" << dfnc_name << ");\n"
          << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
          << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
          << dfnc_name << ".getFunctionType(), newF);\n"
@@ -1750,20 +1752,22 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
        << "cublasv2 ? Type::getVoidTy(fpType->getContext()) : " << dfnc_ret_ty
        << ", tys, false);\n";
 
+    os << "    auto str_" << dfnc_name << " = blas.prefix + blas.floatType + \""
+       << dfnc_name << "\" + ";
+    if (dfnc_name == "copy")
+      os << "(cublasv2 ? \"\" : blas.suffix);\n";
+    else
+      os << "blas.suffix;\n";
+
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-       << "  getRenamedPerCallingConv(called->getName(), blas.prefix + "
-          "blas.floatType + \""
-       << dfnc_name;
-
-    if (dfnc_name == "copy")
-      os << "\" + (cublasv2 ? \"\" : blas.suffix)), FT" << dfnc_name << ");\n";
-    else
-      os << "\" + blas.suffix), FT" << dfnc_name << ");\n";
+       << "  getRenamedPerCallingConv(called->getName(), str_" << dfnc_name
+       << "), FT" << dfnc_name << ");\n";
 
     os << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
        << "    {\n"
+       << "      F->addFnAttr(\"enzyme_math\", str_" << dfnc_name << ");\n"
        << "      auto newF = attribute_" << dfnc_name << "(blas, F);\n"
        << "      derivcall_" << dfnc_name << " = FunctionCallee(derivcall_"
        << dfnc_name << ".getFunctionType(), newF);\n"
