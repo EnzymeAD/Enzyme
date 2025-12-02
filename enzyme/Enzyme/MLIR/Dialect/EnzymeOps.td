@@ -252,7 +252,8 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
   let assemblyFormat = [{
     `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
   }];
-
+  
+  let hasCanonicalizer = 1;
   let extraClassDeclaration = [{
 
     /// Collect all primal input values
