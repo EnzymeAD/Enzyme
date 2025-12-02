@@ -1932,23 +1932,41 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
   if (srets.size() == 1) {
     assert(*srets.begin() == 0);
     assert(enzyme_srets.size() == 0);
+    llvm::Type *SRetType = F->getParamStructRetType(0);
+    CountTrackedPointers tracked(SRetType);
+
+    // No jlvaluet to rewrite
+    if (!tracked.count) {
+      return;
+    }
+
+    bool anyJLStore = false;
+    bool rerooting = needsReRooting(F->getArg(0), anyJLStore);
+
+    // We now assume we have an sret.
+    // If it is properly rooted, we don't have any work to do
     if (rroots.size()) {
       assert(rroots.size() == 1);
       assert(*rroots.begin() == 1);
+      assert(!rerooting);
+
+      size_t count = convertRRootCountFromString(
+          Attrs
+              .getAttribute(AttributeList::FirstArgIndex + 1,
+                            "enzymejl_returnRoots")
+              .getValueAsString());
+
+      assert(count == tracked.count);
+      return;
     }
-    llvm::Type *SRetType = F->getParamStructRetType(0);
-    if (CountTrackedPointers(SRetType).count) {
-      if (rroots.size())
-        return;
-    }
+
     F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
                                       convertSRetTypeToString(SRetType)));
     Attrs = F->getAttributes();
     srets.clear();
-    bool anyJLStore = false;
     size_t i = 0;
     enzyme_srets.insert(i);
-    if (needsReRooting(F->getArg(i), anyJLStore)) {
+    if (rerooting) {
       reroot_enzyme_srets.insert(i);
     } else if (anyJLStore) {
     } else {
@@ -1962,6 +1980,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     // No sret/rooting, no intervention needed.
     return;
   }
+
+  llvm::errs() << " preF: " << *F << "\n";
 
   // Number of additional roots, which contain actually no data at all.
   // Consider this additional rerooting of the sret, except this time
@@ -2538,6 +2558,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
   NewF->takeName(F);
   NewF->setCallingConv(F->getCallingConv());
   F->eraseFromParent();
+  llvm::errs() << " postF: " << *NewF << "\n";
 }
 
 LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
