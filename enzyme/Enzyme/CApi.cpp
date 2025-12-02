@@ -1981,8 +1981,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     return;
   }
 
-  llvm::errs() << " preF: " << *F << "\n";
-
   // Number of additional roots, which contain actually no data at all.
   // Consider this additional rerooting of the sret, except this time
   // just fill it with 0's
@@ -2558,7 +2556,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
   NewF->takeName(F);
   NewF->setCallingConv(F->getCallingConv());
   F->eraseFromParent();
-  llvm::errs() << " postF: " << *NewF << "\n";
 }
 
 LLVMValueRef EnzymeBuildExtractValue(LLVMBuilderRef B, LLVMValueRef AggVal,
