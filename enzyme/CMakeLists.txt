@@ -300,7 +300,7 @@ if (ENZYME_ENABLE_PLUGINS)
 	include (FetchContent)
 	FetchContent_Declare(cpu_benchmarks
 	    GIT_REPOSITORY https://github.com/EnzymeAD/enzyme-benchmarks
-	    GIT_TAG        "9f4532e58da310c1c62830f3afb3a18161224654"
+	    GIT_TAG        "1e41048cf6a18199290a25b8787c99c8e0870bd3"
 	)
 
 	if(NOT cpu_benchmarks_POPULATED)
