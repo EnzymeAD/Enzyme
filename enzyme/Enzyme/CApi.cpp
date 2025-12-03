@@ -1644,14 +1644,16 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
 // If anyJLStore is false (meaning there is no store), it does not need
 // rerooting. Similarly if there is no jlvaluet in the type, there is no
 // need to reroot. Otherwise, all of the arguments are rooted in a rooted arg.
-bool needsReRooting(llvm::Argument *arg, bool &anyJLStore) {
+bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
+                    llvm::Type *SRetType = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
 
-  auto SRetType = convertSRetTypeFromString(
-      Attrs
-          .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
-                        "enzyme_sret")
-          .getValueAsString());
+  if (!SRetType)
+    SRetType = convertSRetTypeFromString(
+        Attrs
+            .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
+                          "enzyme_sret")
+            .getValueAsString());
 
   CountTrackedPointers tracked(SRetType);
   if (tracked.count == 0) {
@@ -1756,6 +1758,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore) {
             storedValues.push_back(IVI->getInsertedValueOperand());
             continue;
           }
+          storedValues.push_back(IVI->getAggregateOperand());
+          storedValues.push_back(IVI->getInsertedValueOperand());
+          continue;
         }
         if (auto ST = dyn_cast<StructType>(sv->getType())) {
           bool legal = true;
@@ -1795,10 +1800,27 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore) {
           assert(0);
         }
 
+        {
+          bool saw_bitcast = false;
+          for (auto u : sv->users()) {
+            if (auto ev0 = dyn_cast<CastInst>(u)) {
+              auto t2 = ev0->getType();
+              if (isa<PointerType>(t2) && isSpecialPtr(cast<PointerType>(t2))) {
+                saw_bitcast = true;
+                storedValues.push_back(ev0);
+                break;
+              }
+            }
+          }
+          if (saw_bitcast)
+            continue;
+        }
+
         if (hasReturnRootingAfterArg) {
           std::string s;
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
+          ss << " sv: " << *sv << "\n";
           CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
                              nullptr, wrap(arg), nullptr);
         }
@@ -1932,23 +1954,48 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
   if (srets.size() == 1) {
     assert(*srets.begin() == 0);
     assert(enzyme_srets.size() == 0);
+    llvm::Type *SRetType = F->getParamStructRetType(0);
+    CountTrackedPointers tracked(SRetType);
+
+    // No jlvaluet to rewrite
+    if (!tracked.count) {
+      return;
+    }
+
+    bool anyJLStore = false;
+    bool rerooting = needsReRooting(F->getArg(0), anyJLStore, SRetType);
+
+    // We now assume we have an sret.
+    // If it is properly rooted, we don't have any work to do
     if (rroots.size()) {
       assert(rroots.size() == 1);
       assert(*rroots.begin() == 1);
+      // GVN is only powerful enough at LLVM 16+
+      // (https://godbolt.org/z/ebY3exW9K)
+#if LLVM_VERSION_MAJOR >= 16
+      if (rerooting) {
+        llvm::errs() << "F: " << *F << "\n";
+      }
+      assert(!rerooting);
+#endif
+
+      size_t count = convertRRootCountFromString(
+          Attrs
+              .getAttribute(AttributeList::FirstArgIndex + 1,
+                            "enzymejl_returnRoots")
+              .getValueAsString());
+
+      assert(count == tracked.count);
+      return;
     }
-    llvm::Type *SRetType = F->getParamStructRetType(0);
-    if (CountTrackedPointers(SRetType).count) {
-      if (rroots.size())
-        return;
-    }
+
     F->addParamAttr(0, Attribute::get(F->getContext(), "enzyme_sret",
                                       convertSRetTypeToString(SRetType)));
     Attrs = F->getAttributes();
     srets.clear();
-    bool anyJLStore = false;
     size_t i = 0;
     enzyme_srets.insert(i);
-    if (needsReRooting(F->getArg(i), anyJLStore)) {
+    if (rerooting) {
       reroot_enzyme_srets.insert(i);
     } else if (anyJLStore) {
     } else {
