@@ -1970,7 +1970,14 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     if (rroots.size()) {
       assert(rroots.size() == 1);
       assert(*rroots.begin() == 1);
+      // GVN is only powerful enough at LLVM 16+
+      // (https://godbolt.org/z/ebY3exW9K)
+#if LLVM_VERSION_MAJOR >= 16
+      if (rerooting) {
+        llvm::errs() << "F: " << *F << "\n";
+      }
       assert(!rerooting);
+#endif
 
       size_t count = convertRRootCountFromString(
           Attrs
