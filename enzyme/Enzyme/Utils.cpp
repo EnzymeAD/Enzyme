@@ -4040,6 +4040,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     auto pair = todo.pop_back_val();
     if (seen.count(pair))
       continue;
+    seen.insert(pair);
     auto UI = std::get<0>(pair);
     auto level = std::get<1>(pair);
     auto prev = std::get<2>(pair);
