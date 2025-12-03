@@ -1758,6 +1758,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             storedValues.push_back(IVI->getInsertedValueOperand());
             continue;
           }
+          storedValues.push_back(IVI->getAggregateOperand());
+          storedValues.push_back(IVI->getInsertedValueOperand());
+          continue;
         }
         if (auto ST = dyn_cast<StructType>(sv->getType())) {
           bool legal = true;
@@ -1801,6 +1804,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           std::string s;
           llvm::raw_string_ostream ss(s);
           ss << "Could not find use of stored value\n";
+          ss << " sv: " << *sv << "\n";
           CustomErrorHandler(ss.str().c_str(), wrap(sv), ErrorType::GCRewrite,
                              nullptr, wrap(arg), nullptr);
         }
