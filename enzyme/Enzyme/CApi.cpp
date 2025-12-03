@@ -1644,14 +1644,16 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
 // If anyJLStore is false (meaning there is no store), it does not need
 // rerooting. Similarly if there is no jlvaluet in the type, there is no
 // need to reroot. Otherwise, all of the arguments are rooted in a rooted arg.
-bool needsReRooting(llvm::Argument *arg, bool &anyJLStore) {
+bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
+                    llvm::Type *SRetType = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
 
-  auto SRetType = convertSRetTypeFromString(
-      Attrs
-          .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
-                        "enzyme_sret")
-          .getValueAsString());
+  if (!SRetType)
+    SRetType = convertSRetTypeFromString(
+        Attrs
+            .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
+                          "enzyme_sret")
+            .getValueAsString());
 
   CountTrackedPointers tracked(SRetType);
   if (tracked.count == 0) {
@@ -1941,7 +1943,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     }
 
     bool anyJLStore = false;
-    bool rerooting = needsReRooting(F->getArg(0), anyJLStore);
+    bool rerooting = needsReRooting(F->getArg(0), anyJLStore, SRetType);
 
     // We now assume we have an sret.
     // If it is properly rooted, we don't have any work to do
