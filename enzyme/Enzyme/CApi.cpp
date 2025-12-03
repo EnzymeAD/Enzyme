@@ -1800,6 +1800,22 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
           assert(0);
         }
 
+        {
+          bool saw_bitcast = false;
+          for (auto u : sv->users()) {
+            if (auto ev0 = dyn_cast<CastInst>(u)) {
+              auto t2 = ev0->getType();
+              if (isa<PointerType>(t2) && isSpecialPtr(cast<PointerType>(t2))) {
+                saw_bitcast = true;
+                storedValues.push_back(ev0);
+                break;
+              }
+            }
+          }
+          if (saw_bitcast)
+            continue;
+        }
+
         if (hasReturnRootingAfterArg) {
           std::string s;
           llvm::raw_string_ostream ss(s);
