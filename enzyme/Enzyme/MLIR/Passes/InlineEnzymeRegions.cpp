@@ -46,8 +46,7 @@ static StringRef getArgAttrsAttrName(Operation *operation) {
   return "";
 }
 
-static void serializeFunctionAttributes(Operation *fn,
-                                        enzyme::AutoDiffRegionOp regionOp) {
+static void serializeFunctionAttributes(Operation *fn, Operation *regionOp) {
   SmallVector<NamedAttribute> fnAttrs;
   fnAttrs.reserve(fn->getAttrDictionary().size());
   for (auto attr : fn->getAttrs()) {
@@ -96,6 +95,52 @@ struct InlineEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffOp> {
     if (!mlir::enzyme::inlineAutodiffOp(op, rewriter, symbolTable))
       return failure();
 
+    return success();
+  }
+};
+
+struct InlineEnzymeForwardDiff
+    : public OpRewritePattern<enzyme::ForwardDiffOp> {
+  using OpRewritePattern<enzyme::ForwardDiffOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(enzyme::ForwardDiffOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+
+    FunctionOpInterface fn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+
+    if (!fn)
+      return failure();
+
+    Region &targetRegion = fn.getFunctionBody();
+
+    if (targetRegion.empty())
+      return failure();
+
+    // Use a StringAttr rather than a SymbolRefAttr so the function can get
+    // symbol-DCE'd
+    auto fnAttr = StringAttr::get(op.getContext(), op.getFn());
+    auto regionOp = rewriter.replaceOpWithNewOp<enzyme::ForwardDiffRegionOp>(
+        op, op.getResultTypes(), op.getInputs(), op.getActivity(),
+        op.getRetActivity(), op.getWidth(), op.getStrongZero(), fnAttr);
+
+    serializeFunctionAttributes(fn, regionOp);
+    rewriter.cloneRegionBefore(targetRegion, regionOp.getBody(),
+                               regionOp.getBody().begin());
+
+    SmallVector<Operation *> toErase;
+    for (Operation &bodyOp : regionOp.getBody().getOps()) {
+      if (bodyOp.hasTrait<OpTrait::ReturnLike>()) {
+        PatternRewriter::InsertionGuard insertionGuard(rewriter);
+        rewriter.setInsertionPoint(&bodyOp);
+        enzyme::YieldOp::create(rewriter, bodyOp.getLoc(),
+                                bodyOp.getOperands());
+        toErase.push_back(&bodyOp);
+      }
+    }
+
+    for (Operation *opToErase : toErase)
+      rewriter.eraseOp(opToErase);
     return success();
   }
 };
@@ -248,7 +293,8 @@ struct InlineEnzymeIntoRegion
           InlineEnzymeIntoRegion> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.insert<InlineEnzymeAutoDiff>(&getContext());
+    patterns.insert<InlineEnzymeAutoDiff, InlineEnzymeForwardDiff>(
+        &getContext());
 
     GreedyRewriteConfig config;
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
