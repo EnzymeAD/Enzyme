@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
+#include "Interfaces/HMCUtils.h"
 #include "Interfaces/ProbProgUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
@@ -38,37 +39,6 @@ namespace enzyme {
 } // namespace mlir
 
 namespace {
-
-static Value createIdentityMatrix(OpBuilder &builder, Location loc,
-                                  RankedTensorType matrixType) {
-  auto shape = matrixType.getShape();
-  assert(shape.size() == 2 && shape[0] == shape[1] &&
-         "Identity matrix must be square");
-  int64_t n = shape[0];
-
-  SmallVector<double> identityData(n * n, 0.0);
-  for (int64_t i = 0; i < n; ++i) {
-    identityData[i * n + i] = 1.0;
-  }
-
-  return builder.create<arith::ConstantOp>(
-      loc, matrixType,
-      DenseElementsAttr::get(matrixType, ArrayRef<double>(identityData)));
-}
-
-static Value createSigmoid(OpBuilder &builder, Location loc, Value x) {
-  auto xType = cast<RankedTensorType>(x.getType());
-  auto elemType = xType.getElementType();
-
-  auto oneConst = builder.create<arith::ConstantOp>(
-      loc, xType,
-      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 1.0)));
-  auto negX = builder.create<arith::NegFOp>(loc, x);
-  auto expNegX = builder.create<math::ExpOp>(loc, negX);
-  auto onePlusExp = builder.create<arith::AddFOp>(loc, oneConst, expNegX);
-  auto result = builder.create<arith::DivFOp>(loc, oneConst, onePlusExp);
-  return result;
-}
 
 static bool computePositionSizeForAddress(Operation *op,
                                           FunctionOpInterface func,
@@ -452,321 +422,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
     }
 
   private:
-    // Reference:
-    // https://github.com/pyro-ppl/numpyro/blob/d49f71825691b554fb8188f8779dc3a5d13e7b96/numpyro/infer/hmc_util.py#L36
-    struct NUTSTree {
-      Value q_left, p_left, grad_left;
-      Value q_right, p_right, grad_right;
-      Value q_proposal, grad_proposal, U_proposal, H_proposal;
-      Value depth, weight, turning, diverging;
-      Value sum_accept_probs, num_proposals, p_sum;
-
-      static constexpr size_t NUM_FIELDS = 17;
-
-      SmallVector<Value> toValues() const {
-        return {q_left,        p_left,        grad_left,
-                q_right,       p_right,       grad_right,
-                q_proposal,    grad_proposal, U_proposal,
-                H_proposal,    depth,         weight,
-                turning,       diverging,     sum_accept_probs,
-                num_proposals, p_sum};
-      }
-
-      static NUTSTree fromValues(ArrayRef<Value> values) {
-        assert(values.size() == NUM_FIELDS);
-        NUTSTree tree;
-        tree.q_left = values[0];
-        tree.p_left = values[1];
-        tree.grad_left = values[2];
-        tree.q_right = values[3];
-        tree.p_right = values[4];
-        tree.grad_right = values[5];
-        tree.q_proposal = values[6];
-        tree.grad_proposal = values[7];
-        tree.U_proposal = values[8];
-        tree.H_proposal = values[9];
-        tree.depth = values[10];
-        tree.weight = values[11];
-        tree.turning = values[12];
-        tree.diverging = values[13];
-        tree.sum_accept_probs = values[14];
-        tree.num_proposals = values[15];
-        tree.p_sum = values[16];
-        return tree;
-      }
-
-      SmallVector<Type> getTypes() const {
-        SmallVector<Type> types;
-        for (auto val : toValues())
-          types.push_back(val.getType());
-        return types;
-      }
-    };
-
-    Value conditionalDump(OpBuilder &builder, Location loc, Value value,
-                          StringRef label) const {
-      if (debugDump) {
-        return enzyme::DumpOp::create(builder, loc, value.getType(), value,
-                                      builder.getStringAttr(label))
-            .getOutput();
-      }
-      return value;
-    }
-
-    /// Computes v = M^-1 @ p
-    Value applyInverseMassMatrix(OpBuilder &builder, Location loc,
-                                 Value invMass, Value momentum,
-                                 RankedTensorType positionType) const {
-      if (!invMass) {
-        return momentum;
-      }
-
-      auto invMassType = cast<RankedTensorType>(invMass.getType());
-
-      if (invMassType.getRank() == 1) {
-        // Diagonal: element-wise
-        return arith::MulFOp::create(builder, loc, invMass, momentum);
-      } else if (invMassType.getRank() == 2) {
-        // Dense: v = invMass @ p
-        return enzyme::DotOp::create(builder, loc, positionType, invMass,
-                                     momentum, builder.getDenseI64ArrayAttr({}),
-                                     builder.getDenseI64ArrayAttr({}),
-                                     builder.getDenseI64ArrayAttr({1}),
-                                     builder.getDenseI64ArrayAttr({0}));
-      }
-
-      emitError(loc,
-                "ProbProg: Provided invMass must have rank 1 or 2, got rank " +
-                    std::to_string(invMassType.getRank()));
-      return nullptr;
-    }
-
-    /// Computes K = 0.5 * p^T @ M^-1 @ p
-    Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
-                               Value invMass, Value halfConst,
-                               RankedTensorType scalarType,
-                               RankedTensorType positionType) const {
-      // v = M^-1 @ p
-      Value v =
-          applyInverseMassMatrix(builder, loc, invMass, momentum, positionType);
-
-      // K = 0.5 * p^T @ v
-      auto pDotV = enzyme::DotOp::create(
-          builder, loc, scalarType, momentum, v,
-          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
-
-      return arith::MulFOp::create(builder, loc, halfConst, pDotV);
-    }
-
-    /// Samples momentum from N(0, M) where M = invMass^-1
-    /// Returns (momentum, updated RNG state)
-    std::pair<Value, Value>
-    sampleMomentum(OpBuilder &builder, Location loc, Value rngState,
-                   Value invMass, Value zeroConst, Value oneConst,
-                   RankedTensorType positionType) const {
-
-      // Sample eps ~ N(0, I)
-      auto randomOp = enzyme::RandomOp::create(
-          builder, loc, TypeRange{rngState.getType(), positionType}, rngState,
-          zeroConst, oneConst,
-          enzyme::RngDistributionAttr::get(builder.getContext(),
-                                           enzyme::RngDistribution::NORMAL));
-
-      Value rngOut = randomOp.getOutputRngState();
-      Value eps = randomOp.getResult();
-
-      if (!invMass) {
-        return {eps, rngOut};
-      }
-
-      auto invMassType = cast<RankedTensorType>(invMass.getType());
-
-      if (invMassType.getRank() == 1) {
-        // Diagonal: p = (1/sqrt(invMass)) * eps = sqrt(M) * eps
-        auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
-        auto onesVector = arith::ConstantOp::create(
-            builder, loc, invMassType,
-            DenseElementsAttr::get(invMassType, builder.getF64FloatAttr(1.0)));
-        auto massMatrixSqrt =
-            arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
-        Value p = arith::MulFOp::create(builder, loc, massMatrixSqrt, eps);
-        return {p, rngOut};
-      } else {
-        // Dense: p = chol(M) @ eps where M = inv(invMass)
-        auto identityMatrix = createIdentityMatrix(builder, loc, invMassType);
-        auto massMatrixSqrt = enzyme::CholeskySolveOp::create(
-            builder, loc, invMassType, invMass, identityMatrix);
-        Value p = enzyme::DotOp::create(
-            builder, loc, positionType, massMatrixSqrt, eps,
-            builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-            builder.getDenseI64ArrayAttr({1}),
-            builder.getDenseI64ArrayAttr({0}));
-        return {p, rngOut};
-      }
-    }
-
-    struct GradientResult {
-      Value potential; // U(q) = -log p(q)
-      Value gradient;  // dU/dq
-      Value rngOut;    // Updated RNG state
-    };
-
-    /// Computes potential energy U(q) and its gradient dU/dq
-    GradientResult computePotentialAndGradient(
-        OpBuilder &builder, Location loc, Value position, Value rng,
-        FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs, Value originalTrace,
-        ArrayAttr selection, enzyme::TraceType traceType,
-        RankedTensorType scalarType, RankedTensorType positionType) const {
-
-      auto gradSeed = arith::ConstantOp::create(
-          builder, loc, scalarType,
-          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(1.0)));
-
-      auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-          builder, loc, TypeRange{scalarType, rng.getType(), positionType},
-          ValueRange{position, gradSeed},
-          builder.getArrayAttr({enzyme::ActivityAttr::get(
-              builder.getContext(), enzyme::Activity::enzyme_active)}),
-          builder.getArrayAttr(
-              {enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_active),
-               enzyme::ActivityAttr::get(builder.getContext(),
-                                         enzyme::Activity::enzyme_const)}),
-          builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
-
-      Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
-      autodiffBlock->addArgument(positionType, loc);
-
-      builder.setInsertionPointToStart(autodiffBlock);
-      Value qArg = autodiffBlock->getArgument(0);
-
-      SmallVector<Value> updateInputs;
-      updateInputs.push_back(rng);
-      updateInputs.append(fnInputs.begin(), fnInputs.end());
-
-      auto updateOp = enzyme::UpdateOp::create(
-          builder, loc, TypeRange{traceType, scalarType, rng.getType()}, fn,
-          updateInputs, originalTrace, qArg, selection,
-          builder.getStringAttr(""));
-
-      Value U = arith::NegFOp::create(builder, loc, updateOp.getWeight());
-
-      enzyme::YieldOp::create(builder, loc,
-                              ValueRange{U, updateOp.getOutputRngState()});
-
-      builder.setInsertionPointAfter(autodiffOp);
-
-      return {
-          autodiffOp.getResult(0), // potential
-          autodiffOp.getResult(2), // gradient
-          autodiffOp.getResult(1)  // rngOut
-      };
-    }
-
-    struct LeapfrogResult {
-      Value q_new;
-      Value p_new;
-      Value grad_new;
-      Value U_new;
-      Value rng_out;
-    };
-
-    /// One leapfrog integration step
-    ///   p_half = p - (eps/2) * grad
-    ///   q_new = q + eps * M^-1 * p_half
-    ///   grad_new = dU/dq(q_new)
-    ///   p_new = p_half - (eps/2) * grad_new
-    LeapfrogResult leapfrogStep(OpBuilder &builder, Location loc, Value q,
-                                Value p, Value grad, Value rng, Value stepSize,
-                                Value invMass, FlatSymbolRefAttr fn,
-                                ArrayRef<Value> fnInputs, Value originalTrace,
-                                ArrayAttr selection,
-                                enzyme::TraceType traceType,
-                                RankedTensorType scalarType,
-                                RankedTensorType positionType) const {
-
-      auto halfConst = arith::ConstantOp::create(
-          builder, loc, scalarType,
-          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(0.5)));
-
-      ArrayRef<int64_t> shape = positionType.getShape();
-      auto stepSizeBroadcast =
-          enzyme::BroadcastOp::create(builder, loc, positionType, stepSize,
-                                      builder.getDenseI64ArrayAttr(shape));
-      auto halfStep = arith::MulFOp::create(builder, loc, halfConst, stepSize);
-      auto halfStepBroadcast =
-          enzyme::BroadcastOp::create(builder, loc, positionType, halfStep,
-                                      builder.getDenseI64ArrayAttr(shape));
-
-      // 1. Half step momentum: p_half = p - 0.5 * eps * grad
-      auto deltaP1 =
-          arith::MulFOp::create(builder, loc, halfStepBroadcast, grad);
-      Value pHalf = arith::SubFOp::create(builder, loc, p, deltaP1);
-
-      // 2. Full step position: q_new = q + eps * M^-1 * p_half
-      Value v =
-          applyInverseMassMatrix(builder, loc, invMass, pHalf, positionType);
-      auto deltaQ = arith::MulFOp::create(builder, loc, stepSizeBroadcast, v);
-      Value qNew = arith::AddFOp::create(builder, loc, q, deltaQ);
-
-      // 3. Compute gradient at new position
-      auto gradResult = computePotentialAndGradient(
-          builder, loc, qNew, rng, fn, fnInputs, originalTrace, selection,
-          traceType, scalarType, positionType);
-
-      // 4. Final half step momentum: p_new = p_half - 0.5 * eps * grad_new
-      auto deltaP2 = arith::MulFOp::create(builder, loc, halfStepBroadcast,
-                                           gradResult.gradient);
-      Value pNew = arith::SubFOp::create(builder, loc, pHalf, deltaP2);
-
-      return {qNew, pNew, gradResult.gradient, gradResult.potential,
-              gradResult.rngOut};
-    }
-
-    /// NUTS termination check (U-turn)
-    /// https://github.com/pyro-ppl/numpyro/blob/47335b83dd02726fb142e61d79193eb761009ba7/numpyro/infer/hmc_util.py#L710-L746
-    Value checkTurning(OpBuilder &builder, Location loc, Value invMass,
-                       Value pLeft, Value pRight, Value pSum, Value zeroConst,
-                       RankedTensorType scalarType,
-                       RankedTensorType positionType) const {
-
-      Value vLeft =
-          applyInverseMassMatrix(builder, loc, invMass, pLeft, positionType);
-      Value vRight =
-          applyInverseMassMatrix(builder, loc, invMass, pRight, positionType);
-
-      // p_sum_centered = p_sum - (p_left + p_right) / 2
-      auto halfConst = arith::ConstantOp::create(
-          builder, loc, scalarType,
-          DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(0.5)));
-      auto halfBroadcast = enzyme::BroadcastOp::create(
-          builder, loc, positionType, halfConst,
-          builder.getDenseI64ArrayAttr(positionType.getShape()));
-
-      auto pLeftPlusPRight = arith::AddFOp::create(builder, loc, pLeft, pRight);
-      auto halfSum =
-          arith::MulFOp::create(builder, loc, halfBroadcast, pLeftPlusPRight);
-      Value pSumCentered = arith::SubFOp::create(builder, loc, pSum, halfSum);
-
-      auto leftAngle = enzyme::DotOp::create(
-          builder, loc, scalarType, vLeft, pSumCentered,
-          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
-      auto rightAngle = enzyme::DotOp::create(
-          builder, loc, scalarType, vRight, pSumCentered,
-          builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-          builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
-
-      // turning = (left_angle <= 0) OR (right_angle <= 0)
-      auto leftNeg = arith::CmpFOp::create(
-          builder, loc, arith::CmpFPredicate::OLE, leftAngle, zeroConst);
-      auto rightNeg = arith::CmpFOp::create(
-          builder, loc, arith::CmpFPredicate::OLE, rightAngle, zeroConst);
-
-      return arith::OrIOp::create(builder, loc, leftNeg, rightNeg);
-    }
-
     LogicalResult lowerHMC(enzyme::MCMCOp mcmcOp,
                            PatternRewriter &rewriter) const {
       SymbolTableCollection symbolTable;
@@ -822,9 +477,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 2. Compute initial potential energy U0 = -weight
       auto weight0 = enzyme::GetWeightFromTraceOp::create(
           rewriter, loc, tensorType, originalTrace);
-      Value U0 = conditionalDump(rewriter, loc,
-                                 arith::NegFOp::create(rewriter, loc, weight0),
-                                 "HMC: initial potential energy U0");
+      Value U0 = enzyme::conditionalDump(
+          rewriter, loc, arith::NegFOp::create(rewriter, loc, weight0),
+          "HMC: initial potential energy U0", debugDump);
 
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, tensorType,
@@ -843,8 +498,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         p0 = initialMomentum;
         rng1 = rngState;
       } else {
-        std::tie(p0, rng1) = sampleMomentum(rewriter, loc, rngState, invMass,
-                                            zeroConst, oneConst, positionType);
+        std::tie(p0, rng1) =
+            enzyme::sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
+                                   oneConst, positionType);
       }
 
       auto halfConst = arith::ConstantOp::create(
@@ -852,15 +508,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
-      Value K0 = conditionalDump(rewriter, loc,
-                                 computeKineticEnergy(rewriter, loc, p0,
-                                                      invMass, halfConst,
-                                                      tensorType, positionType),
-                                 "HMC: initial kinetic energy K0");
+      Value K0 = enzyme::conditionalDump(
+          rewriter, loc,
+          enzyme::computeKineticEnergy(rewriter, loc, p0, invMass, halfConst,
+                                       tensorType, positionType),
+          "HMC: initial kinetic energy K0", debugDump);
 
-      Value H0 = conditionalDump(rewriter, loc,
-                                 arith::AddFOp::create(rewriter, loc, U0, K0),
-                                 "HMC: initial Hamiltonian H0");
+      Value H0 = enzyme::conditionalDump(
+          rewriter, loc, arith::AddFOp::create(rewriter, loc, U0, K0),
+          "HMC: initial Hamiltonian H0", debugDump);
 
       // 5. Compute initial gradient at q0
       auto gradSeedInit = arith::ConstantOp::create(
@@ -913,8 +569,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       ArrayRef<int64_t> positionShape = positionType.getShape();
 
-      stepSize =
-          conditionalDump(rewriter, loc, stepSize, "HMC: step_size (eps)");
+      stepSize = enzyme::conditionalDump(rewriter, loc, stepSize,
+                                         "HMC: step_size (eps)", debugDump);
 
       auto stepSizeBroadcast = enzyme::BroadcastOp::create(
           rewriter, loc, positionType, stepSize,
@@ -939,29 +595,30 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       loopBody->addArgument(rng0_final.getType(), loc); // rng
 
       rewriter.setInsertionPointToStart(loopBody);
-      Value q = conditionalDump(rewriter, loc, loopBody->getArgument(1),
-                                "Leapfrog: position q(t)");
-      Value p = conditionalDump(rewriter, loc, loopBody->getArgument(2),
-                                "Leapfrog: momentum p(t)");
-      Value gradient = conditionalDump(rewriter, loc, loopBody->getArgument(3),
-                                       "Leapfrog: gradient dU/dq(t)");
+      Value q = enzyme::conditionalDump(rewriter, loc, loopBody->getArgument(1),
+                                        "Leapfrog: position q(t)", debugDump);
+      Value p = enzyme::conditionalDump(rewriter, loc, loopBody->getArgument(2),
+                                        "Leapfrog: momentum p(t)", debugDump);
+      Value gradient =
+          enzyme::conditionalDump(rewriter, loc, loopBody->getArgument(3),
+                                  "Leapfrog: gradient dU/dq(t)", debugDump);
       Value loopRng = loopBody->getArgument(4);
 
       // 6.1 Half step on momentum: p -= (eps/2) * gradient
       auto deltaP1 =
           arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast, gradient);
-      Value p1 = conditionalDump(
+      Value p1 = enzyme::conditionalDump(
           rewriter, loc, arith::SubFOp::create(rewriter, loc, p, deltaP1),
-          "Leapfrog: momentum p(t + eps/2)");
+          "Leapfrog: momentum p(t + eps/2)", debugDump);
 
       // 6.2 Full step on position: q += eps * M^-1 * p1
-      Value v1 =
-          applyInverseMassMatrix(rewriter, loc, invMass, p1, positionType);
+      Value v1 = enzyme::applyInverseMassMatrix(rewriter, loc, invMass, p1,
+                                                positionType);
 
       auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v1);
-      Value q1 = conditionalDump(
+      Value q1 = enzyme::conditionalDump(
           rewriter, loc, arith::AddFOp::create(rewriter, loc, q, deltaQ),
-          "Leapfrog: position q(t + eps)");
+          "Leapfrog: position q(t + eps)", debugDump);
 
       // Compute new gradient at q1
       auto gradSeedLoop = arith::ConstantOp::create(
@@ -1002,16 +659,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       rewriter.setInsertionPointAfter(autodiffOp);
 
       Value newRng = autodiffOp.getResult(0);
-      Value newGradient =
-          conditionalDump(rewriter, loc, autodiffOp.getResult(1),
-                          "Leapfrog: gradient dU/dq(t + eps)");
+      Value newGradient = enzyme::conditionalDump(
+          rewriter, loc, autodiffOp.getResult(1),
+          "Leapfrog: gradient dU/dq(t + eps)", debugDump);
 
       // 6.3 Another half step on momentum: p -= (eps/2) * gradient (new)
       auto deltaP2 = arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast,
                                            newGradient);
-      Value p2 = conditionalDump(
+      Value p2 = enzyme::conditionalDump(
           rewriter, loc, arith::SubFOp::create(rewriter, loc, p1, deltaP2),
-          "Leapfrog: momentum p(t + eps)");
+          "Leapfrog: momentum p(t + eps)", debugDump);
 
       // Yield [position, momentum, gradient (new), RNG]
       enzyme::YieldOp::create(rewriter, loc,
@@ -1036,29 +693,29 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value weight1 = finalUpdateOp.getWeight();
       Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
-      Value U1_final = conditionalDump(
+      Value U1_final = enzyme::conditionalDump(
           rewriter, loc, arith::NegFOp::create(rewriter, loc, weight1),
-          "HMC: final potential energy U1");
+          "HMC: final potential energy U1", debugDump);
 
       // K1 = 0.5 * pL^T * M^-1 * pL
-      Value K1 = conditionalDump(rewriter, loc,
-                                 computeKineticEnergy(rewriter, loc, pL,
-                                                      invMass, halfConst,
-                                                      tensorType, positionType),
-                                 "HMC: final kinetic energy K1");
+      Value K1 = enzyme::conditionalDump(
+          rewriter, loc,
+          enzyme::computeKineticEnergy(rewriter, loc, pL, invMass, halfConst,
+                                       tensorType, positionType),
+          "HMC: final kinetic energy K1", debugDump);
 
-      Value H1 = conditionalDump(
+      Value H1 = enzyme::conditionalDump(
           rewriter, loc, arith::AddFOp::create(rewriter, loc, U1_final, K1),
-          "HMC: final Hamiltonian H1");
+          "HMC: final Hamiltonian H1", debugDump);
 
       // 8. Metropolis-Hastings accept/reject step
       // with acceptance probability: α = min(1, exp(H0 - H1))
       auto dH = arith::SubFOp::create(rewriter, loc, H0, H1);
       auto expDH = math::ExpOp::create(rewriter, loc, dH);
-      Value accProb = conditionalDump(
+      Value accProb = enzyme::conditionalDump(
           rewriter, loc,
           arith::MinimumFOp::create(rewriter, loc, oneConst, expDH),
-          "HMC: acceptance probability α");
+          "HMC: acceptance probability α", debugDump);
 
       auto randomOp2 = enzyme::RandomOp::create(
           rewriter, loc, TypeRange{rngAfterUpdate.getType(), tensorType},
@@ -1134,9 +791,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 2. Compute initial potential energy U0 = -weight
       auto weight0 = enzyme::GetWeightFromTraceOp::create(
           rewriter, loc, F64TensorType, originalTrace);
-      Value U0 = conditionalDump(rewriter, loc,
-                                 arith::NegFOp::create(rewriter, loc, weight0),
-                                 "NUTS: initial potential energy U0");
+      Value U0 = enzyme::conditionalDump(
+          rewriter, loc, arith::NegFOp::create(rewriter, loc, weight0),
+          "NUTS: initial potential energy U0", debugDump);
 
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
@@ -1156,8 +813,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rng1 = rngState;
       } else {
         std::tie(pInit, rng1) =
-            sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
-                           oneConst, positionType);
+            enzyme::sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
+                                   oneConst, positionType);
       }
 
       auto halfConst = arith::ConstantOp::create(
@@ -1165,15 +822,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
-      Value K0 = conditionalDump(
+      Value K0 = enzyme::conditionalDump(
           rewriter, loc,
-          computeKineticEnergy(rewriter, loc, pInit, invMass, halfConst,
-                               F64TensorType, positionType),
-          "NUTS: initial kinetic energy K0");
+          enzyme::computeKineticEnergy(rewriter, loc, pInit, invMass, halfConst,
+                                       F64TensorType, positionType),
+          "NUTS: initial kinetic energy K0", debugDump);
 
-      Value H0 = conditionalDump(rewriter, loc,
-                                 arith::AddFOp::create(rewriter, loc, U0, K0),
-                                 "NUTS: initial Hamiltonian H0");
+      Value H0 = enzyme::conditionalDump(
+          rewriter, loc, arith::AddFOp::create(rewriter, loc, U0, K0),
+          "NUTS: initial Hamiltonian H0", debugDump);
 
       // 5. Compute initial gradient at q0
       auto gradSeedInit = arith::ConstantOp::create(
@@ -1236,23 +893,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc, F64TensorType,
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.0)));
 
-      NUTSTree initialTree = {.q_left = q0,
-                              .p_left = pInit,
-                              .grad_left = grad0,
-                              .q_right = q0,
-                              .p_right = pInit,
-                              .grad_right = grad0,
-                              .q_proposal = q0,
-                              .grad_proposal = grad0,
-                              .U_proposal = U0,
-                              .H_proposal = H0,
-                              .depth = zeroI64,
-                              .weight = zeroWeight,
-                              .turning = falseConst,
-                              .diverging = falseConst,
-                              .sum_accept_probs = oneConst,
-                              .num_proposals = oneI64,
-                              .p_sum = pInit};
+      enzyme::NUTSTreeState initialTree = {.q_left = q0,
+                                           .p_left = pInit,
+                                           .grad_left = grad0,
+                                           .q_right = q0,
+                                           .p_right = pInit,
+                                           .grad_right = grad0,
+                                           .q_proposal = q0,
+                                           .grad_proposal = grad0,
+                                           .U_proposal = U0,
+                                           .H_proposal = H0,
+                                           .depth = zeroI64,
+                                           .weight = zeroWeight,
+                                           .turning = falseConst,
+                                           .diverging = falseConst,
+                                           .sum_accept_probs = oneConst,
+                                           .num_proposals = oneI64,
+                                           .p_sum = pInit};
 
       auto maxTreeDepth = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
@@ -1283,9 +940,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       SmallVector<Value> treeArgs(outerCondBlock->getArguments().begin(),
                                   outerCondBlock->getArguments().begin() +
-                                      NUTSTree::NUM_FIELDS);
-      NUTSTree treeCond = NUTSTree::fromValues(treeArgs);
-      Value rngCond = outerCondBlock->getArgument(NUTSTree::NUM_FIELDS);
+                                      enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState treeCond =
+          enzyme::NUTSTreeState::fromValues(treeArgs);
+      Value rngCond =
+          outerCondBlock->getArgument(enzyme::NUTSTreeState::NUM_FIELDS);
 
       // Condition 6a: depth < maxTreeDepth
       auto notMaxDepth =
@@ -1318,9 +977,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       SmallVector<Value> treeBodyArgs(outerBodyBlock->getArguments().begin(),
                                       outerBodyBlock->getArguments().begin() +
-                                          NUTSTree::NUM_FIELDS);
-      NUTSTree treeBody = NUTSTree::fromValues(treeBodyArgs);
-      Value rngBody = outerBodyBlock->getArgument(NUTSTree::NUM_FIELDS);
+                                          enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState treeBody =
+          enzyme::NUTSTreeState::fromValues(treeBodyArgs);
+      Value rngBody =
+          outerBodyBlock->getArgument(enzyme::NUTSTreeState::NUM_FIELDS);
 
       // Body 6a: Sample direction (left or right)
       auto rngSplitOp = enzyme::RandomSplitOp::create(
@@ -1363,9 +1024,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       SmallVector<Value> subtreeCondArgs(
           innerCondBlock->getArguments().begin(),
-          innerCondBlock->getArguments().begin() + NUTSTree::NUM_FIELDS);
-      NUTSTree subtreeCond = NUTSTree::fromValues(subtreeCondArgs);
-      Value rngInnerCond = innerCondBlock->getArgument(NUTSTree::NUM_FIELDS);
+          innerCondBlock->getArguments().begin() +
+              enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState subtreeCond =
+          enzyme::NUTSTreeState::fromValues(subtreeCondArgs);
+      Value rngInnerCond =
+          innerCondBlock->getArgument(enzyme::NUTSTreeState::NUM_FIELDS);
 
       // Condition 7a: depth < depthForSubtree
       auto subtreeDepthOk =
@@ -1399,9 +1063,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       SmallVector<Value> subtreeIterArgs(
           innerBodyBlock->getArguments().begin(),
-          innerBodyBlock->getArguments().begin() + NUTSTree::NUM_FIELDS);
-      NUTSTree subtreeIter = NUTSTree::fromValues(subtreeIterArgs);
-      Value rngIter = innerBodyBlock->getArgument(NUTSTree::NUM_FIELDS);
+          innerBodyBlock->getArguments().begin() +
+              enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState subtreeIter =
+          enzyme::NUTSTreeState::fromValues(subtreeIterArgs);
+      Value rngIter =
+          innerBodyBlock->getArgument(enzyme::NUTSTreeState::NUM_FIELDS);
 
       // Body 7a: Extract boundary from subtree based on direction
       auto goingRightBroadcast = enzyme::BroadcastOp::create(
@@ -1449,8 +1116,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pHalf = arith::SubFOp::create(rewriter, loc, leafP, deltaP1);
 
       // Full step position: q_new = q + eps * M^-1 * p_half
-      Value v =
-          applyInverseMassMatrix(rewriter, loc, invMass, pHalf, positionType);
+      Value v = enzyme::applyInverseMassMatrix(rewriter, loc, invMass, pHalf,
+                                               positionType);
 
       auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v);
       Value qNew = arith::AddFOp::create(rewriter, loc, leafQ, deltaQ);
@@ -1507,8 +1174,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pNew = arith::SubFOp::create(rewriter, loc, pHalf, deltaP2);
 
       // Body 7d: Compute kinetic energy.
-      Value KNew = computeKineticEnergy(rewriter, loc, pNew, invMass, halfConst,
-                                        F64TensorType, positionType);
+      Value KNew = enzyme::computeKineticEnergy(
+          rewriter, loc, pNew, invMass, halfConst, F64TensorType, positionType);
       Value ENew = arith::AddFOp::create(rewriter, loc, UNew, KNew);
 
       // Body 7e: Various checks.
@@ -1524,23 +1191,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           arith::MinimumFOp::create(rewriter, loc, acceptProbRaw, oneConst);
 
       // Body 7g: Create leaf tree state.
-      NUTSTree newLeaf = {.q_left = qNew,
-                          .p_left = pNew,
-                          .grad_left = gradNew,
-                          .q_right = qNew,
-                          .p_right = pNew,
-                          .grad_right = gradNew,
-                          .q_proposal = qNew,
-                          .grad_proposal = gradNew,
-                          .U_proposal = UNew,
-                          .H_proposal = ENew,
-                          .depth = zeroI64,
-                          .weight = treeWeight,
-                          .turning = falseConst,
-                          .diverging = leafDiverging,
-                          .sum_accept_probs = acceptProb,
-                          .num_proposals = oneI64,
-                          .p_sum = pNew};
+      enzyme::NUTSTreeState newLeaf = {.q_left = qNew,
+                                       .p_left = pNew,
+                                       .grad_left = gradNew,
+                                       .q_right = qNew,
+                                       .p_right = pNew,
+                                       .grad_right = gradNew,
+                                       .q_proposal = qNew,
+                                       .grad_proposal = gradNew,
+                                       .U_proposal = UNew,
+                                       .H_proposal = ENew,
+                                       .depth = zeroI64,
+                                       .weight = treeWeight,
+                                       .turning = falseConst,
+                                       .diverging = leafDiverging,
+                                       .sum_accept_probs = acceptProb,
+                                       .num_proposals = oneI64,
+                                       .p_sum = pNew};
 
       // Body 7h: Combine new leaf with the current subtree.
       // 7h.1: Update boundaries based on direction.
@@ -1570,7 +1237,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       Value weightDiffCombine = arith::SubFOp::create(
           rewriter, loc, newLeaf.weight, subtreeIter.weight);
-      Value acceptProbCombine = createSigmoid(rewriter, loc, weightDiffCombine);
+      Value acceptProbCombine =
+          enzyme::createSigmoid(rewriter, loc, weightDiffCombine);
 
       // 7h.3: Select proposal with multinomial sampling.
       auto randomOpCombine = enzyme::RandomOp::create(
@@ -1618,26 +1286,27 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc, subtreeIter.num_proposals, newLeaf.num_proposals);
       Value pSum = arith::AddFOp::create(rewriter, loc, subtreeIter.p_sum,
                                          newLeaf.p_sum);
-      NUTSTree updatedSubtree = {.q_left = qLeft,
-                                 .p_left = pLeft,
-                                 .grad_left = gradLeft,
-                                 .q_right = qRight,
-                                 .p_right = pRight,
-                                 .grad_right = gradRight,
-                                 .q_proposal = qProposal,
-                                 .grad_proposal = gradProposal,
-                                 .U_proposal = UProposal,
-                                 .H_proposal = EProposal,
-                                 .depth = combinedDepth,
-                                 .weight = combinedWeight,
-                                 .turning = combinedTurning,
-                                 .diverging = combinedDiverging,
-                                 .sum_accept_probs = sumAcceptProbs,
-                                 .num_proposals = numProposals,
-                                 .p_sum = pSum};
+      enzyme::NUTSTreeState updatedSubtree = {.q_left = qLeft,
+                                              .p_left = pLeft,
+                                              .grad_left = gradLeft,
+                                              .q_right = qRight,
+                                              .p_right = pRight,
+                                              .grad_right = gradRight,
+                                              .q_proposal = qProposal,
+                                              .grad_proposal = gradProposal,
+                                              .U_proposal = UProposal,
+                                              .H_proposal = EProposal,
+                                              .depth = combinedDepth,
+                                              .weight = combinedWeight,
+                                              .turning = combinedTurning,
+                                              .diverging = combinedDiverging,
+                                              .sum_accept_probs =
+                                                  sumAcceptProbs,
+                                              .num_proposals = numProposals,
+                                              .p_sum = pSum};
 
       // Body 7i: Check and update turning flag.
-      updatedSubtree.turning = checkTurning(
+      updatedSubtree.turning = enzyme::checkTurning(
           rewriter, loc, invMass, updatedSubtree.p_left, updatedSubtree.p_right,
           updatedSubtree.p_sum, zeroConst, F64TensorType, positionType);
 
@@ -1649,9 +1318,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       rewriter.setInsertionPointAfter(innerWhileOp);
       SmallVector<Value> subtreeValues(innerWhileOp.getResults().begin(),
                                        innerWhileOp.getResults().begin() +
-                                           NUTSTree::NUM_FIELDS);
-      NUTSTree subtree = NUTSTree::fromValues(subtreeValues);
-      Value rngAfterBuild = innerWhileOp.getResult(NUTSTree::NUM_FIELDS);
+                                           enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState subtree =
+          enzyme::NUTSTreeState::fromValues(subtreeValues);
+      Value rngAfterBuild =
+          innerWhileOp.getResult(enzyme::NUTSTreeState::NUM_FIELDS);
 
       auto rngSplitAfterBuild = enzyme::RandomSplitOp::create(
           rewriter, loc,
@@ -1692,7 +1363,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 8c. Proposal selection via multinomial sampling.
       Value weightDiffMain =
           arith::SubFOp::create(rewriter, loc, subtree.weight, treeBody.weight);
-      Value acceptProbMainRaw = createSigmoid(rewriter, loc, weightDiffMain);
+      Value acceptProbMainRaw =
+          enzyme::createSigmoid(rewriter, loc, weightDiffMain);
 
       // 8d. Zero accept probability to 0 if new tree is turning or diverging.
       Value acceptProbMain = arith::SelectOp::create(
@@ -1747,23 +1419,24 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pSumMain =
           arith::AddFOp::create(rewriter, loc, treeBody.p_sum, subtree.p_sum);
 
-      NUTSTree combinedTree = {.q_left = qLeftMain,
-                               .p_left = pLeftMain,
-                               .grad_left = gradLeftMain,
-                               .q_right = qRightMain,
-                               .p_right = pRightMain,
-                               .grad_right = gradRightMain,
-                               .q_proposal = qProposalMain,
-                               .grad_proposal = gradProposalMain,
-                               .U_proposal = UProposalMain,
-                               .H_proposal = EProposalMain,
-                               .depth = combinedDepthMain,
-                               .weight = combinedWeightMain,
-                               .turning = combinedTurningMain,
-                               .diverging = combinedDivergingMain,
-                               .sum_accept_probs = sumAcceptProbsMain,
-                               .num_proposals = numProposalsMain,
-                               .p_sum = pSumMain};
+      enzyme::NUTSTreeState combinedTree = {.q_left = qLeftMain,
+                                            .p_left = pLeftMain,
+                                            .grad_left = gradLeftMain,
+                                            .q_right = qRightMain,
+                                            .p_right = pRightMain,
+                                            .grad_right = gradRightMain,
+                                            .q_proposal = qProposalMain,
+                                            .grad_proposal = gradProposalMain,
+                                            .U_proposal = UProposalMain,
+                                            .H_proposal = EProposalMain,
+                                            .depth = combinedDepthMain,
+                                            .weight = combinedWeightMain,
+                                            .turning = combinedTurningMain,
+                                            .diverging = combinedDivergingMain,
+                                            .sum_accept_probs =
+                                                sumAcceptProbsMain,
+                                            .num_proposals = numProposalsMain,
+                                            .p_sum = pSumMain};
 
       // 8g. Yield combined tree.
       SmallVector<Value> outerYieldVals = combinedTree.toValues();
@@ -1775,9 +1448,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // 9. Extract final proposal from combined tree.
       SmallVector<Value> finalTreeValues(outerWhileOp.getResults().begin(),
                                          outerWhileOp.getResults().begin() +
-                                             NUTSTree::NUM_FIELDS);
-      NUTSTree finalTree = NUTSTree::fromValues(finalTreeValues);
-      Value rngFinal = outerWhileOp.getResult(NUTSTree::NUM_FIELDS);
+                                             enzyme::NUTSTreeState::NUM_FIELDS);
+      enzyme::NUTSTreeState finalTree =
+          enzyme::NUTSTreeState::fromValues(finalTreeValues);
+      Value rngFinal =
+          outerWhileOp.getResult(enzyme::NUTSTreeState::NUM_FIELDS);
 
       Value qFinal = finalTree.q_proposal;
 
