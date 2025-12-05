@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
     set(dx, dy);
 
     __enzyme_autodiff((void *)simulate, &enzyme_dup, (double*)&ty, (double*)&dy, &enzyme_dup, (double*)&tx,
-                      (double*)&dx, (double*)&enzyme_const, uplo);
+                      (double*)&dx, &enzyme_const, uplo);
 
     for (int i = 0; i < ROWS; i++) {
       for (int j = 0; j < COLS; j++) {
