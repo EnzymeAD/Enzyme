@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-//include "mlir/Dialect/Linalg/IR/LinalgBase.td"
-
 #ifndef ENZYME_OPS
 #define ENZYME_OPS
+
+include "EnzymeEnums.td"
 
 include "Dialect.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -26,12 +26,8 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Dialect/Arith/IR/ArithBase.td"
 
-
-class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
-    : AttrDef<Enzyme_Dialect, name, traits> {
-  let mnemonic = attrMnemonic;
-}
 
 def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let summary = "A pseudo alias class represents a memory allocation passed into a function.";
@@ -92,47 +88,6 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
 
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
-
-def Activity : I32EnumAttr<"Activity",
-    "Possible activity states for variables",
-    [
-      I32EnumAttrCase<"enzyme_active",  0>,
-      I32EnumAttrCase<"enzyme_dup",  1>,
-      I32EnumAttrCase<"enzyme_const",2>,
-      I32EnumAttrCase<"enzyme_dupnoneed", 3>,
-      I32EnumAttrCase<"enzyme_activenoneed",  4>,
-      I32EnumAttrCase<"enzyme_constnoneed",  5>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
-
-def RngDistribution : I32EnumAttr<"RngDistribution",
-    "Random number distribution type",
-    [
-      I32EnumAttrCase<"UNIFORM", 0>,
-      I32EnumAttrCase<"NORMAL", 1>,
-      I32EnumAttrCase<"MULTINORMAL", 2>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def RngDistributionAttr : EnumAttr<Enzyme_Dialect, RngDistribution, "rng_distribution">;
-
-def MCMCAlgorithm : I32EnumAttr<"MCMCAlgorithm",
-    "MCMC algorithm type",
-    [
-      I32EnumAttrCase<"HMC", 0>,
-      I32EnumAttrCase<"NUTS", 1>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def MCMCAlgorithmAttr : EnumAttr<Enzyme_Dialect, MCMCAlgorithm, "mcmc_algorithm">;
 
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
@@ -984,6 +939,21 @@ def DumpOp : Enzyme_Op<"dump"> {
   let assemblyFormat = [{
     $value attr-dict `:` functional-type($value, results)
   }];
+}
+
+def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
+  let summary = "affine atomic rmw operation";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      AffineMapAttr:$map);
 }
 
 #endif // ENZYME_OPS

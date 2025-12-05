@@ -260,6 +260,7 @@ td_library(
     name = "EnzymeDialectTdFiles",
     srcs = [
         "Enzyme/MLIR/Dialect/Dialect.td",
+        "Enzyme/MLIR/Dialect/EnzymeEnums.td",
     ],
     includes = ["."],
     deps = [
@@ -270,6 +271,7 @@ td_library(
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
+        "@llvm-project//mlir:ArithOpsTdFiles",
     ],
 )
 
@@ -412,7 +414,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeEnums.td",
     deps = [":EnzymeDialectTdFiles"],
 )
 
@@ -434,11 +436,13 @@ gentbl_cc_library(
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
-            ["-gen-attrdef-decls"],
+            ["-gen-attrdef-decls",
+             "-attrdefs-dialect=enzyme"],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.h.inc",
         ),
         (
-            ["-gen-attrdef-defs"],
+            ["-gen-attrdef-defs",
+             "-attrdefs-dialect=enzyme"],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.cpp.inc",
         ),
     ],
