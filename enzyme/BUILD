@@ -749,6 +749,7 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeMLIR",
+        ":LLVMExtDialect",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:AllPassesAndDialects",
@@ -764,6 +765,7 @@ cc_binary(
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",
