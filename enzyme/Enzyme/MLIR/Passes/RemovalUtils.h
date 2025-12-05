@@ -753,7 +753,8 @@ public:
               /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
               /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
 
-          for (auto user : info.popOp.getResult().getUsers()) {
+          for (auto user :
+               llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
             if (isa<memref::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
