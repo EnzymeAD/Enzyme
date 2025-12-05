@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
   double dx0[ROWS * COLS];
   double dy0[ROWS * COLS];
 
-  set(dx0, dy0);
+  set((double*)dx0, (double*)dy0);
 
   double dx[ROWS * COLS];
   double dy[ROWS * COLS];
@@ -73,9 +73,9 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 3; i++) {
     char uplo = "ULG"[i];
 
-    set(dx, dy);
+    set((double*)dx, (double*)dy);
 
-    simulate(dx, dy, uplo);
+    simulate((double*)dx, (double*)dy, uplo);
 
     for (int i = 0; i < ROWS; i++) {
       for (int j = 0; j < COLS; j++) {
@@ -102,8 +102,8 @@ int main(int argc, char **argv) {
 
     set(dx, dy);
 
-    __enzyme_autodiff((void *)simulate, &enzyme_dup, &ty, &dy, &enzyme_dup, &tx,
-                      &dx, &enzyme_const, uplo);
+    __enzyme_autodiff((void *)simulate, &enzyme_dup, (double*)&ty, (double*)&dy, &enzyme_dup, (double*)&tx,
+                      (double*)&dx, (double*)&enzyme_const, uplo);
 
     for (int i = 0; i < ROWS; i++) {
       for (int j = 0; j < COLS; j++) {
