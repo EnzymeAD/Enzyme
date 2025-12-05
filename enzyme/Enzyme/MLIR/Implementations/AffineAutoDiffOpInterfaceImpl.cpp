@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Enzyme/MLIR/Dialect/Ops.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -470,12 +471,22 @@ struct AffineLoadOpInterfaceReverse
                 loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
           }
         } else {
-          SmallVector<Value> indices;
-          computeAffineIndices(builder, loadOp.getLoc(), loadOp.getAffineMap(),
-                               retrievedArguments, indices);
-          memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
-                                      arith::AtomicRMWKind::addf, gradient,
-                                      memrefGradient, indices);
+          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+          // if index had to be cached, the pop is not necessarily a valid index
+          if (hasIndex) {
+            SmallVector<Value> indices;
+            computeAffineIndices(builder, loadOp.getLoc(),
+                                 loadOp.getAffineMap(), retrievedArguments,
+                                 indices);
+            memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
+                                        arith::AtomicRMWKind::addf, gradient,
+                                        memrefGradient, indices);
+          } else {
+            enzyme::AffineAtomicRMWOp::create(
+                builder, loadOp.getLoc(), gradient.getType(),
+                arith::AtomicRMWKind::addf, gradient, memrefGradient,
+                retrievedArguments, loadOp.getAffineMap());
+          }
         }
       }
     }
