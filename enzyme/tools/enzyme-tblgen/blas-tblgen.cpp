@@ -2361,7 +2361,6 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     const auto opName = ruleDag->getOperator()->getAsString();
 
     if (pattern.getName() == "lacpy") {
-      llvm::errs() << "name: " << name << "\n";
       if (name == "B") {
         extraCond = "!active_A";
       }

@@ -182,7 +182,7 @@ template <typename SourceOp,
               llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
               bool> = true>
 llvm::SmallVector<SourceOp, 2> pruneGradDefs(BatchDiffCacheKey &key,
-                                          SmallVector<SourceOp> &allDiffs) {
+                                             SmallVector<SourceOp> &allDiffs) {
   SmallVector<SourceOp, 2> prunedSources;
 
   // We first prune and check that all derivative arguments are defined before
