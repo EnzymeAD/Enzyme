@@ -4294,6 +4294,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       }
       default:
         llvm_unreachable("Unhandled");
+        break;
       }
 
       rootOffset += 1;
