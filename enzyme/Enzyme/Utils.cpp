@@ -4291,10 +4291,10 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
         loc = B.CreateLoad(ty, loc);
         extracted.push_back(loc);
         B.CreateStore(loc, outloc);
+        break;
       }
       default:
         llvm_unreachable("Unhandled");
-        break;
       }
 
       rootOffset += 1;
