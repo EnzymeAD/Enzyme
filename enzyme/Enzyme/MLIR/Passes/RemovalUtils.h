@@ -46,6 +46,7 @@ struct CacheInfo {
       if (!pushOp)
         pushOp = dyn_cast<enzyme::PushOp>(user);
     }
+    (void)nusers;
     assert(nusers == 2); // TODO: support more uses
   }
 
