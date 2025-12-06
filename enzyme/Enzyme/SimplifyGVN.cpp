@@ -235,12 +235,17 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
           continue;
 
         // Check if there's no aliasing store in between
+        // We need to ensure no other store could execute between SI and LI
         bool HasIntermediateStore = false;
         for (auto &[OtherSI, OtherStoreOffset] : Stores) {
           if (OtherSI == SI)
             continue;
 
-          if (DT.dominates(SI, OtherSI) && DT.dominates(OtherSI, LI)) {
+          // Check if OtherSI could interfere:
+          // 1. OtherSI happens after SI: DT.dominates(SI, OtherSI)
+          // 2. OtherSI could happen before LI: !DT.dominates(LI, OtherSI)
+          // If both conditions are true and they alias, we can't forward
+          if (DT.dominates(SI, OtherSI) && !DT.dominates(LI, OtherSI)) {
             uint64_t OtherStoreSize =
                 DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
 
