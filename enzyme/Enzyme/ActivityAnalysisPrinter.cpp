@@ -271,8 +271,8 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
   }
   
   bool changed = false;
+  auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
   for (auto &F : M) {
-    auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
     changed |= printActivityAnalysis(F, FAM.getResult<TargetLibraryAnalysis>(F));
   }
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
