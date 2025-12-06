@@ -204,7 +204,7 @@ Build with `CMAKE_BUILD_TYPE=Debug` for better debugging:
 ### Useful LLVM Flags
 
 ```bash
-opt -load-pass-plugin=path/to/LLVMEnzyme-16.so \
+opt -load-pass-plugin=path/to/LLVMEnzyme-<version>.so \
     -enzyme -enzyme-print -debug -debug-only=enzyme \
     input.ll -S -o output.ll
 ```
@@ -221,7 +221,7 @@ dbgs() << "Debug-only message\n";  // Only with -debug flag
 ### Build Failures
 
 - **Missing LLVM**: Ensure `LLVM_DIR` points to the correct LLVM installation
-- **Version mismatch**: Check `.github/workflows/enzyme-ci.yml` for currently supported LLVM versions (currently 15 and 16)
+- **Version mismatch**: Check `.github/workflows/enzyme-ci.yml` for currently supported LLVM versions
 - **lit not found**: Install with `pip install lit` and set `LLVM_EXTERNAL_LIT`
 
 ### Test Failures
