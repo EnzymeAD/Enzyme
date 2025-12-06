@@ -93,11 +93,6 @@ using namespace llvm;
 
 namespace {
 
-// Check if an argument has noalias attribute
-bool isNoAlias(const Argument *Arg) {
-  return Arg->hasNoAliasAttr();
-}
-
 // Compute the offset of a pointer relative to a base pointer
 // Returns true if a constant offset can be determined
 bool getConstantOffset(const DataLayout &DL, Value *Ptr, Value *Base,
@@ -194,7 +189,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
   // Find noalias arguments
   SmallVector<Argument *, 4> CandidateArgs;
   for (Argument &Arg : F.args()) {
-    if (Arg.getType()->isPointerTy() && isNoAlias(&Arg)) {
+    if (Arg.getType()->isPointerTy() && Arg.hasNoAliasAttr()) {
       CandidateArgs.push_back(&Arg);
     }
   }
