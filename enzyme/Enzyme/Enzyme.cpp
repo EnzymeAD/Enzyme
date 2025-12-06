@@ -3798,15 +3798,15 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(TypeAnalysisPrinterNewPM());
           return true;
         }
+        if (Name == "print-activity-analysis") {
+          MPM.addPass(ActivityAnalysisPrinterNewPM());
+          return true;
+        }
         return false;
       });
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-        if (Name == "print-activity-analysis") {
-          FPM.addPass(ActivityAnalysisPrinterNewPM());
-          return true;
-        }
         if (Name == "jl-inst-simplify") {
           FPM.addPass(JLInstSimplifyNewPM());
           return true;
