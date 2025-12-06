@@ -18,9 +18,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains a GVN-like optimization pass that forwards loads from
-// noalias/nocapture arguments to their corresponding stores, with support
-// for offsets and type conversions.
+// This file declares SimplifyGVN, a GVN-like optimization pass that forwards
+// loads from noalias/nocapture arguments to their corresponding stores.
+//
+// This pass provides an alternative to LLVM's built-in GVN pass without the
+// instruction/offset limit imposed by memdep analysis, allowing it to handle
+// cases with large numbers of memory operations and offsets.
 //
 //===----------------------------------------------------------------------===//
 

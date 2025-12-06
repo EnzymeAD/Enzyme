@@ -22,6 +22,32 @@
 // noalias/nocapture arguments to their corresponding stores, with support
 // for offsets and type conversions.
 //
+// This pass addresses the limitation of LLVM's built-in GVN pass which has
+// a small limit on the number of instructions/memory offsets it analyzes
+// via its use of the memdep analysis.
+//
+// Algorithm:
+// 1. Identify function arguments with noalias and nocapture attributes
+// 2. Verify all uses are exclusively loads, stores, or GEP instructions
+// 3. For each load from such an argument:
+//    a. Find all stores to the argument with constant offsets
+//    b. Find a dominating store that covers the load's memory range
+//    c. Check that no aliasing store exists between the store and load
+//    d. If safe, replace the load with the stored value, performing
+//       type conversion or extraction as needed
+//
+// Example transformation:
+//   define i32 @foo(i32* noalias nocapture %ptr) {
+//     store i32 42, i32* %ptr
+//     %v = load i32, i32* %ptr
+//     ret i32 %v
+//   }
+// becomes:
+//   define i32 @foo(i32* noalias nocapture %ptr) {
+//     store i32 42, i32* %ptr
+//     ret i32 42
+//   }
+//
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
 
