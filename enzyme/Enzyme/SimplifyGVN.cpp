@@ -140,8 +140,16 @@ bool areUsesOnlyLoadStoreGEP(Value *V, SmallPtrSetImpl<Value *> &Visited) {
     return true;
 
   for (User *U : V->users()) {
-    if (isa<LoadInst>(U) || isa<StoreInst>(U))
+    if (isa<LoadInst>(U))
       continue;
+
+    // Check if this is a store TO the pointer (not storing the pointer value)
+    if (auto *SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getPointerOperand() == V)
+        continue;
+      // If the pointer value is being stored somewhere, reject
+      return false;
+    }
 
     if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
       if (!areUsesOnlyLoadStoreGEP(GEP, Visited))
@@ -149,16 +157,9 @@ bool areUsesOnlyLoadStoreGEP(Value *V, SmallPtrSetImpl<Value *> &Visited) {
       continue;
     }
 
-    // Allow bitcasts as they're common in pointer operations
-    if (auto *BC = dyn_cast<BitCastInst>(U)) {
-      if (!areUsesOnlyLoadStoreGEP(BC, Visited))
-        return false;
-      continue;
-    }
-
-    // Allow addrspacecast
-    if (auto *ASC = dyn_cast<AddrSpaceCastInst>(U)) {
-      if (!areUsesOnlyLoadStoreGEP(ASC, Visited))
+    // Allow any cast instruction (bitcast, addrspacecast, etc.)
+    if (isa<CastInst>(U)) {
+      if (!areUsesOnlyLoadStoreGEP(cast<Instruction>(U), Visited))
         return false;
       continue;
     }
@@ -254,22 +255,16 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
 
       for (User *U : V->users()) {
         if (auto *SI = dyn_cast<StoreInst>(U)) {
-          if (SI->getPointerOperand() == V ||
-              SI->getPointerOperand()->stripPointerCasts() ==
-                  V->stripPointerCasts()) {
+          if (SI->getPointerOperand() == V) {
             Stores.push_back(SI);
           }
         } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
           if (WorkList.insert(GEP).second) {
             ToProcess.push_back(GEP);
           }
-        } else if (auto *BC = dyn_cast<BitCastInst>(U)) {
-          if (WorkList.insert(BC).second) {
-            ToProcess.push_back(BC);
-          }
-        } else if (auto *ASC = dyn_cast<AddrSpaceCastInst>(U)) {
-          if (WorkList.insert(ASC).second) {
-            ToProcess.push_back(ASC);
+        } else if (isa<CastInst>(U)) {
+          if (WorkList.insert(cast<Instruction>(U)).second) {
+            ToProcess.push_back(cast<Instruction>(U));
           }
         }
       }
@@ -286,22 +281,16 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
 
       for (User *U : V->users()) {
         if (auto *LI = dyn_cast<LoadInst>(U)) {
-          if (LI->getPointerOperand() == V ||
-              LI->getPointerOperand()->stripPointerCasts() ==
-                  V->stripPointerCasts()) {
+          if (LI->getPointerOperand() == V) {
             Loads.push_back(LI);
           }
         } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
           if (WorkList.insert(GEP).second) {
             ToProcess.push_back(GEP);
           }
-        } else if (auto *BC = dyn_cast<BitCastInst>(U)) {
-          if (WorkList.insert(BC).second) {
-            ToProcess.push_back(BC);
-          }
-        } else if (auto *ASC = dyn_cast<AddrSpaceCastInst>(U)) {
-          if (WorkList.insert(ASC).second) {
-            ToProcess.push_back(ASC);
+        } else if (isa<CastInst>(U)) {
+          if (WorkList.insert(cast<Instruction>(U)).second) {
+            ToProcess.push_back(cast<Instruction>(U));
           }
         }
       }
