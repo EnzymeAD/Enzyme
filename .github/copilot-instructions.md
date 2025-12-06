@@ -166,6 +166,11 @@ public:
 
 ### Error Handling
 
+- **Prefer `EmitFailure`** over compile-time crashes when possible for better error diagnostics:
+  ```cpp
+  EmitFailure("RemarkName", Loc, CodeRegion, "Error message: ", value);
+  ```
+- **Use `CustomErrorHandler`** to provide user-customizable error handling (especially useful for language bindings)
 - Use LLVM's error reporting: `llvm::errs()`, `dbgs()`, assertions
 - Provide meaningful diagnostic messages
 - Use `llvm_unreachable()` for impossible cases
@@ -227,7 +232,7 @@ dbgs() << "Debug-only message\n";  // Only with -debug flag
 ### Build Failures
 
 - **Missing LLVM**: Ensure `LLVM_DIR` points to the correct LLVM installation
-- **Version mismatch**: Check `.github/workflows/enzyme-ci.yml` for currently supported LLVM versions
+- **Version support**: Enzyme supports LLVM 15 through mainline. However, lit tests currently only pass on LLVM 15 and 16, which support both typed and opaque pointers. LLVM 17+ only supports opaque pointers. Help migrating lit tests to work with both typed and opaque pointers (depending on LLVM version) is appreciated.
 - **lit not found**: Install with `pip install lit` and set `LLVM_EXTERNAL_LIT`
 
 ### Test Failures
