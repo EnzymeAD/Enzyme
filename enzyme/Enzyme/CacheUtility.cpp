@@ -125,7 +125,7 @@ InsertNewCanonicalIV(Loop *L, Type *Ty, const llvm::Twine &Name) {
 
   BasicBlock *Header = L->getHeader();
   assert(Header);
-  IRBuilder<> B(&Header->front());
+  IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
   B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
@@ -465,7 +465,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
                           /*shouldfree*/ true);
 
   for (auto ExitBlock : found.exitBlocks) {
-    IRBuilder<> B(&ExitBlock->front());
+    IRBuilder<> B(ExitBlock, ExitBlock->begin());
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
