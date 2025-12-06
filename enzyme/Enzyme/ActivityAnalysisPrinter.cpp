@@ -49,6 +49,8 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <mutex>
+
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
 #include "EnzymeLogic.h"
@@ -230,27 +232,29 @@ static RegisterPass<ActivityAnalysisPrinter>
 ActivityAnalysisPrinterNewPM::Result
 ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
                                   llvm::FunctionAnalysisManager &FAM) {
-  // If a specific function is requested, check if it exists
-  // Note: For function passes in NewPM, we check when we encounter each function
-  static bool checkedForFunction = false;
-  if (!FunctionToAnalyze.empty() && !checkedForFunction) {
-    checkedForFunction = true;
-    bool functionFound = false;
-    Module *M = F.getParent();
-    if (M) {
-      for (auto &Func : *M) {
-        if (Func.getName() == FunctionToAnalyze) {
-          functionFound = true;
-          break;
+  // If a specific function is requested, check if it exists in the module
+  // Note: This is a function pass, so we check on the first invocation
+  // For typical opt usage with a single module, this is sufficient
+  static std::once_flag validationFlag;
+  if (!FunctionToAnalyze.empty()) {
+    std::call_once(validationFlag, [&F]() {
+      bool functionFound = false;
+      Module *M = F.getParent();
+      if (M) {
+        for (auto &Func : *M) {
+          if (Func.getName() == FunctionToAnalyze) {
+            functionFound = true;
+            break;
+          }
+        }
+        
+        if (!functionFound) {
+          std::string msg = "Function '" + FunctionToAnalyze + 
+                            "' specified in -activity-analysis-func not found in module";
+          report_fatal_error(StringRef(msg));
         }
       }
-      
-      if (!functionFound) {
-        std::string msg = "Function '" + FunctionToAnalyze + 
-                          "' specified in -activity-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
-      }
-    }
+    });
   }
   
   bool changed = false;
