@@ -93,42 +93,6 @@ using namespace llvm;
 
 namespace {
 
-// Compute the offset of a pointer relative to a base pointer
-// Returns true if a constant offset can be determined
-bool getConstantOffset(const DataLayout &DL, Value *Ptr, Value *Base,
-                       APInt &Offset) {
-  Offset = APInt(DL.getIndexTypeSizeInBits(Ptr->getType()), 0);
-
-  // Strip pointer casts
-  Ptr = Ptr->stripPointerCasts();
-  Base = Base->stripPointerCasts();
-
-  if (Ptr == Base)
-    return true;
-
-  // Handle GEP instructions
-  if (auto *GEP = dyn_cast<GEPOperator>(Ptr)) {
-    APInt GEPOffset(DL.getIndexTypeSizeInBits(Ptr->getType()), 0);
-    if (!GEP->accumulateConstantOffset(DL, GEPOffset))
-      return false;
-
-    Value *GEPBase = GEP->getPointerOperand()->stripPointerCasts();
-    if (GEPBase == Base) {
-      Offset = GEPOffset;
-      return true;
-    }
-
-    // Recursively check if GEP base has offset from Base
-    APInt BaseOffset(DL.getIndexTypeSizeInBits(Ptr->getType()), 0);
-    if (getConstantOffset(DL, GEPBase, Base, BaseOffset)) {
-      Offset = BaseOffset + GEPOffset;
-      return true;
-    }
-  }
-
-  return false;
-}
-
 // Extract a value with potential type conversion
 Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
                     const DataLayout &DL, APInt LoadOffset, APInt StoreOffset,
@@ -182,8 +146,7 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
 }
 
 // Main optimization function
-bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
-                 AAResults &AA) {
+bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
   bool Changed = false;
 
   // Find noalias arguments
@@ -225,8 +188,6 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
             Stores.push_back({SI, CurrentOffset});
           } else {
             // Pointer value is being stored somewhere - reject this argument
-            Stores.clear();
-            Loads.clear();
             goto next_argument;
           }
         } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
@@ -234,8 +195,6 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
           APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
           if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
             // Cannot compute constant offset - reject this argument
-            Stores.clear();
-            Loads.clear();
             goto next_argument;
           }
           
@@ -243,15 +202,13 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
             APInt NewOffset = CurrentOffset + GEPOffset;
             ToProcess.push_back({GEP, NewOffset});
           }
-        } else if (isa<CastInst>(U)) {
+        } else if (auto *CI = dyn_cast<CastInst>(U)) {
           // Casts don't change offset
-          if (Visited.insert(cast<Instruction>(U)).second) {
-            ToProcess.push_back({cast<Instruction>(U), CurrentOffset});
+          if (Visited.insert(CI).second) {
+            ToProcess.push_back({CI, CurrentOffset});
           }
         } else {
           // Unknown use - reject this argument
-          Stores.clear();
-          Loads.clear();
           goto next_argument;
         }
       }
@@ -340,14 +297,12 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<AAResultsWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override {
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
     const DataLayout &DL = F.getParent()->getDataLayout();
-    return simplifyGVN(F, DT, DL, AA);
+    return simplifyGVN(F, DT, DL);
   }
 };
 
@@ -368,8 +323,7 @@ SimplifyGVNNewPM::Result
 SimplifyGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
   bool Changed = false;
   const DataLayout &DL = F.getParent()->getDataLayout();
-  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL,
-                        FAM.getResult<AAManager>(F));
+  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL);
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
