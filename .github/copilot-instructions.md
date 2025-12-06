@@ -125,7 +125,7 @@ clang-format -i path/to/file.cpp
 
 ### Adding New Features
 
-1. **Understand the IR**: Enzyme operates on LLVM IR. Familiarize yourself with the IR being transformed.
+1. **Understand the IR**: Enzyme operates on LLVM IR and/or MLIR. Familiarize yourself with the IR being transformed.
 2. **Activity Analysis First**: Ensure values are properly marked as active/inactive
 3. **Type Analysis**: Use Type Analysis to understand data flow and pointer types
 4. **Test-Driven Development**: Write tests before implementing features
