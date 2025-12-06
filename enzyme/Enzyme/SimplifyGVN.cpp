@@ -1,0 +1,340 @@
+//=- SimplifyGVN.cpp - GVN-like load forwarding optimization ============//
+//
+//                             Enzyme Project
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// If using this code in an academic setting, please cite the following:
+// @incollection{enzymeNeurips,
+// title = {Instead of Rewriting Foreign Code for Machine Learning,
+//          Automatically Synthesize Fast Gradients},
+// author = {Moses, William S. and Churavy, Valentin},
+// booktitle = {Advances in Neural Information Processing Systems 33},
+// year = {2020},
+// note = {To appear in},
+// }
+//
+//===----------------------------------------------------------------------===//
+//
+// This file contains a GVN-like optimization pass that forwards loads from
+// noalias/nocapture arguments to their corresponding stores, with support
+// for offsets and type conversions.
+//
+// This pass addresses the limitation of LLVM's built-in GVN pass which has
+// a small limit on the number of instructions/memory offsets it analyzes
+// via its use of the memdep analysis.
+//
+// Algorithm:
+// 1. Identify function arguments with noalias and nocapture attributes
+// 2. Verify all uses are exclusively loads, stores, or GEP instructions
+// 3. For each load from such an argument:
+//    a. Find all stores to the argument with constant offsets
+//    b. Find a dominating store that covers the load's memory range
+//    c. Check that no aliasing store exists between the store and load
+//    d. If safe, replace the load with the stored value, performing
+//       type conversion or extraction as needed
+//
+// Example transformation:
+//   define i32 @foo(i32* noalias nocapture %ptr) {
+//     store i32 42, i32* %ptr
+//     %v = load i32, i32* %ptr
+//     ret i32 %v
+//   }
+// becomes:
+//   define i32 @foo(i32* noalias nocapture %ptr) {
+//     store i32 42, i32* %ptr
+//     ret i32 42
+//   }
+//
+//===----------------------------------------------------------------------===//
+#include <llvm/Config/llvm-config.h>
+
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Value.h"
+
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
+
+#include "llvm/IR/LegacyPassManager.h"
+
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include "llvm/Transforms/Utils/Local.h"
+
+#include "SimplifyGVN.h"
+#include "Utils.h"
+
+using namespace llvm;
+
+#ifdef DEBUG_TYPE
+#undef DEBUG_TYPE
+#endif
+#define DEBUG_TYPE "simplify-gvn"
+
+namespace {
+
+// Extract a value with potential type conversion
+Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
+                    const DataLayout &DL, APInt LoadOffset, APInt StoreOffset,
+                    uint64_t LoadSize) {
+  Type *StoreType = StoredVal->getType();
+  uint64_t StoreSize = DL.getTypeStoreSize(StoreType);
+
+  // Calculate relative offset
+  int64_t RelativeOffset = (LoadOffset - StoreOffset).getSExtValue();
+
+  // Check if the load is completely within the stored value
+  if (RelativeOffset < 0 ||
+      (uint64_t)RelativeOffset + LoadSize > StoreSize) {
+    return nullptr;
+  }
+
+  // If types match and offsets are the same, return directly
+  if (RelativeOffset == 0 && LoadType == StoreType) {
+    return StoredVal;
+  }
+
+  // Handle extraction with offset or type mismatch
+  // First, bitcast to an integer type if needed
+  if (!StoreType->isIntegerTy()) {
+    IntegerType *IntTy = Builder.getIntNTy(StoreSize * 8);
+    StoredVal = Builder.CreateBitCast(StoredVal, IntTy);
+  }
+
+  // Extract the relevant bits if there's an offset
+  if (RelativeOffset > 0) {
+    uint64_t ShiftBits = RelativeOffset * 8;
+    StoredVal = Builder.CreateLShr(StoredVal, ShiftBits);
+  }
+
+  // Truncate to the load size if needed
+  IntegerType *LoadIntTy = Builder.getIntNTy(LoadSize * 8);
+  if (StoredVal->getType() != LoadIntTy) {
+    StoredVal = Builder.CreateTrunc(StoredVal, LoadIntTy);
+  }
+
+  // Bitcast to the final type if needed
+  if (LoadIntTy != LoadType) {
+    if (LoadType->isPointerTy()) {
+      StoredVal = Builder.CreateIntToPtr(StoredVal, LoadType);
+    } else {
+      StoredVal = Builder.CreateBitCast(StoredVal, LoadType);
+    }
+  }
+
+  return StoredVal;
+}
+
+// Main optimization function
+bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
+                 const DataLayout &DL) {
+  bool Changed = false;
+
+  // Find noalias arguments
+  SmallVector<Argument *, 4> CandidateArgs;
+  for (Argument &Arg : F.args()) {
+    if (Arg.getType()->isPointerTy() && Arg.hasNoAliasAttr()) {
+      CandidateArgs.push_back(&Arg);
+    }
+  }
+
+  if (CandidateArgs.empty())
+    return false;
+
+  // For each candidate argument, collect stores and loads with their offsets
+  for (Argument *Arg : CandidateArgs) {
+    // Collect all stores and loads to this argument with offsets
+    SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
+    SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
+    
+    // WorkList tracks (Value*, Offset from Arg)
+    SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
+    SmallPtrSet<Value *, 16> Visited;
+    
+    APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+    ToProcess.push_back({Arg, ZeroOffset});
+
+    while (!ToProcess.empty()) {
+      auto [V, CurrentOffset] = ToProcess.pop_back_val();
+      
+      // Skip if already visited
+      if (!Visited.insert(V).second)
+        continue;
+
+      for (User *U : V->users()) {
+        if (auto *LI = dyn_cast<LoadInst>(U)) {
+          Loads.push_back({LI, CurrentOffset});
+        } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+          // Check if this is a store TO the pointer (not storing the pointer value)
+          if (SI->getPointerOperand() == V) {
+            Stores.push_back({SI, CurrentOffset});
+          } else {
+            // Pointer value is being stored somewhere - reject this argument
+            goto next_argument;
+          }
+        } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
+          // Compute the offset for this GEP
+          APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+          if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
+            // Cannot compute constant offset - reject this argument
+            goto next_argument;
+          }
+          
+          APInt NewOffset = CurrentOffset + GEPOffset;
+          ToProcess.push_back({GEP, NewOffset});
+        } else if (auto *CI = dyn_cast<CastInst>(U)) {
+          // Casts don't change offset
+          ToProcess.push_back({CI, CurrentOffset});
+        } else {
+          // Unknown use - reject this argument
+          goto next_argument;
+        }
+      }
+    }
+
+    // Try to forward stores to loads
+    for (auto &[LI, LoadOffset] : Loads) {
+      uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
+
+      // Find a dominating store that can satisfy this load
+      StoreInst *DominatingStore = nullptr;
+      APInt StoreOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+
+      for (auto &[SI, CurStoreOffset] : Stores) {
+        if (!DT.dominates(SI, LI))
+          continue;
+
+        uint64_t StoreSize =
+            DL.getTypeStoreSize(SI->getValueOperand()->getType());
+
+        // Check if the store covers the load
+        int64_t RelOffset = (LoadOffset - CurStoreOffset).getSExtValue();
+        if (RelOffset < 0 || (uint64_t)RelOffset + LoadSize > StoreSize)
+          continue;
+
+        // Check if there's no aliasing store in between
+        // We need to ensure no other store could execute between SI and LI
+        bool HasIntermediateStore = false;
+        for (auto &[OtherSI, OtherStoreOffset] : Stores) {
+          if (OtherSI == SI)
+            continue;
+
+          // First check if stores alias (cheaper check)
+          uint64_t OtherStoreSize =
+              DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
+          int64_t OtherRelOffset =
+              (LoadOffset - OtherStoreOffset).getSExtValue();
+          
+          // Check if the stores don't overlap - if not, continue
+          if (OtherRelOffset + (int64_t)LoadSize <= 0 ||
+              OtherRelOffset >= (int64_t)OtherStoreSize)
+            continue;
+
+          // Stores alias. Check if OtherSI could interfere:
+          // OtherSI interferes if it's on a path from SI to LI.
+          // This happens when: SI dominates OtherSI AND OtherSI dominates LI
+          // Note: If load and store are in mutually exclusive branches,
+          // neither dominates the other, so this correctly allows forwarding.
+          if (DT.dominates(SI, OtherSI) && DT.dominates(OtherSI, LI)) {
+            HasIntermediateStore = true;
+            break;
+          }
+        }
+
+        if (!HasIntermediateStore) {
+          DominatingStore = SI;
+          StoreOffset = CurStoreOffset;
+          break;
+        }
+      }
+
+      if (DominatingStore) {
+        // Try to extract the value from the store
+        IRBuilder<> Builder(LI);
+        Value *StoredVal = DominatingStore->getValueOperand();
+
+        Value *ExtractedVal =
+            extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
+                         StoreOffset, LoadSize);
+
+        if (ExtractedVal) {
+          LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding store to load\n"
+                            << "  Store: " << *DominatingStore << "\n"
+                            << "  Load:  " << *LI << "\n"
+                            << "  Value: " << *ExtractedVal << "\n");
+
+          LI->replaceAllUsesWith(ExtractedVal);
+          Changed = true;
+        }
+      }
+    }
+    
+next_argument:
+    continue;
+  }
+
+  return Changed;
+}
+
+class SimplifyGVN final : public FunctionPass {
+public:
+  static char ID;
+  SimplifyGVN() : FunctionPass(ID) {}
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<PostDominatorTreeWrapperPass>();
+  }
+
+  bool runOnFunction(Function &F) override {
+    auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    auto &PDT = getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
+    const DataLayout &DL = F.getParent()->getDataLayout();
+    return simplifyGVN(F, DT, PDT, DL);
+  }
+};
+
+} // namespace
+
+FunctionPass *createSimplifyGVNPass() { return new SimplifyGVN(); }
+
+extern "C" void LLVMAddSimplifyGVNPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createSimplifyGVNPass());
+}
+
+char SimplifyGVN::ID = 0;
+
+static RegisterPass<SimplifyGVN>
+    X("simplify-gvn", "GVN-like load forwarding optimization");
+
+SimplifyGVNNewPM::Result
+SimplifyGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
+  bool Changed = false;
+  const DataLayout &DL = F.getParent()->getDataLayout();
+  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F),
+                        FAM.getResult<PostDominatorTreeAnalysis>(F), DL);
+  return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+}
+
+llvm::AnalysisKey SimplifyGVNNewPM::Key;
