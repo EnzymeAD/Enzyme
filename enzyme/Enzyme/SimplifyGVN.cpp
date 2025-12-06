@@ -93,9 +93,9 @@ using namespace llvm;
 
 namespace {
 
-// Check if an argument has noalias and nocapture attributes
-bool isNoAliasNoCapture(const Argument *Arg) {
-  return Arg->hasNoAliasAttr() && Arg->hasNoCaptureAttr();
+// Check if an argument has noalias attribute
+bool isNoAlias(const Argument *Arg) {
+  return Arg->hasNoAliasAttr();
 }
 
 // Compute the offset of a pointer relative to a base pointer
@@ -132,42 +132,6 @@ bool getConstantOffset(const DataLayout &DL, Value *Ptr, Value *Base,
   }
 
   return false;
-}
-
-// Check if all uses of a value are loads, stores, or GEPs (recursively)
-bool areUsesOnlyLoadStoreGEP(Value *V, SmallPtrSetImpl<Value *> &Visited) {
-  if (!Visited.insert(V).second)
-    return true;
-
-  for (User *U : V->users()) {
-    if (isa<LoadInst>(U))
-      continue;
-
-    // Check if this is a store TO the pointer (not storing the pointer value)
-    if (auto *SI = dyn_cast<StoreInst>(U)) {
-      if (SI->getPointerOperand() == V)
-        continue;
-      // If the pointer value is being stored somewhere, reject
-      return false;
-    }
-
-    if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
-      if (!areUsesOnlyLoadStoreGEP(GEP, Visited))
-        return false;
-      continue;
-    }
-
-    // Allow any cast instruction (bitcast, addrspacecast, etc.)
-    if (isa<CastInst>(U)) {
-      if (!areUsesOnlyLoadStoreGEP(cast<Instruction>(U), Visited))
-        return false;
-      continue;
-    }
-
-    return false;
-  }
-
-  return true;
 }
 
 // Extract a value with potential type conversion
@@ -227,98 +191,87 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
                  AAResults &AA) {
   bool Changed = false;
 
-  // Find noalias/nocapture arguments
+  // Find noalias arguments
   SmallVector<Argument *, 4> CandidateArgs;
   for (Argument &Arg : F.args()) {
-    if (Arg.getType()->isPointerTy() && isNoAliasNoCapture(&Arg)) {
-      // Check if all uses are loads, stores, or GEPs
-      SmallPtrSet<Value *, 16> Visited;
-      if (areUsesOnlyLoadStoreGEP(&Arg, Visited)) {
-        CandidateArgs.push_back(&Arg);
-      }
+    if (Arg.getType()->isPointerTy() && isNoAlias(&Arg)) {
+      CandidateArgs.push_back(&Arg);
     }
   }
 
   if (CandidateArgs.empty())
     return false;
 
-  // For each candidate argument, collect stores and try to forward to loads
+  // For each candidate argument, collect stores and loads with their offsets
   for (Argument *Arg : CandidateArgs) {
-    // Collect all stores to this argument
-    SmallVector<StoreInst *, 8> Stores;
-    SmallPtrSet<Value *, 16> WorkList;
-    WorkList.insert(Arg);
-
-    SmallVector<Value *, 16> ToProcess(WorkList.begin(), WorkList.end());
-    while (!ToProcess.empty()) {
-      Value *V = ToProcess.pop_back_val();
-
-      for (User *U : V->users()) {
-        if (auto *SI = dyn_cast<StoreInst>(U)) {
-          if (SI->getPointerOperand() == V) {
-            Stores.push_back(SI);
-          }
-        } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
-          if (WorkList.insert(GEP).second) {
-            ToProcess.push_back(GEP);
-          }
-        } else if (isa<CastInst>(U)) {
-          if (WorkList.insert(cast<Instruction>(U)).second) {
-            ToProcess.push_back(cast<Instruction>(U));
-          }
-        }
-      }
-    }
-
-    // Collect all loads from this argument
-    SmallVector<LoadInst *, 8> Loads;
-    WorkList.clear();
-    WorkList.insert(Arg);
-    ToProcess.assign(WorkList.begin(), WorkList.end());
+    // Collect all stores and loads to this argument with offsets
+    SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
+    SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
+    
+    // WorkList tracks (Value*, Offset from Arg)
+    SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
+    SmallPtrSet<Value *, 16> Visited;
+    
+    APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+    ToProcess.push_back({Arg, ZeroOffset});
+    Visited.insert(Arg);
 
     while (!ToProcess.empty()) {
-      Value *V = ToProcess.pop_back_val();
+      auto [V, CurrentOffset] = ToProcess.pop_back_val();
 
       for (User *U : V->users()) {
         if (auto *LI = dyn_cast<LoadInst>(U)) {
           if (LI->getPointerOperand() == V) {
-            Loads.push_back(LI);
+            Loads.push_back({LI, CurrentOffset});
+          }
+        } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+          // Check if this is a store TO the pointer (not storing the pointer value)
+          if (SI->getPointerOperand() == V) {
+            Stores.push_back({SI, CurrentOffset});
+          } else {
+            // Pointer value is being stored somewhere - reject this argument
+            Stores.clear();
+            Loads.clear();
+            goto next_argument;
           }
         } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
-          if (WorkList.insert(GEP).second) {
-            ToProcess.push_back(GEP);
+          // Compute the offset for this GEP
+          APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+          if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
+            // Cannot compute constant offset - reject this argument
+            Stores.clear();
+            Loads.clear();
+            goto next_argument;
+          }
+          
+          if (Visited.insert(GEP).second) {
+            APInt NewOffset = CurrentOffset + GEPOffset;
+            ToProcess.push_back({GEP, NewOffset});
           }
         } else if (isa<CastInst>(U)) {
-          if (WorkList.insert(cast<Instruction>(U)).second) {
-            ToProcess.push_back(cast<Instruction>(U));
+          // Casts don't change offset
+          if (Visited.insert(cast<Instruction>(U)).second) {
+            ToProcess.push_back({cast<Instruction>(U), CurrentOffset});
           }
+        } else {
+          // Unknown use - reject this argument
+          Stores.clear();
+          Loads.clear();
+          goto next_argument;
         }
       }
     }
 
     // Try to forward stores to loads
-    for (LoadInst *LI : Loads) {
-      Value *LoadPtr = LI->getPointerOperand();
-      APInt LoadOffset(DL.getIndexTypeSizeInBits(LoadPtr->getType()), 0);
-
-      if (!getConstantOffset(DL, LoadPtr, Arg, LoadOffset))
-        continue;
-
+    for (auto &[LI, LoadOffset] : Loads) {
       uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
 
       // Find a dominating store that can satisfy this load
       StoreInst *DominatingStore = nullptr;
-      APInt StoreOffset(DL.getIndexTypeSizeInBits(LoadPtr->getType()), 0);
+      APInt StoreOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
 
-      for (StoreInst *SI : Stores) {
+      for (auto &[SI, CurStoreOffset] : Stores) {
         if (!DT.dominates(SI, LI))
-          continue;
-
-        Value *StorePtr = SI->getPointerOperand();
-        APInt CurStoreOffset(DL.getIndexTypeSizeInBits(StorePtr->getType()),
-                             0);
-
-        if (!getConstantOffset(DL, StorePtr, Arg, CurStoreOffset))
           continue;
 
         uint64_t StoreSize =
@@ -331,22 +284,11 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
 
         // Check if there's no aliasing store in between
         bool HasIntermediateStore = false;
-        for (StoreInst *OtherSI : Stores) {
+        for (auto &[OtherSI, OtherStoreOffset] : Stores) {
           if (OtherSI == SI)
             continue;
 
           if (DT.dominates(SI, OtherSI) && DT.dominates(OtherSI, LI)) {
-            // Check if this store may alias
-            Value *OtherStorePtr = OtherSI->getPointerOperand();
-            APInt OtherStoreOffset(
-                DL.getIndexTypeSizeInBits(OtherStorePtr->getType()), 0);
-
-            if (!getConstantOffset(DL, OtherStorePtr, Arg, OtherStoreOffset)) {
-              // Can't determine offset, assume it may alias
-              HasIntermediateStore = true;
-              break;
-            }
-
             uint64_t OtherStoreSize =
                 DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
 
@@ -388,6 +330,9 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
         }
       }
     }
+    
+next_argument:
+    continue;
   }
 
   return Changed;
