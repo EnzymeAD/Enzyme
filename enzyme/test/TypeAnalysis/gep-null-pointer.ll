@@ -1,12 +1,13 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=foo -S -o /dev/null | FileCheck %s
 
-; Test that GEP with null pointer does not propagate pointer type to result
+; Test that GEP with null pointer does not cause "Illegal updateAnalysis" error
 ; This test is based on the issue: https://fwd.gymni.ch/IpbFyC
+; The fix prevents propagating pointer type to GEP result when input is null
 
 declare { i64, i1 } @llvm.umul.with.overflow.i64(i64, i64)
-declare ptr @_RNvCs1QLEhZ2QfLZ_7___rustc19___rust_alloc_zeroed(i64, i64)
-declare ptr @_RNvCs1QLEhZ2QfLZ_7___rustc12___rust_alloc(i64, i64)
+declare ptr @rust_alloc_zeroed(i64, i64)
+declare ptr @rust_alloc(i64, i64)
 
 define void @foo(ptr %0, i64 %1, i1 %2, i64 %3, i64 %4) {
 entry:
@@ -40,14 +41,14 @@ entry:
   br i1 %2, label %28, label %31
 
 28:
-  %28_val = tail call noundef ptr @_RNvCs1QLEhZ2QfLZ_7___rustc19___rust_alloc_zeroed(i64 noundef range(i64 1, 0) %11, i64 noundef range(i64 1, -9223372036854775807) %3)
+  %28_val = tail call noundef ptr @rust_alloc_zeroed(i64 noundef range(i64 1, 0) %11, i64 noundef range(i64 1, -9223372036854775807) %3)
   br label %32
 
 29:
   br i1 %2, label %30, label %31
 
 30:
-  %30_val = tail call noundef ptr @_RNvCs1QLEhZ2QfLZ_7___rustc12___rust_alloc(i64 noundef %11, i64 noundef range(i64 1, -9223372036854775807) %3)
+  %30_val = tail call noundef ptr @rust_alloc(i64 noundef %11, i64 noundef range(i64 1, -9223372036854775807) %3)
   br label %32
 
 31:
@@ -74,4 +75,5 @@ entry:
 }
 
 ; CHECK: foo
+; Verify that the analysis completes without "Illegal updateAnalysis" error
 ; CHECK: %21 = getelementptr i8, ptr null, i64 %3: {[-1]:Pointer, [-1,-1]:Anything}
