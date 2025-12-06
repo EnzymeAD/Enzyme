@@ -49,8 +49,6 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
-#include <mutex>
-
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
 #include "EnzymeLogic.h"
@@ -199,15 +197,9 @@ public:
     if (FunctionToAnalyze.empty())
       return false;
     
-    bool functionFound = false;
-    for (auto &F : M) {
-      if (F.getName() == FunctionToAnalyze) {
-        functionFound = true;
-        break;
-      }
-    }
+    Function *TargetFunc = M.getFunction(FunctionToAnalyze);
     
-    if (!functionFound) {
+    if (!TargetFunc) {
       // Use the first function in the module as context for the diagnostic
       Function *FirstFunc = nullptr;
       for (auto &F : M) {
@@ -221,11 +213,11 @@ public:
         EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
                     FirstFunc,
                     "Function '", FunctionToAnalyze,
-                    "' specified in -activity-analysis-func not found in module");
+                    "' specified by -activity-analysis-func not found in module");
       } else {
         // Fallback if no functions in module
         std::string msg = "Function '" + FunctionToAnalyze + 
-                          "' specified in -activity-analysis-func not found in module";
+                          "' specified by -activity-analysis-func not found in module";
         report_fatal_error(StringRef(msg));
       }
     }
@@ -248,53 +240,41 @@ static RegisterPass<ActivityAnalysisPrinter>
     X("print-activity-analysis", "Print Activity Analysis Results");
 
 ActivityAnalysisPrinterNewPM::Result
-ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
-                                  llvm::FunctionAnalysisManager &FAM) {
-  // If a specific function is requested, check if it exists in the module
-  // Note: This is a function pass, so we check on the first invocation
-  // For typical opt usage with a single module, this is sufficient
+ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
+                                  llvm::ModuleAnalysisManager &MAM) {
+  // If a specific function is requested, check if it exists
   if (!FunctionToAnalyze.empty()) {
-    static std::once_flag validationFlag;
-    std::call_once(validationFlag, [&F]() {
-      Module *M = F.getParent();
-      if (!M)
-        return;
-      
-      bool functionFound = false;
-      for (auto &Func : *M) {
-        if (Func.getName() == FunctionToAnalyze) {
-          functionFound = true;
+    Function *TargetFunc = M.getFunction(FunctionToAnalyze);
+    
+    if (!TargetFunc) {
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
           break;
         }
       }
       
-      if (!functionFound) {
-        // Use the first function in the module as context for the diagnostic
-        Function *FirstFunc = nullptr;
-        for (auto &Func : *M) {
-          if (!Func.isDeclaration()) {
-            FirstFunc = &Func;
-            break;
-          }
-        }
-        
-        if (FirstFunc) {
-          EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
-                      FirstFunc,
-                      "Function '", FunctionToAnalyze,
-                      "' specified in -activity-analysis-func not found in module");
-        } else {
-          // Fallback if no functions in module
-          std::string msg = "Function '" + FunctionToAnalyze + 
-                            "' specified in -activity-analysis-func not found in module";
-          report_fatal_error(StringRef(msg));
-        }
+      if (FirstFunc) {
+        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "Function '", FunctionToAnalyze,
+                    "' specified by -activity-analysis-func not found in module");
+      } else {
+        // Fallback if no functions in module
+        std::string msg = "Function '" + FunctionToAnalyze + 
+                          "' specified by -activity-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
       }
-    });
+    }
   }
   
   bool changed = false;
-  changed = printActivityAnalysis(F, FAM.getResult<TargetLibraryAnalysis>(F));
+  for (auto &F : M) {
+    auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    changed |= printActivityAnalysis(F, FAM.getResult<TargetLibraryAnalysis>(F));
+  }
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey ActivityAnalysisPrinterNewPM::Key;

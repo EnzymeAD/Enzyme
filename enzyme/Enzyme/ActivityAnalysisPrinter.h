@@ -46,7 +46,7 @@ public:
   using Result = llvm::PreservedAnalyses;
   ActivityAnalysisPrinterNewPM() {}
 
-  Result run(llvm::Function &M, llvm::FunctionAnalysisManager &MAM);
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 
   static bool isRequired() { return true; }
 };
