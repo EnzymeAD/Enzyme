@@ -204,9 +204,9 @@ public:
       }
       
       if (!functionFound) {
-        std::string msg = "Function '" + FunctionToAnalyze.str() + 
+        std::string msg = "Function '" + FunctionToAnalyze + 
                           "' specified in -activity-analysis-func not found in module";
-        report_fatal_error(msg);
+        report_fatal_error(StringRef(msg));
       }
     }
     return false;
@@ -246,9 +246,9 @@ ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
       }
       
       if (!functionFound) {
-        std::string msg = "Function '" + FunctionToAnalyze.str() + 
+        std::string msg = "Function '" + FunctionToAnalyze + 
                           "' specified in -activity-analysis-func not found in module";
-        report_fatal_error(msg);
+        report_fatal_error(StringRef(msg));
       }
     }
   }

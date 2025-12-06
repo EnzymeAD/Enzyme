@@ -187,9 +187,9 @@ public:
       }
       
       if (!functionFound) {
-        std::string msg = "Function '" + EnzymeFunctionToAnalyze.str() + 
+        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
                           "' specified in -type-analysis-func not found in module";
-        report_fatal_error(msg);
+        report_fatal_error(StringRef(msg));
       }
     }
     return false;
@@ -221,9 +221,9 @@ TypeAnalysisPrinterNewPM::run(llvm::Module &M,
     }
     
     if (!functionFound) {
-      std::string msg = "Function '" + EnzymeFunctionToAnalyze.str() + 
+      std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
                         "' specified in -type-analysis-func not found in module";
-      report_fatal_error(msg);
+      report_fatal_error(StringRef(msg));
     }
   }
   
