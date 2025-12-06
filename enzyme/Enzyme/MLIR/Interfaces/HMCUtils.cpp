@@ -124,8 +124,14 @@ Value enzyme::applyInverseMassMatrix(OpBuilder &builder, Location loc,
 
 Value enzyme::computeKineticEnergy(OpBuilder &builder, Location loc,
                                    Value momentum, Value invMass,
-                                   Value halfConst, RankedTensorType scalarType,
                                    RankedTensorType positionType) {
+  auto elemType = positionType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+
+  auto halfConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+
   // v = M^-1 @ p
   Value v =
       applyInverseMassMatrix(builder, loc, invMass, momentum, positionType);
@@ -141,8 +147,17 @@ Value enzyme::computeKineticEnergy(OpBuilder &builder, Location loc,
 
 std::pair<Value, Value> enzyme::sampleMomentum(OpBuilder &builder, Location loc,
                                                Value rngState, Value invMass,
-                                               Value zeroConst, Value oneConst,
                                                RankedTensorType positionType) {
+  auto elemType = positionType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  auto oneConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+
   // Sample eps ~ N(0, I)
   auto randomOp = enzyme::RandomOp::create(
       builder, loc, TypeRange{rngState.getType(), positionType}, rngState,
@@ -277,17 +292,23 @@ LeapfrogResult enzyme::emitLeapfrogStep(
 
 Value enzyme::checkTurning(OpBuilder &builder, Location loc, Value invMass,
                            Value pLeft, Value pRight, Value pSum,
-                           Value zeroConst, RankedTensorType scalarType,
                            RankedTensorType positionType) {
+  auto elemType = positionType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  auto halfConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+
   Value vLeft =
       applyInverseMassMatrix(builder, loc, invMass, pLeft, positionType);
   Value vRight =
       applyInverseMassMatrix(builder, loc, invMass, pRight, positionType);
 
   // p_sum_centered = p_sum - (p_left + p_right) / 2
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getF64FloatAttr(0.5)));
   auto halfBroadcast = enzyme::BroadcastOp::create(
       builder, loc, positionType, halfConst,
       builder.getDenseI64ArrayAttr(positionType.getShape()));
@@ -325,9 +346,16 @@ Value enzyme::computeUniformTransitionProb(OpBuilder &builder, Location loc,
 
 Value enzyme::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                           Value currentWeight, Value newWeight,
-                                          Value turning, Value diverging,
-                                          Value zeroConst, Value oneConst) {
+                                          Value turning, Value diverging) {
   auto resultType = cast<RankedTensorType>(currentWeight.getType());
+  auto elemType = resultType.getElementType();
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, resultType,
+      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
+  auto oneConst = arith::ConstantOp::create(
+      builder, loc, resultType,
+      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 1.0)));
 
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
@@ -340,12 +368,23 @@ Value enzyme::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                  zeroConst, clippedProb);
 }
 
-NUTSTreeState enzyme::combineTrees(
-    OpBuilder &builder, Location loc, const NUTSTreeState &currentTree,
-    const NUTSTreeState &newTree, Value invMass, Value goingRight, Value rngKey,
-    bool biasedTransition, Value zeroConst, Value oneConst,
-    RankedTensorType scalarType, RankedTensorType positionType,
-    RankedTensorType i64TensorType, RankedTensorType i1TensorType) {
+NUTSTreeState enzyme::combineTrees(OpBuilder &builder, Location loc,
+                                   const NUTSTreeState &currentTree,
+                                   const NUTSTreeState &newTree, Value invMass,
+                                   Value goingRight, Value rngKey,
+                                   bool biasedTransition,
+                                   RankedTensorType positionType) {
+
+  auto elemType = positionType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  auto oneConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
   auto goingRightBroadcast = enzyme::BroadcastOp::create(
       builder, loc,
@@ -379,7 +418,7 @@ NUTSTreeState enzyme::combineTrees(
   if (biasedTransition) {
     transitionProb = computeBiasedTransitionProb(
         builder, loc, currentTree.weight, newTree.weight, newTree.turning,
-        newTree.diverging, zeroConst, oneConst);
+        newTree.diverging);
   } else {
     transitionProb = computeUniformTransitionProb(
         builder, loc, currentTree.weight, newTree.weight);
@@ -424,7 +463,7 @@ NUTSTreeState enzyme::combineTrees(
     Value turningCheck = checkTurning(
         builder, loc, invMass, pLeft, pRight,
         arith::AddFOp::create(builder, loc, currentTree.p_sum, newTree.p_sum),
-        zeroConst, scalarType, positionType);
+        positionType);
     combinedTurning =
         arith::OrIOp::create(builder, loc, newTree.turning, turningCheck);
   } else {
@@ -480,16 +519,6 @@ InitialHMCState enzyme::initializeHMCState(
                              arith::NegFOp::create(builder, loc, weight0),
                              "HMC: initial potential energy U0", debugDump);
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
-
   Value rng1;
   Value p0;
 
@@ -498,16 +527,15 @@ InitialHMCState enzyme::initializeHMCState(
     p0 = initialMomentum;
     rng1 = rngState;
   } else {
-    std::tie(p0, rng1) = sampleMomentum(builder, loc, rngState, invMass,
-                                        zeroConst, oneConst, positionType);
+    std::tie(p0, rng1) =
+        sampleMomentum(builder, loc, rngState, invMass, positionType);
   }
 
   // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
-  Value K0 =
-      conditionalDump(builder, loc,
-                      computeKineticEnergy(builder, loc, p0, invMass, halfConst,
-                                           scalarType, positionType),
-                      "HMC: initial kinetic energy K0", debugDump);
+  Value K0 = conditionalDump(
+      builder, loc,
+      computeKineticEnergy(builder, loc, p0, invMass, positionType),
+      "HMC: initial kinetic energy K0", debugDump);
 
   Value H0 =
       conditionalDump(builder, loc, arith::AddFOp::create(builder, loc, U0, K0),
@@ -580,9 +608,6 @@ std::tuple<Value, Value, Value> enzyme::finalizeHMCStep(
   auto oneConst = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
 
   SmallVector<Value> finalUpdateInputs;
   finalUpdateInputs.push_back(rngState);
@@ -601,11 +626,11 @@ std::tuple<Value, Value, Value> enzyme::finalizeHMCStep(
                                    "HMC: final potential energy U1", debugDump);
 
   // K1 = 0.5 * pL^T * M^-1 * pL
-  Value K1 = conditionalDump(
-      builder, loc,
-      computeKineticEnergy(builder, loc, proposedMomentum, invMass, halfConst,
-                           scalarType, positionType),
-      "HMC: final kinetic energy K1", debugDump);
+  Value K1 =
+      conditionalDump(builder, loc,
+                      computeKineticEnergy(builder, loc, proposedMomentum,
+                                           invMass, positionType),
+                      "HMC: final kinetic energy K1", debugDump);
 
   Value H1 = conditionalDump(builder, loc,
                              arith::AddFOp::create(builder, loc, U1_final, K1),

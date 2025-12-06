@@ -85,9 +85,7 @@ Value applyInverseMassMatrix(OpBuilder &builder, Location loc, Value invMass,
 
 /// Computes `K = 0.5 * p^T @ M^-1 @ p`
 Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
-                           Value invMass, Value halfConst,
-                           RankedTensorType scalarType,
-                           RankedTensorType positionType);
+                           Value invMass, RankedTensorType positionType);
 
 /// Samples momentum from `N(0, M)`
 /// If `invMass` is nullptr, samples from `N(0, I)` (assumes identity).
@@ -95,7 +93,6 @@ Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
 /// Returns `(momentum, updated_rng_state)`.
 std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
                                        Value rngState, Value invMass,
-                                       Value zeroConst, Value oneConst,
                                        RankedTensorType positionType);
 
 /// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
@@ -122,8 +119,7 @@ emitLeapfrogStep(OpBuilder &builder, Location loc, Value q, Value p, Value grad,
 /// U-turn termination criterion.
 /// Returns `true` if U-turn detected in the trajectory.
 Value checkTurning(OpBuilder &builder, Location loc, Value invMass, Value pLeft,
-                   Value pRight, Value pSum, Value zeroConst,
-                   RankedTensorType scalarType, RankedTensorType positionType);
+                   Value pRight, Value pSum, RankedTensorType positionType);
 
 /// Computes the uniform transition probability for subtree combination.
 /// Specifically: `sigmoid(new_weight - current_weight)`.
@@ -135,17 +131,15 @@ Value computeUniformTransitionProb(OpBuilder &builder, Location loc,
 /// turning or diverging.
 Value computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                   Value currentWeight, Value newWeight,
-                                  Value turning, Value diverging,
-                                  Value zeroConst, Value oneConst);
+                                  Value turning, Value diverging);
 
 /// Combines two trees during NUTS doubling.
-NUTSTreeState
-combineTrees(OpBuilder &builder, Location loc, const NUTSTreeState &currentTree,
-             const NUTSTreeState &newTree, Value invMass, Value goingRight,
-             Value rngKey, bool biasedTransition, Value zeroConst,
-             Value oneConst, RankedTensorType scalarType,
-             RankedTensorType positionType, RankedTensorType i64TensorType,
-             RankedTensorType i1TensorType);
+NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
+                           const NUTSTreeState &currentTree,
+                           const NUTSTreeState &newTree, Value invMass,
+                           Value goingRight, Value rngKey,
+                           bool biasedTransition,
+                           RankedTensorType positionType);
 
 /// Initializes HMC/NUTS state from a trace.
 /// Specifically:

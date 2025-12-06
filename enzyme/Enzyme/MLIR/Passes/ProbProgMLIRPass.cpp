@@ -484,6 +484,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.0)));
+      auto halfConst = arith::ConstantOp::create(
+          rewriter, loc, tensorType,
+          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
       auto oneConst = arith::ConstantOp::create(
           rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
@@ -499,19 +502,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rng1 = rngState;
       } else {
         std::tie(p0, rng1) =
-            enzyme::sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
-                                   oneConst, positionType);
+            enzyme::sampleMomentum(rewriter, loc, rngState, invMass,
+                                   positionType);
       }
-
-      auto halfConst = arith::ConstantOp::create(
-          rewriter, loc, tensorType,
-          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
       Value K0 = enzyme::conditionalDump(
           rewriter, loc,
-          enzyme::computeKineticEnergy(rewriter, loc, p0, invMass, halfConst,
-                                       tensorType, positionType),
+          enzyme::computeKineticEnergy(rewriter, loc, p0, invMass, positionType),
           "HMC: initial kinetic energy K0", debugDump);
 
       Value H0 = enzyme::conditionalDump(
@@ -700,8 +698,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // K1 = 0.5 * pL^T * M^-1 * pL
       Value K1 = enzyme::conditionalDump(
           rewriter, loc,
-          enzyme::computeKineticEnergy(rewriter, loc, pL, invMass, halfConst,
-                                       tensorType, positionType),
+          enzyme::computeKineticEnergy(rewriter, loc, pL, invMass, positionType),
           "HMC: final kinetic energy K1", debugDump);
 
       Value H1 = enzyme::conditionalDump(
@@ -798,6 +795,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.0)));
+      auto halfConst = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.5)));
       auto oneConst = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
@@ -813,19 +813,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rng1 = rngState;
       } else {
         std::tie(pInit, rng1) =
-            enzyme::sampleMomentum(rewriter, loc, rngState, invMass, zeroConst,
-                                   oneConst, positionType);
+            enzyme::sampleMomentum(rewriter, loc, rngState, invMass,
+                                   positionType);
       }
-
-      auto halfConst = arith::ConstantOp::create(
-          rewriter, loc, F64TensorType,
-          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.5)));
 
       // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
       Value K0 = enzyme::conditionalDump(
           rewriter, loc,
-          enzyme::computeKineticEnergy(rewriter, loc, pInit, invMass, halfConst,
-                                       F64TensorType, positionType),
+          enzyme::computeKineticEnergy(rewriter, loc, pInit, invMass,
+                                       positionType),
           "NUTS: initial kinetic energy K0", debugDump);
 
       Value H0 = enzyme::conditionalDump(
@@ -1174,8 +1170,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value pNew = arith::SubFOp::create(rewriter, loc, pHalf, deltaP2);
 
       // Body 7d: Compute kinetic energy.
-      Value KNew = enzyme::computeKineticEnergy(
-          rewriter, loc, pNew, invMass, halfConst, F64TensorType, positionType);
+      Value KNew =
+          enzyme::computeKineticEnergy(rewriter, loc, pNew, invMass, positionType);
       Value ENew = arith::AddFOp::create(rewriter, loc, UNew, KNew);
 
       // Body 7e: Various checks.
@@ -1308,7 +1304,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       // Body 7i: Check and update turning flag.
       updatedSubtree.turning = enzyme::checkTurning(
           rewriter, loc, invMass, updatedSubtree.p_left, updatedSubtree.p_right,
-          updatedSubtree.p_sum, zeroConst, F64TensorType, positionType);
+          updatedSubtree.p_sum, positionType);
 
       SmallVector<Value> yieldVals = updatedSubtree.toValues();
       yieldVals.push_back(rngIter);
