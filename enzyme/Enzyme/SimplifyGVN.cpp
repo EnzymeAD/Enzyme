@@ -61,6 +61,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
@@ -146,7 +147,8 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
 }
 
 // Main optimization function
-bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
+bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
+                 const DataLayout &DL) {
   bool Changed = false;
 
   // Find noalias arguments
@@ -238,22 +240,25 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
           if (OtherSI == SI)
             continue;
 
-          // Check if OtherSI could interfere:
-          // 1. OtherSI happens after SI: DT.dominates(SI, OtherSI)
-          // 2. OtherSI could happen before LI: !DT.dominates(LI, OtherSI)
-          // If both conditions are true and they alias, we can't forward
-          if (DT.dominates(SI, OtherSI) && !DT.dominates(LI, OtherSI)) {
-            uint64_t OtherStoreSize =
-                DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
+          // First check if stores alias (cheaper check)
+          uint64_t OtherStoreSize =
+              DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
+          int64_t OtherRelOffset =
+              (LoadOffset - OtherStoreOffset).getSExtValue();
+          
+          // Check if the stores don't overlap - if not, continue
+          if (OtherRelOffset + (int64_t)LoadSize <= 0 ||
+              OtherRelOffset >= (int64_t)OtherStoreSize)
+            continue;
 
-            // Check if the store overlaps with the load
-            int64_t OtherRelOffset =
-                (LoadOffset - OtherStoreOffset).getSExtValue();
-            if (!(OtherRelOffset + (int64_t)LoadSize <= 0 ||
-                  OtherRelOffset >= (int64_t)OtherStoreSize)) {
-              HasIntermediateStore = true;
-              break;
-            }
+          // Stores alias. Check if OtherSI could interfere:
+          // OtherSI interferes if it's on a path from SI to LI.
+          // This happens when: SI dominates OtherSI AND OtherSI dominates LI
+          // Note: If load and store are in mutually exclusive branches,
+          // neither dominates the other, so this correctly allows forwarding.
+          if (DT.dominates(SI, OtherSI) && DT.dominates(OtherSI, LI)) {
+            HasIntermediateStore = true;
+            break;
           }
         }
 
@@ -299,12 +304,14 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<PostDominatorTreeWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override {
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    auto &PDT = getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
     const DataLayout &DL = F.getParent()->getDataLayout();
-    return simplifyGVN(F, DT, DL);
+    return simplifyGVN(F, DT, PDT, DL);
   }
 };
 
@@ -325,7 +332,8 @@ SimplifyGVNNewPM::Result
 SimplifyGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
   bool Changed = false;
   const DataLayout &DL = F.getParent()->getDataLayout();
-  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL);
+  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F),
+                        FAM.getResult<PostDominatorTreeAnalysis>(F), DL);
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
