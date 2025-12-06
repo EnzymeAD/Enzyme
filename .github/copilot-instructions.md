@@ -134,10 +134,16 @@ clang-format -i path/to/file.cpp
 ### Common Patterns
 
 #### Pass Registration
-New transformation passes should use `AnalysisInfoMixin` pattern:
+New transformation passes should use `AnalysisInfoMixin` pattern (even though they modify IR):
 ```cpp
-struct MyPass : public PassInfoMixin<MyPass> {
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+class MyPass final : public AnalysisInfoMixin<MyPass> {
+  friend struct AnalysisInfoMixin<MyPass>;
+private:
+  static AnalysisKey Key;
+public:
+  using Result = PreservedAnalyses;
+  Result run(Function &F, FunctionAnalysisManager &AM);
+  static bool isRequired() { return true; }
 };
 ```
 
