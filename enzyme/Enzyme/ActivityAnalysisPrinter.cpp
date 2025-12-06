@@ -47,6 +47,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
@@ -191,6 +192,26 @@ public:
     AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 
+  bool doInitialization(Module &M) override {
+    // If a specific function is requested, check if it exists
+    if (!FunctionToAnalyze.empty()) {
+      bool functionFound = false;
+      for (auto &F : M) {
+        if (F.getName() == FunctionToAnalyze) {
+          functionFound = true;
+          break;
+        }
+      }
+      
+      if (!functionFound) {
+        std::string msg = "Function '" + FunctionToAnalyze.str() + 
+                          "' specified in -activity-analysis-func not found in module";
+        report_fatal_error(msg);
+      }
+    }
+    return false;
+  }
+
   bool runOnFunction(Function &F) override {
 
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
@@ -209,6 +230,29 @@ static RegisterPass<ActivityAnalysisPrinter>
 ActivityAnalysisPrinterNewPM::Result
 ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
                                   llvm::FunctionAnalysisManager &FAM) {
+  // If a specific function is requested, check if it exists
+  // Note: For function passes in NewPM, we check when we encounter each function
+  static bool checkedForFunction = false;
+  if (!FunctionToAnalyze.empty() && !checkedForFunction) {
+    checkedForFunction = true;
+    bool functionFound = false;
+    Module *M = F.getParent();
+    if (M) {
+      for (auto &Func : *M) {
+        if (Func.getName() == FunctionToAnalyze) {
+          functionFound = true;
+          break;
+        }
+      }
+      
+      if (!functionFound) {
+        std::string msg = "Function '" + FunctionToAnalyze.str() + 
+                          "' specified in -activity-analysis-func not found in module";
+        report_fatal_error(msg);
+      }
+    }
+  }
+  
   bool changed = false;
   changed = printActivityAnalysis(F, FAM.getResult<TargetLibraryAnalysis>(F));
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

@@ -52,6 +52,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "../EnzymeLogic.h"
 #include "../FunctionUtils.h"
@@ -174,6 +175,26 @@ public:
     AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 
+  bool doInitialization(Module &M) override {
+    // If a specific function is requested, check if it exists
+    if (!EnzymeFunctionToAnalyze.empty()) {
+      bool functionFound = false;
+      for (auto &F : M) {
+        if (F.getName() == EnzymeFunctionToAnalyze) {
+          functionFound = true;
+          break;
+        }
+      }
+      
+      if (!functionFound) {
+        std::string msg = "Function '" + EnzymeFunctionToAnalyze.str() + 
+                          "' specified in -type-analysis-func not found in module";
+        report_fatal_error(msg);
+      }
+    }
+    return false;
+  }
+
   bool runOnFunction(Function &F) override { return printTypeAnalyses(F); }
 };
 
@@ -188,6 +209,24 @@ TypeAnalysisPrinterNewPM::Result
 TypeAnalysisPrinterNewPM::run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM) {
   bool changed = false;
+  bool functionFound = false;
+  
+  // If a specific function is requested, check if it exists
+  if (!EnzymeFunctionToAnalyze.empty()) {
+    for (auto &F : M) {
+      if (F.getName() == EnzymeFunctionToAnalyze) {
+        functionFound = true;
+        break;
+      }
+    }
+    
+    if (!functionFound) {
+      std::string msg = "Function '" + EnzymeFunctionToAnalyze.str() + 
+                        "' specified in -type-analysis-func not found in module";
+      report_fatal_error(msg);
+    }
+  }
+  
   for (auto &F : M)
     changed |= printTypeAnalyses(F);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
