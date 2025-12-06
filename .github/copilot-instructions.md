@@ -242,7 +242,7 @@ dbgs() << "Debug-only message\n";  // Only with -debug flag
 - **Documentation**: https://enzyme.mit.edu/Installation/
 - **Mailing List**: https://groups.google.com/d/forum/enzyme-dev
 - **LLVM Discourse**: https://discourse.llvm.org/c/projects-that-want-to-become-official-llvm-projects/enzyme/45
-- **Discord**: #enzyme channel
+- **Discord**: #enzyme channel on https://discord.gg/xS7Z362
 - **Julia Integration**: https://github.com/EnzymeAD/Enzyme.jl
 - **Rust Integration**: https://github.com/EnzymeAD/rust
 
