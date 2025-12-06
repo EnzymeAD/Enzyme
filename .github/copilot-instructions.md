@@ -43,7 +43,7 @@ enzyme/
 ### Prerequisites
 
 - CMake 3.13+
-- LLVM development libraries (version 15 or 16 recommended)
+- LLVM development libraries (check `.github/workflows/enzyme-ci.yml` for supported versions)
 - Ninja or Make build system
 - Python 3 with lit (for testing)
 
@@ -221,7 +221,7 @@ dbgs() << "Debug-only message\n";  // Only with -debug flag
 ### Build Failures
 
 - **Missing LLVM**: Ensure `LLVM_DIR` points to the correct LLVM installation
-- **Version mismatch**: Enzyme requires LLVM 15 or 16 (check CI for supported versions)
+- **Version mismatch**: Check `.github/workflows/enzyme-ci.yml` for currently supported LLVM versions (currently 15 and 16)
 - **lit not found**: Install with `pip install lit` and set `LLVM_EXTERNAL_LIT`
 
 ### Test Failures
