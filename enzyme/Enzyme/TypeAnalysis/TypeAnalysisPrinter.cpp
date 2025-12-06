@@ -220,9 +220,8 @@ TypeAnalysisPrinterNewPM::run(llvm::Module &M,
     return PreservedAnalyses::all();
   }
   
-  bool changed = false;
-  for (auto &F : M)
-    changed |= printTypeAnalyses(F);
+  // Run analysis only on the target function
+  bool changed = printTypeAnalyses(*TargetFunc);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey TypeAnalysisPrinterNewPM::Key;
