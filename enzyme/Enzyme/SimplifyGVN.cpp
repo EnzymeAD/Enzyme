@@ -172,16 +172,17 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     
     APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
     ToProcess.push_back({Arg, ZeroOffset});
-    Visited.insert(Arg);
 
     while (!ToProcess.empty()) {
       auto [V, CurrentOffset] = ToProcess.pop_back_val();
+      
+      // Skip if already visited
+      if (!Visited.insert(V).second)
+        continue;
 
       for (User *U : V->users()) {
         if (auto *LI = dyn_cast<LoadInst>(U)) {
-          if (LI->getPointerOperand() == V) {
-            Loads.push_back({LI, CurrentOffset});
-          }
+          Loads.push_back({LI, CurrentOffset});
         } else if (auto *SI = dyn_cast<StoreInst>(U)) {
           // Check if this is a store TO the pointer (not storing the pointer value)
           if (SI->getPointerOperand() == V) {
@@ -198,15 +199,11 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
             goto next_argument;
           }
           
-          if (Visited.insert(GEP).second) {
-            APInt NewOffset = CurrentOffset + GEPOffset;
-            ToProcess.push_back({GEP, NewOffset});
-          }
+          APInt NewOffset = CurrentOffset + GEPOffset;
+          ToProcess.push_back({GEP, NewOffset});
         } else if (auto *CI = dyn_cast<CastInst>(U)) {
           // Casts don't change offset
-          if (Visited.insert(CI).second) {
-            ToProcess.push_back({CI, CurrentOffset});
-          }
+          ToProcess.push_back({CI, CurrentOffset});
         } else {
           // Unknown use - reject this argument
           goto next_argument;
