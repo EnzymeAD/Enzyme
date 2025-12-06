@@ -177,20 +177,21 @@ public:
 
   bool doInitialization(Module &M) override {
     // If a specific function is requested, check if it exists
-    if (!EnzymeFunctionToAnalyze.empty()) {
-      bool functionFound = false;
-      for (auto &F : M) {
-        if (F.getName() == EnzymeFunctionToAnalyze) {
-          functionFound = true;
-          break;
-        }
+    if (EnzymeFunctionToAnalyze.empty())
+      return false;
+    
+    bool functionFound = false;
+    for (auto &F : M) {
+      if (F.getName() == EnzymeFunctionToAnalyze) {
+        functionFound = true;
+        break;
       }
-      
-      if (!functionFound) {
-        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
-                          "' specified in -type-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
-      }
+    }
+    
+    if (!functionFound) {
+      std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
+                        "' specified in -type-analysis-func not found in module";
+      report_fatal_error(StringRef(msg));
     }
     return false;
   }
@@ -209,10 +210,10 @@ TypeAnalysisPrinterNewPM::Result
 TypeAnalysisPrinterNewPM::run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM) {
   bool changed = false;
-  bool functionFound = false;
   
   // If a specific function is requested, check if it exists
   if (!EnzymeFunctionToAnalyze.empty()) {
+    bool functionFound = false;
     for (auto &F : M) {
       if (F.getName() == EnzymeFunctionToAnalyze) {
         functionFound = true;

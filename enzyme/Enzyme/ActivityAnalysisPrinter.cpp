@@ -196,20 +196,21 @@ public:
 
   bool doInitialization(Module &M) override {
     // If a specific function is requested, check if it exists
-    if (!FunctionToAnalyze.empty()) {
-      bool functionFound = false;
-      for (auto &F : M) {
-        if (F.getName() == FunctionToAnalyze) {
-          functionFound = true;
-          break;
-        }
+    if (FunctionToAnalyze.empty())
+      return false;
+    
+    bool functionFound = false;
+    for (auto &F : M) {
+      if (F.getName() == FunctionToAnalyze) {
+        functionFound = true;
+        break;
       }
-      
-      if (!functionFound) {
-        std::string msg = "Function '" + FunctionToAnalyze + 
-                          "' specified in -activity-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
-      }
+    }
+    
+    if (!functionFound) {
+      std::string msg = "Function '" + FunctionToAnalyze + 
+                        "' specified in -activity-analysis-func not found in module";
+      report_fatal_error(StringRef(msg));
     }
     return false;
   }
@@ -235,24 +236,25 @@ ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
   // If a specific function is requested, check if it exists in the module
   // Note: This is a function pass, so we check on the first invocation
   // For typical opt usage with a single module, this is sufficient
-  static std::once_flag validationFlag;
   if (!FunctionToAnalyze.empty()) {
+    static std::once_flag validationFlag;
     std::call_once(validationFlag, [&F]() {
-      bool functionFound = false;
       Module *M = F.getParent();
-      if (M) {
-        for (auto &Func : *M) {
-          if (Func.getName() == FunctionToAnalyze) {
-            functionFound = true;
-            break;
-          }
+      if (!M)
+        return;
+      
+      bool functionFound = false;
+      for (auto &Func : *M) {
+        if (Func.getName() == FunctionToAnalyze) {
+          functionFound = true;
+          break;
         }
-        
-        if (!functionFound) {
-          std::string msg = "Function '" + FunctionToAnalyze + 
-                            "' specified in -activity-analysis-func not found in module";
-          report_fatal_error(StringRef(msg));
-        }
+      }
+      
+      if (!functionFound) {
+        std::string msg = "Function '" + FunctionToAnalyze + 
+                          "' specified in -activity-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
       }
     });
   }
