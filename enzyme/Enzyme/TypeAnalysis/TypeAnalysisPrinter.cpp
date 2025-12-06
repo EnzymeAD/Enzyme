@@ -166,90 +166,61 @@ bool printTypeAnalyses(llvm::Function &F) {
   }
   return /*changed*/ false;
 }
-class TypeAnalysisPrinter final : public FunctionPass {
-public:
-  static char ID;
-  TypeAnalysisPrinter() : FunctionPass(ID) {}
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-  }
-
-  bool doInitialization(Module &M) override {
-    // If a specific function is requested, check if it exists
-    if (EnzymeFunctionToAnalyze.empty())
-      return false;
-    
-    Function *TargetFunc = M.getFunction(EnzymeFunctionToAnalyze);
-    
-    if (!TargetFunc) {
-      // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = nullptr;
-      for (auto &F : M) {
-        if (!F.isDeclaration()) {
-          FirstFunc = &F;
-          break;
-        }
-      }
-      
-      if (FirstFunc) {
-        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
-                    FirstFunc,
-                    "Function '", EnzymeFunctionToAnalyze,
-                    "' specified by -type-analysis-func not found in module");
-      } else {
-        // Fallback if no functions in module
-        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
-                          "' specified by -type-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
-      }
-    }
-    return false;
-  }
-
-  bool runOnFunction(Function &F) override { return printTypeAnalyses(F); }
-};
 
 } // namespace
-
-char TypeAnalysisPrinter::ID = 0;
-
-static RegisterPass<TypeAnalysisPrinter> X("print-type-analysis",
-                                           "Print Type Analysis Results");
 
 TypeAnalysisPrinterNewPM::Result
 TypeAnalysisPrinterNewPM::run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &MAM) {
-  bool changed = false;
-  
-  // If a specific function is requested, check if it exists
-  if (!EnzymeFunctionToAnalyze.empty()) {
-    Function *TargetFunc = M.getFunction(EnzymeFunctionToAnalyze);
-    
-    if (!TargetFunc) {
-      // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = nullptr;
-      for (auto &F : M) {
-        if (!F.isDeclaration()) {
-          FirstFunc = &F;
-          break;
-        }
-      }
-      
-      if (FirstFunc) {
-        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
-                    FirstFunc,
-                    "Function '", EnzymeFunctionToAnalyze,
-                    "' specified by -type-analysis-func not found in module");
-      } else {
-        // Fallback if no functions in module
-        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
-                          "' specified by -type-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
+  // Check if function name is specified
+  if (EnzymeFunctionToAnalyze.empty()) {
+    // Use the first function in the module as context for the diagnostic
+    Function *FirstFunc = nullptr;
+    for (auto &F : M) {
+      if (!F.isDeclaration()) {
+        FirstFunc = &F;
+        break;
       }
     }
+    
+    if (FirstFunc) {
+      EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
+                  FirstFunc,
+                  "No function specified for -type-analysis-func");
+    } else {
+      report_fatal_error("No function specified for -type-analysis-func");
+    }
+    return PreservedAnalyses::all();
   }
   
+  // Check if the specified function exists
+  Function *TargetFunc = M.getFunction(EnzymeFunctionToAnalyze);
+  
+  if (!TargetFunc) {
+    // Use the first function in the module as context for the diagnostic
+    Function *FirstFunc = nullptr;
+    for (auto &F : M) {
+      if (!F.isDeclaration()) {
+        FirstFunc = &F;
+        break;
+      }
+    }
+    
+    if (FirstFunc) {
+      EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                  FirstFunc,
+                  "Function '", EnzymeFunctionToAnalyze,
+                  "' specified by -type-analysis-func not found in module");
+    } else {
+      // Fallback if no functions in module
+      std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
+                        "' specified by -type-analysis-func not found in module";
+      report_fatal_error(StringRef(msg));
+    }
+    return PreservedAnalyses::all();
+  }
+  
+  bool changed = false;
   for (auto &F : M)
     changed |= printTypeAnalyses(F);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
