@@ -208,9 +208,26 @@ public:
     }
     
     if (!functionFound) {
-      std::string msg = "Function '" + FunctionToAnalyze + 
-                        "' specified in -activity-analysis-func not found in module";
-      report_fatal_error(StringRef(msg));
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
+          break;
+        }
+      }
+      
+      if (FirstFunc) {
+        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "Function '", FunctionToAnalyze,
+                    "' specified in -activity-analysis-func not found in module");
+      } else {
+        // Fallback if no functions in module
+        std::string msg = "Function '" + FunctionToAnalyze + 
+                          "' specified in -activity-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
+      }
     }
     return false;
   }
@@ -252,9 +269,26 @@ ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
       }
       
       if (!functionFound) {
-        std::string msg = "Function '" + FunctionToAnalyze + 
-                          "' specified in -activity-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
+        // Use the first function in the module as context for the diagnostic
+        Function *FirstFunc = nullptr;
+        for (auto &Func : *M) {
+          if (!Func.isDeclaration()) {
+            FirstFunc = &Func;
+            break;
+          }
+        }
+        
+        if (FirstFunc) {
+          EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                      FirstFunc,
+                      "Function '", FunctionToAnalyze,
+                      "' specified in -activity-analysis-func not found in module");
+        } else {
+          // Fallback if no functions in module
+          std::string msg = "Function '" + FunctionToAnalyze + 
+                            "' specified in -activity-analysis-func not found in module";
+          report_fatal_error(StringRef(msg));
+        }
       }
     });
   }

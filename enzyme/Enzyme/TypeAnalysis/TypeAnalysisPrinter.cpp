@@ -189,9 +189,26 @@ public:
     }
     
     if (!functionFound) {
-      std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
-                        "' specified in -type-analysis-func not found in module";
-      report_fatal_error(StringRef(msg));
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
+          break;
+        }
+      }
+      
+      if (FirstFunc) {
+        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "Function '", EnzymeFunctionToAnalyze,
+                    "' specified in -type-analysis-func not found in module");
+      } else {
+        // Fallback if no functions in module
+        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
+                          "' specified in -type-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
+      }
     }
     return false;
   }
@@ -222,9 +239,26 @@ TypeAnalysisPrinterNewPM::run(llvm::Module &M,
     }
     
     if (!functionFound) {
-      std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
-                        "' specified in -type-analysis-func not found in module";
-      report_fatal_error(StringRef(msg));
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
+          break;
+        }
+      }
+      
+      if (FirstFunc) {
+        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "Function '", EnzymeFunctionToAnalyze,
+                    "' specified in -type-analysis-func not found in module");
+      } else {
+        // Fallback if no functions in module
+        std::string msg = "Function '" + EnzymeFunctionToAnalyze + 
+                          "' specified in -type-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
+      }
     }
   }
   
