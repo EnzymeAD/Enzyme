@@ -3381,6 +3381,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "ActivityAnalysisPrinter.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
+#include "SimpleGVN.h"
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
@@ -3809,6 +3810,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "jl-inst-simplify") {
           FPM.addPass(JLInstSimplifyNewPM());
+          return true;
+        }
+        if (Name == "simple-gvn") {
+          FPM.addPass(SimpleGVNNewPM());
           return true;
         }
         return false;
