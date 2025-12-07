@@ -192,13 +192,7 @@ public:
     // Check if function name is specified
     if (FunctionToAnalyze.empty()) {
       // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = nullptr;
-      for (auto &F : M) {
-        if (!F.isDeclaration()) {
-          FirstFunc = &F;
-          break;
-        }
-      }
+      Function *FirstFunc = getFirstFunctionDefinition(M);
       
       if (FirstFunc) {
         EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
@@ -215,13 +209,7 @@ public:
     
     if (!TargetFunc) {
       // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = nullptr;
-      for (auto &F : M) {
-        if (!F.isDeclaration()) {
-          FirstFunc = &F;
-          break;
-        }
-      }
+      Function *FirstFunc = getFirstFunctionDefinition(M);
       
       if (FirstFunc) {
         EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
@@ -261,13 +249,7 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
   // Check if function name is specified
   if (FunctionToAnalyze.empty()) {
     // Use the first function in the module as context for the diagnostic
-    Function *FirstFunc = nullptr;
-    for (auto &F : M) {
-      if (!F.isDeclaration()) {
-        FirstFunc = &F;
-        break;
-      }
-    }
+    Function *FirstFunc = getFirstFunctionDefinition(M);
     
     if (FirstFunc) {
       EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
@@ -284,13 +266,7 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
   
   if (!TargetFunc) {
     // Use the first function in the module as context for the diagnostic
-    Function *FirstFunc = nullptr;
-    for (auto &F : M) {
-      if (!F.isDeclaration()) {
-        FirstFunc = &F;
-        break;
-      }
-    }
+    Function *FirstFunc = getFirstFunctionDefinition(M);
     
     if (FirstFunc) {
       EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),

@@ -1395,6 +1395,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
+llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
+
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
 
