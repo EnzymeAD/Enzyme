@@ -115,6 +115,10 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
     return StoredVal;
   }
 
+  if (RelativeOffset == 0 && isa<PointerType>(LoadType) &&
+      isa<PointerType>(StoreType)) {
+    return Builder.CreatePointerCast(StoredVal, LoadType);
+  }
   // Handle extraction with offset or type mismatch
   // First, bitcast to an integer type if needed
   if (!StoreType->isIntegerTy()) {
