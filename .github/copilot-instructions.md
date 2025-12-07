@@ -171,6 +171,9 @@ public:
   EmitFailure("RemarkName", Loc, CodeRegion, "Error message: ", value);
   ```
 - **Use `CustomErrorHandler`** to provide user-customizable error handling (especially useful for language bindings)
+  - `CustomErrorHandler` is a global variable set by tools that use Enzyme as a library
+  - If non-null, it should be checked and used in preference to other error handlers
+  - Functions like `EmitNoDerivativeError`, `EmitNoTypeError` implement this pattern: they first check if `CustomErrorHandler` is set and call it, otherwise fall back to `EmitFailure`
 - Use LLVM's error reporting: `llvm::errs()`, `dbgs()`, assertions
 - Provide meaningful diagnostic messages
 - Use `llvm_unreachable()` for impossible cases
