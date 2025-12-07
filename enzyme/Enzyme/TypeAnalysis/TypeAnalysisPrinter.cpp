@@ -179,17 +179,16 @@ public:
                   "No function specified for -type-analysis-func");
       return false;
     }
-    
+
     // Check if the specified function exists
     Function *TargetFunc = M.getFunction(EnzymeFunctionToAnalyze);
-    
+
     if (!TargetFunc) {
-      EmitFailure("FunctionNotFound", M,
-                  "Function '", EnzymeFunctionToAnalyze,
+      EmitFailure("FunctionNotFound", M, "Function '", EnzymeFunctionToAnalyze,
                   "' specified by -type-analysis-func not found in module");
       return false;
     }
-    
+
     // Run analysis only on the target function
     return printTypeAnalyses(*TargetFunc);
   }
@@ -204,7 +203,7 @@ public:
 char TypeAnalysisPrinter::ID = 0;
 
 static RegisterPass<TypeAnalysisPrinter> X("print-type-analysis",
-                                            "Print Type Analysis Results");
+                                           "Print Type Analysis Results");
 
 TypeAnalysisPrinterNewPM::Result
 TypeAnalysisPrinterNewPM::run(llvm::Module &M,
@@ -215,17 +214,16 @@ TypeAnalysisPrinterNewPM::run(llvm::Module &M,
                 "No function specified for -type-analysis-func");
     return PreservedAnalyses::all();
   }
-  
+
   // Check if the specified function exists
   Function *TargetFunc = M.getFunction(EnzymeFunctionToAnalyze);
-  
+
   if (!TargetFunc) {
-    EmitFailure("FunctionNotFound", M,
-                "Function '", EnzymeFunctionToAnalyze,
+    EmitFailure("FunctionNotFound", M, "Function '", EnzymeFunctionToAnalyze,
                 "' specified by -type-analysis-func not found in module");
     return PreservedAnalyses::all();
   }
-  
+
   // Run analysis only on the target function
   bool changed = printTypeAnalyses(*TargetFunc);
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();

@@ -195,17 +195,16 @@ public:
                   "No function specified for -activity-analysis-func");
       return false;
     }
-    
+
     // Check if the specified function exists
     Function *TargetFunc = M.getFunction(FunctionToAnalyze);
-    
+
     if (!TargetFunc) {
-      EmitFailure("FunctionNotFound", M,
-                  "Function '", FunctionToAnalyze,
+      EmitFailure("FunctionNotFound", M, "Function '", FunctionToAnalyze,
                   "' specified by -activity-analysis-func not found in module");
       return false;
     }
-    
+
     // Run analysis only on the target function
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*TargetFunc);
     return printActivityAnalysis(*TargetFunc, TLI);
@@ -233,20 +232,20 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
                 "No function specified for -activity-analysis-func");
     return PreservedAnalyses::all();
   }
-  
+
   // Check if the specified function exists
   Function *TargetFunc = M.getFunction(FunctionToAnalyze);
-  
+
   if (!TargetFunc) {
-    EmitFailure("FunctionNotFound", M,
-                "Function '", FunctionToAnalyze,
+    EmitFailure("FunctionNotFound", M, "Function '", FunctionToAnalyze,
                 "' specified by -activity-analysis-func not found in module");
     return PreservedAnalyses::all();
   }
-  
+
   // Run analysis only on the target function
   auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-  bool changed = printActivityAnalysis(*TargetFunc, FAM.getResult<TargetLibraryAnalysis>(*TargetFunc));
+  bool changed = printActivityAnalysis(
+      *TargetFunc, FAM.getResult<TargetLibraryAnalysis>(*TargetFunc));
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey ActivityAnalysisPrinterNewPM::Key;
