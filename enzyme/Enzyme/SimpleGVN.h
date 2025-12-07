@@ -1,4 +1,4 @@
-//=- SimplifyGVN.h - GVN-like load forwarding optimization ==============//
+//=- SimpleGVN.h - GVN-like load forwarding optimization ================//
 //
 //                             Enzyme Project
 //
@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares SimplifyGVN, a GVN-like optimization pass that forwards
+// This file declares SimpleGVN, a GVN-like optimization pass that forwards
 // loads from noalias/nocapture arguments to their corresponding stores.
 //
 // This pass provides an alternative to LLVM's built-in GVN pass without the
@@ -27,8 +27,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_SIMPLIFY_GVN_H
-#define ENZYME_SIMPLIFY_GVN_H
+#ifndef ENZYME_SIMPLE_GVN_H
+#define ENZYME_SIMPLE_GVN_H
 
 #include <llvm/Config/llvm-config.h>
 
@@ -39,20 +39,20 @@ namespace llvm {
 class FunctionPass;
 }
 
-class SimplifyGVNNewPM final
-    : public llvm::AnalysisInfoMixin<SimplifyGVNNewPM> {
-  friend struct llvm::AnalysisInfoMixin<SimplifyGVNNewPM>;
+class SimpleGVNNewPM final
+    : public llvm::AnalysisInfoMixin<SimpleGVNNewPM> {
+  friend struct llvm::AnalysisInfoMixin<SimpleGVNNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
 
 public:
   using Result = llvm::PreservedAnalyses;
-  SimplifyGVNNewPM() {}
+  SimpleGVNNewPM() {}
 
   Result run(llvm::Function &F, llvm::FunctionAnalysisManager &FAM);
 
   static bool isRequired() { return true; }
 };
 
-#endif // ENZYME_SIMPLIFY_GVN_H
+#endif // ENZYME_SIMPLE_GVN_H

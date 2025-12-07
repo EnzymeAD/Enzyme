@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -simplify-gvn -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="simplify-gvn" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -simple-gvn -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="simple-gvn" -S | FileCheck %s
 
 ; Test that load IS forwarded when store2 is in mutually exclusive branch
 

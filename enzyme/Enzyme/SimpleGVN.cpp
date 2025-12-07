@@ -1,4 +1,4 @@
-//=- SimplifyGVN.cpp - GVN-like load forwarding optimization ============//
+//=- SimpleGVN.cpp - GVN-like load forwarding optimization ============//
 //
 //                             Enzyme Project
 //
@@ -83,7 +83,7 @@
 
 #include "llvm/Transforms/Utils/Local.h"
 
-#include "SimplifyGVN.h"
+#include "SimpleGVN.h"
 #include "Utils.h"
 
 using namespace llvm;
@@ -91,7 +91,7 @@ using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
 #endif
-#define DEBUG_TYPE "simplify-gvn"
+#define DEBUG_TYPE "simple-gvn"
 
 namespace {
 
@@ -276,7 +276,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                                               LoadOffset, StoreOffset, LoadSize);
           
           if (ExtractedVal) {
-            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (single alias)\n"
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (single alias)\n"
                               << "  Store: " << *SI << "\n"
                               << "  Load:  " << *LI << "\n");
             LI->replaceAllUsesWith(ExtractedVal);
@@ -324,7 +324,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                                                 LoadOffset, StoreOffset, LoadSize);
             
             if (ExtractedVal) {
-              LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (same block)\n"
+              LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
                                 << "  Store: " << *SI << "\n"
                                 << "  Load:  " << *LI << "\n");
               LI->replaceAllUsesWith(ExtractedVal);
@@ -389,7 +389,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                                               LoadOffset, CandidateOffset, LoadSize);
           
           if (ExtractedVal) {
-            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (BFS candidate)\n"
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (BFS candidate)\n"
                               << "  Store: " << *Candidate << "\n"
                               << "  Load:  " << *LI << "\n");
             LI->replaceAllUsesWith(ExtractedVal);
@@ -406,10 +406,10 @@ next_argument:
   return Changed;
 }
 
-class SimplifyGVN final : public FunctionPass {
+class SimpleGVN final : public FunctionPass {
 public:
   static char ID;
-  SimplifyGVN() : FunctionPass(ID) {}
+  SimpleGVN() : FunctionPass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<DominatorTreeWrapperPass>();
@@ -425,23 +425,23 @@ public:
 
 } // namespace
 
-FunctionPass *createSimplifyGVNPass() { return new SimplifyGVN(); }
+FunctionPass *createSimpleGVNPass() { return new SimpleGVN(); }
 
-extern "C" void LLVMAddSimplifyGVNPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createSimplifyGVNPass());
+extern "C" void LLVMAddSimpleGVNPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createSimpleGVNPass());
 }
 
-char SimplifyGVN::ID = 0;
+char SimpleGVN::ID = 0;
 
-static RegisterPass<SimplifyGVN>
-    X("simplify-gvn", "GVN-like load forwarding optimization");
+static RegisterPass<SimpleGVN>
+    X("simple-gvn", "GVN-like load forwarding optimization");
 
-SimplifyGVNNewPM::Result
-SimplifyGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
+SimpleGVNNewPM::Result
+SimpleGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
   bool Changed = false;
   const DataLayout &DL = F.getParent()->getDataLayout();
   Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL);
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
-llvm::AnalysisKey SimplifyGVNNewPM::Key;
+llvm::AnalysisKey SimpleGVNNewPM::Key;

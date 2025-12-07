@@ -1,10 +1,10 @@
-# SimplifyGVN Pass Tests
+# SimpleGVN Pass Tests
 
-This directory contains tests for the SimplifyGVN optimization pass.
+This directory contains tests for the SimpleGVN optimization pass.
 
-## What is SimplifyGVN?
+## What is SimpleGVN?
 
-SimplifyGVN is a GVN-like (Global Value Numbering) optimization pass that forwards loads from `noalias` and `nocapture` function arguments to their corresponding stores. Unlike LLVM's built-in GVN pass, SimplifyGVN does not have a limit on the number of instructions or memory offsets it will analyze.
+SimpleGVN is a GVN-like (Global Value Numbering) optimization pass that forwards loads from `noalias` and `nocapture` function arguments to their corresponding stores. Unlike LLVM's built-in GVN pass, SimpleGVN does not have a limit on the number of instructions or memory offsets it will analyze.
 
 ## How It Works
 
@@ -30,12 +30,12 @@ The pass:
 
 Using opt with the new pass manager:
 ```bash
-opt -load-pass-plugin=LLVMEnzyme-18.so -passes="simplify-gvn" -S < test.ll
+opt -load-pass-plugin=LLVMEnzyme-18.so -passes="simple-gvn" -S < test.ll
 ```
 
 Using opt with the legacy pass manager (LLVM < 16):
 ```bash
-opt -load LLVMEnzyme-18.so -simplify-gvn -S < test.ll
+opt -load LLVMEnzyme-18.so -simple-gvn -S < test.ll
 ```
 
 ## Example
@@ -49,7 +49,7 @@ define i32 @foo(i32* noalias nocapture %ptr) {
 }
 ```
 
-Output after SimplifyGVN:
+Output after SimpleGVN:
 ```llvm
 define i32 @foo(i32* noalias nocapture %ptr) {
   store i32 42, i32* %ptr
