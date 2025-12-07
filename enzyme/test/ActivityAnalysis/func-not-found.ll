@@ -5,4 +5,4 @@ entry:
   ret void
 }
 
-; CHECK: Enzyme: Function 'nonexistent' specified in -activity-analysis-func not found in module
+; CHECK: Enzyme: Function 'nonexistent' specified by -activity-analysis-func not found in module
