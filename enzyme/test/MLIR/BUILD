@@ -15,7 +15,7 @@ load("@llvm-project//llvm:lit_test.bzl", "lit_test")
             "@llvm-project//llvm:count",
             "@llvm-project//llvm:lli",
             "@llvm-project//llvm:not",
-        ] + glob(["**/*.h"]),
+        ] + glob(["**/*.h"], allow_empty=True),
     )
     for src in glob(
         [
