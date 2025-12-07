@@ -11,7 +11,7 @@ entry:
   ret void
 }
 
-; CHECK: foo - {} |{}:{}
+; CHECK: foo - {} |{[-1]:Integer}:{}
 ; CHECK-NEXT: i64 %offset: {[-1]:Integer}
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:   %gep = getelementptr i8, ptr null, i64 %offset: {[-1]:Pointer, [-1,-1]:Anything}
