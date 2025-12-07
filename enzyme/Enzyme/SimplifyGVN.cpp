@@ -69,6 +69,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/CFG.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/MemoryLocation.h"
@@ -146,6 +147,136 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
   return StoredVal;
 }
 
+// Check if there are any conflicting stores between SI and LI
+// Uses BFS to check all paths from SI's block to LI's block
+bool hasConflictingStoreBetween(
+    StoreInst *SI, LoadInst *LI, const DataLayout &DL,
+    const DenseMap<BasicBlock *, SmallVector<std::pair<StoreInst *, APInt>, 4>>
+        &BlockToStores,
+    APInt LoadOffset, uint64_t LoadSize, APInt StoreOffset) {
+  
+  BasicBlock *SIBlock = SI->getParent();
+  BasicBlock *LIBlock = LI->getParent();
+  
+  // Lambda to check if a store conflicts with the load
+  auto conflictsWith = [&](StoreInst *Store, const APInt &Offset) {
+    if (Store == SI)
+      return false;
+    
+    uint64_t StSize = DL.getTypeStoreSize(Store->getValueOperand()->getType());
+    int64_t RelOffset = (LoadOffset - Offset).getSExtValue();
+    
+    // Check if store overlaps with load location
+    return !(RelOffset + (int64_t)LoadSize <= 0 ||
+             RelOffset >= (int64_t)StSize);
+  };
+  
+  // If SI and LI are in the same block, check instructions between them
+  if (SIBlock == LIBlock) {
+    auto It = BlockToStores.find(SIBlock);
+    if (It == BlockToStores.end())
+      return false;
+    
+    bool afterSI = false;
+    for (auto &[Store, Offset] : It->second) {
+      if (Store == SI) {
+        afterSI = true;
+        continue;
+      }
+      // Check if this store comes before LI
+      if (Store->comesBefore(LI)) {
+        if (afterSI && SI->comesBefore(Store)) {
+          if (conflictsWith(Store, Offset))
+            return true;
+        }
+      }
+    }
+    return false;
+  }
+  
+  // Check for conflicts after SI in its block
+  auto SIIt = BlockToStores.find(SIBlock);
+  if (SIIt != BlockToStores.end()) {
+    for (auto &[Store, Offset] : SIIt->second) {
+      if (Store == SI)
+        continue;
+      if (SI->comesBefore(Store)) {
+        if (conflictsWith(Store, Offset))
+          return true;
+      }
+    }
+  }
+  
+  // BFS from SI's successors, but only check blocks that can reach LI
+  // This is important to handle mutually exclusive branches correctly
+  SmallPtrSet<BasicBlock *, 32> Visited;
+  SmallVector<BasicBlock *, 16> Worklist;
+  
+  // Helper to check if a block can reach LI's block
+  // We do a simple reachability check
+  auto canReachLI = [&](BasicBlock *BB) -> bool {
+    if (BB == LIBlock)
+      return true;
+    SmallPtrSet<BasicBlock *, 32> ReachVisited;
+    SmallVector<BasicBlock *, 16> ReachWorklist;
+    ReachWorklist.push_back(BB);
+    ReachVisited.insert(BB);
+    
+    while (!ReachWorklist.empty()) {
+      BasicBlock *Current = ReachWorklist.pop_back_val();
+      for (BasicBlock *Succ : successors(Current)) {
+        if (Succ == LIBlock)
+          return true;
+        if (ReachVisited.insert(Succ).second)
+          ReachWorklist.push_back(Succ);
+      }
+    }
+    return false;
+  };
+  
+  // Add successors of SI's block that can reach LI
+  for (BasicBlock *Succ : successors(SIBlock)) {
+    if (canReachLI(Succ) && Visited.insert(Succ).second)
+      Worklist.push_back(Succ);
+  }
+  
+  while (!Worklist.empty()) {
+    BasicBlock *BB = Worklist.pop_back_val();
+    
+    // Check if this block contains LI
+    if (BB == LIBlock) {
+      // Check stores before LI in this block
+      auto It = BlockToStores.find(BB);
+      if (It != BlockToStores.end()) {
+        for (auto &[Store, Offset] : It->second) {
+          if (Store->comesBefore(LI)) {
+            if (conflictsWith(Store, Offset))
+              return true;
+          }
+        }
+      }
+      continue; // Don't add successors of LI's block
+    }
+    
+    // Check all stores in this block
+    auto It = BlockToStores.find(BB);
+    if (It != BlockToStores.end()) {
+      for (auto &[Store, Offset] : It->second) {
+        if (conflictsWith(Store, Offset))
+          return true;
+      }
+    }
+    
+    // Add successors that can reach LI
+    for (BasicBlock *Succ : successors(BB)) {
+      if (canReachLI(Succ) && Visited.insert(Succ).second)
+        Worklist.push_back(Succ);
+    }
+  }
+  
+  return false;
+}
+
 // Main optimization function
 bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
                  const DataLayout &DL) {
@@ -213,79 +344,62 @@ bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
       }
     }
 
-    // Try to forward stores to loads
-    for (auto &[LI, LoadOffset] : Loads) {
-      uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
+    // Scope for BlockToStores to avoid goto issues
+    {
+      // Build a map from basic blocks to stores for efficient path checking
+      DenseMap<BasicBlock *, SmallVector<std::pair<StoreInst *, APInt>, 4>>
+          BlockToStores;
+      for (auto &[SI, Offset] : Stores) {
+        BlockToStores[SI->getParent()].push_back({SI, Offset});
+      }
 
-      // Find a dominating store that can satisfy this load
-      StoreInst *DominatingStore = nullptr;
-      APInt StoreOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+      // Try to forward stores to loads
+      for (auto &[LI, LoadOffset] : Loads) {
+        uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
 
-      for (auto &[SI, CurStoreOffset] : Stores) {
-        if (!DT.dominates(SI, LI))
-          continue;
+        // Find a dominating store that can satisfy this load
+        StoreInst *DominatingStore = nullptr;
+        APInt StoreOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
 
-        uint64_t StoreSize =
-            DL.getTypeStoreSize(SI->getValueOperand()->getType());
-
-        // Check if the store covers the load
-        int64_t RelOffset = (LoadOffset - CurStoreOffset).getSExtValue();
-        if (RelOffset < 0 || (uint64_t)RelOffset + LoadSize > StoreSize)
-          continue;
-
-        // Check if there's no aliasing store in between
-        // We need to ensure no other store could execute between SI and LI
-        bool HasIntermediateStore = false;
-        for (auto &[OtherSI, OtherStoreOffset] : Stores) {
-          if (OtherSI == SI)
+        for (auto &[SI, CurStoreOffset] : Stores) {
+          if (!DT.dominates(SI, LI))
             continue;
 
-          // First check if stores alias (cheaper check)
-          uint64_t OtherStoreSize =
-              DL.getTypeStoreSize(OtherSI->getValueOperand()->getType());
-          int64_t OtherRelOffset =
-              (LoadOffset - OtherStoreOffset).getSExtValue();
-          
-          // Check if the stores don't overlap - if not, continue
-          if (OtherRelOffset + (int64_t)LoadSize <= 0 ||
-              OtherRelOffset >= (int64_t)OtherStoreSize)
+          uint64_t StoreSize =
+              DL.getTypeStoreSize(SI->getValueOperand()->getType());
+
+          // Check if the store covers the load
+          int64_t RelOffset = (LoadOffset - CurStoreOffset).getSExtValue();
+          if (RelOffset < 0 || (uint64_t)RelOffset + LoadSize > StoreSize)
             continue;
 
-          // Stores alias. Check if OtherSI could interfere:
-          // OtherSI interferes if it's on a path from SI to LI.
-          // This happens when: SI dominates OtherSI AND OtherSI dominates LI
-          // Note: If load and store are in mutually exclusive branches,
-          // neither dominates the other, so this correctly allows forwarding.
-          if (DT.dominates(SI, OtherSI) && DT.dominates(OtherSI, LI)) {
-            HasIntermediateStore = true;
+          // Check if there's no conflicting store between SI and LI using BFS
+          if (!hasConflictingStoreBetween(SI, LI, DL, BlockToStores, LoadOffset,
+                                          LoadSize, CurStoreOffset)) {
+            DominatingStore = SI;
+            StoreOffset = CurStoreOffset;
             break;
           }
         }
 
-        if (!HasIntermediateStore) {
-          DominatingStore = SI;
-          StoreOffset = CurStoreOffset;
-          break;
-        }
-      }
+        if (DominatingStore) {
+          // Try to extract the value from the store
+          IRBuilder<> Builder(LI);
+          Value *StoredVal = DominatingStore->getValueOperand();
 
-      if (DominatingStore) {
-        // Try to extract the value from the store
-        IRBuilder<> Builder(LI);
-        Value *StoredVal = DominatingStore->getValueOperand();
+          Value *ExtractedVal =
+              extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
+                           StoreOffset, LoadSize);
 
-        Value *ExtractedVal =
-            extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
-                         StoreOffset, LoadSize);
+          if (ExtractedVal) {
+            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding store to load\n"
+                              << "  Store: " << *DominatingStore << "\n"
+                              << "  Load:  " << *LI << "\n"
+                              << "  Value: " << *ExtractedVal << "\n");
 
-        if (ExtractedVal) {
-          LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding store to load\n"
-                            << "  Store: " << *DominatingStore << "\n"
-                            << "  Load:  " << *LI << "\n"
-                            << "  Value: " << *ExtractedVal << "\n");
-
-          LI->replaceAllUsesWith(ExtractedVal);
-          Changed = true;
+            LI->replaceAllUsesWith(ExtractedVal);
+            Changed = true;
+          }
         }
       }
     }
