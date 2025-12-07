@@ -61,7 +61,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
-#include "llvm/Analysis/PostDominators.h"
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
@@ -147,139 +147,32 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
   return StoredVal;
 }
 
-// Check if there are any conflicting stores between SI and LI
-// Uses BFS to check all paths from SI's block to LI's block
-bool hasConflictingStoreBetween(
-    StoreInst *SI, LoadInst *LI, const DataLayout &DL,
-    const DenseMap<BasicBlock *, SmallVector<std::pair<StoreInst *, APInt>, 4>>
-        &BlockToStores,
-    APInt LoadOffset, uint64_t LoadSize, APInt StoreOffset) {
-  
-  BasicBlock *SIBlock = SI->getParent();
-  BasicBlock *LIBlock = LI->getParent();
-  
-  // Lambda to check if a store conflicts with the load
-  auto conflictsWith = [&](StoreInst *Store, const APInt &Offset) {
-    if (Store == SI)
-      return false;
-    
-    uint64_t StSize = DL.getTypeStoreSize(Store->getValueOperand()->getType());
-    int64_t RelOffset = (LoadOffset - Offset).getSExtValue();
-    
-    // Check if store overlaps with load location
-    return !(RelOffset + (int64_t)LoadSize <= 0 ||
-             RelOffset >= (int64_t)StSize);
-  };
-  
-  // If SI and LI are in the same block, check instructions between them
-  if (SIBlock == LIBlock) {
-    auto It = BlockToStores.find(SIBlock);
-    if (It == BlockToStores.end())
-      return false;
-    
-    bool afterSI = false;
-    for (auto &[Store, Offset] : It->second) {
-      if (Store == SI) {
-        afterSI = true;
-        continue;
-      }
-      // Check if this store comes before LI
-      if (Store->comesBefore(LI)) {
-        if (afterSI && SI->comesBefore(Store)) {
-          if (conflictsWith(Store, Offset))
-            return true;
-        }
-      }
-    }
+// Helper to check if a store dominates and completely covers a load
+static bool dominatesAndCovers(StoreInst *SI, LoadInst *LI,
+                                 const APInt &StoreOffset, const APInt &LoadOffset,
+                                 uint64_t LoadSize, const DataLayout &DL,
+                                 DominatorTree &DT) {
+  if (!DT.dominates(SI, LI))
     return false;
+
+  uint64_t StoreSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+  int64_t RelOffset = (LoadOffset - StoreOffset).getSExtValue();
+  return RelOffset >= 0 && (uint64_t)RelOffset + LoadSize <= StoreSize;
+}
+
+// Helper to check if two memory ranges alias
+static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
+                                const APInt &Offset2, uint64_t Size2) {
+  int64_t Diff = (Offset1 - Offset2).getSExtValue();
+  if (Diff < 0) {
+    return (uint64_t)(-Diff) < Size2;
+  } else {
+    return (uint64_t)Diff < Size1;
   }
-  
-  // Check for conflicts after SI in its block
-  auto SIIt = BlockToStores.find(SIBlock);
-  if (SIIt != BlockToStores.end()) {
-    for (auto &[Store, Offset] : SIIt->second) {
-      if (Store == SI)
-        continue;
-      if (SI->comesBefore(Store)) {
-        if (conflictsWith(Store, Offset))
-          return true;
-      }
-    }
-  }
-  
-  // BFS from SI's successors, but only check blocks that can reach LI
-  // This is important to handle mutually exclusive branches correctly
-  SmallPtrSet<BasicBlock *, 32> Visited;
-  SmallVector<BasicBlock *, 16> Worklist;
-  
-  // Helper to check if a block can reach LI's block
-  // We do a simple reachability check
-  auto canReachLI = [&](BasicBlock *BB) -> bool {
-    if (BB == LIBlock)
-      return true;
-    SmallPtrSet<BasicBlock *, 32> ReachVisited;
-    SmallVector<BasicBlock *, 16> ReachWorklist;
-    ReachWorklist.push_back(BB);
-    ReachVisited.insert(BB);
-    
-    while (!ReachWorklist.empty()) {
-      BasicBlock *Current = ReachWorklist.pop_back_val();
-      for (BasicBlock *Succ : successors(Current)) {
-        if (Succ == LIBlock)
-          return true;
-        if (ReachVisited.insert(Succ).second)
-          ReachWorklist.push_back(Succ);
-      }
-    }
-    return false;
-  };
-  
-  // Add successors of SI's block that can reach LI
-  for (BasicBlock *Succ : successors(SIBlock)) {
-    if (canReachLI(Succ) && Visited.insert(Succ).second)
-      Worklist.push_back(Succ);
-  }
-  
-  while (!Worklist.empty()) {
-    BasicBlock *BB = Worklist.pop_back_val();
-    
-    // Check if this block contains LI
-    if (BB == LIBlock) {
-      // Check stores before LI in this block
-      auto It = BlockToStores.find(BB);
-      if (It != BlockToStores.end()) {
-        for (auto &[Store, Offset] : It->second) {
-          if (Store->comesBefore(LI)) {
-            if (conflictsWith(Store, Offset))
-              return true;
-          }
-        }
-      }
-      continue; // Don't add successors of LI's block
-    }
-    
-    // Check all stores in this block
-    auto It = BlockToStores.find(BB);
-    if (It != BlockToStores.end()) {
-      for (auto &[Store, Offset] : It->second) {
-        if (conflictsWith(Store, Offset))
-          return true;
-      }
-    }
-    
-    // Add successors that can reach LI
-    for (BasicBlock *Succ : successors(BB)) {
-      if (canReachLI(Succ) && Visited.insert(Succ).second)
-        Worklist.push_back(Succ);
-    }
-  }
-  
-  return false;
 }
 
 // Main optimization function
-bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
-                 const DataLayout &DL) {
+bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
   bool Changed = false;
 
   // Find noalias arguments
@@ -353,50 +246,154 @@ bool simplifyGVN(Function &F, DominatorTree &DT, PostDominatorTree &PDT,
         BlockToStores[SI->getParent()].push_back({SI, Offset});
       }
 
-      // Try to forward stores to loads
+      // Try to forward stores to loads using simplified algorithm
       for (auto &[LI, LoadOffset] : Loads) {
         uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
-
-        // Find a dominating store that can satisfy this load
-        StoreInst *DominatingStore = nullptr;
-        APInt StoreOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
-
-        for (auto &[SI, CurStoreOffset] : Stores) {
-          if (!DT.dominates(SI, LI))
-            continue;
-
-          uint64_t StoreSize =
-              DL.getTypeStoreSize(SI->getValueOperand()->getType());
-
-          // Check if the store covers the load
-          int64_t RelOffset = (LoadOffset - CurStoreOffset).getSExtValue();
-          if (RelOffset < 0 || (uint64_t)RelOffset + LoadSize > StoreSize)
-            continue;
-
-          // Check if there's no conflicting store between SI and LI using BFS
-          if (!hasConflictingStoreBetween(SI, LI, DL, BlockToStores, LoadOffset,
-                                          LoadSize, CurStoreOffset)) {
-            DominatingStore = SI;
-            StoreOffset = CurStoreOffset;
-            break;
+        
+        // Step 1: Find all stores that may alias with this load
+        SmallVector<std::pair<StoreInst *, APInt>, 8> AliasingStores;
+        for (auto &[SI, StoreOffset] : Stores) {
+          uint64_t StoreSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+          if (memoryRangesAlias(LoadOffset, LoadSize, StoreOffset, StoreSize)) {
+            AliasingStores.push_back({SI, StoreOffset});
           }
         }
-
-        if (DominatingStore) {
-          // Try to extract the value from the store
+        
+        // Step 2: Filter to dominating + covering stores
+        SmallVector<std::pair<StoreInst *, APInt>, 8> DominatingCoveringStores;
+        for (auto &[SI, StoreOffset] : AliasingStores) {
+          if (dominatesAndCovers(SI, LI, StoreOffset, LoadOffset, LoadSize, DL, DT)) {
+            DominatingCoveringStores.push_back({SI, StoreOffset});
+          }
+        }
+        
+        // Step 3: If only one aliasing store and it's dominating+covering, forward
+        if (AliasingStores.size() == 1 && DominatingCoveringStores.size() == 1) {
+          StoreInst *SI = DominatingCoveringStores[0].first;
+          APInt StoreOffset = DominatingCoveringStores[0].second;
+          
           IRBuilder<> Builder(LI);
-          Value *StoredVal = DominatingStore->getValueOperand();
-
-          Value *ExtractedVal =
-              extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
-                           StoreOffset, LoadSize);
-
+          Value *StoredVal = SI->getValueOperand();
+          Value *ExtractedVal = extractValue(Builder, StoredVal, LI->getType(), DL,
+                                              LoadOffset, StoreOffset, LoadSize);
+          
           if (ExtractedVal) {
-            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding store to load\n"
-                              << "  Store: " << *DominatingStore << "\n"
-                              << "  Load:  " << *LI << "\n"
-                              << "  Value: " << *ExtractedVal << "\n");
-
+            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (single alias)\n"
+                              << "  Store: " << *SI << "\n"
+                              << "  Load:  " << *LI << "\n");
+            LI->replaceAllUsesWith(ExtractedVal);
+            Changed = true;
+          }
+          continue;
+        }
+        
+        // Step 4: If no dominating+covering stores, bail
+        if (DominatingCoveringStores.empty())
+          continue;
+        
+        // Step 5: Build map of last store in each block before LI
+        DenseMap<BasicBlock *, std::pair<StoreInst *, APInt>> LastStoreInBlockBeforeLI;
+        for (auto &[SI, StoreOffset] : AliasingStores) {
+          BasicBlock *BB = SI->getParent();
+          if (BB == LI->getParent()) {
+            // Only consider stores before LI in the same block
+            if (SI->comesBefore(LI)) {
+              auto &Entry = LastStoreInBlockBeforeLI[BB];
+              if (!Entry.first || Entry.first->comesBefore(SI)) {
+                Entry = {SI, StoreOffset};
+              }
+            }
+          } else {
+            // For other blocks, take the last store in the block
+            auto &Entry = LastStoreInBlockBeforeLI[BB];
+            if (!Entry.first || Entry.first->comesBefore(SI)) {
+              Entry = {SI, StoreOffset};
+            }
+          }
+        }
+        
+        // Step 6: Check if LI's parent block has a dominating+covering store
+        BasicBlock *LIBlock = LI->getParent();
+        auto It = LastStoreInBlockBeforeLI.find(LIBlock);
+        if (It != LastStoreInBlockBeforeLI.end()) {
+          StoreInst *SI = It->second.first;
+          APInt StoreOffset = It->second.second;
+          
+          if (dominatesAndCovers(SI, LI, StoreOffset, LoadOffset, LoadSize, DL, DT)) {
+            IRBuilder<> Builder(LI);
+            Value *StoredVal = SI->getValueOperand();
+            Value *ExtractedVal = extractValue(Builder, StoredVal, LI->getType(), DL,
+                                                LoadOffset, StoreOffset, LoadSize);
+            
+            if (ExtractedVal) {
+              LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (same block)\n"
+                                << "  Store: " << *SI << "\n"
+                                << "  Load:  " << *LI << "\n");
+              LI->replaceAllUsesWith(ExtractedVal);
+              Changed = true;
+            }
+            continue;
+          }
+          
+          // Not dominating+covering, bail
+          continue;
+        }
+        
+        // Step 7: BFS backwards from LI's parent block
+        SmallPtrSet<BasicBlock *, 32> Visited;
+        SmallVector<BasicBlock *, 16> Worklist;
+        StoreInst *Candidate = nullptr;
+        APInt CandidateOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+        
+        // Start with predecessors of LI's block
+        for (BasicBlock *Pred : predecessors(LIBlock)) {
+          if (Visited.insert(Pred).second)
+            Worklist.push_back(Pred);
+        }
+        
+        while (!Worklist.empty()) {
+          BasicBlock *BB = Worklist.pop_back_val();
+          
+          auto It = LastStoreInBlockBeforeLI.find(BB);
+          if (It != LastStoreInBlockBeforeLI.end()) {
+            StoreInst *SI = It->second.first;
+            APInt StoreOffset = It->second.second;
+            
+            if (!dominatesAndCovers(SI, LI, StoreOffset, LoadOffset, LoadSize, DL, DT)) {
+              // Non-dominating+covering store on path, bail
+              Candidate = nullptr;
+              break;
+            }
+            
+            // Found dominating+covering store
+            if (!Candidate) {
+              Candidate = SI;
+              CandidateOffset = StoreOffset;
+            } else if (Candidate != SI) {
+              // Multiple different candidates, bail
+              Candidate = nullptr;
+              break;
+            }
+          }
+          
+          // Continue BFS
+          for (BasicBlock *Pred : predecessors(BB)) {
+            if (Visited.insert(Pred).second)
+              Worklist.push_back(Pred);
+          }
+        }
+        
+        // Step 8: If unique candidate found, forward
+        if (Candidate) {
+          IRBuilder<> Builder(LI);
+          Value *StoredVal = Candidate->getValueOperand();
+          Value *ExtractedVal = extractValue(Builder, StoredVal, LI->getType(), DL,
+                                              LoadOffset, CandidateOffset, LoadSize);
+          
+          if (ExtractedVal) {
+            LLVM_DEBUG(dbgs() << "SimplifyGVN: Forwarding (BFS candidate)\n"
+                              << "  Store: " << *Candidate << "\n"
+                              << "  Load:  " << *LI << "\n");
             LI->replaceAllUsesWith(ExtractedVal);
             Changed = true;
           }
@@ -418,14 +415,13 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<PostDominatorTreeWrapperPass>();
+
   }
 
   bool runOnFunction(Function &F) override {
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    auto &PDT = getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
     const DataLayout &DL = F.getParent()->getDataLayout();
-    return simplifyGVN(F, DT, PDT, DL);
+    return simplifyGVN(F, DT, DL);
   }
 };
 
@@ -446,8 +442,7 @@ SimplifyGVNNewPM::Result
 SimplifyGVNNewPM::run(Function &F, FunctionAnalysisManager &FAM) {
   bool Changed = false;
   const DataLayout &DL = F.getParent()->getDataLayout();
-  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F),
-                        FAM.getResult<PostDominatorTreeAnalysis>(F), DL);
+  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL);
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
