@@ -2006,8 +2006,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       }
     }
     updateAnalysis(&gep, keepMinus, &gep);
-    updateAnalysis(&gep, TypeTree(pointerAnalysis.Inner0()).Only(-1, inst),
-                   &gep);
+    // Don't propagate pointer type when the input pointer is null
+    if (!isa<ConstantPointerNull>(gep.getPointerOperand())) {
+      updateAnalysis(&gep, TypeTree(pointerAnalysis.Inner0()).Only(-1, inst),
+                     &gep);
+    }
   }
   if (direction & UP)
     updateAnalysis(gep.getPointerOperand(),
