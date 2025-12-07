@@ -243,16 +243,8 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
       }
     }
 
-    // Scope for BlockToStores to avoid goto issues
+    // Try to forward stores to loads using simplified algorithm
     {
-      // Build a map from basic blocks to stores for efficient path checking
-      DenseMap<BasicBlock *, SmallVector<std::pair<StoreInst *, APInt>, 4>>
-          BlockToStores;
-      for (auto &[SI, Offset] : Stores) {
-        BlockToStores[SI->getParent()].push_back({SI, Offset});
-      }
-
-      // Try to forward stores to loads using simplified algorithm
       for (auto &[LI, LoadOffset] : Loads) {
         uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
         
