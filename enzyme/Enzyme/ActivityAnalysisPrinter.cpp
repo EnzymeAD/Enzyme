@@ -191,16 +191,8 @@ public:
   bool runOnModule(Module &M) override {
     // Check if function name is specified
     if (FunctionToAnalyze.empty()) {
-      // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = getFirstFunctionDefinition(M);
-      
-      if (FirstFunc) {
-        EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
-                    FirstFunc,
-                    "No function specified for -activity-analysis-func");
-      } else {
-        report_fatal_error("No function specified for -activity-analysis-func");
-      }
+      EmitFailure("NoFunctionSpecified", M,
+                  "No function specified for -activity-analysis-func");
       return false;
     }
     
@@ -208,20 +200,9 @@ public:
     Function *TargetFunc = M.getFunction(FunctionToAnalyze);
     
     if (!TargetFunc) {
-      // Use the first function in the module as context for the diagnostic
-      Function *FirstFunc = getFirstFunctionDefinition(M);
-      
-      if (FirstFunc) {
-        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
-                    FirstFunc,
-                    "Function '", FunctionToAnalyze,
-                    "' specified by -activity-analysis-func not found in module");
-      } else {
-        // Fallback if no functions in module
-        std::string msg = "Function '" + FunctionToAnalyze + 
-                          "' specified by -activity-analysis-func not found in module";
-        report_fatal_error(StringRef(msg));
-      }
+      EmitFailure("FunctionNotFound", M,
+                  "Function '", FunctionToAnalyze,
+                  "' specified by -activity-analysis-func not found in module");
       return false;
     }
     
@@ -248,16 +229,8 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
                                   llvm::ModuleAnalysisManager &MAM) {
   // Check if function name is specified
   if (FunctionToAnalyze.empty()) {
-    // Use the first function in the module as context for the diagnostic
-    Function *FirstFunc = getFirstFunctionDefinition(M);
-    
-    if (FirstFunc) {
-      EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
-                  FirstFunc,
-                  "No function specified for -activity-analysis-func");
-    } else {
-      report_fatal_error("No function specified for -activity-analysis-func");
-    }
+    EmitFailure("NoFunctionSpecified", M,
+                "No function specified for -activity-analysis-func");
     return PreservedAnalyses::all();
   }
   
@@ -265,20 +238,9 @@ ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
   Function *TargetFunc = M.getFunction(FunctionToAnalyze);
   
   if (!TargetFunc) {
-    // Use the first function in the module as context for the diagnostic
-    Function *FirstFunc = getFirstFunctionDefinition(M);
-    
-    if (FirstFunc) {
-      EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
-                  FirstFunc,
-                  "Function '", FunctionToAnalyze,
-                  "' specified by -activity-analysis-func not found in module");
-    } else {
-      // Fallback if no functions in module
-      std::string msg = "Function '" + FunctionToAnalyze + 
-                        "' specified by -activity-analysis-func not found in module";
-      report_fatal_error(StringRef(msg));
-    }
+    EmitFailure("FunctionNotFound", M,
+                "Function '", FunctionToAnalyze,
+                "' specified by -activity-analysis-func not found in module");
     return PreservedAnalyses::all();
   }
   
