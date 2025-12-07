@@ -285,6 +285,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                               << "  Store: " << *SI << "\n"
                               << "  Load:  " << *LI << "\n");
             LI->replaceAllUsesWith(ExtractedVal);
+            LI->eraseFromParent();
             Changed = true;
           }
           continue;
@@ -336,6 +337,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                                 << "  Store: " << *SI << "\n"
                                 << "  Load:  " << *LI << "\n");
               LI->replaceAllUsesWith(ExtractedVal);
+              LI->eraseFromParent();
               Changed = true;
             }
             continue;
@@ -403,6 +405,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                               << "  Store: " << *Candidate << "\n"
                               << "  Load:  " << *LI << "\n");
             LI->replaceAllUsesWith(ExtractedVal);
+            LI->eraseFromParent();
             Changed = true;
           }
         }
