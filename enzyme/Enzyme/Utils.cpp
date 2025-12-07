@@ -3168,6 +3168,15 @@ Function *GetFunctionFromValue(Value *fn) {
   return dyn_cast<Function>(GetFunctionValFromValue(fn));
 }
 
+Function *getFirstFunctionDefinition(Module &M) {
+  for (auto &F : M) {
+    if (!F.isDeclaration()) {
+      return &F;
+    }
+  }
+  return nullptr;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else

@@ -195,6 +195,9 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+// Forward declaration needed for EmitFailure template
+llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
+
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
@@ -215,6 +218,21 @@ void EmitFailure(llvm::StringRef RemarkName,
   (ss << ... << args);
   CodeRegion->getContext().diagnose(
       (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+}
+
+template <typename... Args>
+void EmitFailure(llvm::StringRef RemarkName, llvm::Module &M, Args &...args) {
+  // Use the first function definition in the module as context for the
+  // diagnostic
+  if (llvm::Function *FirstFunc = getFirstFunctionDefinition(M)) {
+    EmitFailure(RemarkName, FirstFunc->getSubprogram(), FirstFunc, args...);
+  } else {
+    // Fallback if no functions in module
+    std::string *str = new std::string();
+    llvm::raw_string_ostream ss(*str);
+    (ss << ... << args);
+    llvm::report_fatal_error(llvm::StringRef(*str));
+  }
 }
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
@@ -1394,6 +1412,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
+
+llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
