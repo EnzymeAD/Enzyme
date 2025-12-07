@@ -161,14 +161,20 @@ static bool dominatesAndCovers(StoreInst *SI, LoadInst *LI,
 }
 
 // Helper to check if two memory ranges alias
+// Range1: [Offset1, Offset1 + Size1)
+// Range2: [Offset2, Offset2 + Size2)
 static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
                                 const APInt &Offset2, uint64_t Size2) {
-  int64_t Diff = (Offset1 - Offset2).getSExtValue();
-  if (Diff < 0) {
-    return (uint64_t)(-Diff) < Size2;
-  } else {
-    return (uint64_t)Diff < Size1;
-  }
+  // Check if range2 ends before range1 begins
+  if ((Offset2 + Size2).sle(Offset1))
+    return false;
+  
+  // Check if range1 ends before range2 begins
+  if ((Offset1 + Size1).sle(Offset2))
+    return false;
+  
+  // Otherwise, they may alias
+  return true;
 }
 
 // Main optimization function
