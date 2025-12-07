@@ -2194,51 +2194,52 @@ get_blas_row(llvm::IRBuilder<> &B, llvm::ArrayRef<llvm::Value *> trans,
 // Parameter attributes from the original function/call that
 // we should preserve on the primal of the derivative code.
 static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
-    llvm::Attribute::AttrKind::ReadOnly,
-    llvm::Attribute::AttrKind::WriteOnly,
-    llvm::Attribute::AttrKind::ZExt,
-    llvm::Attribute::AttrKind::SExt,
-    llvm::Attribute::AttrKind::InReg,
-    llvm::Attribute::AttrKind::ByVal,
+  llvm::Attribute::AttrKind::ReadOnly,
+  llvm::Attribute::AttrKind::WriteOnly,
+  llvm::Attribute::AttrKind::ZExt,
+  llvm::Attribute::AttrKind::SExt,
+  llvm::Attribute::AttrKind::InReg,
+  llvm::Attribute::AttrKind::ByVal,
 #if LLVM_VERSION_MAJOR >= 12
-    llvm::Attribute::AttrKind::ByRef,
+  llvm::Attribute::AttrKind::ByRef,
 #endif
-    llvm::Attribute::AttrKind::Preallocated,
-    llvm::Attribute::AttrKind::InAlloca,
+  llvm::Attribute::AttrKind::Preallocated,
+  llvm::Attribute::AttrKind::InAlloca,
 #if LLVM_VERSION_MAJOR >= 13
-    llvm::Attribute::AttrKind::ElementType,
+  llvm::Attribute::AttrKind::ElementType,
 #endif
 #if LLVM_VERSION_MAJOR >= 15
-    llvm::Attribute::AttrKind::AllocAlign,
+  llvm::Attribute::AttrKind::AllocAlign,
 #endif
-    llvm::Attribute::AttrKind::NoFree,
-    llvm::Attribute::AttrKind::Alignment,
-    llvm::Attribute::AttrKind::StackAlignment,
+  llvm::Attribute::AttrKind::NoFree,
+  llvm::Attribute::AttrKind::Alignment,
+  llvm::Attribute::AttrKind::StackAlignment,
 #if LLVM_VERSION_MAJOR >= 20
-    llvm::Attribute::AttrKind::Captures,
+  llvm::Attribute::AttrKind::Captures,
 #else
-    llvm::Attribute::AttrKind::NoCapture,
+  llvm::Attribute::AttrKind::NoCapture,
 #endif
-    llvm::Attribute::AttrKind::ReadNone};
+  llvm::Attribute::AttrKind::ReadNone
+};
 
 // Parameter attributes from the original function/call that
 // we should preserve on the shadow of the derivative code.
 // Note that this will not occur on vectore > 1.
 static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
-    llvm::Attribute::AttrKind::ZExt,
-    llvm::Attribute::AttrKind::SExt,
+  llvm::Attribute::AttrKind::ZExt,
+  llvm::Attribute::AttrKind::SExt,
 #if LLVM_VERSION_MAJOR >= 13
-    llvm::Attribute::AttrKind::ElementType,
+  llvm::Attribute::AttrKind::ElementType,
 #endif
-    llvm::Attribute::AttrKind::NoFree,
-    llvm::Attribute::AttrKind::Alignment,
-    llvm::Attribute::AttrKind::StackAlignment,
+  llvm::Attribute::AttrKind::NoFree,
+  llvm::Attribute::AttrKind::Alignment,
+  llvm::Attribute::AttrKind::StackAlignment,
 #if LLVM_VERSION_MAJOR >= 20
-    llvm::Attribute::AttrKind::Captures,
+  llvm::Attribute::AttrKind::Captures,
 #else
-    llvm::Attribute::AttrKind::NoCapture,
+  llvm::Attribute::AttrKind::NoCapture,
 #endif
-    llvm::Attribute::AttrKind::ReadNone,
+  llvm::Attribute::AttrKind::ReadNone,
 };
 #ifdef __clang__
 #pragma clang diagnostic pop
