@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=foo -S -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -opaque-pointers=1 -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -opaque-pointers=1 -type-analysis-func=foo -S -o /dev/null | FileCheck %s
 
 ; Test that GEP with null pointer does not cause "Illegal updateAnalysis" error
 ; This test is based on the issue: https://fwd.gymni.ch/IpbFyC
