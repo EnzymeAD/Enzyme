@@ -12,14 +12,9 @@ bazel_dep(name = "rules_shell", version = "0.6.1")
 bazel_dep(name = "zlib-ng", version = "2.0.7", repo_name = "llvm_zlib")
 bazel_dep(name = "zstd", version = "1.5.7", repo_name = "llvm_zstd")
 
-new_local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "new_local_repository")
-
-new_local_repository(
-    name = "llvm-raw",
-    build_file_content="# empty",
-    path = "../llvm-project"
-)
-
+# LLVM path: ../llvm-project
+llvm = use_extension("//:bazel/import_llvm.bzl", "llvm_import_extension")
+use_repo(llvm, "llvm-raw")
 llvm_configure = use_repo_rule("@llvm-raw//utils/bazel:configure.bzl","llvm_configure")
 llvm_configure(name = "llvm-project", targets = ["AArch64","NVPTX","X86"])
 
