@@ -183,7 +183,77 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   return /*changed*/ false;
 }
 
+class ActivityAnalysisPrinter final : public ModulePass {
+public:
+  static char ID;
+  ActivityAnalysisPrinter() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+    // Check if function name is specified
+    if (FunctionToAnalyze.empty()) {
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
+          break;
+        }
+      }
+      
+      if (FirstFunc) {
+        EmitFailure("NoFunctionSpecified", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "No function specified for -activity-analysis-func");
+      } else {
+        report_fatal_error("No function specified for -activity-analysis-func");
+      }
+      return false;
+    }
+    
+    // Check if the specified function exists
+    Function *TargetFunc = M.getFunction(FunctionToAnalyze);
+    
+    if (!TargetFunc) {
+      // Use the first function in the module as context for the diagnostic
+      Function *FirstFunc = nullptr;
+      for (auto &F : M) {
+        if (!F.isDeclaration()) {
+          FirstFunc = &F;
+          break;
+        }
+      }
+      
+      if (FirstFunc) {
+        EmitFailure("FunctionNotFound", FirstFunc->getSubprogram(),
+                    FirstFunc,
+                    "Function '", FunctionToAnalyze,
+                    "' specified by -activity-analysis-func not found in module");
+      } else {
+        // Fallback if no functions in module
+        std::string msg = "Function '" + FunctionToAnalyze + 
+                          "' specified by -activity-analysis-func not found in module";
+        report_fatal_error(StringRef(msg));
+      }
+      return false;
+    }
+    
+    // Run analysis only on the target function
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*TargetFunc);
+    return printActivityAnalysis(*TargetFunc, TLI);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.setPreservesAll();
+  }
+};
+
 } // namespace
+
+char ActivityAnalysisPrinter::ID = 0;
+
+static RegisterPass<ActivityAnalysisPrinter>
+    X("print-activity-analysis", "Print Activity Analysis Results");
 
 ActivityAnalysisPrinterNewPM::Result
 ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
