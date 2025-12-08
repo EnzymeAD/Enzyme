@@ -185,10 +185,18 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
   bool Changed = false;
 
   // Find noalias arguments
-  SmallVector<Argument *, 4> CandidateArgs;
+  SmallVector<Value *, 4> CandidateArgs;
   for (Argument &Arg : F.args()) {
     if (Arg.getType()->isPointerTy() && Arg.hasNoAliasAttr()) {
       CandidateArgs.push_back(&Arg);
+    }
+  }
+
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (isa<AllocaInst>(&I)) {
+        CandidateArgs.push_back(&I);
+      }
     }
   }
 
@@ -196,7 +204,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     return false;
 
   // For each candidate argument, collect stores and loads with their offsets
-  for (Argument *Arg : CandidateArgs) {
+  for (Value *Arg : CandidateArgs) {
     // Collect all stores and loads to this argument with offsets
     SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
