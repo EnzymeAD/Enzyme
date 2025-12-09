@@ -119,10 +119,28 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
       isa<PointerType>(StoreType)) {
     return Builder.CreatePointerCast(StoredVal, LoadType);
   }
+
+  if (RelativeOffset == 0 && StoreSize >= LoadSize &&
+      StoreType->isAggregateType()) {
+    auto first = Builder.CreateExtractValue(StoredVal, 0);
+    auto res = extractValue(Builder, first, LoadType, DL, LoadOffset,
+                            StoreOffset, LoadSize);
+    if (res) {
+      return res;
+    } else {
+      if (auto I = dyn_cast<Instruction>(first))
+        I->eraseFromParent();
+    }
+  }
+
   // Handle extraction with offset or type mismatch
   // First, bitcast to an integer type if needed
   if (!StoreType->isIntegerTy()) {
     IntegerType *IntTy = Builder.getIntNTy(StoreSize * 8);
+    if (!CastInst::castIsValid(Instruction::BitCast, StoredVal->getType(),
+                               IntTy)) {
+      return nullptr;
+    }
     StoredVal = Builder.CreateBitCast(StoredVal, IntTy);
   }
 
