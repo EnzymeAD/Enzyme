@@ -180,6 +180,99 @@ static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
   return true;
 }
 
+// Helper to check if a load dominates another instruction and covers memory
+static bool loadDominatesAndCovers(LoadInst *LI, Instruction *Target,
+                                   const APInt &LoadOffset,
+                                   const APInt &TargetOffset,
+                                   uint64_t TargetSize, const DataLayout &DL,
+                                   DominatorTree &DT) {
+  if (!DT.dominates(LI, Target))
+    return false;
+
+  uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
+  int64_t RelOffset = (TargetOffset - LoadOffset).getSExtValue();
+  return RelOffset >= 0 && (uint64_t)RelOffset + TargetSize <= LoadSize;
+}
+
+// Collect memory operations (loads, stores) and calls for a given pointer value
+// Returns false if the value has uses that prevent optimization
+static bool collectMemoryOps(
+    Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
+    SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
+    SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
+    SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
+  // WorkList tracks (Value*, Offset from Arg)
+  SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
+  SmallPtrSet<Value *, 16> Visited;
+
+  APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+  ToProcess.push_back({Arg, ZeroOffset});
+
+  while (!ToProcess.empty()) {
+    auto [V, CurrentOffset] = ToProcess.pop_back_val();
+
+    // Skip if already visited
+    if (!Visited.insert(V).second)
+      continue;
+
+    for (User *U : V->users()) {
+      if (auto *LI = dyn_cast<LoadInst>(U)) {
+        Loads.push_back({LI, CurrentOffset});
+      } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+        // Check if this is a store TO the pointer (not storing the pointer
+        // value)
+        if (SI->getPointerOperand() == V) {
+          Stores.push_back({SI, CurrentOffset});
+        } else {
+          // Pointer value is being stored somewhere - reject this argument
+          return false;
+        }
+      } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
+        // Compute the offset for this GEP
+        APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
+          // Cannot compute constant offset - reject this argument
+          return false;
+        }
+
+        APInt NewOffset = CurrentOffset + GEPOffset;
+        ToProcess.push_back({GEP, NewOffset});
+      } else if (auto *CI = dyn_cast<CastInst>(U)) {
+        // Casts don't change offset
+        ToProcess.push_back({CI, CurrentOffset});
+      } else if (AllowNoCaptureCallUses) {
+        // For load-load forwarding, allow nocapture call uses
+        if (auto *Call = dyn_cast<CallInst>(U)) {
+          // Check if the pointer argument is marked nocapture
+          bool IsNoCaptureArg = false;
+          for (unsigned i = 0; i < Call->arg_size(); ++i) {
+            if (Call->getArgOperand(i) == V) {
+              if (Call->paramHasAttr(i, Attribute::NoCapture)) {
+                IsNoCaptureArg = true;
+                break;
+              }
+            }
+          }
+          if (IsNoCaptureArg) {
+            Calls.push_back({Call, CurrentOffset});
+          } else {
+            // Call that may capture - reject this argument
+            return false;
+          }
+        } else {
+          // Unknown use - reject this argument
+          return false;
+        }
+      } else {
+        // Unknown use - reject this argument
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 // Main optimization function
 bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
   bool Changed = false;
@@ -208,51 +301,14 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     // Collect all stores and loads to this argument with offsets
     SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
+    SmallVector<std::pair<CallInst *, APInt>, 8> Calls;
 
-    // WorkList tracks (Value*, Offset from Arg)
-    SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
-    SmallPtrSet<Value *, 16> Visited;
-
-    APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
-    ToProcess.push_back({Arg, ZeroOffset});
-
-    while (!ToProcess.empty()) {
-      auto [V, CurrentOffset] = ToProcess.pop_back_val();
-
-      // Skip if already visited
-      if (!Visited.insert(V).second)
-        continue;
-
-      for (User *U : V->users()) {
-        if (auto *LI = dyn_cast<LoadInst>(U)) {
-          Loads.push_back({LI, CurrentOffset});
-        } else if (auto *SI = dyn_cast<StoreInst>(U)) {
-          // Check if this is a store TO the pointer (not storing the pointer
-          // value)
-          if (SI->getPointerOperand() == V) {
-            Stores.push_back({SI, CurrentOffset});
-          } else {
-            // Pointer value is being stored somewhere - reject this argument
-            goto next_argument;
-          }
-        } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
-          // Compute the offset for this GEP
-          APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
-          if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
-            // Cannot compute constant offset - reject this argument
-            goto next_argument;
-          }
-
-          APInt NewOffset = CurrentOffset + GEPOffset;
-          ToProcess.push_back({GEP, NewOffset});
-        } else if (auto *CI = dyn_cast<CastInst>(U)) {
-          // Casts don't change offset
-          ToProcess.push_back({CI, CurrentOffset});
-        } else {
-          // Unknown use - reject this argument
-          goto next_argument;
-        }
-      }
+    // First pass: strict collection (no nocapture calls) for store-load
+    // forwarding
+    if (!collectMemoryOps(Arg, DL, /*AllowNoCaptureCallUses=*/false, Stores,
+                          Loads, Calls)) {
+      // Argument has uses that prevent optimization
+      continue;
     }
 
     // Try to forward stores to loads using simplified algorithm
@@ -419,6 +475,152 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
             LI->replaceAllUsesWith(ExtractedVal);
             LI->eraseFromParent();
             Changed = true;
+          }
+        }
+      }
+    }
+
+    // Second phase: Load-load forwarding
+    // After store-load forwarding, collect remaining loads and potential
+    // aliasing writes/calls
+    {
+      // Re-collect loads and stores (including nocapture calls this time)
+      SmallVector<std::pair<StoreInst *, APInt>, 8> AllStores;
+      SmallVector<std::pair<LoadInst *, APInt>, 8> RemainingLoads;
+      SmallVector<std::pair<CallInst *, APInt>, 8> NoCaptureCallUses;
+
+      if (!collectMemoryOps(Arg, DL, /*AllowNoCaptureCallUses=*/true, AllStores,
+                            RemainingLoads, NoCaptureCallUses)) {
+        // Should not happen, as we already checked this in the first pass
+        continue;
+      }
+
+      // Try to forward loads to other loads
+      for (auto &[TargetLI, TargetLoadOffset] : RemainingLoads) {
+        // Skip if this load was already erased in store-load forwarding
+        if (TargetLI->getParent() == nullptr)
+          continue;
+
+        uint64_t TargetLoadSize = DL.getTypeStoreSize(TargetLI->getType());
+
+        // Find dominating loads that can forward to this load
+        SmallVector<std::pair<LoadInst *, APInt>, 8> DominatingLoads;
+        for (auto &[SourceLI, SourceLoadOffset] : RemainingLoads) {
+          if (SourceLI == TargetLI || SourceLI->getParent() == nullptr)
+            continue;
+
+          if (loadDominatesAndCovers(SourceLI, TargetLI, SourceLoadOffset,
+                                     TargetLoadOffset, TargetLoadSize, DL,
+                                     DT)) {
+            DominatingLoads.push_back({SourceLI, SourceLoadOffset});
+          }
+        }
+
+        if (DominatingLoads.empty())
+          continue;
+
+        // Check for each dominating load if there's a store or call between it
+        // and the target load
+        for (auto &[SourceLI, SourceLoadOffset] : DominatingLoads) {
+          bool HasAliasingWriteBetween = false;
+
+          // Check all stores for aliasing writes between source and target
+          for (auto &[SI, StoreOffset] : AllStores) {
+            uint64_t StoreSize =
+                DL.getTypeStoreSize(SI->getValueOperand()->getType());
+            if (!memoryRangesAlias(TargetLoadOffset, TargetLoadSize,
+                                   StoreOffset, StoreSize))
+              continue;
+
+            // Check if store is between source load and target load
+            if (DT.dominates(SourceLI, SI) && DT.dominates(SI, TargetLI)) {
+              // Check ordering in same block
+              BasicBlock *SourceBB = SourceLI->getParent();
+              BasicBlock *TargetBB = TargetLI->getParent();
+              BasicBlock *StoreBB = SI->getParent();
+
+              if (SourceBB == StoreBB && TargetBB == StoreBB) {
+                // All in same block - check instruction ordering
+                if (SourceLI->comesBefore(SI) && SI->comesBefore(TargetLI)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else if (SourceBB == StoreBB) {
+                // Source and store in same block
+                if (SourceLI->comesBefore(SI)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else if (TargetBB == StoreBB) {
+                // Target and store in same block
+                if (SI->comesBefore(TargetLI)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else {
+                // Different blocks - store is between in CFG
+                HasAliasingWriteBetween = true;
+                break;
+              }
+            }
+          }
+
+          if (HasAliasingWriteBetween)
+            continue;
+
+          // Check all nocapture calls for potential aliasing writes
+          for (auto &[Call, CallOffset] : NoCaptureCallUses) {
+            // Assume nocapture calls may write to the memory
+            if (DT.dominates(SourceLI, Call) && DT.dominates(Call, TargetLI)) {
+              // Check ordering in same block
+              BasicBlock *SourceBB = SourceLI->getParent();
+              BasicBlock *TargetBB = TargetLI->getParent();
+              BasicBlock *CallBB = Call->getParent();
+
+              if (SourceBB == CallBB && TargetBB == CallBB) {
+                // All in same block - check instruction ordering
+                if (SourceLI->comesBefore(Call) && Call->comesBefore(TargetLI)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else if (SourceBB == CallBB) {
+                // Source and call in same block
+                if (SourceLI->comesBefore(Call)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else if (TargetBB == CallBB) {
+                // Target and call in same block
+                if (Call->comesBefore(TargetLI)) {
+                  HasAliasingWriteBetween = true;
+                  break;
+                }
+              } else {
+                // Different blocks - call is between in CFG
+                HasAliasingWriteBetween = true;
+                break;
+              }
+            }
+          }
+
+          if (HasAliasingWriteBetween)
+            continue;
+
+          // Found a valid source load - forward it
+          IRBuilder<> Builder(TargetLI);
+          Value *LoadedVal = SourceLI;
+          Value *ExtractedVal =
+              extractValue(Builder, LoadedVal, TargetLI->getType(), DL,
+                           TargetLoadOffset, SourceLoadOffset, TargetLoadSize);
+
+          if (ExtractedVal) {
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Load-load forwarding\n"
+                              << "  Source Load: " << *SourceLI << "\n"
+                              << "  Target Load: " << *TargetLI << "\n");
+            TargetLI->replaceAllUsesWith(ExtractedVal);
+            TargetLI->eraseFromParent();
+            Changed = true;
+            break; // Successfully forwarded, move to next target load
           }
         }
       }
