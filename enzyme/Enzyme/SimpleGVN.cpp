@@ -443,9 +443,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
             }
           }
         }
-        if (LI == nullptr) {
-          continue;
-        }
+        continue;
       } else {
         for (auto &&[DCS, StoreOffset, StoredVal] : DominatingCoveringStores) {
           if (DCS->getParent() == LI->getParent()) {
