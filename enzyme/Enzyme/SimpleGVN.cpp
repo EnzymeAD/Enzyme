@@ -161,6 +161,10 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
     if (LoadType->isPointerTy()) {
       StoredVal = Builder.CreateIntToPtr(StoredVal, LoadType);
     } else {
+      if (!CastInst::castIsValid(Instruction::BitCast, StoredVal->getType(),
+                                 LoadType)) {
+        return nullptr;
+      }
       StoredVal = Builder.CreateBitCast(StoredVal, LoadType);
     }
   }
