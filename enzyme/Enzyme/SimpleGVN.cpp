@@ -196,11 +196,11 @@ static bool loadDominatesAndCovers(LoadInst *LI, Instruction *Target,
 
 // Collect memory operations (loads, stores) and calls for a given pointer value
 // Returns false if the value has uses that prevent optimization
-static bool collectMemoryOps(
-    Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
-    SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
-    SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
-    SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
+static bool
+collectMemoryOps(Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
+                 SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
+                 SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
+                 SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
   // WorkList tracks (Value*, Offset from Arg)
   SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
   SmallPtrSet<Value *, 16> Visited;
@@ -579,7 +579,8 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
 
               if (SourceBB == CallBB && TargetBB == CallBB) {
                 // All in same block - check instruction ordering
-                if (SourceLI->comesBefore(Call) && Call->comesBefore(TargetLI)) {
+                if (SourceLI->comesBefore(Call) &&
+                    Call->comesBefore(TargetLI)) {
                   HasAliasingWriteBetween = true;
                   break;
                 }
