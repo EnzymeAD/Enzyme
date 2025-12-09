@@ -626,9 +626,6 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
         }
       }
     }
-
-  next_argument:
-    continue;
   }
 
   return Changed;
