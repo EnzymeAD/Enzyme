@@ -194,12 +194,18 @@ static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
 
 // Collect memory operations (loads, stores) and calls for a given pointer value
 // Returns false if the value has uses that prevent optimization
-// If Calls vector is provided (non-null), nocapture call uses are allowed
+// Nocapture calls are only rejected (causing failure) if Calls is empty on
+// entry If Calls is non-empty on entry, nocapture calls are collected
 static bool
 collectMemoryOps(Value *Arg, const DataLayout &DL,
                  SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
                  SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
-                 SmallVectorImpl<std::pair<CallInst *, APInt>> *Calls) {
+                 SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
+  // Check if we should allow nocapture calls (for load-load forwarding)
+  // If Calls is initially empty, reject nocapture calls
+  // If Calls is initially non-empty (sentinel), collect nocapture calls
+  bool AllowNoCaptureCallUses = !Calls.empty();
+
   // WorkList tracks (Value*, Offset from Arg)
   SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
   SmallPtrSet<Value *, 16> Visited;
@@ -240,13 +246,13 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
       } else if (auto *CI = dyn_cast<CastInst>(Usr)) {
         // Casts don't change offset
         ToProcess.push_back({CI, CurrentOffset});
-      } else if (Calls) {
-        // Allow nocapture call uses when collecting for load-load forwarding
+      } else if (AllowNoCaptureCallUses) {
+        // For load-load forwarding, allow nocapture call uses
         if (auto *Call = dyn_cast<CallInst>(Usr)) {
           // Get the argument index from the Use
           unsigned ArgIdx = U.getOperandNo();
           if (isNoCapture(Call, ArgIdx)) {
-            Calls->push_back({Call, CurrentOffset});
+            Calls.push_back({Call, CurrentOffset});
           } else {
             // Call that may capture - reject this argument
             return false;
@@ -296,8 +302,8 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     SmallVector<std::pair<CallInst *, APInt>, 8> Calls;
 
     // First pass: strict collection (no nocapture calls) for store-load
-    // forwarding
-    if (!collectMemoryOps(Arg, DL, Stores, Loads, nullptr)) {
+    // forwarding (pass empty Calls to reject nocapture calls)
+    if (!collectMemoryOps(Arg, DL, Stores, Loads, Calls)) {
       // Argument has uses that prevent optimization
       continue;
     }
@@ -474,16 +480,22 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     // Second phase: Load-load forwarding
     // Collect nocapture calls for this phase
     {
-      SmallVector<std::pair<CallInst *, APInt>, 8> NoCaptureCallUses;
+      // Add a sentinel to Calls to enable nocapture call collection
+      APInt DummyOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+      Calls.push_back({nullptr, DummyOffset});
 
       // Collect nocapture call uses (reuse Stores and Loads from first pass)
       SmallVector<std::pair<StoreInst *, APInt>, 8> TempStores;
       SmallVector<std::pair<LoadInst *, APInt>, 8> TempLoads;
-      if (!collectMemoryOps(Arg, DL, TempStores, TempLoads,
-                            &NoCaptureCallUses)) {
+      if (!collectMemoryOps(Arg, DL, TempStores, TempLoads, Calls)) {
         // Should not happen, as we already checked this in the first pass
         continue;
       }
+
+      // Remove the sentinel
+      Calls.erase(llvm::remove_if(
+                      Calls, [](const auto &P) { return P.first == nullptr; }),
+                  Calls.end());
 
       // Build a set of remaining loads (those not eliminated in store-load
       // forwarding)
@@ -564,7 +576,10 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
             continue;
 
           // Check all nocapture calls for potential aliasing writes
-          for (auto &[Call, CallOffset] : NoCaptureCallUses) {
+          for (auto &[Call, CallOffset] : Calls) {
+            // Skip sentinel or null entries
+            if (!Call)
+              continue;
             // Assume nocapture calls may write to the memory
             if (DT.dominates(SourceLI, Call) && DT.dominates(Call, TargetLI)) {
               // Check ordering in same block
