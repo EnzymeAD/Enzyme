@@ -201,11 +201,6 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
                  SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
                  SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
                  SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
-  // Check if we should allow nocapture calls (for load-load forwarding)
-  // If Calls is initially empty, reject nocapture calls
-  // If Calls is initially non-empty (sentinel), collect nocapture calls
-  bool AllowNoCaptureCallUses = !Calls.empty();
-
   // WorkList tracks (Value*, Offset from Arg)
   SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
   SmallPtrSet<Value *, 16> Visited;
@@ -246,19 +241,13 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
       } else if (auto *CI = dyn_cast<CastInst>(Usr)) {
         // Casts don't change offset
         ToProcess.push_back({CI, CurrentOffset});
-      } else if (AllowNoCaptureCallUses) {
-        // For load-load forwarding, allow nocapture call uses
-        if (auto *Call = dyn_cast<CallInst>(Usr)) {
-          // Get the argument index from the Use
-          unsigned ArgIdx = U.getOperandNo();
-          if (isNoCapture(Call, ArgIdx)) {
-            Calls.push_back({Call, CurrentOffset});
-          } else {
-            // Call that may capture - reject this argument
-            return false;
-          }
+      } else if (auto *Call = dyn_cast<CallInst>(Usr)) {
+        // Get the argument index from the Use
+        unsigned ArgIdx = U.getOperandNo();
+        if (isNoCapture(Call, ArgIdx)) {
+          Calls.push_back({Call, CurrentOffset});
         } else {
-          // Unknown use - reject this argument
+          // Call that may capture - reject this argument
           return false;
         }
       } else {
