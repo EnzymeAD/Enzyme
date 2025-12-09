@@ -150,17 +150,29 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
   return StoredVal;
 }
 
-// Helper to check if a store dominates and completely covers a load
-static bool dominatesAndCovers(StoreInst *SI, LoadInst *LI,
-                               const APInt &StoreOffset,
-                               const APInt &LoadOffset, uint64_t LoadSize,
+// Helper to check if a source instruction dominates and completely covers a
+// target instruction's memory access
+// For stores: checks if store covers a load
+// For loads: checks if load covers another load
+static bool dominatesAndCovers(Instruction *Source, Instruction *Target,
+                               const APInt &SourceOffset,
+                               const APInt &TargetOffset, uint64_t TargetSize,
                                const DataLayout &DL, DominatorTree &DT) {
-  if (!DT.dominates(SI, LI))
+  if (!DT.dominates(Source, Target))
     return false;
 
-  uint64_t StoreSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
-  int64_t RelOffset = (LoadOffset - StoreOffset).getSExtValue();
-  return RelOffset >= 0 && (uint64_t)RelOffset + LoadSize <= StoreSize;
+  // Get the size of the source memory access
+  uint64_t SourceSize;
+  if (auto *SI = dyn_cast<StoreInst>(Source)) {
+    SourceSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+  } else if (auto *LI = dyn_cast<LoadInst>(Source)) {
+    SourceSize = DL.getTypeStoreSize(LI->getType());
+  } else {
+    return false;
+  }
+
+  int64_t RelOffset = (TargetOffset - SourceOffset).getSExtValue();
+  return RelOffset >= 0 && (uint64_t)RelOffset + TargetSize <= SourceSize;
 }
 
 // Helper to check if two memory ranges alias
@@ -178,20 +190,6 @@ static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
 
   // Otherwise, they may alias
   return true;
-}
-
-// Helper to check if a load dominates another instruction and covers memory
-static bool loadDominatesAndCovers(LoadInst *LI, Instruction *Target,
-                                   const APInt &LoadOffset,
-                                   const APInt &TargetOffset,
-                                   uint64_t TargetSize, const DataLayout &DL,
-                                   DominatorTree &DT) {
-  if (!DT.dominates(LI, Target))
-    return false;
-
-  uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
-  int64_t RelOffset = (TargetOffset - LoadOffset).getSExtValue();
-  return RelOffset >= 0 && (uint64_t)RelOffset + TargetSize <= LoadSize;
 }
 
 // Collect memory operations (loads, stores) and calls for a given pointer value
@@ -509,9 +507,8 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
           if (SourceLI == TargetLI || SourceLI->getParent() == nullptr)
             continue;
 
-          if (loadDominatesAndCovers(SourceLI, TargetLI, SourceLoadOffset,
-                                     TargetLoadOffset, TargetLoadSize, DL,
-                                     DT)) {
+          if (dominatesAndCovers(SourceLI, TargetLI, SourceLoadOffset,
+                                 TargetLoadOffset, TargetLoadSize, DL, DT)) {
             DominatingLoads.push_back({SourceLI, SourceLoadOffset});
           }
         }
