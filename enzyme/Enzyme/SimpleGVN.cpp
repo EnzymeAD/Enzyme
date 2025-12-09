@@ -194,11 +194,12 @@ static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
 
 // Collect memory operations (loads, stores) and calls for a given pointer value
 // Returns false if the value has uses that prevent optimization
+// If Calls vector is provided (non-null), nocapture call uses are allowed
 static bool
-collectMemoryOps(Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
+collectMemoryOps(Value *Arg, const DataLayout &DL,
                  SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
                  SmallVectorImpl<std::pair<LoadInst *, APInt>> &Loads,
-                 SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls) {
+                 SmallVectorImpl<std::pair<CallInst *, APInt>> *Calls) {
   // WorkList tracks (Value*, Offset from Arg)
   SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
   SmallPtrSet<Value *, 16> Visited;
@@ -213,10 +214,11 @@ collectMemoryOps(Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
     if (!Visited.insert(V).second)
       continue;
 
-    for (User *U : V->users()) {
-      if (auto *LI = dyn_cast<LoadInst>(U)) {
+    for (Use &U : V->uses()) {
+      User *Usr = U.getUser();
+      if (auto *LI = dyn_cast<LoadInst>(Usr)) {
         Loads.push_back({LI, CurrentOffset});
-      } else if (auto *SI = dyn_cast<StoreInst>(U)) {
+      } else if (auto *SI = dyn_cast<StoreInst>(Usr)) {
         // Check if this is a store TO the pointer (not storing the pointer
         // value)
         if (SI->getPointerOperand() == V) {
@@ -225,7 +227,7 @@ collectMemoryOps(Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
           // Pointer value is being stored somewhere - reject this argument
           return false;
         }
-      } else if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
+      } else if (auto *GEP = dyn_cast<GetElementPtrInst>(Usr)) {
         // Compute the offset for this GEP
         APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
         if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
@@ -235,24 +237,16 @@ collectMemoryOps(Value *Arg, const DataLayout &DL, bool AllowNoCaptureCallUses,
 
         APInt NewOffset = CurrentOffset + GEPOffset;
         ToProcess.push_back({GEP, NewOffset});
-      } else if (auto *CI = dyn_cast<CastInst>(U)) {
+      } else if (auto *CI = dyn_cast<CastInst>(Usr)) {
         // Casts don't change offset
         ToProcess.push_back({CI, CurrentOffset});
-      } else if (AllowNoCaptureCallUses) {
-        // For load-load forwarding, allow nocapture call uses
-        if (auto *Call = dyn_cast<CallInst>(U)) {
-          // Check if the pointer argument is marked nocapture
-          bool IsNoCaptureArg = false;
-          for (unsigned i = 0; i < Call->arg_size(); ++i) {
-            if (Call->getArgOperand(i) == V) {
-              if (Call->paramHasAttr(i, Attribute::NoCapture)) {
-                IsNoCaptureArg = true;
-                break;
-              }
-            }
-          }
-          if (IsNoCaptureArg) {
-            Calls.push_back({Call, CurrentOffset});
+      } else if (Calls) {
+        // Allow nocapture call uses when collecting for load-load forwarding
+        if (auto *Call = dyn_cast<CallInst>(Usr)) {
+          // Get the argument index from the Use
+          unsigned ArgIdx = U.getOperandNo();
+          if (isNoCapture(Call, ArgIdx)) {
+            Calls->push_back({Call, CurrentOffset});
           } else {
             // Call that may capture - reject this argument
             return false;
@@ -303,8 +297,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
 
     // First pass: strict collection (no nocapture calls) for store-load
     // forwarding
-    if (!collectMemoryOps(Arg, DL, /*AllowNoCaptureCallUses=*/false, Stores,
-                          Loads, Calls)) {
+    if (!collectMemoryOps(Arg, DL, Stores, Loads, nullptr)) {
       // Argument has uses that prevent optimization
       continue;
     }
@@ -479,25 +472,30 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     }
 
     // Second phase: Load-load forwarding
-    // After store-load forwarding, collect remaining loads and potential
-    // aliasing writes/calls
+    // Collect nocapture calls for this phase
     {
-      // Re-collect loads and stores (including nocapture calls this time)
-      SmallVector<std::pair<StoreInst *, APInt>, 8> AllStores;
-      SmallVector<std::pair<LoadInst *, APInt>, 8> RemainingLoads;
       SmallVector<std::pair<CallInst *, APInt>, 8> NoCaptureCallUses;
 
-      if (!collectMemoryOps(Arg, DL, /*AllowNoCaptureCallUses=*/true, AllStores,
-                            RemainingLoads, NoCaptureCallUses)) {
+      // Collect nocapture call uses (reuse Stores and Loads from first pass)
+      SmallVector<std::pair<StoreInst *, APInt>, 8> TempStores;
+      SmallVector<std::pair<LoadInst *, APInt>, 8> TempLoads;
+      if (!collectMemoryOps(Arg, DL, TempStores, TempLoads,
+                            &NoCaptureCallUses)) {
         // Should not happen, as we already checked this in the first pass
         continue;
       }
 
+      // Build a set of remaining loads (those not eliminated in store-load
+      // forwarding)
+      SmallVector<std::pair<LoadInst *, APInt>, 8> RemainingLoads;
+      for (auto &[LI, LoadOffset] : Loads) {
+        if (LI->getParent() != nullptr) {
+          RemainingLoads.push_back({LI, LoadOffset});
+        }
+      }
+
       // Try to forward loads to other loads
       for (auto &[TargetLI, TargetLoadOffset] : RemainingLoads) {
-        // Skip if this load was already erased in store-load forwarding
-        if (TargetLI->getParent() == nullptr)
-          continue;
 
         uint64_t TargetLoadSize = DL.getTypeStoreSize(TargetLI->getType());
 
@@ -522,7 +520,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
           bool HasAliasingWriteBetween = false;
 
           // Check all stores for aliasing writes between source and target
-          for (auto &[SI, StoreOffset] : AllStores) {
+          for (auto &[SI, StoreOffset] : Stores) {
             uint64_t StoreSize =
                 DL.getTypeStoreSize(SI->getValueOperand()->getType());
             if (!memoryRangesAlias(TargetLoadOffset, TargetLoadSize,
