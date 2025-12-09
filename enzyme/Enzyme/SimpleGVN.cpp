@@ -478,24 +478,39 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     }
 
     // Second phase: Load-load forwarding
-    // Collect nocapture calls for this phase
+    // Collect nocapture calls for this phase by traversing uses directly
     {
-      // Add a sentinel to Calls to enable nocapture call collection
-      APInt DummyOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
-      Calls.push_back({nullptr, DummyOffset});
-
       // Collect nocapture call uses (reuse Stores and Loads from first pass)
-      SmallVector<std::pair<StoreInst *, APInt>, 8> TempStores;
-      SmallVector<std::pair<LoadInst *, APInt>, 8> TempLoads;
-      if (!collectMemoryOps(Arg, DL, TempStores, TempLoads, Calls)) {
-        // Should not happen, as we already checked this in the first pass
-        continue;
-      }
+      SmallVector<std::pair<Value *, APInt>, 16> ToProcess;
+      SmallPtrSet<Value *, 16> Visited;
 
-      // Remove the sentinel
-      Calls.erase(llvm::remove_if(
-                      Calls, [](const auto &P) { return P.first == nullptr; }),
-                  Calls.end());
+      APInt ZeroOffset(DL.getIndexTypeSizeInBits(Arg->getType()), 0);
+      ToProcess.push_back({Arg, ZeroOffset});
+
+      while (!ToProcess.empty()) {
+        auto [V, CurrentOffset] = ToProcess.pop_back_val();
+
+        if (!Visited.insert(V).second)
+          continue;
+
+        for (Use &U : V->uses()) {
+          User *Usr = U.getUser();
+          if (auto *GEP = dyn_cast<GetElementPtrInst>(Usr)) {
+            APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+            if (GEP->accumulateConstantOffset(DL, GEPOffset)) {
+              APInt NewOffset = CurrentOffset + GEPOffset;
+              ToProcess.push_back({GEP, NewOffset});
+            }
+          } else if (auto *CI = dyn_cast<CastInst>(Usr)) {
+            ToProcess.push_back({CI, CurrentOffset});
+          } else if (auto *Call = dyn_cast<CallInst>(Usr)) {
+            unsigned ArgIdx = U.getOperandNo();
+            if (isNoCapture(Call, ArgIdx)) {
+              Calls.push_back({Call, CurrentOffset});
+            }
+          }
+        }
+      }
 
       // Build a set of remaining loads (those not eliminated in store-load
       // forwarding)
