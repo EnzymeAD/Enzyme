@@ -192,6 +192,86 @@ static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
   return true;
 }
 
+// Check if there's an aliasing store or call between Source and Target
+// Returns true if there's a potential write in between
+static bool hasAliasingWriteBetween(
+    Instruction *Source, Instruction *Target, const APInt &TargetOffset,
+    uint64_t TargetSize,
+    const SmallVectorImpl<std::pair<StoreInst *, APInt>> &Stores,
+    const SmallVectorImpl<std::pair<CallInst *, APInt>> &Calls,
+    const DataLayout &DL, DominatorTree &DT) {
+  // Check all stores for aliasing writes between source and target
+  for (auto &[SI, StoreOffset] : Stores) {
+    uint64_t StoreSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+    if (!memoryRangesAlias(TargetOffset, TargetSize, StoreOffset, StoreSize))
+      continue;
+
+    // Check if store is between source and target
+    if (DT.dominates(Source, SI) && DT.dominates(SI, Target)) {
+      // Check ordering in same block
+      BasicBlock *SourceBB = Source->getParent();
+      BasicBlock *TargetBB = Target->getParent();
+      BasicBlock *StoreBB = SI->getParent();
+
+      if (SourceBB == StoreBB && TargetBB == StoreBB) {
+        // All in same block - check instruction ordering
+        if (Source->comesBefore(SI) && SI->comesBefore(Target)) {
+          return true;
+        }
+      } else if (SourceBB == StoreBB) {
+        // Source and store in same block
+        if (Source->comesBefore(SI)) {
+          return true;
+        }
+      } else if (TargetBB == StoreBB) {
+        // Target and store in same block
+        if (SI->comesBefore(Target)) {
+          return true;
+        }
+      } else {
+        // Different blocks - store is between in CFG
+        return true;
+      }
+    }
+  }
+
+  // Check all nocapture calls for potential aliasing writes
+  for (auto &[Call, CallOffset] : Calls) {
+    // Skip null entries
+    if (!Call)
+      continue;
+    // Assume nocapture calls may write to the memory
+    if (DT.dominates(Source, Call) && DT.dominates(Call, Target)) {
+      // Check ordering in same block
+      BasicBlock *SourceBB = Source->getParent();
+      BasicBlock *TargetBB = Target->getParent();
+      BasicBlock *CallBB = Call->getParent();
+
+      if (SourceBB == CallBB && TargetBB == CallBB) {
+        // All in same block - check instruction ordering
+        if (Source->comesBefore(Call) && Call->comesBefore(Target)) {
+          return true;
+        }
+      } else if (SourceBB == CallBB) {
+        // Source and call in same block
+        if (Source->comesBefore(Call)) {
+          return true;
+        }
+      } else if (TargetBB == CallBB) {
+        // Target and call in same block
+        if (Call->comesBefore(Target)) {
+          return true;
+        }
+      } else {
+        // Different blocks - call is between in CFG
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 // Collect memory operations (loads, stores) and calls for a given pointer value
 // Returns false if the value has uses that prevent optimization
 // Nocapture calls are only rejected (causing failure) if Calls is empty on
@@ -544,92 +624,9 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
         // Check for each dominating load if there's a store or call between it
         // and the target load
         for (auto &[SourceLI, SourceLoadOffset] : DominatingLoads) {
-          bool HasAliasingWriteBetween = false;
-
-          // Check all stores for aliasing writes between source and target
-          for (auto &[SI, StoreOffset] : Stores) {
-            uint64_t StoreSize =
-                DL.getTypeStoreSize(SI->getValueOperand()->getType());
-            if (!memoryRangesAlias(TargetLoadOffset, TargetLoadSize,
-                                   StoreOffset, StoreSize))
-              continue;
-
-            // Check if store is between source load and target load
-            if (DT.dominates(SourceLI, SI) && DT.dominates(SI, TargetLI)) {
-              // Check ordering in same block
-              BasicBlock *SourceBB = SourceLI->getParent();
-              BasicBlock *TargetBB = TargetLI->getParent();
-              BasicBlock *StoreBB = SI->getParent();
-
-              if (SourceBB == StoreBB && TargetBB == StoreBB) {
-                // All in same block - check instruction ordering
-                if (SourceLI->comesBefore(SI) && SI->comesBefore(TargetLI)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else if (SourceBB == StoreBB) {
-                // Source and store in same block
-                if (SourceLI->comesBefore(SI)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else if (TargetBB == StoreBB) {
-                // Target and store in same block
-                if (SI->comesBefore(TargetLI)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else {
-                // Different blocks - store is between in CFG
-                HasAliasingWriteBetween = true;
-                break;
-              }
-            }
-          }
-
-          if (HasAliasingWriteBetween)
-            continue;
-
-          // Check all nocapture calls for potential aliasing writes
-          for (auto &[Call, CallOffset] : Calls) {
-            // Skip sentinel or null entries
-            if (!Call)
-              continue;
-            // Assume nocapture calls may write to the memory
-            if (DT.dominates(SourceLI, Call) && DT.dominates(Call, TargetLI)) {
-              // Check ordering in same block
-              BasicBlock *SourceBB = SourceLI->getParent();
-              BasicBlock *TargetBB = TargetLI->getParent();
-              BasicBlock *CallBB = Call->getParent();
-
-              if (SourceBB == CallBB && TargetBB == CallBB) {
-                // All in same block - check instruction ordering
-                if (SourceLI->comesBefore(Call) &&
-                    Call->comesBefore(TargetLI)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else if (SourceBB == CallBB) {
-                // Source and call in same block
-                if (SourceLI->comesBefore(Call)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else if (TargetBB == CallBB) {
-                // Target and call in same block
-                if (Call->comesBefore(TargetLI)) {
-                  HasAliasingWriteBetween = true;
-                  break;
-                }
-              } else {
-                // Different blocks - call is between in CFG
-                HasAliasingWriteBetween = true;
-                break;
-              }
-            }
-          }
-
-          if (HasAliasingWriteBetween)
+          // Check if there's an aliasing write between source and target
+          if (hasAliasingWriteBetween(SourceLI, TargetLI, TargetLoadOffset,
+                                      TargetLoadSize, Stores, Calls, DL, DT))
             continue;
 
           // Found a valid source load - forward it
