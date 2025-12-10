@@ -395,7 +395,8 @@ struct CacheAnalysis {
                 },
                 [&]() {
                   // if gone past entry
-                  if (mode != DerivativeMode::ReverseModeCombined) {
+                  if (mode != DerivativeMode::ReverseModeCombined &&
+                      mode != DerivativeMode::ReverseModeProfiled) {
                     EmitWarning("Uncacheable", li, "Load may need caching ", li,
                                 " due to entry via ", *II);
                     can_modref = true;
@@ -713,7 +714,8 @@ void calculateUnusedValuesInFunction(
       auto found = gutils->rematerializableAllocations.find(
           const_cast<CallInst *>(pair.first));
       if (found != gutils->rematerializableAllocations.end()) {
-        if (mode != DerivativeMode::ReverseModeCombined)
+        if (mode != DerivativeMode::ReverseModeCombined &&
+            mode != DerivativeMode::ReverseModeProfiled)
           primalNeededInReverse = false;
         else if (auto inst = dyn_cast<Instruction>(pair.first))
           if (found->second.LI &&
@@ -747,7 +749,8 @@ void calculateUnusedValuesInFunction(
     if (gutils->needsCacheWholeAllocation(rmat.first)) {
       primalNeededInReverse = true;
     } else if (primalNeededInReverse) {
-      if (mode != DerivativeMode::ReverseModeCombined)
+      if (mode != DerivativeMode::ReverseModeCombined &&
+          mode != DerivativeMode::ReverseModeProfiled)
         primalNeededInReverse = false;
       else if (auto inst = dyn_cast<Instruction>(rmat.first))
         if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
@@ -972,7 +975,8 @@ void calculateUnusedValuesInFunction(
                 mode == DerivativeMode::ForwardModeError ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
-                  mode == DerivativeMode::ReverseModeCombined) &&
+                  mode == DerivativeMode::ReverseModeCombined ||
+                  mode == DerivativeMode::ReverseModeProfiled) &&
                  gutils->forwardDeallocations.count(obj_op)))
               return UseReq::Need;
             return UseReq::Recur;
@@ -1063,6 +1067,7 @@ void calculateUnusedValuesInFunction(
         }
         if ((mode == DerivativeMode::ReverseModePrimal ||
              mode == DerivativeMode::ReverseModeCombined ||
+             mode == DerivativeMode::ReverseModeProfiled ||
              mode == DerivativeMode::ForwardMode ||
              mode == DerivativeMode::ForwardModeError) &&
             (mayWriteToMemory || mayThrow)) {
@@ -1736,14 +1741,10 @@ void clearFunctionAttributes(Function *f) {
 
   Attribute::AttrKind fnattrs[] = {
 #if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory,
+      Attribute::Memory,
 #endif
-    Attribute::ReadOnly,
-    Attribute::ReadNone,
-    Attribute::WriteOnly,
-    Attribute::WillReturn,
-    Attribute::OptimizeNone
-  };
+      Attribute::ReadOnly,   Attribute::ReadNone,    Attribute::WriteOnly,
+      Attribute::WillReturn, Attribute::OptimizeNone};
 
   for (auto attr : fnattrs) {
     if (f->hasFnAttribute(attr)) {
@@ -1778,17 +1779,13 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    Attribute::Range,
+      Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2693,16 +2690,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    llvm::Attribute::Range,
+      llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
@@ -3698,6 +3693,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                            prevkey.todiff->getName());
 
   assert(prevkey.mode == DerivativeMode::ReverseModeCombined ||
+         prevkey.mode == DerivativeMode::ReverseModeProfiled ||
          prevkey.mode == DerivativeMode::ReverseModeGradient);
 
   FnTypeInfo oldTypeInfo =
@@ -3720,7 +3716,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   if (key.returnUsed)
-    assert(key.mode == DerivativeMode::ReverseModeCombined);
+    assert(key.mode == DerivativeMode::ReverseModeCombined ||
+           key.mode == DerivativeMode::ReverseModeProfiled);
 
   TargetLibraryInfo &TLI =
       PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
@@ -3761,7 +3758,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
     }
 
-    if (key.mode == DerivativeMode::ReverseModeCombined) {
+    if (key.mode == DerivativeMode::ReverseModeCombined ||
+        key.mode == DerivativeMode::ReverseModeProfiled) {
       auto res = getDefaultFunctionTypeForGradient(
           key.todiff->getFunctionType(),
           /*retType*/ key.retType, key.constant_args);
@@ -4232,6 +4230,26 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
+  if (key.mode == DerivativeMode::ReverseModeProfiled) {
+    Module *M = key.todiff->getParent();
+    LLVMContext &Ctx = M->getContext();
+
+    Type *DoubleTy = Type::getDoubleTy(Ctx);
+    Type *PtrTy = PointerType::getUnqual(Ctx);
+    Type *Int32Ty = Type::getInt32Ty(Ctx);
+    Type *SizeTy = Type::getInt64Ty(Ctx);
+
+    M->getOrInsertGlobal("ENZYME_FPPROFILE_RUNTIME_VAR", Int32Ty);
+
+    FunctionType *LogValueFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, Int32Ty, PtrTy}, false);
+    M->getOrInsertFunction("enzymeLogValue", LogValueFT);
+
+    FunctionType *LogGradFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, DoubleTy}, false);
+    M->getOrInsertFunction("enzymeLogGrad", LogGradFT);
+  }
+
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
@@ -4343,7 +4361,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     auto v = gutils->newFunc->arg_end();
     v--;
     additionalValue = v;
-    assert(key.mode != DerivativeMode::ReverseModeCombined);
+    assert(key.mode != DerivativeMode::ReverseModeCombined &&
+           key.mode != DerivativeMode::ReverseModeProfiled);
     assert(augmenteddata);
 
     // TODO VERIFY THIS
@@ -4409,12 +4428,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.shadowReturnUsed) {
     assert(key.retType == DIFFE_TYPE::DUP_ARG ||
            key.retType == DIFFE_TYPE::DUP_NONEED);
-    assert(key.mode == DerivativeMode::ReverseModeCombined);
+    assert(key.mode == DerivativeMode::ReverseModeCombined ||
+           key.mode == DerivativeMode::ReverseModeProfiled);
     dretAlloca =
         IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
             .CreateAlloca(key.todiff->getReturnType(), nullptr, "dtoreturn");
   }
   if (key.mode == DerivativeMode::ReverseModeCombined ||
+      key.mode == DerivativeMode::ReverseModeProfiled ||
       key.mode == DerivativeMode::ReverseModeGradient) {
     for (BasicBlock &oBB : *gutils->oldFunc) {
       if (ReturnInst *orig = dyn_cast<ReturnInst>(oBB.getTerminator())) {
@@ -4462,7 +4483,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
       SmallVector<BasicBlock *, 4> toRemove;
-      if (key.mode != DerivativeMode::ReverseModeCombined) {
+      if (key.mode != DerivativeMode::ReverseModeCombined &&
+          key.mode != DerivativeMode::ReverseModeProfiled) {
         if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
           toRemove.push_back(cast<BasicBlock>(
               gutils->getNewFromOriginal(II->getNormalDest())));
@@ -4495,12 +4517,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         toerase.push_back(&I);
       }
       for (auto I : llvm::reverse(toerase)) {
-        maker.eraseIfUnused(*I, /*erase*/ true,
-                            /*check*/ key.mode ==
-                                DerivativeMode::ReverseModeCombined);
+        maker.eraseIfUnused(
+            *I, /*erase*/ true,
+            /*check*/ key.mode == DerivativeMode::ReverseModeCombined ||
+                key.mode == DerivativeMode::ReverseModeProfiled);
       }
 
-      if (key.mode != DerivativeMode::ReverseModeCombined) {
+      if (key.mode != DerivativeMode::ReverseModeCombined &&
+          key.mode != DerivativeMode::ReverseModeProfiled) {
         if (newBB->getTerminator())
           gutils->erase(newBB->getTerminator());
         IRBuilder<> builder(newBB);
@@ -4548,7 +4572,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       Arch == Triple::amdgcn ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                              : 3;
 
-  if (key.mode == DerivativeMode::ReverseModeCombined) {
+  if (key.mode == DerivativeMode::ReverseModeCombined ||
+      key.mode == DerivativeMode::ReverseModeProfiled) {
     BasicBlock *sharedBlock = nullptr;
     for (auto &g : gutils->newFunc->getParent()->globals()) {
       if (hasMetadata(&g, "enzyme_internalshadowglobal")) {
@@ -6618,6 +6643,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                         "vprintf",
                         "fprintf",
                         "fputc",
+                        "getrusage",
                          "memchr",
                          "time",
                          "strlen",

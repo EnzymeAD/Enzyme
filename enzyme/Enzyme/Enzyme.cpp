@@ -68,8 +68,11 @@
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/AbstractCallSite.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
@@ -77,6 +80,9 @@
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#ifdef ENABLE_POSEIDON
+#include "Poseidon/Poseidon.h"
+#endif
 #include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "Utils.h"
@@ -789,6 +795,7 @@ public:
     bool runtimeActivity;
     bool strongZero;
     bool subsequent_calls_may_write;
+    double errTol;
   };
 
 #if LLVM_VERSION_MAJOR > 16
@@ -827,8 +834,10 @@ public:
     bool subsequent_calls_may_write =
         mode != DerivativeMode::ForwardMode &&
         mode != DerivativeMode::ForwardModeError &&
-        mode != DerivativeMode::ReverseModeCombined;
+        mode != DerivativeMode::ReverseModeCombined &&
+        mode != DerivativeMode::ReverseModeProfiled;
     StringSet<> ActiveRandomVariables;
+    double errTol = 0.0;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
@@ -848,7 +857,8 @@ public:
 
     std::vector<bool> overwritten_args(
         fn->getFunctionType()->getNumParams(),
-        !(mode == DerivativeMode::ReverseModeCombined));
+        !(mode == DerivativeMode::ReverseModeCombined ||
+          mode == DerivativeMode::ReverseModeProfiled));
 
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
@@ -874,6 +884,7 @@ public:
       }
     }
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
+                               mode == DerivativeMode::ReverseModeProfiled ||
                                mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
 
@@ -952,6 +963,7 @@ public:
       }
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
+      case DerivativeMode::ReverseModeProfiled:
       case DerivativeMode::ReverseModeGradient: {
         if (retType != DIFFE_TYPE::CONSTANT)
           shadow = CI->getArgOperand(1);
@@ -972,8 +984,7 @@ public:
 
     ssize_t interleaved = -1;
 
-    size_t maxsize;
-    maxsize = CI->arg_size();
+    size_t maxsize = CI->arg_size();
     size_t num_args = maxsize;
     for (unsigned i = 1 + sret; i < maxsize; ++i) {
       Value *res = CI->getArgOperand(i);
@@ -1000,7 +1011,8 @@ public:
       Optional<DIFFE_TYPE> opt_ty;
 #endif
 
-      bool overwritten = !(mode == DerivativeMode::ReverseModeCombined);
+      bool overwritten = !(mode == DerivativeMode::ReverseModeCombined ||
+                           mode == DerivativeMode::ReverseModeProfiled);
 
       bool skipArg = false;
 
@@ -1148,6 +1160,21 @@ public:
                 "IllegalStringType", CI->getDebugLoc(), CI,
                 "active variable address must be a compile-time constant", *CI,
                 *metaString);
+          }
+          skipArg = true;
+          break;
+        } else if (*metaString == "enzyme_err_tol") {
+          ++i;
+          Value *relErrorArg = CI->getArgOperand(i);
+          if (auto *CFP = dyn_cast<ConstantFP>(relErrorArg)) {
+            errTol = CFP->getValueAPF().convertToDouble();
+          } else {
+            EmitFailure(
+                "InvalidErrorTolerance", CI->getDebugLoc(), CI,
+                "Relative error tolerance must be a constant floating-point "
+                "value, got ",
+                *relErrorArg);
+            return {};
           }
           skipArg = true;
           break;
@@ -1432,7 +1459,8 @@ public:
                     overwritten_args,
                     runtimeActivity,
                     strongZero,
-                    subsequent_calls_may_write});
+                    subsequent_calls_may_write,
+                    errTol});
   }
 
   static FnTypeInfo populate_type_args(TypeAnalysis &TA, llvm::Function *fn,
@@ -1827,6 +1855,7 @@ public:
       break;
     }
     case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeProfiled:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
           context,
@@ -2251,6 +2280,134 @@ public:
     return status;
   }
 
+#ifdef ENABLE_POSEIDON
+  bool HandlePoseidonProf(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
+    assert(FPProfileGenerate);
+
+    IRBuilder<> Builder(CI);
+    Function *F = parseFunctionParameter(CI);
+    if (!F)
+      return false;
+
+    assert(F);
+
+    std::map<int, Type *> byVal;
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<Value *, 2> args;
+
+    auto mode = DerivativeMode::ReverseModeProfiled;
+
+    auto options =
+        handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
+    if (!options) {
+      return false;
+    }
+
+    Value *ret = CI;
+    Type *retElemType = nullptr;
+    if (CI->hasStructRetAttr()) {
+      ret = CI->getArgOperand(0);
+      retElemType =
+          CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+              .getValueAsType();
+    }
+
+    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
+                          byVal, constants, F, mode, *options, false, calls);
+  }
+
+  bool HandlePoseidonOpt(CallInst *CI, SmallVectorImpl<CallInst *> &calls) {
+    IRBuilder<> Builder(CI);
+    Function *F = parseFunctionParameter(CI);
+    if (!F)
+      return false;
+
+    assert(F);
+
+    auto mode = DerivativeMode::ReverseModeProfiled;
+
+    std::map<int, Type *> byVal;
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<Value *, 8> args;
+
+    auto options =
+        handleArguments(Builder, CI, F, mode, false, constants, args, byVal);
+    if (!options) {
+      return false;
+    }
+
+    SmallVector<Value *, 8> primalArgs;
+    size_t argIdx = 0;
+    for (size_t i = 0; i < constants.size(); ++i) {
+      if (argIdx >= args.size())
+        break;
+
+      if (i == 0 && F->hasParamAttribute(0, Attribute::StructRet)) {
+        argIdx++;
+        if (constants[i] == DIFFE_TYPE::DUP_ARG ||
+            constants[i] == DIFFE_TYPE::DUP_NONEED) {
+          argIdx++;
+        }
+        continue;
+      }
+
+      primalArgs.push_back(args[argIdx]);
+      argIdx++;
+
+      if (constants[i] == DIFFE_TYPE::DUP_ARG ||
+          constants[i] == DIFFE_TYPE::DUP_NONEED) {
+        argIdx++;
+      }
+    }
+
+    if (!FPProfileUse.getNumOccurrences() || FPProfileUse.empty()) {
+      EmitWarning("MissingProfileMode", *CI,
+                  "__enzyme_fp_optimize called without -fpprofile-generate or "
+                  "-fpprofile-use=<dir>. "
+                  "Emitting unoptimized function call. Use -fpprofile-generate "
+                  "to create a profile or -fpprofile-use=<dir> to use an "
+                  "existing profile.");
+    } else {
+      F = Logic.PPC.preprocessForClone(F, mode);
+      setPoseidonMetadata(*F);
+
+      SmallString<128> profilePath(FPProfileUse);
+      llvm::sys::path::append(profilePath, F->getName() + ".fpprofile");
+      if (!llvm::sys::fs::exists(profilePath.str())) {
+        EmitFailure("NoProfile", CI->getDebugLoc(), CI, "No profile found at ",
+                    profilePath, " (FPProfileUse: ", FPProfileUse, ")");
+        return false;
+      }
+
+      auto &TTI = Logic.PPC.FAM.getResult<TargetIRAnalysis>(*CI->getFunction());
+
+      if (FPOptPrint) {
+        llvm::errs() << "FPOpt: Optimizing " << F->getName()
+                     << " with relative error tolerance: " << options->errTol
+                     << "\n";
+      }
+
+      bool optimized = fpOptimize(*F, TTI, options->errTol);
+
+      if (!optimized) {
+        EmitWarning("NoChange", *CI, "Poseidon returned false (no change) for ",
+                    F->getName());
+      }
+    }
+
+    CallInst *optCall = Builder.CreateCall(F->getFunctionType(), F, primalArgs);
+    optCall->setCallingConv(CI->getCallingConv());
+    optCall->setDebugLoc(CI->getDebugLoc());
+
+    CI->replaceAllUsesWith(optCall);
+    CI->eraseFromParent();
+
+    calls.push_back(optCall);
+
+    return true;
+  }
+#endif
+
   bool handleFullModuleTrunc(Function &F) {
     if (startsWith(F.getName(), EnzymeFPRTPrefix))
       return false;
@@ -2400,6 +2557,7 @@ public:
     SmallVector<CallInst *, 4> toTruncateFuncOp;
     SmallVector<CallInst *, 4> toTruncateValue;
     SmallVector<CallInst *, 4> toExpandValue;
+    SmallVector<CallInst *, 4> toFPOpt;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2717,6 +2875,7 @@ public:
         bool truncateFuncMem = false;
         bool truncateValue = false;
         bool expandValue = false;
+        bool fpOpt = false;
         bool probProg = false;
         DerivativeMode derivativeMode;
         ProbProgMode probProgMode;
@@ -2773,6 +2932,9 @@ public:
           enableEnzyme = true;
           probProgMode = ProbProgMode::Condition;
           probProg = true;
+        } else if (Fn->getName().contains("__enzyme_fp_optimize")) {
+          enableEnzyme = true;
+          fpOpt = true;
         }
 
         if (enableEnzyme) {
@@ -2826,9 +2988,11 @@ public:
             toTruncateValue.push_back(CI);
           else if (expandValue)
             toExpandValue.push_back(CI);
-          else if (probProg) {
+          else if (probProg)
             toProbProg[CI] = probProgMode;
-          } else
+          else if (fpOpt)
+            toFPOpt.push_back(CI);
+          else
             toLower[CI] = derivativeMode;
 
           if (auto dc = dyn_cast<Function>(fn)) {
@@ -2932,6 +3096,18 @@ public:
       HandleProbProg(call, mode, calls);
     }
 
+#ifdef ENABLE_POSEIDON
+    for (auto CI : toFPOpt) {
+      Changed |= FPProfileGenerate ? HandlePoseidonProf(CI, calls)
+                                   : HandlePoseidonOpt(CI, calls);
+    }
+#else
+    if (!toFPOpt.empty()) {
+      llvm_unreachable("Poseidon is not enabled. Please specify "
+                       "-DENABLE_POSEIDON=1 when building Enzyme.");
+    }
+#endif
+
     if (Logic.PostOpt) {
       auto Params = llvm::getInlineParams();
 
@@ -3005,31 +3181,31 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,
+&AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,
+&AAMemoryLocation::ID,
+&AANoUnwind::ID,
+          &AANoSync::ID,
+&AANoRecurse::ID,
+&AAWillReturn::ID,
+          &AANoReturn::ID,
+&AANonNull::ID,
+&AANoAlias::ID,
+          &AADereferenceable::ID,
+&AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,
+&AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
       AttributorConfig aconfig(CGUpdater);
@@ -3281,8 +3457,12 @@ public:
       call->eraseFromParent();
     }
 
-    for (const auto &pair : Logic.PPC.cache)
-      pair.second->eraseFromParent();
+    for (const auto &pair : Logic.PPC.cache) {
+      if (pair.second->use_empty()) {
+        pair.second->eraseFromParent();
+      }
+    }
+
     Logic.clear();
 
     if (changed && Logic.PostOpt) {
@@ -3787,6 +3967,12 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(EnzymeNewPM());
           return true;
         }
+#ifdef ENABLE_POSEIDON
+        if (Name == "fp-opt") {
+          MPM.addPass(FPOptNewPM());
+          return true;
+        }
+#endif
         if (Name == "preserve-nvvm") {
           MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
           return true;

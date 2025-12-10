@@ -199,6 +199,7 @@ void emit_beginning(const TGPattern &pattern, raw_ostream &os) {
 
 void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+     << "      Mode == DerivativeMode::ReverseModeProfiled ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
      << "    if (shouldFree()) {\n";
@@ -681,11 +682,13 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
 
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+     << "      Mode == DerivativeMode::ReverseModeProfiled ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
      << "\n"
      << "    if (cachetype) {\n"
-     << "      if (Mode != DerivativeMode::ReverseModeCombined) {\n"
+     << "      if (Mode != DerivativeMode::ReverseModeCombined && Mode != "
+        "DerivativeMode::ReverseModeProfiled) {\n"
      << "        cacheval = BuilderZ.CreatePHI(cachetype, 0);\n"
      << "      }\n"
      << "      cacheval = gutils->cacheForReverse(\n"
@@ -2233,6 +2236,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "  /* rev-rewrite */                                 \n"
      << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+     << "      Mode == DerivativeMode::ReverseModeProfiled ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient) {\n";
 
   os << "    if (blas.floatType == \"c\" || blas.floatType == \"C\" || "

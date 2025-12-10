@@ -50,6 +50,54 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND ENZYME_SRC TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
+set(ENABLE_POSEIDON 0 CACHE BOOL "Enable Poseidon")
+
+if(ENABLE_POSEIDON)
+  include(ExternalProject)
+    ExternalProject_Add(herbie
+        GIT_REPOSITORY https://github.com/sbrantq/herbie
+        GIT_TAG 193e2a4e6e4902fe5ee7fa8bd5747c19f70ce19b
+        UPDATE_COMMAND ""
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND make clean 
+            COMMAND raco pkg install --auto --update-deps fpbench || true 
+            COMMAND raco pkg install --auto --update-deps rival || true 
+            COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml 
+            COMMAND raco pkg install ./egg-herbie 
+            COMMAND mkdir -p herbie-compiled/ 
+            COMMAND raco exe -o herbie --orig-exe --embed-dlls --vv src/main.rkt 
+            COMMAND raco distribute herbie-compiled herbie
+        BUILD_IN_SOURCE true
+        INSTALL_COMMAND COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie/install
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/herbie-prefix/src/herbie/herbie-compiled ${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie
+    )
+    list(APPEND ENZYME_SRC 
+        Poseidon/Poseidon.cpp
+        Poseidon/PoseidonEvaluators.cpp
+        Poseidon/PoseidonHerbieUtils.cpp
+        Poseidon/PoseidonProfUtils.cpp
+        Poseidon/PoseidonPrecUtils.cpp
+        Poseidon/PoseidonSolvers.cpp
+        Poseidon/PoseidonTypes.cpp
+        Poseidon/PoseidonUtils.cpp
+    )
+    add_compile_definitions(ENABLE_POSEIDON=1)
+    set_source_files_properties(Poseidon/PoseidonHerbieUtils.cpp PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${CMAKE_CURRENT_BINARY_DIR}/herbie/install/herbie/bin/herbie")
+    
+    add_library(EnzymeFPProfile STATIC
+        Runtimes/FPProfiler/FPProfiler.cpp
+    )
+    target_compile_features(EnzymeFPProfile PRIVATE cxx_std_17)
+    target_include_directories(EnzymeFPProfile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Runtimes/FPProfiler)
+    
+    install(TARGETS EnzymeFPProfile
+        EXPORT EnzymeTargets
+        ARCHIVE DESTINATION lib
+        COMPONENT dev
+    )
+endif()
+
+
 if (ENZYME_ENABLE_PLUGINS)
         # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
         if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
@@ -119,6 +167,14 @@ if (ENZYME_ENABLE_PLUGINS)
                  )
              target_compile_definitions(LLDEnzyme-${LLVM_VERSION_MAJOR} PUBLIC ENZYME_RUNPASS)
         endif()
+        
+        if(ENABLE_POSEIDON)
+            target_link_libraries(LLVMEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+            if (${Clang_FOUND})
+                target_link_libraries(ClangEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+            endif()
+            target_link_libraries(LLDEnzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+        endif()
 endif()
 
 if (${ENZYME_STATIC_LIB})
@@ -129,6 +185,9 @@ if (${ENZYME_STATIC_LIB})
         DEPENDS
         intrinsics_gen
     )
+    if(ENABLE_POSEIDON)
+        target_link_libraries(EnzymeStatic-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+    endif()
 endif()
 
 if (${ENZYME_EXTERNAL_SHARED_LIB})
@@ -146,6 +205,9 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+    if(ENABLE_POSEIDON)
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE mpfr)
+    endif()
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
         LIBRARY DESTINATION lib COMPONENT shlib

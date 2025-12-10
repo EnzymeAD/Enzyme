@@ -331,6 +331,7 @@ void emit_cache_for_reverse(const TGPattern &pattern, raw_ostream &os) {
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "       Mode == DerivativeMode::ReverseModeProfiled ||\n"
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
 if (pattern.getName() == "potrf" || pattern.getName() == "trtrs") {
@@ -415,6 +416,7 @@ os << "BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call)->getNextNode())
 << "  IRBuilder<> Builder2(&call);\n"               
 << "  switch (Mode) {\n"                            
 << "    case DerivativeMode::ReverseModeCombined:\n"
+<< "    case DerivativeMode::ReverseModeProfiled:\n"
 << "    case DerivativeMode::ReverseModeGradient:\n"
 << "      getReverseBuilder(Builder2);\n"
 << "      break;\n"

@@ -28,6 +28,7 @@
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -114,6 +115,10 @@
 
 #include "CacheUtility.h"
 #include "Utils.h"
+
+#ifdef ENABLE_POSEIDON
+#include "Poseidon/Poseidon.h"
+#endif
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
@@ -708,7 +713,9 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
         // TODO use is_value_needed_in_reverse (requiring GradientUtils)
         if (OnlyUsedInOMP(AI))
           continue;
-        if (!UsableEverywhere || mode != DerivativeMode::ReverseModeCombined) {
+        if (!UsableEverywhere ||
+            (mode != DerivativeMode::ReverseModeCombined &&
+             mode != DerivativeMode::ReverseModeProfiled)) {
           ToConvert.push_back(AI);
         }
       }
@@ -2714,7 +2721,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -2750,17 +2758,32 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||
-      mode == DerivativeMode::ReverseModeCombined) {
+      mode == DerivativeMode::ReverseModeCombined ||
+      mode == DerivativeMode::ReverseModeProfiled) {
     // For subfunction calls upgrade stack allocations to mallocs
     // to ensure availability in the reverse pass
     auto unreachable = getGuaranteedUnreachable(NewF);
     UpgradeAllocasToMallocs(NewF, mode, unreachable);
   }
+
+#ifdef ENABLE_POSEIDON
+  if (mode == DerivativeMode::ReverseModeProfiled) {
+    preprocessForPoseidon(NewF);
+
+    auto PA = InstCombinePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+    PA = EarlyCSEPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+    PA = GVNPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+  }
+#endif
 
   CanonicalizeLoops(NewF, FAM);
   RemoveRedundantPHI(NewF, FAM);
@@ -3002,7 +3025,8 @@ FunctionType *getFunctionTypeForClone(llvm::FunctionType *FTy,
   if (RetTypes.size() == 0)
     RetType = Type::getVoidTy(RetType->getContext());
   else if (RetTypes.size() == 1 && (returnPrimal || returnShadow) &&
-           mode != DerivativeMode::ReverseModeCombined)
+           mode != DerivativeMode::ReverseModeCombined &&
+           mode != DerivativeMode::ReverseModeProfiled)
     RetType = RetTypes[0];
   else
     RetType = StructType::get(FTy->getContext(), RetTypes);
@@ -3025,6 +3049,11 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     bool diffeReturnArg, llvm::Type *additionalArg) {
   if (!F->empty())
     F = preprocessForClone(F, mode);
+#ifdef ENABLE_POSEIDON
+  if (mode == DerivativeMode::ReverseModeProfiled) {
+    setPoseidonMetadata(*F);
+  }
+#endif
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,
@@ -3220,6 +3249,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   }
 
   if (hasPtrInput && (mode == DerivativeMode::ReverseModeCombined ||
+                      mode == DerivativeMode::ReverseModeProfiled ||
                       mode == DerivativeMode::ReverseModeGradient)) {
     if (NewF->hasFnAttribute(Attribute::ReadOnly)) {
       NewF->removeFnAttr(Attribute::ReadOnly);

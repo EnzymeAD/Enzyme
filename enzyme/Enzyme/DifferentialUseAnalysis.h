@@ -123,12 +123,13 @@ inline bool is_value_needed_in_reverse(
         }
       }
     }
-    if (gutils->mode == DerivativeMode::ForwardModeError &&
+    if ((gutils->mode == DerivativeMode::ReverseModeProfiled ||
+         gutils->mode == DerivativeMode::ForwardModeError) &&
         !gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (EnzymePrintDiffUse)
-        llvm::errs()
-            << " Need: " << to_string(VT) << " of " << *inst
-            << " in reverse as forward mode error always needs result\n";
+        llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                     << " in reverse as profiling mode or forward mode "
+                        "error always needs result\n";
       return seen[idx] = true;
     }
   }
