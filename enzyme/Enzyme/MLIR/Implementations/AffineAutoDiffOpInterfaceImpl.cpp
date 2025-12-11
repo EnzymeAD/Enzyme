@@ -361,11 +361,17 @@ struct AffineParallelOpEnzymeOpsRemover
         assert(parOp.getLowerBoundsMap() == otherParOp.getLowerBoundsMap());
         for (auto &&[f, o] :
              llvm::zip_equal(parOp.getLowerBoundsOperands(),
-                             otherParOp.getLowerBoundsOperands()))
+                             otherParOp.getLowerBoundsOperands())) {
+          (void)f;
+          (void)o;
           assert(Equivalent(f, o));
+        }
         for (auto [fstep, ostep] :
-             llvm::zip_equal(parOp.getSteps(), otherParOp.getSteps()))
+             llvm::zip_equal(parOp.getSteps(), otherParOp.getSteps())) {
+          (void)fstep;
+          (void)ostep;
           assert(fstep == ostep);
+        }
         map.map(fiv, oiv);
       }
     }
@@ -716,9 +722,13 @@ public:
     Value canIdx = forOp.getBody()->getArgument(0);
     if (!map.contains(canIdx)) {
       assert(forOp.getLowerBoundMap() == otherForOp.getLowerBoundMap());
-      for (auto &&[f, o] : llvm::zip_equal(forOp.getLowerBoundOperands(),
-                                           otherForOp.getLowerBoundOperands()))
+      for (auto &&[f, o] :
+           llvm::zip_equal(forOp.getLowerBoundOperands(),
+                           otherForOp.getLowerBoundOperands())) {
+        (void)f;
+        (void)o;
         assert(Equivalent(f, o));
+      }
       assert(forOp.getStep() == otherForOp.getStep());
       map.map(forOp.getBody()->getArgument(0),
               otherForOp.getBody()->getArgument(0));
