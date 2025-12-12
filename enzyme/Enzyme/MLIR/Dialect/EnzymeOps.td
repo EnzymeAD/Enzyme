@@ -954,6 +954,11 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
       Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
       Variadic<Index>:$indices,
       AffineMapAttr:$map);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
 }
 
 #endif // ENZYME_OPS
