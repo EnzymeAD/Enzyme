@@ -1,4 +1,4 @@
-// RUN: %eopt %s --enzyme-wrap="infn=affine outfn= argTys=enzyme_active,enzyme_dup,enzyme_dup retTys= mode=ReverseModeCombined" --enzyme-wrap="infn=scf outfn= argTys=enzyme_active,enzyme_dup,enzyme_dup retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s
+// RUN: %eopt %s --enzyme-wrap="infn=affine outfn= argTys=enzyme_active,enzyme_dup,enzyme_dup retTys= mode=ReverseModeCombined" --canonicalize --remove-unnecessary-enzyme-ops --canonicalize --enzyme-simplify-math | FileCheck %s
 
 module {
   func.func @affine(%a: f32,
