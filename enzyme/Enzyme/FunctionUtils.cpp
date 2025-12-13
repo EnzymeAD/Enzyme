@@ -8682,10 +8682,11 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
         if (CI->getContext().supportsTypedPointers()) {
           V = B.CreateAddrSpaceCast(V, getUnqual(PT->getPointerElementType()));
         } else {
-          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getContext()));
+          V = B.CreateAddrSpaceCast(V,
+                                    PointerType::getUnqual(PT->getContext()));
         }
 #else
-        V = B.CreateAddrSpaceCast(V, getUnqual(PT->getContext()));
+        V = B.CreateAddrSpaceCast(V, PointerType::getUnqual(PT->getContext()));
 #endif
       }
       return B.CreatePtrToInt(V, intTy);
