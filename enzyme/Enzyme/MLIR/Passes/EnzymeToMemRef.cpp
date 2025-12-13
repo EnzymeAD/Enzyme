@@ -14,7 +14,6 @@
 #include "Dialect/Ops.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
-#include "Passes/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -370,23 +369,6 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
   }
 };
 
-struct AffineAtomicRmwConversion
-    : public OpConversionPattern<enzyme::AffineAtomicRMWOp> {
-  using OpConversionPattern<enzyme::AffineAtomicRMWOp>::OpConversionPattern;
-
-  LogicalResult
-  matchAndRewrite(enzyme::AffineAtomicRMWOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    SmallVector<Value> indices;
-    enzyme::computeAffineIndices(rewriter, op.getLoc(), op.getMap(),
-                                 adaptor.getIndices(), indices);
-    memref::AtomicRMWOp::create(rewriter, op.getLoc(),
-                                arith::AtomicRMWKind::addf, adaptor.getValue(),
-                                adaptor.getMemref(), indices);
-    return success();
-  }
-};
-
 struct EnzymeToMemRefPass
     : public enzyme::impl::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
   void runOnOperation() override {
@@ -421,7 +403,6 @@ struct EnzymeToMemRefPass
     patterns.add<PopOpConversion>(typeConverter, context);
     patterns.add<SetOpConversion>(typeConverter, context);
     patterns.add<GetOpConversion>(typeConverter, context);
-    patterns.add<AffineAtomicRmwConversion>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<memref::MemRefDialect>();
