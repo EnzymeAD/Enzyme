@@ -6437,7 +6437,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         Value *newIV = nullptr;
         {
+#if LLVM_VERSION_MAJOR >= 22
+          SCEVExpander Exp(SE, "sparseenzyme");
+#else
           SCEVExpander Exp(SE, DL, "sparseenzyme");
+#endif
           // We place that at first non phi as it may produce a non-phi
           // instruction and must thus be expanded after all phi's
           newIV = Exp.expandCodeFor(S, tmp->getType(), point);
@@ -8396,7 +8400,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
       IRBuilder<> B(L->getHeader()->getFirstNonPHI());
       {
+#if LLVM_VERSION_MAJOR >= 22
+        SCEVExpander Exp(SE, "sparseenzyme");
+#else
         SCEVExpander Exp(SE, DL, "sparseenzyme");
+#endif
         auto LoopCountS = SE.getBackedgeTakenCount(L);
         LoopCount = B.CreateAdd(
             ConstantInt::get(idx->getType(), 1),
@@ -8557,7 +8565,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
+#if LLVM_VERSION_MAJOR >= 22
+      SCEVExpander Exp(SE, "sparseenzyme", /*preservelcssa*/ false);
+#else
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
+#endif
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
