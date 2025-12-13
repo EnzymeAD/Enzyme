@@ -1323,12 +1323,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via reading from memory"
-                   << "\n";
+                   << " modified via reading from memory" << "\n";
 #endif
   }
 
@@ -1339,12 +1337,10 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 #ifdef PRINT_AUGCALL
     if (called)
       llvm::errs() << "primal modified " << called->getName()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
     else
       llvm::errs() << "primal modified " << *op->getCalledValue()
-                   << " modified via return"
-                   << "\n";
+                   << " modified via return" << "\n";
 #endif
   }
 
@@ -1736,14 +1732,10 @@ void clearFunctionAttributes(Function *f) {
 
   Attribute::AttrKind fnattrs[] = {
 #if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory,
+      Attribute::Memory,
 #endif
-    Attribute::ReadOnly,
-    Attribute::ReadNone,
-    Attribute::WriteOnly,
-    Attribute::WillReturn,
-    Attribute::OptimizeNone
-  };
+      Attribute::ReadOnly,   Attribute::ReadNone,    Attribute::WriteOnly,
+      Attribute::WillReturn, Attribute::OptimizeNone};
 
   for (auto attr : fnattrs) {
     if (f->hasFnAttribute(attr)) {
@@ -1778,17 +1770,13 @@ void clearFunctionAttributes(Function *f) {
   }
   Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    Attribute::Range,
+      Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    Attribute::NoFPClass,
+      Attribute::NoFPClass,
 #endif
-    Attribute::NoUndef,
-    Attribute::NonNull,
-    Attribute::ZExt,
-    Attribute::SExt,
-    Attribute::NoAlias
-  };
+      Attribute::NoUndef,   Attribute::NonNull, Attribute::ZExt,
+      Attribute::SExt,      Attribute::NoAlias};
   for (auto attr : attrs) {
     if (f->hasRetAttribute(attr)) {
       f->removeRetAttr(attr);
@@ -2295,8 +2283,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             auto AI = bb.CreateAlloca(todiff->getReturnType());
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
-                bb.CreatePointerCast(
-                    AI, getUnqual(ST->getTypeAtIndex(i))));
+                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i))));
             auto ty = todiff->getReturnType();
             if (i == 2)
               ty = GradientUtils::getShadowType(ty, width);
@@ -2376,8 +2363,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             auto AI = bb.CreateAlloca(todiff->getReturnType());
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
-                bb.CreatePointerCast(
-                    AI, getUnqual(ST->getTypeAtIndex(i))));
+                bb.CreatePointerCast(AI, getUnqual(ST->getTypeAtIndex(i))));
             Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }
@@ -2693,16 +2679,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   llvm::Attribute::AttrKind attrs[] = {
 #if LLVM_VERSION_MAJOR >= 19
-    llvm::Attribute::Range,
+      llvm::Attribute::Range,
 #endif
 #if LLVM_VERSION_MAJOR >= 17
-    llvm::Attribute::NoFPClass,
+      llvm::Attribute::NoFPClass,
 #endif
-    llvm::Attribute::NoAlias,
-    llvm::Attribute::NoUndef,
-    llvm::Attribute::NonNull,
-    llvm::Attribute::ZExt,
-    llvm::Attribute::SExt,
+      llvm::Attribute::NoAlias,   llvm::Attribute::NoUndef,
+      llvm::Attribute::NonNull,   llvm::Attribute::ZExt,
+      llvm::Attribute::SExt,
   };
   for (auto attr : attrs) {
     if (gutils->newFunc->hasRetAttribute(attr)) {
@@ -4163,9 +4147,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           Type *T = (foundcalled->arg_begin() + idx)->getType();
 
           auto AI = bb.CreateAlloca(T);
-          bb.CreateStore(args[idx],
-                         bb.CreatePointerCast(
-                             AI, getUnqual(args[idx]->getType())));
+          bb.CreateStore(args[idx], bb.CreatePointerCast(
+                                        AI, getUnqual(args[idx]->getType())));
           Value *vres = bb.CreateLoad(T, AI);
           args[idx] = vres;
         }
@@ -4177,9 +4160,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             args[idx] = bb.CreateZExtOrTrunc(args[idx], T);
           } else {
             auto AI = bb.CreateAlloca(T);
-            bb.CreateStore(args[idx],
-                           bb.CreatePointerCast(AI, getUnqual(
-                                                        args[idx]->getType())));
+            bb.CreateStore(args[idx], bb.CreatePointerCast(
+                                          AI, getUnqual(args[idx]->getType())));
             Value *vres = bb.CreateLoad(T, AI);
             args[idx] = vres;
           }

@@ -1298,19 +1298,18 @@ Function *CreateMPIWrapper(Function *F) {
   auto FT = FunctionType::get(ReturnType, types, false);
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
-  llvm::Attribute::AttrKind attrs[] = {
-    Attribute::WillReturn,
-    Attribute::MustProgress,
+  llvm::Attribute::AttrKind attrs[] = {Attribute::WillReturn,
+                                       Attribute::MustProgress,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::ReadOnly,
+                                       Attribute::ReadOnly,
 #endif
-    Attribute::Speculatable,
-    Attribute::NoUnwind,
-    Attribute::AlwaysInline,
-    Attribute::NoFree,
-    Attribute::NoSync,
+                                       Attribute::Speculatable,
+                                       Attribute::NoUnwind,
+                                       Attribute::AlwaysInline,
+                                       Attribute::NoFree,
+                                       Attribute::NoSync,
 #if LLVM_VERSION_MAJOR < 16
-    Attribute::InaccessibleMemOnly
+                                       Attribute::InaccessibleMemOnly
 #endif
   };
   for (auto attr : attrs) {
@@ -1399,8 +1398,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
 #endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
-      storePointer = B.CreateIntToPtr(storePointer,
-                                      getUnqual(res->getType()));
+      storePointer = B.CreateIntToPtr(storePointer, getUnqual(res->getType()));
     }
     if (isa<AllocaInst>(storePointer)) {
       // If this is only loaded from, immedaitely replace
@@ -8682,11 +8680,9 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       if (PT->getAddressSpace() != 0) {
 #if LLVM_VERSION_MAJOR < 17
         if (CI->getContext().supportsTypedPointers()) {
-          V = B.CreateAddrSpaceCast(
-              V, getUnqual(PT->getPointerElementType()));
+          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getPointerElementType()));
         } else {
-          V = B.CreateAddrSpaceCast(V,
-                                    getUnqual(PT->getContext()));
+          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getContext()));
         }
 #else
         V = B.CreateAddrSpaceCast(V, getUnqual(PT->getContext()));

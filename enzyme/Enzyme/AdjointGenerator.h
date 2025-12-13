@@ -151,8 +151,7 @@ public:
         }
       }
     }
-    Type *pargs[] = {getInt8PtrTy(DT->getContext()),
-                     getUnqual(intType)};
+    Type *pargs[] = {getInt8PtrTy(DT->getContext()), getUnqual(intType)};
     auto FT = FunctionType::get(intType, pargs, false);
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
     llvm::Value *args[] = {DT, alloc};
@@ -4518,8 +4517,7 @@ public:
                 .width = gutils->getWidth(),
                 .freeMemory = true,
                 .AtomicAdd = true,
-                .additionalType =
-                    tape ? getUnqual(tape->getType()) : nullptr,
+                .additionalType = tape ? getUnqual(tape->getType()) : nullptr,
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
@@ -5056,8 +5054,7 @@ public:
             argsInverted, false, /*returnTape*/ false,
             /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
         PointerType *fptype = getUnqual(FT);
-        newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               getUnqual(fptype));
+        newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
       }
 
@@ -5417,8 +5414,7 @@ public:
             StructType::get(newcalled->getContext(), res.second), res.first,
             ft->isVarArg());
         auto fptype = getUnqual(FT);
-        newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               getUnqual(fptype));
+        newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
         tapeIdx = 0;
 
@@ -5933,8 +5929,7 @@ public:
           StructType::get(newcalled->getContext(), res.second), res.first,
           ft->isVarArg());
       auto fptype = getUnqual(FT);
-      newcalled =
-          Builder2.CreatePointerCast(newcalled, getUnqual(fptype));
+      newcalled = Builder2.CreatePointerCast(newcalled, getUnqual(fptype));
       newcalled = Builder2.CreateLoad(
           fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
     }

@@ -2301,8 +2301,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
           }
           if (subCount != numRooting) {
             gep = EB.CreatePointerCast(
-                gep,
-                getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+                gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
           }
           curOffset += subCount;
           if (reret_roots.count(i))
@@ -2459,8 +2458,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
 
             if (subCount != numRooting) {
               gep = AIB.CreatePointerCast(
-                  gep, getUnqual(
-                           ArrayType::get(T_prjlvalue, subCount)));
+                  gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
             }
             local_root_count += subCount;
             if (reret_roots.count(i))

@@ -636,8 +636,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
 
     if (DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
       Builder.CreateStore(
-          diffret,
-          Builder.CreatePointerCast(ret, getUnqual(diffretType)));
+          diffret, Builder.CreatePointerCast(ret, getUnqual(diffretType)));
       CI->eraseFromParent();
       return true;
     }
@@ -650,8 +649,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
-    Builder.CreateStore(diffret, Builder.CreatePointerCast(
-                                     AL, getUnqual(diffretType)));
+    Builder.CreateStore(diffret,
+                        Builder.CreatePointerCast(AL, getUnqual(diffretType)));
     Value *cload = Builder.CreateLoad(retType, AL);
     CI->replaceAllUsesWith(cload);
     CI->eraseFromParent();
@@ -1230,9 +1229,8 @@ public:
                                        ->getEntryBlock()
                                        .front());
                     auto AI = B.CreateAlloca(ST1);
-                    Builder.CreateStore(differet,
-                                        Builder.CreatePointerCast(
-                                            AI, getUnqual(ST0)));
+                    Builder.CreateStore(differet, Builder.CreatePointerCast(
+                                                      AI, getUnqual(ST0)));
                     differet = Builder.CreateLoad(ST1, AI);
                   }
 
@@ -1979,8 +1977,7 @@ public:
         auto AL = EB.CreateAlloca(tape->getType());
         Builder.CreateStore(tape, AL);
         tape = Builder.CreateLoad(
-            tapeType,
-            Builder.CreatePointerCast(AL, getUnqual(tapeType)));
+            tapeType, Builder.CreatePointerCast(AL, getUnqual(tapeType)));
       }
       assert(tape->getType() == tapeType);
       args.push_back(tape);
@@ -3005,31 +3002,22 @@ public:
                                  /* CGSCC */ nullptr);
 
       DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
+          &AAHeapToStack::ID,     &AANoCapture::ID,
 
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
+          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
+          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
+          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
+          &AADereferenceable::ID, &AAAlign::ID,
 #if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
+          &AAReturnedValues::ID,
 #endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
+          &AANoFree::ID,          &AANoUndef::ID,
 
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
       };
 
       AttributorConfig aconfig(CGUpdater);

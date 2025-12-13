@@ -867,9 +867,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST);
-        BuilderM.CreateStore(dif,
-                             BuilderM.CreatePointerCast(
-                                 Al, getUnqual(dif->getType())));
+        BuilderM.CreateStore(
+            dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
@@ -891,9 +890,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         else {
           IRBuilder<> A(inversionAllocs);
           auto Al = A.CreateAlloca(addingType);
-          BuilderM.CreateStore(dif,
-                               BuilderM.CreatePointerCast(
-                                   Al, getUnqual(dif->getType())));
+          BuilderM.CreateStore(
+              dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
           dif = BuilderM.CreateLoad(addingType, Al);
         }
       }

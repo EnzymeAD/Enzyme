@@ -64,8 +64,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             CreateAllocation(BuilderZ, impi, ConstantInt::get(i64, 1));
         BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
-        d_req = BuilderZ.CreateBitCast(
-            d_req, getUnqual(impialloc->getType()));
+        d_req = BuilderZ.CreateBitCast(d_req, getUnqual(impialloc->getType()));
         Value *d_req_prev = BuilderZ.CreateLoad(impialloc->getType(), d_req);
         BuilderZ.CreateStore(
             BuilderZ.CreatePointerCast(d_req_prev,
@@ -173,8 +172,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         }
         auto impi = getMPIHelper(call.getContext());
         Type *helperTy = getUnqual(impi);
-        Value *helper =
-            Builder2.CreatePointerCast(d_req, getUnqual(helperTy));
+        Value *helper = Builder2.CreatePointerCast(d_req, getUnqual(helperTy));
         helper = Builder2.CreateLoad(helperTy, helper);
 
         auto i64 = Type::getInt64Ty(call.getContext());
@@ -206,9 +204,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             getInt8PtrTy(call.getContext()),
             getMPIMemberPtr<MPI_Elem::Old>(Builder2, helper, impi));
 
-        Builder2.CreateStore(
-            prev, Builder2.CreatePointerCast(
-                      d_req, getUnqual(prev->getType())));
+        Builder2.CreateStore(prev, Builder2.CreatePointerCast(
+                                       d_req, getUnqual(prev->getType())));
 
         assert(shouldFree());
 
@@ -358,8 +355,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *isNull = nullptr;
       if (auto GV = gutils->newFunc->getParent()->getNamedValue(
               "ompi_request_null")) {
-        Value *reql = BuilderZ.CreatePointerCast(
-            req, getUnqual(GV->getType()));
+        Value *reql = BuilderZ.CreatePointerCast(req, getUnqual(GV->getType()));
         reql = BuilderZ.CreateLoad(GV->getType(), reql);
         isNull = BuilderZ.CreateICmpEQ(reql, GV);
       }
@@ -371,8 +367,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       d_reqp = BuilderZ.CreateLoad(
           getUnqual(impi),
-          BuilderZ.CreatePointerCast(
-              d_req, getUnqual(getUnqual(impi))));
+          BuilderZ.CreatePointerCast(d_req, getUnqual(getUnqual(impi))));
       if (isNull)
         d_reqp =
             CreateSelect(BuilderZ, isNull,
@@ -558,8 +553,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       d_req = Builder2.CreateLoad(
           getUnqual(impi),
-          Builder2.CreatePointerCast(
-              d_req, getUnqual(getUnqual(impi))));
+          Builder2.CreatePointerCast(d_req, getUnqual(getUnqual(impi))));
 
       Value *isNull = Builder2.CreateICmpEQ(
           d_req, Constant::getNullValue(d_req->getType()));
@@ -626,8 +620,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           gutils->invertPointerM(call.getOperand(1), Builder2);
       if (array_of_requests->getType()->isIntegerTy()) {
         array_of_requests = Builder2.CreateIntToPtr(
-            array_of_requests,
-            getUnqual(getInt8PtrTy(call.getContext())));
+            array_of_requests, getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       Value *args[] = {
@@ -3175,8 +3168,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                     if (anti->getType()->getPointerElementType() != elTy)
                       replacement = bb.CreatePointerCast(
                           replacement,
-                          getUnqual(
-                              anti->getType()->getPointerElementType()));
+                          getUnqual(anti->getType()->getPointerElementType()));
                   }
 #endif
                   if (int AS = cast<PointerType>(anti->getType())
@@ -3381,8 +3373,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (call.getContext().supportsTypedPointers()) {
         if (call.getType()->getPointerElementType() != elTy)
           replacement = B.CreatePointerCast(
-              replacement,
-              getUnqual(call.getType()->getPointerElementType()));
+              replacement, getUnqual(call.getType()->getPointerElementType()));
       }
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
@@ -3843,8 +3834,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
               BuilderZ.CreateCall(called, args, Defs);
               if (!isa<PointerType>(ptrshadow->getType()))
-                ptrshadow = BuilderZ.CreateIntToPtr(ptrshadow,
-                                                    getUnqual(PT));
+                ptrshadow = BuilderZ.CreateIntToPtr(ptrshadow, getUnqual(PT));
               Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
 
               auto dst_arg =
