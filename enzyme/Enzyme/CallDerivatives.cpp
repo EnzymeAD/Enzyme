@@ -54,7 +54,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         Value *d_req = gutils->invertPointerM(call.getOperand(6), BuilderZ);
         if (d_req->getType()->isIntegerTy()) {
           d_req = BuilderZ.CreateIntToPtr(
-              d_req, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+              d_req, getUnqual(getInt8PtrTy(call.getContext())));
         }
 
         auto i64 = Type::getInt64Ty(call.getContext());
@@ -65,7 +65,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
         d_req = BuilderZ.CreateBitCast(
-            d_req, PointerType::getUnqual(impialloc->getType()));
+            d_req, getUnqual(impialloc->getType()));
         Value *d_req_prev = BuilderZ.CreateLoad(impialloc->getType(), d_req);
         BuilderZ.CreateStore(
             BuilderZ.CreatePointerCast(d_req_prev,
@@ -172,9 +172,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
               Builder2.CreateIntToPtr(d_req, getInt8PtrTy(call.getContext()));
         }
         auto impi = getMPIHelper(call.getContext());
-        Type *helperTy = llvm::PointerType::getUnqual(impi);
+        Type *helperTy = llvm::getUnqual(impi);
         Value *helper =
-            Builder2.CreatePointerCast(d_req, PointerType::getUnqual(helperTy));
+            Builder2.CreatePointerCast(d_req, getUnqual(helperTy));
         helper = Builder2.CreateLoad(helperTy, helper);
 
         auto i64 = Type::getInt64Ty(call.getContext());
@@ -208,7 +208,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         Builder2.CreateStore(
             prev, Builder2.CreatePointerCast(
-                      d_req, PointerType::getUnqual(prev->getType())));
+                      d_req, getUnqual(prev->getType())));
 
         assert(shouldFree());
 
@@ -352,27 +352,27 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       if (req->getType()->isIntegerTy()) {
         req = BuilderZ.CreateIntToPtr(
-            req, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+            req, getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       Value *isNull = nullptr;
       if (auto GV = gutils->newFunc->getParent()->getNamedValue(
               "ompi_request_null")) {
         Value *reql = BuilderZ.CreatePointerCast(
-            req, PointerType::getUnqual(GV->getType()));
+            req, getUnqual(GV->getType()));
         reql = BuilderZ.CreateLoad(GV->getType(), reql);
         isNull = BuilderZ.CreateICmpEQ(reql, GV);
       }
 
       if (d_req->getType()->isIntegerTy()) {
         d_req = BuilderZ.CreateIntToPtr(
-            d_req, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+            d_req, getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       d_reqp = BuilderZ.CreateLoad(
-          PointerType::getUnqual(impi),
+          getUnqual(impi),
           BuilderZ.CreatePointerCast(
-              d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+              d_req, getUnqual(getUnqual(impi))));
       if (isNull)
         d_reqp =
             CreateSelect(BuilderZ, isNull,
@@ -392,7 +392,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
-        d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(impi), 0);
+        d_reqp = BuilderZ.CreatePHI(getUnqual(impi), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       } else
@@ -481,7 +481,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
     Value *d_reqp = nullptr;
     auto impi = getMPIHelper(call.getContext());
-    PointerType *reqType = PointerType::getUnqual(impi);
+    PointerType *reqType = getUnqual(impi);
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
       Value *count = gutils->getNewFromOriginal(call.getOperand(0));
@@ -490,12 +490,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       if (req->getType()->isIntegerTy()) {
         req = BuilderZ.CreateIntToPtr(
-            req, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+            req, getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       if (d_req->getType()->isIntegerTy()) {
         d_req = BuilderZ.CreateIntToPtr(
-            d_req, PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+            d_req, getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       Function *dsave = getOrInsertDifferentialWaitallSave(
@@ -521,7 +521,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
-        d_reqp = BuilderZ.CreatePHI(PointerType::getUnqual(reqType), 0);
+        d_reqp = BuilderZ.CreatePHI(getUnqual(reqType), 0);
         d_reqp = gutils->cacheForReverse(
             BuilderZ, d_reqp, getIndex(&call, CacheType::Tape, BuilderZ));
       }
@@ -557,9 +557,9 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       Value *d_req = Builder2.CreateInBoundsGEP(reqType, d_reqp, idxs);
 
       d_req = Builder2.CreateLoad(
-          PointerType::getUnqual(impi),
+          getUnqual(impi),
           Builder2.CreatePointerCast(
-              d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+              d_req, getUnqual(getUnqual(impi))));
 
       Value *isNull = Builder2.CreateICmpEQ(
           d_req, Constant::getNullValue(d_req->getType()));
@@ -627,7 +627,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       if (array_of_requests->getType()->isIntegerTy()) {
         array_of_requests = Builder2.CreateIntToPtr(
             array_of_requests,
-            PointerType::getUnqual(getInt8PtrTy(call.getContext())));
+            getUnqual(getInt8PtrTy(call.getContext())));
       }
 
       Value *args[] = {
@@ -931,7 +931,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call);
       auto MPI_OP_type = getInt8PtrTy(call.getContext());
-      Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
+      Type *MPI_OP_Ptr_type = getUnqual(MPI_OP_type);
 
       Value *count = gutils->getNewFromOriginal(call.getOperand(1));
       if (!forwardMode)
@@ -2086,7 +2086,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
       ConcreteType CT = TR.firstPointer(1, orig_sendbuf, &call);
       auto MPI_OP_type = getInt8PtrTy(call.getContext());
-      Type *MPI_OP_Ptr_type = PointerType::getUnqual(MPI_OP_type);
+      Type *MPI_OP_Ptr_type = getUnqual(MPI_OP_type);
 
       // 2. reduce diff(recvbuffer) then scatter to corresponding input node's
       // intermediate buffer
@@ -2547,7 +2547,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             types[2],
             Builder2.CreatePointerCast(
                 gutils->invertPointerM(call.getOperand(4), Builder2),
-                PointerType::getUnqual(types[2])),
+                getUnqual(types[2])),
             idxs);
 
         auto l0 = Builder2.CreateLoad(types[2], dtmp_idx);
@@ -3175,7 +3175,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                     if (anti->getType()->getPointerElementType() != elTy)
                       replacement = bb.CreatePointerCast(
                           replacement,
-                          PointerType::getUnqual(
+                          getUnqual(
                               anti->getType()->getPointerElementType()));
                   }
 #endif
@@ -3382,7 +3382,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (call.getType()->getPointerElementType() != elTy)
           replacement = B.CreatePointerCast(
               replacement,
-              PointerType::getUnqual(call.getType()->getPointerElementType()));
+              getUnqual(call.getType()->getPointerElementType()));
       }
 #endif
       if (int AS = cast<PointerType>(call.getType())->getAddressSpace()) {
@@ -3748,7 +3748,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         Mode == DerivativeMode::ReverseModeCombined) {
       val = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(val->getType()))
-        val = BuilderZ.CreateIntToPtr(val, PointerType::getUnqual(PT));
+        val = BuilderZ.CreateIntToPtr(val, getUnqual(PT));
       val = BuilderZ.CreateLoad(PT, val);
       val = gutils->cacheForReverse(BuilderZ, val,
                                     getIndex(&call, CacheType::Tape, BuilderZ));
@@ -3844,7 +3844,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
               BuilderZ.CreateCall(called, args, Defs);
               if (!isa<PointerType>(ptrshadow->getType()))
                 ptrshadow = BuilderZ.CreateIntToPtr(ptrshadow,
-                                                    PointerType::getUnqual(PT));
+                                                    getUnqual(PT));
               Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
 
               auto dst_arg =
@@ -3991,7 +3991,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       IRBuilder<> Builder2(newCall->getNextNode());
       auto ptrv = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(ptrv->getType()))
-        ptrv = BuilderZ.CreateIntToPtr(ptrv, PointerType::getUnqual(PT));
+        ptrv = BuilderZ.CreateIntToPtr(ptrv, getUnqual(PT));
       auto load = Builder2.CreateLoad(PT, ptrv, "posix_preread");
       Builder2.SetInsertPoint(&call);
       getReverseBuilder(Builder2);

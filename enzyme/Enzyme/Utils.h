@@ -1178,6 +1178,14 @@ static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
 #endif
 }
 
+static inline llvm::PointerType *getUnqual(llvm::Type *T) {
+#if LLVM_VERSION_MAJOR >= 17
+  return llvm::PointerType::getUnqual(T->getContext());
+#else
+  return llvm::PointerType::getUnqual(T);
+#endif
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);

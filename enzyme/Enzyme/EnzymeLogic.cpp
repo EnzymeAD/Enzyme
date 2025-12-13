@@ -2296,7 +2296,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
-                    AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
+                    AI, getUnqual(ST->getTypeAtIndex(i))));
             auto ty = todiff->getReturnType();
             if (i == 2)
               ty = GradientUtils::getShadowType(ty, width);
@@ -2377,7 +2377,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             bb.CreateStore(
                 bb.CreateExtractValue(cal, {i}),
                 bb.CreatePointerCast(
-                    AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
+                    AI, getUnqual(ST->getTypeAtIndex(i))));
             Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
             res = bb.CreateInsertValue(res, vres, {i});
           }
@@ -2834,7 +2834,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   if (omp && !noTape) {
     // see lack of struct type for openmp
-    ArgTypes.push_back(PointerType::getUnqual(tapeType));
+    ArgTypes.push_back(getUnqual(tapeType));
     // ArgTypes.push_back(tapeType);
   }
 
@@ -4165,7 +4165,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           auto AI = bb.CreateAlloca(T);
           bb.CreateStore(args[idx],
                          bb.CreatePointerCast(
-                             AI, PointerType::getUnqual(args[idx]->getType())));
+                             AI, getUnqual(args[idx]->getType())));
           Value *vres = bb.CreateLoad(T, AI);
           args[idx] = vres;
         }
@@ -4178,7 +4178,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           } else {
             auto AI = bb.CreateAlloca(T);
             bb.CreateStore(args[idx],
-                           bb.CreatePointerCast(AI, PointerType::getUnqual(
+                           bb.CreatePointerCast(AI, getUnqual(
                                                         args[idx]->getType())));
             Value *vres = bb.CreateLoad(T, AI);
             args[idx] = vres;
@@ -5016,7 +5016,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         IRBuilder<> BuilderZ(gutils->inversionAllocs);
         if (!augmenteddata->tapeType->isEmptyTy()) {
           auto tapep = BuilderZ.CreatePointerCast(
-              additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
+              additionalValue, getUnqual(augmenteddata->tapeType));
           LoadInst *truetape =
               BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
           truetape->setMetadata("enzyme_mustcache",

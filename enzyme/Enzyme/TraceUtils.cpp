@@ -70,7 +70,7 @@ TraceUtils::FromClone(ProbProgMode mode,
   }
 
   Type *likelihood_acc_type =
-      PointerType::getUnqual(Type::getDoubleTy(Context));
+      getUnqual(Type::getDoubleTy(Context));
   params.push_back(likelihood_acc_type);
 
   if (mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) {

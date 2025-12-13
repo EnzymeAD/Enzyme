@@ -133,7 +133,7 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     if (isVecLikeArg(ty)) {
       os
 << "  if (cache_" << nameVec[i] << ")\n"
-<< "    cacheTypes.push_back(PointerType::getUnqual(fpType));\n";
+<< "    cacheTypes.push_back(getUnqual(fpType));\n";
     }
   }
 }

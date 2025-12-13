@@ -5377,7 +5377,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           auto alloc = bb.CreateAlloca(oval->getType());
           auto AT = ArrayType::get(bb.getInt8Ty(), size);
           bb.CreateStore(getNewFromOriginal(oval), alloc);
-          Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
+          Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
           size_t i = 0;
           assert(size > 0);
           for (; i < size;) {
@@ -5387,7 +5387,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               continue;
             } else if (auto flt = CT2.isFloat()) {
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
-              ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
+              ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
               bb.CreateStore(Constant::getNullValue(flt), ptr);
               size_t chunk = dl.getTypeSizeInBits(flt) / 8;
               i += chunk;

@@ -152,7 +152,7 @@ public:
       }
     }
     Type *pargs[] = {getInt8PtrTy(DT->getContext()),
-                     PointerType::getUnqual(intType)};
+                     getUnqual(intType)};
     auto FT = FunctionType::get(intType, pargs, false);
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
     llvm::Value *args[] = {DT, alloc};
@@ -201,7 +201,7 @@ public:
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
-    Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
+    Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
@@ -235,7 +235,7 @@ public:
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
-    Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
+    Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
@@ -4519,7 +4519,7 @@ public:
                 .freeMemory = true,
                 .AtomicAdd = true,
                 .additionalType =
-                    tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+                    tape ? getUnqual(tape->getType()) : nullptr,
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
@@ -4609,7 +4609,7 @@ public:
                cast<Function>(newcalled)->getFunctionType()->params()) {
             MetaTypes.push_back(P);
           }
-          MetaTypes.push_back(PointerType::getUnqual(ST));
+          MetaTypes.push_back(getUnqual(ST));
           auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
                                       MetaTypes, false);
           Function *F =
@@ -5055,9 +5055,9 @@ public:
             ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
             argsInverted, false, /*returnTape*/ false,
             /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
-        PointerType *fptype = PointerType::getUnqual(FT);
+        PointerType *fptype = getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               PointerType::getUnqual(fptype));
+                                               getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
       }
 
@@ -5416,9 +5416,9 @@ public:
         FT = FunctionType::get(
             StructType::get(newcalled->getContext(), res.second), res.first,
             ft->isVarArg());
-        auto fptype = PointerType::getUnqual(FT);
+        auto fptype = getUnqual(FT);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               PointerType::getUnqual(fptype));
+                                               getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
         tapeIdx = 0;
 
@@ -5932,9 +5932,9 @@ public:
       FT = FunctionType::get(
           StructType::get(newcalled->getContext(), res.second), res.first,
           ft->isVarArg());
-      auto fptype = PointerType::getUnqual(FT);
+      auto fptype = getUnqual(FT);
       newcalled =
-          Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(fptype));
+          Builder2.CreatePointerCast(newcalled, getUnqual(fptype));
       newcalled = Builder2.CreateLoad(
           fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
     }
