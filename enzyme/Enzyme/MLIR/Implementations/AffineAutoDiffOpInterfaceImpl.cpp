@@ -16,6 +16,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
+#include "Passes/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/IntegerSet.h"
@@ -414,15 +415,6 @@ struct AffineParallelOpEnzymeOpsRemover
         .createNullValue(builder, grad.getLoc());
   }
 };
-
-static void computeAffineIndices(OpBuilder &builder, Location loc,
-                                 AffineMap map, ValueRange operands,
-                                 SmallVectorImpl<Value> &indices) {
-  for (unsigned i = 0; i < map.getNumResults(); i++) {
-    indices.push_back(
-        AffineApplyOp::create(builder, loc, map.getSubMap({i}), operands));
-  }
-}
 
 struct AffineLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<

@@ -40,4 +40,3 @@ module {
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<1xf32>
 // CHECK:           return %[[PARALLEL_0]] : f32
 // CHECK:         }
-

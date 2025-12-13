@@ -35,5 +35,8 @@ Value getConcatValue(OpBuilder &builder, Location loc, ArrayRef<Value> argList);
 Value getExtractValue(OpBuilder &builder, Location loc, Type argTy, Value val,
                       int64_t index);
 
+void computeAffineIndices(OpBuilder &builder, Location loc, AffineMap map,
+                          ValueRange operands, SmallVectorImpl<Value> &indices);
+
 } // namespace enzyme
 } // namespace mlir
