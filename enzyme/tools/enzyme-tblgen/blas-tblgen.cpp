@@ -2326,7 +2326,8 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
     // we just create and struct-return the shadows
     if (ty == ArgType::fp)
       continue;
-    os << ((first) ? "" : ", ") << "Value *" << "d_" + name;
+    os << ((first) ? "" : ", ") << "Value *"
+       << "d_" + name;
     first = false;
   }
 
