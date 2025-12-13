@@ -276,4 +276,11 @@ def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
   ];
 }
 
+def LowerAffineAtomicRmwPass : Pass<"lower-affine-atomic-rmw"> {
+  let summary = "Lower AffineRmw to MemrefRmw";
+  let dependentDialects = [
+    "memref::MemRefDialect"
+  ];
+}
+
 #endif // ENZYME_PASSES
