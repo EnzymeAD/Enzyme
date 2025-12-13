@@ -7330,9 +7330,14 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 Value *start0;
                 SmallVector<Instruction *, 32> InsertedInstructions;
                 {
+#if LLVM_VERSION_MAJOR >= 22
+                  SCEVExpander OrigExp(*OrigSE, "enzyme",
+                                       /*PreserveLCSSA = */ false);
+#else
                   SCEVExpander OrigExp(
                       *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
                       "enzyme", /*PreserveLCSSA = */ false);
+#endif
 
                   OrigExp.setInsertPoint(
                       isOriginal(l1.header)->getTerminator());
