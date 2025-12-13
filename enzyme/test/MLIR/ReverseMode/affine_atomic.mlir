@@ -16,10 +16,10 @@ module {
 // CHECK: #[[$ATTR_0:.+]] = affine_map<() -> (0)>
 // CHECK-LABEL:   func.func @affine(
 // CHECK-SAME:                      %[[ARG0:.*]]: f32,
-// CHECK-SAME:                      %[[ARG1:.*]]: memref<?xf32>,
-// CHECK-SAME:                      %[[ARG2:.*]]: memref<?xf32>,
-// CHECK-SAME:                      %[[ARG3:.*]]: memref<?xf32>,
-// CHECK-SAME:                      %[[ARG4:.*]]: memref<?xf32>) -> f32 {
+// CHECK-SAME:                      %[[ARG1:[^ :]+]]: memref<?xf32>,
+// CHECK-SAME:                      %[[ARG2:[^ :]+]]: memref<?xf32>,
+// CHECK-SAME:                      %[[ARG3:[^ :]+]]: memref<?xf32>,
+// CHECK-SAME:                      %[[ARG4:[^ :]+]]: memref<?xf32>) -> f32 {
 // CHECK:           %[[CONSTANT_0:.*]] = arith.constant 0.000000e+00 : f32
 // CHECK:           %[[ALLOC_0:.*]] = memref.alloc() : memref<1xf32>
 // CHECK:           affine.parallel (%[[VAL_0:.*]]) = (0) to (1) {
