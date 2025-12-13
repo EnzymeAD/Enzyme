@@ -172,7 +172,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
               Builder2.CreateIntToPtr(d_req, getInt8PtrTy(call.getContext()));
         }
         auto impi = getMPIHelper(call.getContext());
-        Type *helperTy = llvm::getUnqual(impi);
+        Type *helperTy = getUnqual(impi);
         Value *helper =
             Builder2.CreatePointerCast(d_req, getUnqual(helperTy));
         helper = Builder2.CreateLoad(helperTy, helper);
