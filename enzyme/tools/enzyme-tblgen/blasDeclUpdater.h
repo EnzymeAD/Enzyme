@@ -98,7 +98,7 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
             "argTys.push_back(llvm::isa<llvm::PointerType>(prevFT->"
             "getParamType(argTys.size())) ? "
             "prevFT->getParamType(argTys.size()) : "
-            "llvm::PointerType::getUnqual(fpType));\n";
+            "getUnqual(fpType));\n";
     } else {
       os << "  argTys.push_back(prevFT->getParamType(argTys.size()));\n";
       if (typeOfArg == ArgType::uplo || typeOfArg == ArgType::trans ||

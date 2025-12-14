@@ -754,8 +754,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
           ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
       };
       auto g2 = GetElementPtrInst::Create(
-          Val->getType(),
-          UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
+          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -807,8 +806,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
           ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
       };
       auto g2 = GetElementPtrInst::Create(
-          Val->getType(),
-          UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
+          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -2729,8 +2727,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
     {
       Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
                        ConstantInt::get(Type::getInt64Ty(I.getContext()), i)};
-      auto ud =
-          UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+      auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
       auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
       APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(dl, ai);
@@ -2763,8 +2760,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         Value *vec[2] = {
             ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
             ConstantInt::get(Type::getInt64Ty(I.getContext()), mask[i])};
-        auto ud =
-            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -2792,8 +2788,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
                          ConstantInt::get(Type::getInt64Ty(I.getContext()),
                                           mask[i] - numFirst)};
-        auto ud =
-            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -2833,7 +2828,7 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   for (auto ind : I.indices()) {
     vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
   }
-  auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
   g2->accumulateConstantOffset(dl, ai);
@@ -2862,7 +2857,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   for (auto ind : I.indices()) {
     vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
   }
-  auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
   g2->accumulateConstantOffset(dl, ai);
@@ -5639,7 +5634,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           Value *vec[2] = {
               ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
-          auto ud = UndefValue::get(PointerType::getUnqual(ST));
+          auto ud = UndefValue::get(getUnqual(ST));
           auto g2 = GetElementPtrInst::Create(ST, ud, vec);
           APInt ai(DL.getIndexSizeInBits(0), 0);
           g2->accumulateConstantOffset(DL, ai);
@@ -5653,7 +5648,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             Value *vec[2] = {
                 ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
-            auto ud = UndefValue::get(PointerType::getUnqual(ST));
+            auto ud = UndefValue::get(getUnqual(ST));
             auto g2 = GetElementPtrInst::Create(ST, ud, vec);
             APInt ai(DL.getIndexSizeInBits(0), 0);
             g2->accumulateConstantOffset(DL, ai);
@@ -6406,8 +6401,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          ST, UndefValue::get(PointerType::getUnqual(ST)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(ST, UndefValue::get(getUnqual(ST)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -6430,8 +6425,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -6460,8 +6455,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent

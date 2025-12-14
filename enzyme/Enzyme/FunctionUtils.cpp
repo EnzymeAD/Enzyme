@@ -1399,8 +1399,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
 #endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
-      storePointer = B.CreateIntToPtr(storePointer,
-                                      PointerType::getUnqual(res->getType()));
+      storePointer = B.CreateIntToPtr(storePointer, getUnqual(res->getType()));
     }
     if (isa<AllocaInst>(storePointer)) {
       // If this is only loaded from, immedaitely replace
@@ -8694,8 +8693,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       if (PT->getAddressSpace() != 0) {
 #if LLVM_VERSION_MAJOR < 17
         if (CI->getContext().supportsTypedPointers()) {
-          V = B.CreateAddrSpaceCast(
-              V, PointerType::getUnqual(PT->getPointerElementType()));
+          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getPointerElementType()));
         } else {
           V = B.CreateAddrSpaceCast(V,
                                     PointerType::getUnqual(PT->getContext()));

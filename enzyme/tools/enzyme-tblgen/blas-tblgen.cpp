@@ -467,7 +467,7 @@ void emit_helper(const TGPattern &pattern, raw_ostream &os) {
   }
   if (!hasFP)
     os << "  Type* blasFPType = byRefFloat ? "
-          "(Type*)PointerType::getUnqual(fpType) "
+          "(Type*)getUnqual(fpType) "
           ": (Type*)fpType;\n";
 
   bool hasChar = false;

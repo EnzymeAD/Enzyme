@@ -636,8 +636,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
 
     if (DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
       Builder.CreateStore(
-          diffret,
-          Builder.CreatePointerCast(ret, PointerType::getUnqual(diffretType)));
+          diffret, Builder.CreatePointerCast(ret, getUnqual(diffretType)));
       CI->eraseFromParent();
       return true;
     }
@@ -650,8 +649,8 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
     auto AL = EB.CreateAlloca(retType);
-    Builder.CreateStore(diffret, Builder.CreatePointerCast(
-                                     AL, PointerType::getUnqual(diffretType)));
+    Builder.CreateStore(diffret,
+                        Builder.CreatePointerCast(AL, getUnqual(diffretType)));
     Value *cload = Builder.CreateLoad(retType, AL);
     CI->replaceAllUsesWith(cload);
     CI->eraseFromParent();
@@ -1230,9 +1229,8 @@ public:
                                        ->getEntryBlock()
                                        .front());
                     auto AI = B.CreateAlloca(ST1);
-                    Builder.CreateStore(differet,
-                                        Builder.CreatePointerCast(
-                                            AI, PointerType::getUnqual(ST0)));
+                    Builder.CreateStore(differet, Builder.CreatePointerCast(
+                                                      AI, getUnqual(ST0)));
                     differet = Builder.CreateLoad(ST1, AI);
                   }
 
@@ -1979,8 +1977,7 @@ public:
         auto AL = EB.CreateAlloca(tape->getType());
         Builder.CreateStore(tape, AL);
         tape = Builder.CreateLoad(
-            tapeType,
-            Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
+            tapeType, Builder.CreatePointerCast(AL, getUnqual(tapeType)));
       }
       assert(tape->getType() == tapeType);
       args.push_back(tape);
@@ -2854,7 +2851,7 @@ public:
       }
       auto FT = FunctionType::get(CI->getType(), ArgTypes, /*varargs*/ false);
       if (fn->getType() != FT) {
-        fn = B.CreatePointerCast(fn, PointerType::getUnqual(FT));
+        fn = B.CreatePointerCast(fn, getUnqual(FT));
       }
       auto Rep = B.CreateCall(FT, fn, Args);
       Rep->addAttribute(AttributeList::FunctionIndex,

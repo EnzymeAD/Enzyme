@@ -771,7 +771,7 @@ Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
 
   Value *ptr = base;
   if (base->getType()->isIntegerTy())
-    ptr = B.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));
+    ptr = B.CreateIntToPtr(ptr, getUnqual(fpType));
 
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
@@ -1820,8 +1820,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
                                                    ArrayRef<llvm::Type *> T,
                                                    PointerType *reqType) {
   std::string name = "__enzyme_differential_waitall_save";
-  FunctionType *FT =
-      FunctionType::get(PointerType::getUnqual(reqType), T, false);
+  FunctionType *FT = FunctionType::get(getUnqual(reqType), T, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
 
   if (!F->empty())
@@ -1865,13 +1864,12 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
-    Value *reql =
-        B.CreatePointerCast(ireq, PointerType::getUnqual(GV->getType()));
+    Value *reql = B.CreatePointerCast(ireq, getUnqual(GV->getType()));
     reql = B.CreateLoad(GV->getType(), reql);
     isNull = B.CreateICmpEQ(reql, GV);
   }
 
-  idreq = B.CreatePointerCast(idreq, PointerType::getUnqual(reqType));
+  idreq = B.CreatePointerCast(idreq, getUnqual(reqType));
   Value *d_reqp = B.CreateLoad(reqType, idreq);
   if (isNull)
     d_reqp = B.CreateSelect(isNull, Constant::getNullValue(d_reqp->getType()),
@@ -2004,9 +2002,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     return B2.CreateLoad(Glob->getValueType(), Glob);
   }
 
-  llvm::Type *types[] = {PointerType::getUnqual(FlT),
-                         PointerType::getUnqual(FlT),
-                         PointerType::getUnqual(intType), OpPtr};
+  llvm::Type *types[] = {getUnqual(FlT), getUnqual(FlT), getUnqual(intType),
+                         OpPtr};
   FunctionType *FuT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
   Function *F =
@@ -2081,7 +2078,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     RF =
         cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
   } else {
-    RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
+    RF = ConstantExpr::getBitCast(RF, getUnqual(RFT));
   }
 
   GlobalVariable *GV =
@@ -3061,8 +3058,7 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
         vec.push_back(
             ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
       }
-      auto ud = UndefValue::get(
-          PointerType::getUnqual(EVI->getOperand(0)->getType()));
+      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
       auto g2 =
           GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -3610,7 +3606,7 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
     return V;
 
   if (V->getType()->isIntegerTy())
-    V = B.CreateIntToPtr(V, PointerType::getUnqual(intType));
+    V = B.CreateIntToPtr(V, getUnqual(intType));
   else
     V = B.CreatePointerCast(
         V, PointerType::get(

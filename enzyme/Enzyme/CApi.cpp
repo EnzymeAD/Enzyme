@@ -2108,7 +2108,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
   SmallVector<Type *, 1> types;
   size_t nexti = 0;
   if (sretTy) {
-    types.push_back(PointerType::getUnqual(sretTy));
+    types.push_back(getUnqual(sretTy));
     NewAttrs = NewAttrs.addAttribute(
         F->getContext(), AttributeList::FirstArgIndex + nexti,
         Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
@@ -2127,7 +2127,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      Attribute::WriteOnly);
-    types.push_back(PointerType::getUnqual(roots_AT));
+    types.push_back(getUnqual(roots_AT));
     nexti++;
   }
 
@@ -2301,8 +2301,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
           }
           if (subCount != numRooting) {
             gep = EB.CreatePointerCast(
-                gep,
-                PointerType::getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+                gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
           }
           curOffset += subCount;
           if (reret_roots.count(i))
@@ -2459,8 +2458,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
 
             if (subCount != numRooting) {
               gep = AIB.CreatePointerCast(
-                  gep, PointerType::getUnqual(
-                           ArrayType::get(T_prjlvalue, subCount)));
+                  gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
             }
             local_root_count += subCount;
             if (reret_roots.count(i))
