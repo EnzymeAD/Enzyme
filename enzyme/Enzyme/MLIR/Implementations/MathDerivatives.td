@@ -10,7 +10,7 @@ def : MLIRDerivative<"math", "ExpOp", (Op $x),
                       (CheckedMulF (DiffeRet), (ExpF $x))
                     ]
                   >;
-def : MLIRDerivative<"math", "SinOp", (Op $x), 
+def : MLIRDerivative<"math", "SinOp", (Op $x),
                     [
                       (CheckedMulF (DiffeRet), (CosF $x))
                     ]
@@ -27,7 +27,13 @@ def : MLIRDerivative<"math", "AtanOp", (Op $x),
                   >;
 def : MLIRDerivative<"math", "AbsFOp", (Op $x),
                     [
-                      // TODO: handle complex
-                      (Arith_Select (CmpF (Arith_OGE), $x, (ConstantFP<"0","arith","ConstantOp"> $x)), (DiffeRet), (NegF (DiffeRet)))
+                      (SelectIfComplex $x,
+                        (ComplexCreate
+                          (TypeOf $x),
+                          (DivF (ComplexRe $x), (AbsF $x)),
+                          (NegF (DivF (ComplexIm $x), (AbsF $x)))
+                        ),
+                        (Arith_Select (CmpF (Arith_OGE), $x, (ConstantFP<"0","arith","ConstantOp"> $x)), (DiffeRet), (NegF (DiffeRet)))
+                      )
                     ]
                   >;
