@@ -30,6 +30,9 @@ bool mayAlias(Value v1, Value v2);
 bool mayAlias(MemoryEffects::EffectInstance &A,
               MemoryEffects::EffectInstance &B);
 
+// check if a memory effect's underlying values alias with a value
+bool mayAlias(mlir::MemoryEffects::EffectInstance a, mlir::Value v2);
+
 /// Returns the side effects of an operation(similar to
 /// `mlir::getEffectsRecursively`). If the operation has RecursiveMemoryEffects,
 /// include all side effects of child operations.
