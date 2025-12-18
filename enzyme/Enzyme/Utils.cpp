@@ -149,6 +149,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       custom = F->getName() != "malloc";
     }
     allocType = cast<PointerType>(malloccall->getType());
+    if (ZeroInit && !SubZero)
+      ZeroInit = false;
     BB->eraseFromParent();
   }
 
