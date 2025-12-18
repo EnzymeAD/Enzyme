@@ -263,6 +263,37 @@ bool isReadOnly(Operation *op) {
   return true;
 }
 
+bool isReadNone(Operation *op) {
+  bool hasRecursiveEffects = op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+  if (hasRecursiveEffects) {
+    for (Region &region : op->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          if (!isReadNone(&nestedOp))
+            return false;
+      }
+    }
+    return true;
+  }
+
+  // If the op has memory effects, try to characterize them to see if the op
+  // is trivially dead here.
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    // Check to see if this op either has no effects, or only allocates/reads
+    // memory.
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    if (llvm::any_of(effects, [](const MemoryEffects::EffectInstance &it) {
+          return isa<MemoryEffects::Read>(it.getEffect()) ||
+                 isa<MemoryEffects::Write>(it.getEffect());
+        })) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 bool collectOpEffects(Operation *rootOp,
                       SmallVector<MemoryEffects::EffectInstance> &effects) {
   SmallVector<Operation *> effectingOps(1, rootOp);

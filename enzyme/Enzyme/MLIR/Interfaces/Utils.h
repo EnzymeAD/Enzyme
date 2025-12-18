@@ -23,6 +23,8 @@ const std::set<std::string> &getNonCapturingFunctions();
 // function doesnt modify memory operands)
 bool isReadOnly(Operation *op);
 
+bool isReadNone(Operation *op);
+
 // Checks if 2 values v1 and v2 may alias with each other locally
 bool mayAlias(Value v1, Value v2);
 
