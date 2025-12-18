@@ -6958,8 +6958,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
                           II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
 #endif
-                        interveningSync =
-                            DT.dominates(SI, II) && DT.dominates(II, origInst);
+                        interveningSync = OrigDT->dominates(SI, II) &&
+                                          OrigDT->dominates(II, origInst);
                         allUnsyncdPredecessorsOf(
                             II,
                             [&](Instruction *mid) {
