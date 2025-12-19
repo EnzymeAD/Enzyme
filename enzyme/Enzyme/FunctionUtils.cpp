@@ -2367,7 +2367,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             }
           }
 
-          if (called && called->getName() == "__enzyme_iter") {
+          if (called && called->getName().contains("__enzyme_iter")) {
             ItersToErase.push_back(CI);
           }
         }
