@@ -889,9 +889,8 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
 
     Optional HMC-specific parameters:
     - inverse_mass_matrix: Inverse mass matrix (identity assumed if not provided).
-    - step_size: Leapfrong integration step size
+    - step_size: Integration step size
     - num_steps: Number of leapfrog steps
-    - initial_momentum: deterministic initial momentum (debug)
   }];
 
   let arguments = (ins
@@ -903,7 +902,6 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Optional<AnyRankedTensor>:$inverse_mass_matrix,
     Optional<AnyRankedTensor>:$step_size,
     Optional<AnyRankedTensor>:$num_steps,
-    Optional<AnyRankedTensor>:$initial_momentum,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -914,7 +912,6 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     (`inverse_mass_matrix` `=` $inverse_mass_matrix^ `:` type($inverse_mass_matrix))?
     (`step_size` `=` $step_size^ `:` type($step_size))?
     (`num_steps` `=` $num_steps^ `:` type($num_steps))?
-    (`initial_momentum` `=` $initial_momentum^ `:` type($initial_momentum))?
     attr-dict `:` functional-type($inputs, results)
   }];
 }
@@ -1044,6 +1041,56 @@ def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
 
   let assemblyFormat = [{
     $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def PopcountOp : Enzyme_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Computes population count";
+  let description = [{
+    Returns the number of 1-bits elementwise.
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def ExtractCheckpointOp : Enzyme_Op<"extract_checkpoint", [Pure]> {
+  let summary = "Extract a row from a NUTS checkpoint tensor";
+  let description = [{
+    Extracts row at specified index from a NUTS checkpoint tensor.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$checkpoints,
+    AnyRankedTensor:$index
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $checkpoints `[` $index `]` attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def UpdateCheckpointOp : Enzyme_Op<"update_checkpoint", [Pure]> {
+  let summary = "Update a row in a NUTS checkpoint tensor";
+  let description = [{
+    Updates row at specified index in a NUTS checkpoint tensor with the given value.
+    Used in NUTS for updating momentum checkpoints at even leaf indices.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$checkpoints,
+    AnyRankedTensor:$index,
+    AnyRankedTensor:$value
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $checkpoints `[` $index `]` `=` $value attr-dict `:` functional-type(operands, results)
   }];
 }
 
