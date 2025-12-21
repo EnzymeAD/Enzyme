@@ -1183,10 +1183,10 @@ Value MCMC::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   builder.setInsertionPointToStart(bodyBlock);
   Value iBody = bodyBlock->getArgument(0);
 
-  Value pLeft = enzyme::ExtractCheckpointOp::create(builder, loc, positionType,
-                                                    pCkpts, iBody);
-  Value pSumCkptI = enzyme::ExtractCheckpointOp::create(
-      builder, loc, positionType, pSumCkpts, iBody);
+  Value pLeft = enzyme::DynamicExtractOp::create(builder, loc, positionType,
+                                                 pCkpts, iBody);
+  Value pSumCkptI = enzyme::DynamicExtractOp::create(builder, loc, positionType,
+                                                     pSumCkpts, iBody);
 
   // Compute subtree momentum sum: pSum - pSumCkpts[i] + pCkpts[i]
   auto pSumMinusCkpt = arith::SubFOp::create(builder, loc, pSum, pSumCkptI);
@@ -1222,9 +1222,9 @@ MCMC::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
   auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
   auto pCkptsShape = pCkptsType.getShape();
 
-  auto updatedPCkpts = enzyme::UpdateCheckpointOp::create(
-      builder, loc, pCkptsType, pCkpts, ckptIdxMax, p);
-  auto updatedPSumCkpts = enzyme::UpdateCheckpointOp::create(
+  auto updatedPCkpts = enzyme::DynamicUpdateOp::create(builder, loc, pCkptsType,
+                                                       pCkpts, ckptIdxMax, p);
+  auto updatedPSumCkpts = enzyme::DynamicUpdateOp::create(
       builder, loc, pCkptsType, pSumCkpts, ckptIdxMax, pSum);
 
   auto i1CheckpointType =
