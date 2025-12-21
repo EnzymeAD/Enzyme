@@ -622,7 +622,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto rngState = inputs[0];
+      auto rngInput = inputs[0];
       SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
 
       auto loc = mcmcOp.getLoc();
@@ -630,17 +630,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto selection = mcmcOp.getSelectionAttr();
 
       auto initSplit = enzyme::RandomSplitOp::create(
-          rewriter, loc, TypeRange{rngState.getType(), rngState.getType()},
-          rngState);
-      auto rngAfterInitSplit = initSplit.getResult(0);
-
-      auto kernelInitSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc, TypeRange{rngInput.getType(), rngInput.getType()},
+          rngInput);
+      auto kernelSplit = enzyme::RandomSplitOp::create(
           rewriter, loc,
-          TypeRange{rngState.getType(), rngState.getType(), rngState.getType()},
-          rngAfterInitSplit);
-      auto rngKeyHmc = kernelInitSplit.getResult(0);
-      auto rngKeyMomentumInit = kernelInitSplit.getResult(2);
-      rngState = rngKeyHmc;
+          TypeRange{rngInput.getType(), rngInput.getType(), rngInput.getType()},
+          initSplit.getResult(0));
+      auto rngTree = kernelSplit.getResult(0);
+      auto rngMomentumInit = kernelSplit.getResult(2);
 
       // Extract initial position vector q0
       int64_t positionSize =
@@ -667,16 +664,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
 
       // Sample initial momentum p0 ~ N(0, M)
-      auto rngForTree = rngState;
-      auto [pInit, rngAfterMomentumInit] = sampleMomentum(
-          rewriter, loc, rngKeyMomentumInit, invMass, positionType);
+      auto [pInit, rngAfterMomentumInit] =
+          sampleMomentum(rewriter, loc, rngMomentumInit, invMass, positionType);
 
       // Compute initial gradient
       auto gradSeedInit = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
       auto autodiffInit = enzyme::AutoDiffRegionOp::create(
-          rewriter, loc, TypeRange{rngForTree.getType(), positionType},
+          rewriter, loc, TypeRange{rngTree.getType(), positionType},
           ValueRange{q0, gradSeedInit},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
@@ -695,12 +691,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto q0Arg = autodiffInitBlock->getArgument(0);
 
       SmallVector<Value> updateInputsInit;
-      updateInputsInit.push_back(rngForTree);
+      updateInputsInit.push_back(rngTree);
       updateInputsInit.append(fnInputs.begin(), fnInputs.end());
 
       auto updateOpInit = enzyme::UpdateOp::create(
-          rewriter, loc,
-          TypeRange{traceType, F64TensorType, rngForTree.getType()},
+          rewriter, loc, TypeRange{traceType, F64TensorType, rngTree.getType()},
           mcmcOp.getFnAttr(), updateInputsInit, originalTrace, q0Arg, selection,
           rewriter.getStringAttr(""));
       auto w0 = updateOpInit.getWeight();
@@ -710,23 +705,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       enzyme::YieldOp::create(rewriter, loc, ValueRange{U0_init, rng0_out});
 
       rewriter.setInsertionPointAfter(autodiffInit);
-      auto rng0_final = autodiffInit.getResult(0);
+      auto rngAfterGrad = autodiffInit.getResult(0);
       auto grad0 = autodiffInit.getResult(1);
 
-      auto sampleKernelSplit = enzyme::RandomSplitOp::create(
+      auto treeSplit = enzyme::RandomSplitOp::create(
           rewriter, loc,
-          TypeRange{rng0_final.getType(), rng0_final.getType(),
-                    rng0_final.getType()},
-          rng0_final);
-      auto rngKeyNext = sampleKernelSplit.getResult(0);
-      auto rngKeyMomentum = sampleKernelSplit.getResult(1);
-      auto rngKeyTransition = sampleKernelSplit.getResult(2);
+          TypeRange{rngAfterGrad.getType(), rngAfterGrad.getType(),
+                    rngAfterGrad.getType()},
+          rngAfterGrad);
+      auto rngNext = treeSplit.getResult(0);
+      auto rngMomentum = treeSplit.getResult(1);
+      auto rngTransition = treeSplit.getResult(2);
 
-      // 6. Sample new momentum for tree building
+      // Sample new momentum for tree building
       auto [p0, rngAfterMomentum] =
-          sampleMomentum(rewriter, loc, rngKeyMomentum, invMass, positionType);
+          sampleMomentum(rewriter, loc, rngMomentum, invMass, positionType);
 
-      // 7. Compute kinetic energy and Hamiltonian
+      // Compute kinetic energy and Hamiltonian
       auto K0 = computeKineticEnergy(rewriter, loc, p0, invMass, positionType);
       Value H0_tree = conditionalDump(
           rewriter, loc, arith::AddFOp::create(rewriter, loc, U0, K0),
@@ -766,7 +761,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                    .sum_accept_probs = zeroConst,
                                    .num_proposals = zeroI64,
                                    .p_sum = p0,
-                                   .rng = rngKeyTransition};
+                                   .rng = rngTransition};
 
       int64_t maxTreeDepthVal = 10; // TODO: Make configurable
 
