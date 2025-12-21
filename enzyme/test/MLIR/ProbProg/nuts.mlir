@@ -176,8 +176,8 @@ module {
 // CHECK-NEXT:          %139 = arith.addi %138, %cst_2 : tensor<i64>
 // CHECK-NEXT:          %140 = arith.andi %arg41, %cst_2 : tensor<i64>
 // CHECK-NEXT:          %141 = arith.cmpi eq, %140, %cst_8 : tensor<i64>
-// CHECK-NEXT:          %142 = enzyme.update_checkpoint %arg39[%132] = %76 : (tensor<10x2xf64>, tensor<i64>, tensor<2xf64>) -> tensor<10x2xf64>
-// CHECK-NEXT:          %143 = enzyme.update_checkpoint %arg40[%132] = %123 : (tensor<10x2xf64>, tensor<i64>, tensor<2xf64>) -> tensor<10x2xf64>
+// CHECK-NEXT:          %142 = enzyme.dynamic_update %arg39[%132] = %76 : (tensor<10x2xf64>, tensor<i64>, tensor<2xf64>) -> tensor<10x2xf64>
+// CHECK-NEXT:          %143 = enzyme.dynamic_update %arg40[%132] = %123 : (tensor<10x2xf64>, tensor<i64>, tensor<2xf64>) -> tensor<10x2xf64>
 // CHECK-NEXT:          %144 = "enzyme.broadcast"(%141) <{shape = array<i64: 10, 2>}> : (tensor<i1>) -> tensor<10x2xi1>
 // CHECK-NEXT:          %145 = arith.select %144, %142, %arg39 : tensor<10x2xi1>, tensor<10x2xf64>
 // CHECK-NEXT:          %146 = arith.select %144, %143, %arg40 : tensor<10x2xi1>, tensor<10x2xf64>
@@ -189,8 +189,8 @@ module {
 // CHECK-NEXT:            enzyme.yield %152 : tensor<i1>
 // CHECK-NEXT:          } body {
 // CHECK-NEXT:          ^bb0(%arg42: tensor<i64>, %arg43: tensor<i1>):
-// CHECK-NEXT:            %150 = enzyme.extract_checkpoint %145[%arg42] : (tensor<10x2xf64>, tensor<i64>) -> tensor<2xf64>
-// CHECK-NEXT:            %151 = enzyme.extract_checkpoint %146[%arg42] : (tensor<10x2xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT:            %150 = enzyme.dynamic_extract %145[%arg42] : (tensor<10x2xf64>, tensor<i64>) -> tensor<2xf64>
+// CHECK-NEXT:            %151 = enzyme.dynamic_extract %146[%arg42] : (tensor<10x2xf64>, tensor<i64>) -> tensor<2xf64>
 // CHECK-NEXT:            %152 = arith.subf %123, %151 : tensor<2xf64>
 // CHECK-NEXT:            %153 = arith.addf %152, %150 : tensor<2xf64>
 // CHECK-NEXT:            %154 = enzyme.dot %cst_13, %150 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
