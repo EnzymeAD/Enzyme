@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Ops.h"
+#include "Interfaces/HMCUtils.h"
 #include "Interfaces/ProbProgUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
@@ -29,6 +30,7 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 using namespace enzyme;
+using namespace enzyme::MCMC;
 
 namespace mlir {
 namespace enzyme {
@@ -399,11 +401,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerMCMCPattern : public mlir::OpRewritePattern<enzyme::MCMCOp> {
-    bool debug;
+    bool debugDump;
 
-    LowerMCMCPattern(MLIRContext *context, bool debug,
+    LowerMCMCPattern(MLIRContext *context, bool debugDump,
                      PatternBenefit benefit = 1)
-        : OpRewritePattern(context, benefit), debug(debug) {}
+        : OpRewritePattern(context, benefit), debugDump(debugDump) {}
 
     LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
@@ -413,25 +415,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       case enzyme::MCMCAlgorithm::HMC:
         return lowerHMC(mcmcOp, rewriter);
       case enzyme::MCMCAlgorithm::NUTS:
-        mcmcOp.emitError("NUTS lowering not yet implemented");
-        return failure();
+        return lowerNUTS(mcmcOp, rewriter);
       default:
-        mcmcOp.emitError("Unknown MCMC algorithm");
+        mcmcOp.emitError("ProbProg: Unknown MCMC algorithm");
         return failure();
       }
     }
 
   private:
-    Value conditionalDump(OpBuilder &builder, Location loc, Value value,
-                          StringRef label) const {
-      if (debug) {
-        return enzyme::DumpOp::create(builder, loc, value.getType(), value,
-                                      builder.getStringAttr(label))
-            .getOutput();
-      }
-      return value;
-    }
-
     LogicalResult lowerHMC(enzyme::MCMCOp mcmcOp,
                            PatternRewriter &rewriter) const {
       SymbolTableCollection symbolTable;
@@ -448,16 +439,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto tensorType = RankedTensorType::get({}, rewriter.getF64Type());
       auto traceType = enzyme::TraceType::get(mcmcOp.getContext());
 
-      // Extract static HMC parameters
       if (!mcmcOp.getStepSize() || !mcmcOp.getNumSteps()) {
         mcmcOp.emitError(
             "ProbProg: HMC requires step_size and num_steps parameters");
         return failure();
       }
 
-      Value mass = mcmcOp.getMass();
-      Value stepSize = mcmcOp.getStepSize();
-      Value numSteps = mcmcOp.getNumSteps();
+      auto invMass = mcmcOp.getInverseMassMatrix();
+      auto stepSize = mcmcOp.getStepSize();
+      auto numSteps = mcmcOp.getNumSteps();
 
       auto inputs = mcmcOp.getInputs();
       if (inputs.empty()) {
@@ -465,7 +455,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      Value rngState = inputs[0];
+      auto rngState = inputs[0];
       SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
 
       auto loc = mcmcOp.getLoc();
@@ -480,81 +470,31 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto positionType =
           RankedTensorType::get({positionSize}, rewriter.getF64Type());
 
-      // 1. Extract initial position vector q0
+      // Extract initial position vector q0
       auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
           rewriter, loc, positionType, originalTrace, selection);
 
-      // 2. Compute initial potential energy U0 = -weight
+      // Compute initial potential energy U0 = -weight
       auto weight0 = enzyme::GetWeightFromTraceOp::create(
           rewriter, loc, tensorType, originalTrace);
-      Value U0 = conditionalDump(rewriter, loc,
-                                 arith::NegFOp::create(rewriter, loc, weight0),
-                                 "HMC: initial potential energy U0");
+      auto U0 = arith::NegFOp::create(rewriter, loc, weight0);
 
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.0)));
-      auto oneConst = arith::ConstantOp::create(
-          rewriter, loc, tensorType,
-          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
 
-      Value rng1;
-      Value p0;
+      // Sample initial momentum p0 ~ N(0, M)
+      auto [p0, rng1] =
+          sampleMomentum(rewriter, loc, rngState, invMass, positionType);
 
-      // 3. Sample initial momentum p0 ~ N(0, M) if M is provided,
-      //    otherwise p0 ~ N(0, I)
-      Value initialMomentum = mcmcOp.getInitialMomentum();
-      if (initialMomentum) {
-        p0 = initialMomentum;
-        rng1 = rngState;
-      } else {
-        if (mass) {
-          auto randomOp = enzyme::RandomOp::create(
-              rewriter, loc, TypeRange{rngState.getType(), positionType},
-              rngState, zeroConst, mass,
-              enzyme::RngDistributionAttr::get(
-                  rewriter.getContext(), enzyme::RngDistribution::MULTINORMAL));
-          rng1 = randomOp.getOutputRngState();
-          p0 = randomOp.getResult();
-        } else {
-          auto randomOp = enzyme::RandomOp::create(
-              rewriter, loc, TypeRange{rngState.getType(), positionType},
-              rngState, zeroConst, oneConst,
-              enzyme::RngDistributionAttr::get(
-                  rewriter.getContext(), enzyme::RngDistribution::NORMAL));
-          rng1 = randomOp.getOutputRngState();
-          p0 = randomOp.getResult();
-        }
-      }
-
-      auto halfConst = arith::ConstantOp::create(
-          rewriter, loc, tensorType,
-          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.5)));
-
-      // 4. Compute initial kinetic energy K0 = 0.5 * p^T * M^{-1} * p
-      Value K0;
-      if (mass) {
-        auto MInvP0 = enzyme::CholeskySolveOp::create(rewriter, loc,
-                                                      positionType, mass, p0);
-        auto p0DotMInvP =
-            enzyme::DotOp::create(rewriter, loc, tensorType, p0, MInvP0);
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotMInvP),
-            "HMC: initial kinetic energy K0");
-      } else {
-        auto p0DotP0 = enzyme::DotOp::create(rewriter, loc, tensorType, p0, p0);
-        K0 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, p0DotP0),
-            "HMC: initial kinetic energy K0");
-      }
+      // Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
+      auto K0 = computeKineticEnergy(rewriter, loc, p0, invMass, positionType);
 
       Value H0 = conditionalDump(rewriter, loc,
                                  arith::AddFOp::create(rewriter, loc, U0, K0),
-                                 "HMC: initial Hamiltonian H0");
+                                 "HMC: initial Hamiltonian H0", debugDump);
 
-      // 5. Compute initial gradient at q0
+      // Compute initial gradient at q0
       auto gradSeedInit = arith::ConstantOp::create(
           rewriter, loc, tensorType,
           DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
@@ -573,7 +513,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Block *autodiffInitBlock = rewriter.createBlock(&autodiffInit.getBody());
       autodiffInitBlock->addArgument(positionType, loc);
 
-      OpBuilder::InsertionGuard guard(rewriter);
       rewriter.setInsertionPointToStart(autodiffInitBlock);
       Value q0Arg = autodiffInitBlock->getArgument(0);
 
@@ -595,8 +534,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value rng0_final = autodiffInit.getResult(0);
       Value grad0 = autodiffInit.getResult(1);
 
-      // 6. Leapfrog integration
+      // Leapfrog integration
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
+      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
       auto c0 = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
@@ -604,27 +544,20 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
 
-      ArrayRef<int64_t> positionShape = positionType.getShape();
+      auto direction = arith::ConstantOp::create(
+          rewriter, loc, i1TensorType,
+          DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(true)));
 
-      stepSize =
-          conditionalDump(rewriter, loc, stepSize, "HMC: step_size (eps)");
-
-      auto stepSizeBroadcast = enzyme::BroadcastOp::create(
-          rewriter, loc, positionType, stepSize,
-          rewriter.getDenseI64ArrayAttr(positionShape));
-      auto halfStepSize =
-          arith::MulFOp::create(rewriter, loc, halfConst, stepSize);
-      auto halfStepSizeBroadcast = enzyme::BroadcastOp::create(
-          rewriter, loc, positionType, halfStepSize,
-          rewriter.getDenseI64ArrayAttr(positionShape));
+      HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
+                     invMass, stepSize, positionSize);
 
       SmallVector<Type> loopResultTypes = {positionType, positionType,
                                            positionType, rng0_final.getType()};
-      auto loopOp =
-          enzyme::LoopOp::create(rewriter, loc, loopResultTypes, c0, numSteps,
-                                 c1, ValueRange{q0, p0, grad0, rng0_final});
+      auto forLoopOp = enzyme::ForLoopOp::create(
+          rewriter, loc, loopResultTypes, c0, numSteps, c1,
+          ValueRange{q0, p0, grad0, rng0_final});
 
-      Block *loopBody = rewriter.createBlock(&loopOp.getRegion());
+      Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
       loopBody->addArgument(i64TensorType, loc);        // iv
       loopBody->addArgument(positionType, loc);         // q
       loopBody->addArgument(positionType, loc);         // p
@@ -632,161 +565,228 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       loopBody->addArgument(rng0_final.getType(), loc); // rng
 
       rewriter.setInsertionPointToStart(loopBody);
-      Value q = conditionalDump(rewriter, loc, loopBody->getArgument(1),
-                                "Leapfrog: position q(t)");
-      Value p = conditionalDump(rewriter, loc, loopBody->getArgument(2),
-                                "Leapfrog: momentum p(t)");
-      Value gradient = conditionalDump(rewriter, loc, loopBody->getArgument(3),
-                                       "Leapfrog: gradient dU/dq(t)");
-      Value loopRng = loopBody->getArgument(4);
+      auto q = loopBody->getArgument(1);
+      auto p = loopBody->getArgument(2);
+      auto gradient = loopBody->getArgument(3);
+      auto loopRng = loopBody->getArgument(4);
 
-      // 6.1 Half step on momentum: p -= (eps/2) * gradient
-      auto deltaP1 =
-          arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast, gradient);
-      Value p1 = conditionalDump(
-          rewriter, loc, arith::SubFOp::create(rewriter, loc, p, deltaP1),
-          "Leapfrog: momentum p(t + eps/2)");
+      IntegratorState leaf = {q, p, gradient};
+      auto step =
+          computeIntegrationStep(rewriter, loc, leaf, loopRng, direction, ctx);
 
-      // 6.2 Full step on position: q += eps * M^{-1} * p1
-      Value v1;
-      if (mass) {
-        v1 = enzyme::CholeskySolveOp::create(rewriter, loc, positionType, mass,
-                                             p1);
-      } else {
-        v1 = p1;
+      // Yield [position, momentum, gradient (new), RNG]
+      enzyme::YieldOp::create(rewriter, loc,
+                              ValueRange{step.q, step.p, step.grad, step.rng});
+
+      rewriter.setInsertionPointAfter(forLoopOp);
+      auto qL = forLoopOp.getResult(0);
+      auto pL = forLoopOp.getResult(1);
+      auto rngAfterLeapfrog = forLoopOp.getResult(3);
+
+      auto result = finalizeHMCStep(rewriter, loc, qL, pL, H0, rngAfterLeapfrog,
+                                    ctx, debugDump);
+
+      rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
+
+      return success();
+    }
+
+    LogicalResult lowerNUTS(enzyme::MCMCOp mcmcOp,
+                            PatternRewriter &rewriter) const {
+      SymbolTableCollection symbolTable;
+
+      auto fn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
+
+      if (fn.getFunctionBody().empty()) {
+        mcmcOp.emitError(
+            "ProbProg: calling `mcmc` with NUTS on an empty function");
+        return failure();
       }
 
-      auto deltaQ = arith::MulFOp::create(rewriter, loc, stepSizeBroadcast, v1);
-      Value q1 = conditionalDump(
-          rewriter, loc, arith::AddFOp::create(rewriter, loc, q, deltaQ),
-          "Leapfrog: position q(t + eps)");
+      auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
+      auto traceType = enzyme::TraceType::get(mcmcOp.getContext());
 
-      // Compute new gradient at q1
-      auto gradSeedLoop = arith::ConstantOp::create(
-          rewriter, loc, tensorType,
-          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(1.0)));
-      auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-          rewriter, loc, TypeRange{loopRng.getType(), positionType},
-          ValueRange{q1, gradSeedLoop},
+      auto invMass = mcmcOp.getInverseMassMatrix();
+      auto stepSize = mcmcOp.getStepSize();
+
+      if (!stepSize) {
+        mcmcOp.emitError("ProbProg: NUTS requires step_size parameter");
+        return failure();
+      }
+
+      auto inputs = mcmcOp.getInputs();
+      if (inputs.empty()) {
+        mcmcOp.emitError("ProbProg: initial RNG state is required as the first "
+                         "function input by convention");
+        return failure();
+      }
+
+      auto rngInput = inputs[0];
+      SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
+
+      auto loc = mcmcOp.getLoc();
+      auto originalTrace = mcmcOp.getOriginalTrace();
+      auto selection = mcmcOp.getSelectionAttr();
+
+      auto initSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc, TypeRange{rngInput.getType(), rngInput.getType()},
+          rngInput);
+      auto kernelSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc,
+          TypeRange{rngInput.getType(), rngInput.getType(), rngInput.getType()},
+          initSplit.getResult(0));
+      auto rngTree = kernelSplit.getResult(0);
+      auto rngMomentumInit = kernelSplit.getResult(2);
+
+      // Extract initial position vector q0
+      int64_t positionSize =
+          computePositionSizeForSelection(mcmcOp, fn, selection, symbolTable);
+      if (positionSize <= 0)
+        return failure();
+
+      auto positionType =
+          RankedTensorType::get({positionSize}, rewriter.getF64Type());
+
+      auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
+          rewriter, loc, positionType, originalTrace, selection);
+
+      // Compute initial potential energy U0 = -weight
+      auto weight0 = enzyme::GetWeightFromTraceOp::create(
+          rewriter, loc, F64TensorType, originalTrace);
+      auto U0 = arith::NegFOp::create(rewriter, loc, weight0);
+
+      auto zeroConst = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.0)));
+      auto oneConst = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
+
+      // Sample initial momentum p0 ~ N(0, M)
+      auto [pInit, rngAfterMomentumInit] =
+          sampleMomentum(rewriter, loc, rngMomentumInit, invMass, positionType);
+
+      // Compute initial gradient
+      auto gradSeedInit = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
+      auto autodiffInit = enzyme::AutoDiffRegionOp::create(
+          rewriter, loc, TypeRange{rngTree.getType(), positionType},
+          ValueRange{q0, gradSeedInit},
           rewriter.getArrayAttr({enzyme::ActivityAttr::get(
               rewriter.getContext(), enzyme::Activity::enzyme_active)}),
           rewriter.getArrayAttr(
-              {enzyme::ActivityAttr::get(rewriter.getContext(),
-                                         enzyme::Activity::enzyme_activenoneed),
+              {enzyme::ActivityAttr::get(
+                   rewriter.getContext(),
+                   enzyme::Activity::enzyme_activenoneed), // U0 not needed here
                enzyme::ActivityAttr::get(rewriter.getContext(),
                                          enzyme::Activity::enzyme_const)}),
           rewriter.getI64IntegerAttr(1), rewriter.getBoolAttr(false), nullptr);
 
-      Block *autodiffBlock = rewriter.createBlock(&autodiffOp.getBody());
-      autodiffBlock->addArgument(positionType, loc);
+      Block *autodiffInitBlock = rewriter.createBlock(&autodiffInit.getBody());
+      autodiffInitBlock->addArgument(positionType, loc);
 
-      rewriter.setInsertionPointToStart(autodiffBlock);
-      Value q1Arg = autodiffBlock->getArgument(0);
+      rewriter.setInsertionPointToStart(autodiffInitBlock);
+      auto q0Arg = autodiffInitBlock->getArgument(0);
 
-      SmallVector<Value> updateInputs;
-      updateInputs.push_back(loopRng);
-      updateInputs.append(fnInputs.begin(), fnInputs.end());
+      SmallVector<Value> updateInputsInit;
+      updateInputsInit.push_back(rngTree);
+      updateInputsInit.append(fnInputs.begin(), fnInputs.end());
 
-      auto updateOp = enzyme::UpdateOp::create(
-          rewriter, loc, TypeRange{traceType, tensorType, loopRng.getType()},
-          mcmcOp.getFnAttr(), updateInputs, originalTrace, q1Arg, selection,
+      auto updateOpInit = enzyme::UpdateOp::create(
+          rewriter, loc, TypeRange{traceType, F64TensorType, rngTree.getType()},
+          mcmcOp.getFnAttr(), updateInputsInit, originalTrace, q0Arg, selection,
           rewriter.getStringAttr(""));
-      Value w1 = updateOp.getWeight();
-      Value rng1_inner = updateOp.getOutputRngState();
-      Value U1 = arith::NegFOp::create(rewriter, loc, w1);
+      auto w0 = updateOpInit.getWeight();
+      auto rng0_out = updateOpInit.getOutputRngState();
+      auto U0_init = arith::NegFOp::create(rewriter, loc, w0);
 
-      enzyme::YieldOp::create(rewriter, loc, ValueRange{U1, rng1_inner});
+      enzyme::YieldOp::create(rewriter, loc, ValueRange{U0_init, rng0_out});
 
-      rewriter.setInsertionPointAfter(autodiffOp);
+      rewriter.setInsertionPointAfter(autodiffInit);
+      auto rngAfterGrad = autodiffInit.getResult(0);
+      auto grad0 = autodiffInit.getResult(1);
 
-      Value newRng = autodiffOp.getResult(0);
-      Value newGradient =
-          conditionalDump(rewriter, loc, autodiffOp.getResult(1),
-                          "Leapfrog: gradient dU/dq(t + eps)");
-
-      // 6.3 Another half step on momentum: p -= (eps/2) * gradient (new)
-      auto deltaP2 = arith::MulFOp::create(rewriter, loc, halfStepSizeBroadcast,
-                                           newGradient);
-      Value p2 = conditionalDump(
-          rewriter, loc, arith::SubFOp::create(rewriter, loc, p1, deltaP2),
-          "Leapfrog: momentum p(t + eps)");
-
-      // Yield [position, momentum, gradient (new), RNG]
-      enzyme::YieldOp::create(rewriter, loc,
-                              ValueRange{q1, p2, newGradient, newRng});
-
-      rewriter.setInsertionPointAfter(loopOp);
-      Value qL = loopOp.getResult(0);
-      Value pL = loopOp.getResult(1);
-      Value rngAfterLeapfrog = loopOp.getResult(3);
-
-      // 7. Generate final trace with final position qL
-      SmallVector<Value> finalUpdateInputs;
-      finalUpdateInputs.push_back(rngAfterLeapfrog);
-      finalUpdateInputs.append(fnInputs.begin(), fnInputs.end());
-
-      auto finalUpdateOp = enzyme::UpdateOp::create(
+      auto treeSplit = enzyme::RandomSplitOp::create(
           rewriter, loc,
-          TypeRange{traceType, tensorType, rngAfterLeapfrog.getType()},
-          mcmcOp.getFnAttr(), finalUpdateInputs, originalTrace, qL, selection,
-          rewriter.getStringAttr(""));
-      Value finalTrace = finalUpdateOp.getUpdatedTrace();
-      Value weight1 = finalUpdateOp.getWeight();
-      Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
+          TypeRange{rngAfterGrad.getType(), rngAfterGrad.getType(),
+                    rngAfterGrad.getType()},
+          rngAfterGrad);
+      auto rngNext = treeSplit.getResult(0);
+      auto rngMomentum = treeSplit.getResult(1);
+      auto rngTransition = treeSplit.getResult(2);
 
-      Value U1_final = conditionalDump(
-          rewriter, loc, arith::NegFOp::create(rewriter, loc, weight1),
-          "HMC: final potential energy U1");
+      // Sample new momentum for tree building
+      auto [p0, rngAfterMomentum] =
+          sampleMomentum(rewriter, loc, rngMomentum, invMass, positionType);
 
-      // K1 = 0.5 * pL^T * M^{-1} * pL
-      Value K1;
-      if (mass) {
-        auto MInvPL = enzyme::CholeskySolveOp::create(rewriter, loc,
-                                                      positionType, mass, pL);
-        auto pLDotMInvPL =
-            enzyme::DotOp::create(rewriter, loc, tensorType, pL, MInvPL);
-        K1 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, pLDotMInvPL),
-            "HMC: final kinetic energy K1");
-      } else {
-        auto pLDotPL = enzyme::DotOp::create(rewriter, loc, tensorType, pL, pL);
-        K1 = conditionalDump(
-            rewriter, loc,
-            arith::MulFOp::create(rewriter, loc, halfConst, pLDotPL),
-            "HMC: final kinetic energy K1");
-      }
+      // Compute kinetic energy and Hamiltonian
+      auto K0 = computeKineticEnergy(rewriter, loc, p0, invMass, positionType);
+      Value H0_tree = conditionalDump(
+          rewriter, loc, arith::AddFOp::create(rewriter, loc, U0, K0),
+          "NUTS: initial Hamiltonian H0", debugDump);
 
-      Value H1 = conditionalDump(
-          rewriter, loc, arith::AddFOp::create(rewriter, loc, U1_final, K1),
-          "HMC: final Hamiltonian H1");
+      // Initialize NUTS tree state
+      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
+      auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
 
-      // 8. Metropolis-Hastings accept/reject step
-      // with acceptance probability: α = min(1, exp(H0 - H1))
-      auto dH = arith::SubFOp::create(rewriter, loc, H0, H1);
-      auto expDH = math::ExpOp::create(rewriter, loc, dH);
-      Value accProb = conditionalDump(
-          rewriter, loc,
-          arith::MinimumFOp::create(rewriter, loc, oneConst, expDH),
-          "HMC: acceptance probability α");
+      auto zeroI64 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
+      auto oneI64 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
+      auto falseConst = arith::ConstantOp::create(
+          rewriter, loc, i1TensorType,
+          DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
+      auto zeroWeight = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.0)));
 
-      auto randomOp2 = enzyme::RandomOp::create(
-          rewriter, loc, TypeRange{rngAfterUpdate.getType(), tensorType},
-          rngAfterUpdate, zeroConst, oneConst,
-          enzyme::RngDistributionAttr::get(rewriter.getContext(),
-                                           enzyme::RngDistribution::UNIFORM));
-      Value rngFinal = randomOp2.getOutputRngState();
-      Value randUniform = randomOp2.getResult();
+      NUTSTreeState initialTree = {.q_left = q0,
+                                   .p_left = p0,
+                                   .grad_left = grad0,
+                                   .q_right = q0,
+                                   .p_right = p0,
+                                   .grad_right = grad0,
+                                   .q_proposal = q0,
+                                   .grad_proposal = grad0,
+                                   .U_proposal = U0,
+                                   .H_proposal = H0_tree,
+                                   .depth = zeroI64,
+                                   .weight = zeroWeight,
+                                   .turning = falseConst,
+                                   .diverging = falseConst,
+                                   .sum_accept_probs = zeroConst,
+                                   .num_proposals = zeroI64,
+                                   .p_sum = p0,
+                                   .rng = rngTransition};
 
-      // Accept if U(0,1) < α
-      auto acceptedTensor = arith::CmpFOp::create(
-          rewriter, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
+      int64_t maxTreeDepthVal = 10; // TODO: Make configurable
 
-      // 9. Select trace based on acceptance
-      auto selectedTrace = enzyme::SelectTraceOp::create(
-          rewriter, loc, traceType, acceptedTensor, finalTrace, originalTrace);
+      auto maxDeltaEnergy = arith::ConstantOp::create(
+          rewriter, loc, F64TensorType,
+          DenseElementsAttr::get(
+              F64TensorType,
+              rewriter.getF64FloatAttr(1000.0))); // TODO: Make adjustable
 
-      rewriter.replaceOp(mcmcOp, {selectedTrace, acceptedTensor, rngFinal});
+      NUTSContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
+                      invMass, stepSize, positionSize, H0_tree, maxDeltaEnergy,
+                      maxTreeDepthVal);
+
+      // Build NUTS tree
+      auto finalTree = buildTree(rewriter, loc, initialTree, ctx, debugDump);
+
+      conditionalDump(rewriter, loc, finalTree.q_proposal,
+                      "NUTS: final proposal", debugDump);
+      conditionalDump(rewriter, loc, finalTree.depth, "NUTS: tree depth",
+                      debugDump);
+
+      auto result = finalizeNUTSStep(rewriter, loc, finalTree.q_proposal,
+                                     finalTree.rng, ctx);
+
+      rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
 
       return success();
     }
@@ -1728,10 +1728,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 void ProbProgPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   patterns
-      .add<LowerUntracedCallPattern, LowerSimulatePattern, LowerGeneratePattern,
-           LowerMHPattern, LowerRegeneratePattern, LowerUpdatePattern>(
+      .add<LowerUpdatePattern, LowerUntracedCallPattern, LowerSimulatePattern,
+           LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
           &getContext());
-  patterns.add<LowerMCMCPattern>(&getContext(), debugMCMC);
+  patterns.add<LowerMCMCPattern>(&getContext(), debugDump);
 
   mlir::GreedyRewriteConfig config;
 
