@@ -1058,39 +1058,38 @@ def PopcountOp : Enzyme_Op<"popcount", [Pure, SameOperandsAndResultElementType, 
   }];
 }
 
-def ExtractCheckpointOp : Enzyme_Op<"extract_checkpoint", [Pure]> {
-  let summary = "Extract a row from a NUTS checkpoint tensor";
+def DynamicExtractOp : Enzyme_Op<"dynamic_extract", [Pure]> {
+  let summary = "Extract slice from tensor at dynamic index along first dimension";
   let description = [{
-    Extracts row at specified index from a NUTS checkpoint tensor.
+    Extracts a slice at the specified dynamic index along the first dimension.
   }];
 
   let arguments = (ins
-    AnyRankedTensor:$checkpoints,
+    AnyRankedTensor:$input,
     AnyRankedTensor:$index
   );
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $checkpoints `[` $index `]` attr-dict `:` functional-type(operands, results)
+    $input `[` $index `]` attr-dict `:` functional-type(operands, results)
   }];
 }
 
-def UpdateCheckpointOp : Enzyme_Op<"update_checkpoint", [Pure]> {
-  let summary = "Update a row in a NUTS checkpoint tensor";
+def DynamicUpdateOp : Enzyme_Op<"dynamic_update", [Pure]> {
+  let summary = "Update slice in tensor at dynamic index along first dimension";
   let description = [{
-    Updates row at specified index in a NUTS checkpoint tensor with the given value.
-    Used in NUTS for updating momentum checkpoints at even leaf indices.
+    Returns a new tensor with the slice at the specified dynamic index replaced.
   }];
 
   let arguments = (ins
-    AnyRankedTensor:$checkpoints,
+    AnyRankedTensor:$input,
     AnyRankedTensor:$index,
     AnyRankedTensor:$value
   );
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $checkpoints `[` $index `]` `=` $value attr-dict `:` functional-type(operands, results)
+    $input `[` $index `]` `=` $value attr-dict `:` functional-type(operands, results)
   }];
 }
 
