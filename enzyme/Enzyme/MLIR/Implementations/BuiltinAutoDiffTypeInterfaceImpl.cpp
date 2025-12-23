@@ -46,10 +46,15 @@ template <typename ConcreteType>
 class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
                                FloatTypeInterface<ConcreteType>, ConcreteType> {
 public:
+  TypedAttr createNullAttr(Type self) const {
+    auto fltType = cast<ConcreteType>(self);
+    return FloatAttr::get(fltType, APFloat(fltType.getFloatSemantics(), 0));
+  }
+
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto fltType = cast<ConcreteType>(self);
-    return arith::ConstantFloatOp::create(
-        builder, loc, fltType, APFloat(fltType.getFloatSemantics(), 0));
+    return arith::ConstantFloatOp::create(builder, loc, fltType,
+                                          createNullAttr(self));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -89,32 +94,35 @@ class TensorTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<TensorTypeInterface,
                                                   TensorType> {
 public:
-  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+  TypedAttr createNullAttr(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
 
     if (auto F = dyn_cast<FloatType>(ET)) {
       APFloat apvalue(F.getFloatSemantics(), 0);
-      auto attr = DenseElementsAttr::get(tenType, apvalue);
-      return arith::ConstantOp::create(builder, loc, tenType, attr);
+      return DenseElementsAttr::get(tenType, apvalue);
     }
     if (auto G = dyn_cast<ComplexType>(ET)) {
       if (auto F = dyn_cast<FloatType>(G.getElementType())) {
         APFloat apvalue(F.getFloatSemantics(), 0);
         std::complex<APFloat> c(apvalue, apvalue);
-        auto attr = DenseElementsAttr::get(tenType, c);
-        return arith::ConstantOp::create(builder, loc, tenType, attr);
+        return DenseElementsAttr::get(tenType, c);
       }
     }
     if (auto IT = dyn_cast<IntegerType>(ET)) {
       APInt apvalue(IT.getWidth(), 0);
-      auto attr = DenseElementsAttr::get(tenType, apvalue);
-      return arith::ConstantOp::create(builder, loc, tenType, attr);
+      return DenseElementsAttr::get(tenType, apvalue);
     }
     llvm::errs() << " cannot create null value of tensor type: " << tenType
                  << "\n";
     assert(0);
     return nullptr;
+  }
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    auto attr = createNullAttr(self);
+    assert(attr);
+    auto tenType = cast<TensorType>(self);
+    return arith::ConstantOp::create(builder, loc, tenType, attr);
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -195,6 +203,14 @@ template <typename T>
 class IntegerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<IntegerTypeInterface<T>, T> {
 public:
+  TypedAttr createNullAttr(Type self) {
+    if (isa<IndexType>(self)) {
+      return IntegerAttr::get(self, APInt(64, 0));
+    } else {
+      return IntegerAttr::get(self, APInt(self.getIntOrFloatBitWidth(), 0));
+    }
+  }
+
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     if (isa<IndexType>(self)) {
       return arith::ConstantIndexOp::create(builder, loc, 0);
@@ -243,13 +259,16 @@ class ComplexTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<ComplexTypeInterface,
                                                   ComplexType> {
 public:
-  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+  TypedAttr createNullAttr(Type self) const {
     auto fltType = cast<FloatType>(cast<ComplexType>(self).getElementType());
     mlir::Attribute attrs[2] = {
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
         builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};
+    return builder.getArrayAttr(attrs);
+  }
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     return complex::ConstantOp::create(builder, loc, self,
-                                       builder.getArrayAttr(attrs));
+                                       createNullAttr(self));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

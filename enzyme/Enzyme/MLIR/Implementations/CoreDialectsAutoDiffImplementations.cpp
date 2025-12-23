@@ -26,6 +26,10 @@ using namespace mlir::enzyme;
 mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                               llvm::StringRef value) {
   using namespace mlir;
+  if (value == "0") {
+    auto ATI = cast<AutoDiffTypeInterface>(type);
+    return ATI.getNullAttr();
+  }
   if (auto T = dyn_cast<TensorType>(type)) {
     auto ET = dyn_cast<FloatType>(T.getElementType());
     if (!ET) {
