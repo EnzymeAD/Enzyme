@@ -42,8 +42,8 @@ class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
 public:
-  mlir::TypedAttr createNullAttr(mlir::Type self) const {
-    llvm::errs() << " unsupported: createNullAttr of pointertype\n";
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    llvm::errs() << " unsupported: createNullAttribute of pointertype\n";
     return nullptr;
   }
 

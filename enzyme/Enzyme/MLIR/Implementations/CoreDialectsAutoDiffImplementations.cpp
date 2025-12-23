@@ -28,7 +28,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
   using namespace mlir;
   if (value == "0") {
     auto ATI = cast<AutoDiffTypeInterface>(type);
-    return ATI.getNullAttr();
+    return cast<TypedAttr>(ATI.createNullAttr());
   }
   if (auto T = dyn_cast<TensorType>(type)) {
     auto ET = dyn_cast<FloatType>(T.getElementType());

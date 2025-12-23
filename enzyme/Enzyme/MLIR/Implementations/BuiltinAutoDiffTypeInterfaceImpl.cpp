@@ -46,15 +46,15 @@ template <typename ConcreteType>
 class FloatTypeInterface : public AutoDiffTypeInterface::ExternalModel<
                                FloatTypeInterface<ConcreteType>, ConcreteType> {
 public:
-  TypedAttr createNullAttr(Type self) const {
+  Attribute createNullAttr(Type self) const {
     auto fltType = cast<ConcreteType>(self);
     return FloatAttr::get(fltType, APFloat(fltType.getFloatSemantics(), 0));
   }
 
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     auto fltType = cast<ConcreteType>(self);
-    return arith::ConstantFloatOp::create(builder, loc, fltType,
-                                          createNullAttr(self));
+    return arith::ConstantOp::create(builder, loc, fltType,
+                                     cast<FloatAttr>(createNullAttr(self)));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -94,7 +94,7 @@ class TensorTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<TensorTypeInterface,
                                                   TensorType> {
 public:
-  TypedAttr createNullAttr(Type self) const {
+  Attribute createNullAttr(Type self) const {
     auto tenType = cast<TensorType>(self);
     auto ET = tenType.getElementType();
 
@@ -122,7 +122,8 @@ public:
     auto attr = createNullAttr(self);
     assert(attr);
     auto tenType = cast<TensorType>(self);
-    return arith::ConstantOp::create(builder, loc, tenType, attr);
+    return arith::ConstantOp::create(builder, loc, tenType,
+                                     cast<TypedAttr>(attr));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
@@ -203,7 +204,7 @@ template <typename T>
 class IntegerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<IntegerTypeInterface<T>, T> {
 public:
-  TypedAttr createNullAttr(Type self) {
+  Attribute createNullAttr(Type self) const {
     if (isa<IndexType>(self)) {
       return IntegerAttr::get(self, APInt(64, 0));
     } else {
@@ -259,16 +260,15 @@ class ComplexTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<ComplexTypeInterface,
                                                   ComplexType> {
 public:
-  TypedAttr createNullAttr(Type self) const {
+  Attribute createNullAttr(Type self) const {
     auto fltType = cast<FloatType>(cast<ComplexType>(self).getElementType());
-    mlir::Attribute attrs[2] = {
-        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0)),
-        builder.getFloatAttr(fltType, APFloat(fltType.getFloatSemantics(), 0))};
-    return builder.getArrayAttr(attrs);
+    auto zattr = cast<AutoDiffTypeInterface>(fltType).createNullAttr();
+    mlir::Attribute attrs[2] = {zattr, zattr};
+    return ArrayAttr::get(self.getContext(), attrs);
   }
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     return complex::ConstantOp::create(builder, loc, self,
-                                       createNullAttr(self));
+                                       cast<ArrayAttr>(createNullAttr(self)));
   }
 
   Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,

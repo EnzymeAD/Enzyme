@@ -237,8 +237,7 @@ class MemRefAutoDiffTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<MemRefAutoDiffTypeInterface,
                                                   MemRefType> {
 public:
-  mlir::TypedAttr createNullAttr(mlir::Type self, OpBuilder &builder,
-                                 Location loc) const {
+  mlir::Attribute createNullAttr(mlir::Type self) const {
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
   mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,

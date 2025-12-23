@@ -39,7 +39,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
         provided builder should be used to construct the const-like operation.
         Null can be emitted by the differentiation pass.
       }],
-      /*retTy=*/"::mlir::TypedAttr",
+      /*retTy=*/"::mlir::Attribute",
       /*methodName=*/"createNullAttr",
       /*args=*/(ins)
     >,
