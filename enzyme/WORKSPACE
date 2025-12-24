@@ -1,6 +1,20 @@
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
 
+#bazel_skylib
+SKYLIB_VERSION = "1.8.2"
+http_archive(
+    name = "bazel_skylib",
+    sha256 = "6e78f0e57de26801f6f564fa7c4a48dc8b36873e416257a92bbb0937eeac8446",
+    urls = [
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version=SKYLIB_VERSION),
+        "https://github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version=SKYLIB_VERSION),
+    ],
+)
+load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+
+bazel_skylib_workspace()
+
 #apple_support
 http_archive(
     name = "build_bazel_apple_support",
@@ -15,19 +29,6 @@ load(
 apple_support_dependencies()
 load("@bazel_features//:deps.bzl", "bazel_features_deps")
 bazel_features_deps()
-
-#bazel_skylib
-SKYLIB_VERSION = "1.8.2"
-http_archive(
-    name = "bazel_skylib",
-    sha256 = "6e78f0e57de26801f6f564fa7c4a48dc8b36873e416257a92bbb0937eeac8446",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version=SKYLIB_VERSION),
-        "https://github.com/bazelbuild/bazel-skylib/releases/download/{version}/bazel-skylib-{version}.tar.gz".format(version=SKYLIB_VERSION),
-    ],
-)
-load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
-bazel_skylib_workspace()
 
 #platforms
 http_archive(
