@@ -171,7 +171,7 @@ template <typename SourceOp> struct EnzymeOpCreator;
 
 template <> struct EnzymeOpCreator<AutoDiffOp> {
   static AutoDiffOp create(PatternRewriter &rewriter, AutoDiffOp uop,
-                           ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                           TypeRange out_ty, ArrayRef<Value> in_args,
                            ArrayAttr newInActivity, ArrayAttr newRetActivity) {
 
     return AutoDiffOp::create(rewriter, uop.getLoc(), out_ty, uop.getFnAttr(),
@@ -182,21 +182,22 @@ template <> struct EnzymeOpCreator<AutoDiffOp> {
 
 template <> struct EnzymeOpCreator<AutoDiffRegionOp> {
   static AutoDiffRegionOp create(PatternRewriter &rewriter,
-                                 AutoDiffRegionOp uop, ArrayRef<Type> out_ty,
+                                 AutoDiffRegionOp uop, TypeRange out_ty,
                                  ArrayRef<Value> in_args,
                                  ArrayAttr newInActivity,
                                  ArrayAttr newRetActivity) {
     auto newOp = AutoDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
-    newOp.getBody().takeBody(uop.getBody());
+    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
+                                newOp.getBody().begin());
     return newOp;
   }
 };
 
 template <> struct EnzymeOpCreator<ForwardDiffOp> {
   static ForwardDiffOp create(PatternRewriter &rewriter, ForwardDiffOp uop,
-                              ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
+                              TypeRange out_ty, ArrayRef<Value> in_args,
                               ArrayAttr newInActivity,
                               ArrayAttr newRetActivity) {
     return ForwardDiffOp::create(
@@ -206,14 +207,16 @@ template <> struct EnzymeOpCreator<ForwardDiffOp> {
 };
 
 template <> struct EnzymeOpCreator<ForwardDiffRegionOp> {
-  static ForwardDiffRegionOp
-  create(PatternRewriter &rewriter, ForwardDiffRegionOp uop,
-         ArrayRef<Type> out_ty, ArrayRef<Value> in_args,
-         ArrayAttr newInActivity, ArrayAttr newRetActivity) {
+  static ForwardDiffRegionOp create(PatternRewriter &rewriter,
+                                    ForwardDiffRegionOp uop, TypeRange out_ty,
+                                    ArrayRef<Value> in_args,
+                                    ArrayAttr newInActivity,
+                                    ArrayAttr newRetActivity) {
     auto newOp = ForwardDiffRegionOp::create(
         rewriter, uop.getLoc(), out_ty, in_args, newInActivity, newRetActivity,
         uop.getWidthAttr(), uop.getStrongZeroAttr(), uop.getFnAttr());
-    newOp.getBody().takeBody(uop.getBody());
+    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
+                                newOp.getBody().begin());
     return newOp;
   }
 };
@@ -564,6 +567,70 @@ public:
   }
 };
 
+template <typename SourceOp>
+class RemoveUnusedArgs final : public OpRewritePattern<SourceOp> {
+
+private:
+  using SourceOpCreator = EnzymeOpCreator<SourceOp>;
+
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp uop,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> newInArgs;
+    SmallVector<size_t> argIdxToErase;
+    SmallVector<ActivityAttr> newInActivityArgs;
+    llvm::SmallVector<Value> blockArg(uop.getBody().getArguments());
+    auto in_idx = 0;
+    for (auto [idx, act] : llvm::enumerate(
+             uop.getActivity().template getAsRange<ActivityAttr>())) {
+      auto act_val = act.getValue();
+      Value res = uop.getInputs()[in_idx++];
+
+      if (blockArg[idx].use_empty()) {
+        argIdxToErase.push_back(idx);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          in_idx++;
+        }
+      } else {
+        newInActivityArgs.push_back(act);
+        newInArgs.push_back(res);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          res = uop.getInputs()[in_idx++];
+          newInArgs.push_back(res);
+        }
+      }
+    }
+
+    if (argIdxToErase.empty())
+      return failure();
+
+    if constexpr (std::is_same_v<SourceOp, AutoDiffRegionOp>) {
+      newInArgs.append(uop.getDifferentialReturns());
+    }
+
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
+
+    auto newOp =
+        SourceOpCreator::create(rewriter, uop, uop.getResultTypes(), newInArgs,
+                                newInActivity, uop.getRetActivity());
+
+    // erase the unused arguments
+    for (auto idx : llvm::reverse(argIdxToErase)) {
+      newOp.getBody().eraseArgument(idx);
+    }
+
+    rewriter.replaceOp(uop, newOp);
+    return success();
+  }
+};
+
 void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                 MLIRContext *context) {
 
@@ -572,8 +639,8 @@ void ForwardDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 
 void ForwardDiffRegionOp::getCanonicalizationPatterns(
     RewritePatternSet &patterns, MLIRContext *context) {
-  patterns.add<FwdRetOpt<ForwardDiffRegionOp>, FwdInpOpt<ForwardDiffRegionOp>>(
-      context);
+  patterns.add<FwdRetOpt<ForwardDiffRegionOp>, FwdInpOpt<ForwardDiffRegionOp>,
+               RemoveUnusedArgs<ForwardDiffRegionOp>>(context);
 }
 
 LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
@@ -958,65 +1025,6 @@ public:
   }
 };
 
-class RemoveUnusedArgs final : public OpRewritePattern<AutoDiffRegionOp> {
-
-public:
-  using OpRewritePattern<AutoDiffRegionOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(AutoDiffRegionOp uop,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> newInArgs;
-    SmallVector<size_t> argIdxToErase;
-    SmallVector<ActivityAttr> newInActivityArgs;
-    llvm::SmallVector<Value> blockArg(uop.getBody().getArguments());
-    auto in_idx = 0;
-    for (auto [idx, act] :
-         llvm::enumerate(uop.getActivity().getAsRange<ActivityAttr>())) {
-      auto act_val = act.getValue();
-      Value res = uop.getInputs()[in_idx++];
-
-      if (blockArg[idx].use_empty()) {
-        argIdxToErase.push_back(idx);
-        if (act_val == Activity::enzyme_dup ||
-            act_val == Activity::enzyme_dupnoneed) {
-          in_idx++;
-        }
-      } else {
-        newInActivityArgs.push_back(act);
-        newInArgs.push_back(res);
-        if (act_val == Activity::enzyme_dup ||
-            act_val == Activity::enzyme_dupnoneed) {
-          res = uop.getInputs()[in_idx++];
-          newInArgs.push_back(res);
-        }
-      }
-    }
-
-    if (argIdxToErase.empty())
-      return failure();
-
-    newInArgs.append(uop.getDifferentialReturns());
-    ArrayAttr newInActivity =
-        ArrayAttr::get(rewriter.getContext(),
-                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
-                                                 newInActivityArgs.end()));
-
-    auto newOp = AutoDiffRegionOp::create(
-        rewriter, uop.getLoc(), uop.getResultTypes(), newInArgs, newInActivity,
-        uop.getRetActivity(), uop.getWidthAttr(), uop.getStrongZeroAttr(),
-        uop.getFnAttr());
-    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
-                                newOp.getBody().begin());
-
-    for (auto idx : llvm::reverse(argIdxToErase)) {
-      newOp.getBody().eraseArgument(idx);
-    }
-
-    rewriter.replaceOp(uop, newOp);
-    return success();
-  }
-};
-
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<ReverseRetOpt<AutoDiffOp>>(context);
@@ -1024,7 +1032,9 @@ void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 
 void AutoDiffRegionOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
-  patterns.add<ReverseRetOpt<AutoDiffRegionOp>, RemoveUnusedArgs>(context);
+  patterns
+      .add<ReverseRetOpt<AutoDiffRegionOp>, RemoveUnusedArgs<AutoDiffRegionOp>>(
+          context);
 }
 //===----------------------------------------------------------------------===//
 // SampleOp

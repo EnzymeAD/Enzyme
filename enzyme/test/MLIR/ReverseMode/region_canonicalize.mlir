@@ -21,4 +21,3 @@ func.func @test1(%vx : f64, %dout : f64) -> f64 {
 // CHECK-NEXT:   return %1 : f64
 // CHECK-NEXT: }
 
-
