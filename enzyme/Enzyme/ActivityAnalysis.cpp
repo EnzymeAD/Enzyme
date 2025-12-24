@@ -3350,13 +3350,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
-          if (!isPointerArithmeticInst(I))
+          if (!isPointerArithmeticInst(I) &&
+              !(UA == UseActivity::OnlyNonPointerStores && isa<LoadInst>(I)))
             NU = UseActivity::None;
         }
 
         if (EnzymePrintActivity) {
           llvm::errs() << "Adding users of value " << *I << " now with sub UA "
-                       << to_string(UA) << "\n";
+                       << to_string(NU) << "\n";
         }
         for (auto u : I->users()) {
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
@@ -3434,6 +3435,11 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
     if (isa<LoadInst>(a)) {
       continue;
     }
+
+    if (auto I = dyn_cast<Instruction>(a))
+      if (notForAnalysis.count(I->getParent())) {
+        continue;
+      }
 
     if (isa<ReturnInst>(a)) {
       if (ActiveReturns == DIFFE_TYPE::CONSTANT)
