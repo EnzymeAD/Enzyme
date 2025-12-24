@@ -25,6 +25,31 @@ func.func @dsquare(%x: f64, %dr: f64) -> f64 {
 
 // -----
 
+func.func @square(%x: f64) -> f64 {
+  %next = arith.mulf %x, %x : f64
+  return %next : f64
+}
+func.func @dsquare_fwd(%x: f64, %dr: f64) -> f64 {
+  %r = enzyme.fwddiff @square(%x, %dr)
+    {
+      activity=[#enzyme<activity enzyme_dup>],
+      ret_activity=[#enzyme<activity enzyme_dupnoneed>]
+    } : (f64, f64) -> f64
+  return %r : f64
+}
+
+
+// CHECK: func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:   %0 = enzyme.fwddiff_region(%arg0, %arg1) {
+// CHECK-NEXT:   ^bb0(%arg2: f64):
+// CHECK-NEXT:     %1 = arith.mulf %arg2, %arg2 : f64
+// CHECK-NEXT:     enzyme.yield %1 : f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_dup>], fn = "square", fn_attrs = {}, ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   return %0 : f64
+// CHECK-NEXT: }
+
+// -----
+
 llvm.func internal @_Z6squarePfS_(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}) attributes {dso_local, frame_pointer = #llvm.framePointerKind<all>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, will_return, sym_visibility = "private"} {
   %0 = llvm.mlir.constant(5.600000e+00 : f64) : f64
   %1 = nvvm.read.ptx.sreg.tid.x : i32

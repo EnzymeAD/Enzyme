@@ -181,3 +181,24 @@ func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
 // CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
+
+// ----- 
+
+func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
+  %0 = enzyme.fwddiff_region(%arg0, %arg1) {
+  ^bb0(%arg2: f64):
+    %1 = arith.mulf %arg0, %arg2 : f64
+    enzyme.yield %1 : f64
+  } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  return %0 : f64
+}
+
+
+// CHECK: func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   return %0 : f64
+// CHECK-NEXT: }
+// CHECK: func.func @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:   %0 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:   return %0 : f64
+// CHECK-NEXT: }
