@@ -1859,7 +1859,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             goto rnextpair;
 
           {
-            auto bi1 = cast<BranchInst>(block->getTerminator());
+            auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+            if (!bi1) {
+              goto endCheck;
+            }
 
             auto cond1 = getOp(bi1->getCondition());
             if (cond1 == nullptr) {
