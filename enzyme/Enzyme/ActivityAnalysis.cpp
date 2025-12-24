@@ -3350,7 +3350,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
-          if (!isPointerArithmeticInst(I) && !isa<LoadInst>(I))
+          if (!isPointerArithmeticInst(I) &&
+              !(UA == UseActivity::OnlyNonPointerStores && isa<LoadInst>(I)))
             NU = UseActivity::None;
         }
 
