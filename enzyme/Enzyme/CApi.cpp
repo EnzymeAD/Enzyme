@@ -1878,6 +1878,14 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
   return true;
 }
 
+static bool isOpaque(llvm::Type *T) {
+#if LLVM_VERSION_MAJOR >= 20
+  return T->isPointerTy();
+#else
+  return T->isOpaquePointerTy();
+#endif
+}
+
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
 // sret If so, confirm that those values are saved elsewhere in a returnroot
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
@@ -2339,6 +2347,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
     assert(sretCount == Types.size());
   }
 
+  auto &DL = F->getParent()->getDataLayout();
+
   // TODO fix caller side
   for (auto CI : callers) {
     auto Attrs = CI->getAttributes();
@@ -2400,7 +2410,10 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
 
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
-            if (AI->getAllocatedType() == Types[sretCount]) {
+            if (AI->getAllocatedType() == Types[sretCount] ||
+                (isOpaque(AI->getType()) &&
+                 DL.getTypeSizeInBits(AI->getAllocatedType()) ==
+                     DL.getTypeSizeInBits(Types[sretCount]))) {
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
@@ -2424,8 +2437,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
             }
 
             postCallReplacements.emplace_back(val, gep, Types[sretCount],
-                                              sret_jlvalue);
-            preCallReplacements.emplace_back(val, gep, Types[sretCount]);
+                                              should_sret);
+            if (!isWriteOnly(CI, i))
+              preCallReplacements.emplace_back(val, gep, Types[sretCount]);
           }
 
           if (roots_AT && reroot_enzyme_srets.count(i)) {
