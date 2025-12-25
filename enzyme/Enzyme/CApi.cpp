@@ -1878,6 +1878,14 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
   return true;
 }
 
+static bool isOpaque(llvm::Type *T) {
+#if LLVM_VERSION_MAJOR >= 20
+  return T->isPointerTy();
+#else
+  return T->isOpaquePointerTy();
+#endif
+}
+
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
 // sret If so, confirm that those values are saved elsewhere in a returnroot
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
@@ -2403,7 +2411,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
             if (AI->getAllocatedType() == Types[sretCount] ||
-                (AI->getType()->isOpaquePointerTy() &&
+                (isOpaque(AI->getType()) &&
                  DL.getTypeSizeInBits(AI->getAllocatedType()) ==
                      DL.getTypeSizeInBits(Types[sretCount]))) {
               AI->replaceAllUsesWith(gep);
