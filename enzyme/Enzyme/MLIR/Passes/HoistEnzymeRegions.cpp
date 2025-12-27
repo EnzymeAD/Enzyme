@@ -20,7 +20,6 @@
 #include "mlir/Analysis/TopologicalSortUtils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -29,7 +28,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
-
+using namespace enzyme;
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_HOISTENZYMEFROMREGIONPASS
@@ -42,43 +41,61 @@ namespace enzyme {
 
 namespace {
 
-static bool checkRangeDominance(DominanceInfo &dominance,
-                                enzyme::AutoDiffRegionOp &rootOp,
+static bool checkRangeDominance(DominanceInfo &dom, AutoDiffRegionOp &rootOp,
                                 SetVector<Operation *> &specialOps,
                                 ValueRange values) {
+  SmallVector<Value> blockArgs(rootOp.getBody().getArguments());
   for (auto value : values) {
-    if (dominance.properlyDominates(value, rootOp))
+    if (dom.properlyDominates(value, rootOp))
       continue;
+
     // Block arguments within autodiff_region are not supported
-    // TODO: add support for enzyme_const block arguments
+    //
     if (isa<BlockArgument>(value)) {
-      return false;
+      // check if it's a block argument of type enzyme_const
+      bool is_econst = false;
+      for (auto [bval, act] : llvm::zip(
+               blockArgs, rootOp.getActivity().getAsRange<ActivityAttr>())) {
+        auto act_val = act.getValue();
+        if (act_val == Activity::enzyme_const && value == bval) {
+          is_econst = true;
+        }
+      }
+
+      if (is_econst)
+        continue;
+      else
+        return false;
     }
+
     if (!llvm::is_contained(specialOps, value.getDefiningOp())) {
       return false;
     }
   }
+
+  // if we reach this point, it means that these current set of values are safe
+  // to hoist
   return true;
 }
 
-struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
-  using OpRewritePattern<enzyme::AutoDiffRegionOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(enzyme::AutoDiffRegionOp rootOp,
+struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
+  using OpRewritePattern<AutoDiffRegionOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(AutoDiffRegionOp rootOp,
                                 PatternRewriter &rewriter) const override {
-    DominanceInfo dominance(rootOp);
-    PostDominanceInfo postDominance(rootOp);
+    DominanceInfo dom(rootOp);
+    PostDominanceInfo pdom(rootOp);
     Region &autodiffRegion = rootOp.getBody();
     SmallVector<Value> primalArgs = rootOp.getPrimalInputs();
-    SmallVector<Value> regionPrimalArgs(autodiffRegion.getArguments());
+    SmallVector<Value> blockArgs(autodiffRegion.getArguments());
 
-    if (primalArgs.size() != regionPrimalArgs.size())
+    if (primalArgs.size() != blockArgs.size())
       return failure();
 
+    // rename all uses
     llvm::SetVector<Value> freeValues;
     getUsedValuesDefinedAbove(autodiffRegion, freeValues);
-
     for (Value value : freeValues) {
-      for (auto [pval, bval] : llvm::zip(primalArgs, regionPrimalArgs)) {
+      for (auto [pval, bval] : llvm::zip(primalArgs, blockArgs)) {
         if (value == pval) {
           for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
             if (rootOp->isProperAncestor(use.getOwner()))
@@ -92,10 +109,9 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
     llvm::SetVector<Operation *> stationaryOps;
     llvm::SmallVector<MemoryEffects::EffectInstance> stationaryEffects;
     for (Block &blk : autodiffRegion.getBlocks()) {
-
       // If bodyOp is in a block which does not post-dominate the entry
       // block to the regionOp, then we disable lifting it
-      if (postDominance.postDominates(&blk, &autodiffRegion.front())) {
+      if (pdom.postDominates(&blk, &autodiffRegion.front())) {
         for (Operation &bodyOp : blk.without_terminator()) {
           bool canLift = true;
           llvm::SmallVector<MemoryEffects::EffectInstance> bodyOpEffects;
@@ -106,15 +122,15 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
           if (!couldCollectEffects)
             canLift = false;
 
-          canLift = checkRangeDominance(dominance, rootOp, liftOps,
-                                        bodyOp.getOperands());
+          canLift =
+              checkRangeDominance(dom, rootOp, liftOps, bodyOp.getOperands());
 
+          llvm::SetVector<Value> inside_values;
           if (bodyOp.getNumRegions()) {
             canLift = false;
-            llvm::SetVector<Value> values;
-            getUsedValuesDefinedAbove(bodyOp.getRegions(), values);
-            canLift = checkRangeDominance(dominance, rootOp, liftOps,
-                                          values.getArrayRef());
+            getUsedValuesDefinedAbove(bodyOp.getRegions(), inside_values);
+            canLift = checkRangeDominance(dom, rootOp, liftOps,
+                                          inside_values.getArrayRef());
           }
 
           // Check for memory conflicts with current set of stationary ops
@@ -136,6 +152,35 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<enzyme::AutoDiffRegionOp> {
           }
 
           if (canLift) {
+            // replace all instances of enzyme_const block args with the
+            // equivalent primal args for both inside_values and
+            // bodyOp.getOperands()
+
+            for (Value inner : inside_values) {
+              for (auto [bval, pval, act] :
+                   llvm::zip(blockArgs, primalArgs,
+                             rootOp.getActivity().getAsRange<ActivityAttr>())) {
+                auto act_val = act.getValue();
+                // replace inner/outer with parg
+                if (inner == bval && act_val == Activity::enzyme_const) {
+                  for (auto &region : bodyOp.getRegions()) {
+                    replaceAllUsesInRegionWith(inner, pval, region);
+                  }
+                }
+              }
+            }
+
+            for (OpOperand &inner : bodyOp.getOpOperands()) {
+              for (auto [bval, pval, act] :
+                   llvm::zip(blockArgs, primalArgs,
+                             rootOp.getActivity().getAsRange<ActivityAttr>())) {
+                auto act_val = act.getValue();
+                if (act_val == Activity::enzyme_const && inner.is(bval)) {
+                  inner.assign(pval);
+                }
+              }
+            }
+
             liftOps.insert(&bodyOp);
           } else {
             stationaryOps.insert(&bodyOp);
