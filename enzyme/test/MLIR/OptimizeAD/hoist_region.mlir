@@ -72,7 +72,7 @@ func.func @foo(%arg0: f64, %arg1: f64,%xx: f64) -> f64 {
 // CHECK:   enzyme.yield %{{.*}} : f64
 // CHECK: } attributes {{.*}} : (f64, f64) -> f64
 
-// ---
+// -----
 
 func.func @bar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
   %0 = enzyme.autodiff_region(%arg0, %arg1) {
@@ -119,4 +119,53 @@ func.func @bar(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
 // CHECK-NEXT:     enzyme.yield %9 : f64
 // CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
 // CHECK-NEXT:   return %2 : f64
+// CHECK-NEXT: }
+
+// -----
+
+func.func @baz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 { 
+  %0 = enzyme.autodiff_region(%arg0, %arg1) {
+  ^bb0(%arg4: f64):
+    %cst = arith.constant 2.000000e+00 : f64 // h
+    %1 = arith.mulf %cst, %arg2 : f64 // h 
+    %2 = arith.mulf %arg4, %arg4 : f64 // h
+    cf.cond_br %arg3, ^bb1(%1 : f64), ^bb2(%arg2 : f64)
+    ^bb1(%3: f64):  // pred: ^bb0
+    %4 = arith.mulf %3, %3 : f64 
+    cf.br ^bb3(%4 : f64)
+    ^bb2(%5: f64):  // pred: ^bb0
+    %tmp = arith.addf %1, %1 : f64
+    %6 = arith.addf %5, %tmp : f64
+    cf.br ^bb3(%6 : f64)
+    ^bb3(%7: f64):  // 2 preds: ^bb1, ^bb2
+    %9 = arith.addf %1, %1 : f64
+    %8 = arith.mulf %2, %7 : f64
+    %10 = arith.mulf %8, %9 : f64
+    enzyme.yield %10 : f64
+  } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  return %0 : f64
+}
+
+
+// CHECK: func.func @baz(%arg0: f64, %arg1: f64, %arg2: f64, %arg3: i1) -> f64 {
+// CHECK-NEXT:   %cst = arith.constant 2.000000e+00 : f64
+// CHECK-NEXT:   %0 = arith.mulf %arg2, %cst : f64
+// CHECK-NEXT:   %1 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:   %2 = arith.addf %0, %0 : f64
+// CHECK-NEXT:   %3 = enzyme.autodiff_region(%arg0, %arg1) {
+// CHECK-NEXT:   ^bb0(%arg4: f64):
+// CHECK-NEXT:     cf.cond_br %arg3, ^bb1, ^bb2
+// CHECK-NEXT:   ^bb1:  // pred: ^bb0
+// CHECK-NEXT:     %4 = arith.mulf %0, %0 : f64
+// CHECK-NEXT:     cf.br ^bb3(%4 : f64)
+// CHECK-NEXT:   ^bb2:  // pred: ^bb0
+// CHECK-NEXT:     %5 = arith.addf %0, %0 : f64
+// CHECK-NEXT:     %6 = arith.addf %arg2, %5 : f64
+// CHECK-NEXT:     cf.br ^bb3(%6 : f64)
+// CHECK-NEXT:   ^bb3(%7: f64):  // 2 preds: ^bb1, ^bb2
+// CHECK-NEXT:     %8 = arith.mulf %1, %7 : f64
+// CHECK-NEXT:     %9 = arith.mulf %8, %2 : f64
+// CHECK-NEXT:     enzyme.yield %9 : f64
+// CHECK-NEXT:   } attributes {activity = [#enzyme<activity enzyme_const>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   return %3 : f64
 // CHECK-NEXT: }
