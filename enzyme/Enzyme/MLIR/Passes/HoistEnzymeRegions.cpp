@@ -41,7 +41,8 @@ namespace enzyme {
 
 namespace {
 
-static bool checkRangeDominance(DominanceInfo &dom, AutoDiffRegionOp &rootOp,
+static bool checkRangeDominance(IRMapping &btop, DominanceInfo &dom,
+                                AutoDiffRegionOp &rootOp,
                                 SetVector<Operation *> &specialOps,
                                 ValueRange values) {
   SmallVector<Value> blockArgs(rootOp.getBody().getArguments());
@@ -53,16 +54,7 @@ static bool checkRangeDominance(DominanceInfo &dom, AutoDiffRegionOp &rootOp,
     //
     if (isa<BlockArgument>(value)) {
       // check if it's a block argument of type enzyme_const
-      bool is_econst = false;
-      for (auto [bval, act] : llvm::zip(
-               blockArgs, rootOp.getActivity().getAsRange<ActivityAttr>())) {
-        auto act_val = act.getValue();
-        if (act_val == Activity::enzyme_const && value == bval) {
-          is_econst = true;
-        }
-      }
-
-      if (is_econst)
+      if (btop.contains(value))
         continue;
       else
         return false;
@@ -91,7 +83,18 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
     if (primalArgs.size() != blockArgs.size())
       return failure();
 
-    // rename all uses
+    // map for block arg -> primal arg iff activity is enzyme_const
+    IRMapping btop;
+    for (auto [pval, bval, act] :
+         llvm::zip(primalArgs, blockArgs,
+                   rootOp.getActivity().getAsRange<ActivityAttr>())) {
+      auto act_val = act.getValue();
+      if (act_val == Activity::enzyme_const) {
+        btop.map(bval, pval);
+      }
+    }
+
+    // rename all uses of primal
     llvm::SetVector<Value> freeValues;
     getUsedValuesDefinedAbove(autodiffRegion, freeValues);
     for (Value value : freeValues) {
@@ -122,14 +125,14 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
           if (!couldCollectEffects)
             canLift = false;
 
-          canLift =
-              checkRangeDominance(dom, rootOp, liftOps, bodyOp.getOperands());
+          canLift = checkRangeDominance(btop, dom, rootOp, liftOps,
+                                        bodyOp.getOperands());
 
           llvm::SetVector<Value> inside_values;
           if (bodyOp.getNumRegions()) {
             canLift = false;
             getUsedValuesDefinedAbove(bodyOp.getRegions(), inside_values);
-            canLift = checkRangeDominance(dom, rootOp, liftOps,
+            canLift = checkRangeDominance(btop, dom, rootOp, liftOps,
                                           inside_values.getArrayRef());
           }
 
@@ -157,28 +160,16 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
             // bodyOp.getOperands()
 
             for (Value inner : inside_values) {
-              for (auto [bval, pval, act] :
-                   llvm::zip(blockArgs, primalArgs,
-                             rootOp.getActivity().getAsRange<ActivityAttr>())) {
-                auto act_val = act.getValue();
-                // replace inner/outer with parg
-                if (inner == bval && act_val == Activity::enzyme_const) {
-                  for (auto &region : bodyOp.getRegions()) {
-                    replaceAllUsesInRegionWith(inner, pval, region);
-                  }
+              if (btop.contains(inner)) {
+                auto pval = btop.lookup(inner);
+                for (auto &region : bodyOp.getRegions()) {
+                  replaceAllUsesInRegionWith(inner, pval, region);
                 }
               }
             }
 
             for (OpOperand &inner : bodyOp.getOpOperands()) {
-              for (auto [bval, pval, act] :
-                   llvm::zip(blockArgs, primalArgs,
-                             rootOp.getActivity().getAsRange<ActivityAttr>())) {
-                auto act_val = act.getValue();
-                if (act_val == Activity::enzyme_const && inner.is(bval)) {
-                  inner.assign(pval);
-                }
-              }
+              inner.assign(btop.lookupOrDefault(inner.get()));
             }
 
             liftOps.insert(&bodyOp);
