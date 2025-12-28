@@ -41,10 +41,10 @@ namespace enzyme {
 
 namespace {
 
-static bool checkRangeDominance(IRMapping &btop, DominanceInfo &dom,
-                                AutoDiffRegionOp &rootOp,
-                                SetVector<Operation *> &specialOps,
-                                ValueRange values) {
+template <typename SourceOp>
+static bool
+checkRangeDominance(IRMapping &btop, DominanceInfo &dom, SourceOp &rootOp,
+                    SetVector<Operation *> &specialOps, ValueRange values) {
   SmallVector<Value> blockArgs(rootOp.getBody().getArguments());
   for (auto value : values) {
     if (dom.properlyDominates(value, rootOp))
@@ -70,9 +70,10 @@ static bool checkRangeDominance(IRMapping &btop, DominanceInfo &dom,
   return true;
 }
 
-struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
-  using OpRewritePattern<AutoDiffRegionOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(AutoDiffRegionOp rootOp,
+template <typename SourceOp>
+struct HoistEnzymeAutoDiff : public OpRewritePattern<SourceOp> {
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(SourceOp rootOp,
                                 PatternRewriter &rewriter) const override {
     DominanceInfo dom(rootOp);
     PostDominanceInfo pdom(rootOp);
@@ -87,7 +88,7 @@ struct HoistEnzymeAutoDiff : public OpRewritePattern<AutoDiffRegionOp> {
     IRMapping btop;
     for (auto [pval, bval, act] :
          llvm::zip(primalArgs, blockArgs,
-                   rootOp.getActivity().getAsRange<ActivityAttr>())) {
+                   rootOp.getActivity().template getAsRange<ActivityAttr>())) {
       auto act_val = act.getValue();
       if (act_val == Activity::enzyme_const) {
         btop.map(bval, pval);
@@ -196,7 +197,8 @@ struct HoistEnzymeFromRegion
           HoistEnzymeFromRegion> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<HoistEnzymeAutoDiff>(&getContext());
+    patterns.add<HoistEnzymeAutoDiff<AutoDiffRegionOp>,
+                 HoistEnzymeAutoDiff<ForwardDiffRegionOp>>(&getContext());
     GreedyRewriteConfig config;
     (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   }
