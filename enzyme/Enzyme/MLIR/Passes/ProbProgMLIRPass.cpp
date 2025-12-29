@@ -455,7 +455,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto rngState = inputs[0];
+      auto rngInput = inputs[0];
       SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
 
       auto loc = mcmcOp.getLoc();
@@ -469,6 +469,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto positionType =
           RankedTensorType::get({positionSize}, rewriter.getF64Type());
+
+      auto initSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc, TypeRange{rngInput.getType(), rngInput.getType()},
+          rngInput);
+      auto kernelSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc,
+          TypeRange{rngInput.getType(), rngInput.getType(), rngInput.getType()},
+          initSplit.getResult(0));
+      auto rngHmc = kernelSplit.getResult(0);
+
+      auto sampleKernelSplit = enzyme::RandomSplitOp::create(
+          rewriter, loc,
+          TypeRange{rngHmc.getType(), rngHmc.getType(), rngHmc.getType()},
+          rngHmc);
+      auto rngNext = sampleKernelSplit.getResult(0);
+      auto rngMomentum = sampleKernelSplit.getResult(1);
+      auto rngTransition = sampleKernelSplit.getResult(2);
 
       // Extract initial position vector q0
       auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
@@ -485,7 +502,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       // Sample initial momentum p0 ~ N(0, M)
       auto [p0, rng1] =
-          sampleMomentum(rewriter, loc, rngState, invMass, positionType);
+          sampleMomentum(rewriter, loc, rngMomentum, invMass, positionType);
 
       // Compute initial kinetic energy K0 = 0.5 * p^T * M^-1 * p
       auto K0 = computeKineticEnergy(rewriter, loc, p0, invMass, positionType);
