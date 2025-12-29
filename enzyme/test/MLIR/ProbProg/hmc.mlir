@@ -16,13 +16,11 @@ module {
 
     %inverse_mass_matrix = arith.constant dense<[[1.0, 0.0], [0.0, 1.0]]> : tensor<2x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %num_steps = arith.constant dense<10> : tensor<i64>
 
-    %res:3 = enzyme.mcmc algorithm = HMC @test(%rng, %mean, %stddev) given %init_trace
+    %res:3 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inverse_mass_matrix : tensor<2x2xf64>
       step_size = %step_size : tensor<f64>
-      num_steps = %num_steps : tensor<i64>
-      { name = "hmc", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
+      { hmc_config = #enzyme.hmc_config<num_steps = 10>, name = "hmc", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
   }
 }

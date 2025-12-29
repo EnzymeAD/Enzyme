@@ -16,10 +16,10 @@ module {
     %inverse_mass_matrix = arith.constant dense<[[1.0, 0.0], [0.0, 1.0]]> : tensor<2x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %res:3 = enzyme.mcmc algorithm = NUTS @test(%rng, %mean, %stddev) given %init_trace
+    %res:3 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inverse_mass_matrix : tensor<2x2xf64>
       step_size = %step_size : tensor<f64>
-      { name = "nuts", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
+      { nuts_config = #enzyme.nuts_config<max_tree_depth = 10>, name = "nuts", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
   }
 }

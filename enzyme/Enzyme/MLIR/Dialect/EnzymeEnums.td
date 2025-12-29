@@ -46,17 +46,31 @@ def RngDistribution : I32EnumAttr<"RngDistribution",
 
 def RngDistributionAttr : EnumAttr<Enzyme_Dialect, RngDistribution, "rng_distribution">;
 
-def MCMCAlgorithm : I32EnumAttr<"MCMCAlgorithm",
-    "MCMC algorithm type",
-    [
-      I32EnumAttrCase<"HMC", 0>,
-      I32EnumAttrCase<"NUTS", 1>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
+def HMCConfigAttr : Enzyme_Attr<"HMCConfig", "hmc_config"> {
+  let summary = "Configuration for HMC inference";
+  let description = [{
+    HMC-specific parameters for fixed-trajectory Hamiltonian Monte Carlo.
+    - num_steps: Number of leapfrog integration steps per sample
+  }];
+  let parameters = (ins
+    "int64_t":$num_steps
+  );
+  let assemblyFormat = "`<` `num_steps` `=` $num_steps `>`";
 }
 
-def MCMCAlgorithmAttr : EnumAttr<Enzyme_Dialect, MCMCAlgorithm, "mcmc_algorithm">;
-
+def NUTSConfigAttr : Enzyme_Attr<"NUTSConfig", "nuts_config"> {
+  let summary = "Configuration for NUTS inference";
+  let description = [{
+    NUTS-specific parameters for No-U-Turn Sampler with adaptive path length.
+    - max_tree_depth: Maximum tree depth, controls max leapfrog steps (2^max_tree_depth).
+    - max_delta_energy: Threshold for trajectory divergence (rejected if energy change exceeds this).
+                        Default: 1000.0
+  }];
+  let parameters = (ins
+    DefaultValuedParameter<"int64_t", "10">:$max_tree_depth,
+    OptionalParameter<"FloatAttr">:$max_delta_energy
+  );
+  let assemblyFormat = "`<` `max_tree_depth` `=` $max_tree_depth (`,` `max_delta_energy` `=` $max_delta_energy^)? `>`";
+}
 
 #endif // ENZYME_ENUMS

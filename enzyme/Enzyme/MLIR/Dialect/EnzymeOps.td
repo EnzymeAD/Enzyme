@@ -879,41 +879,44 @@ def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
 }
 
 def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference step for probabilistic programs";
+  let summary = "MCMC inference for probabilistic programs";
   let description = [{
-    Perform an MCMC inference step (HMC, NUTS, etc.) on a probabilistic function.
+    Performs MCMC inference on a probabilistic function.
     This operation proposes a new trace using the specified algorithm,
     computes the acceptance probability, and returns the updated trace.
     By convention, the 0th operand in inputs is the initial RNG state
     and the 0th operand in results is the updated RNG state.
 
-    Optional HMC-specific parameters:
-    - inverse_mass_matrix: Inverse mass matrix (identity assumed if not provided).
-    - step_size: Integration step size
-    - num_steps: Number of leapfrog steps
+    Exactly one of `hmc_config` or `nuts_config` must be provided to determine the algorithm
   }];
 
   let arguments = (ins
-    MCMCAlgorithmAttr:$alg,
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
     AddressArrayAttr:$selection,
+
+    // Algorithm-specific MCMC parameters
     Optional<AnyRankedTensor>:$inverse_mass_matrix,
     Optional<AnyRankedTensor>:$step_size,
-    Optional<AnyRankedTensor>:$num_steps,
+
+    // Algorithm-specific configurations
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    `algorithm` `=` $alg $fn `(` $inputs `)` `given` $original_trace
+    $fn `(` $inputs `)` `given` $original_trace
     (`inverse_mass_matrix` `=` $inverse_mass_matrix^ `:` type($inverse_mass_matrix))?
     (`step_size` `=` $step_size^ `:` type($step_size))?
-    (`num_steps` `=` $num_steps^ `:` type($num_steps))?
     attr-dict `:` functional-type($inputs, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 def DotOp : Enzyme_Op<"dot", [Pure]> {
