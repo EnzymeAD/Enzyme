@@ -1747,8 +1747,8 @@ void ProbProgPass::runOnOperation() {
 
   mlir::GreedyRewriteConfig config;
 
-  if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
-                                          config))) {
+  if (failed(
+          applyPatternsGreedily(getOperation(), std::move(patterns), config))) {
     signalPassFailure();
     return;
   }
