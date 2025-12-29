@@ -38,69 +38,56 @@ module {
 // CHECK-NEXT:    %cst_6 = arith.constant dense<1.000000e-01> : tensor<f64>
 // CHECK-NEXT:    %cst_7 = arith.constant dense<{{\[}}[1.000000e+00, 0.000000e+00], [0.000000e+00, 1.000000e+00]{{\]}}> : tensor<2x2xf64>
 // CHECK-NEXT:    %0 = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:    %1 = enzyme.getFlattenedSamplesFromTrace %0 {selection = {{\[}}[#enzyme.symbol<1>], [#enzyme.symbol<2>]{{\]}}} : tensor<2xf64>
-// CHECK-NEXT:    %2 = enzyme.getWeightFromTrace %0 : tensor<f64>
-// CHECK-NEXT:    %3 = arith.negf %2 : tensor<f64>
-// CHECK-NEXT:    %4 = enzyme.randomSplit %arg0 : (tensor<2xui64>) -> tensor<2xui64>
-// CHECK-NEXT:    %output_rng_state, %result = enzyme.random %4, %cst_4, %cst_3 {rng_distribution = #enzyme<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT:    %5 = enzyme.cholesky_solve %cst_7, %cst_7 : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
-// CHECK-NEXT:    %6 = enzyme.dot %5, %result {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT:    %7 = enzyme.dot %cst_7, %6 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT:    %8 = enzyme.dot %6, %7 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
-// CHECK-NEXT:    %9 = arith.mulf %8, %cst_2 : tensor<f64>
-// CHECK-NEXT:    %10 = arith.addf %3, %9 : tensor<f64>
-// CHECK-NEXT:    %11:2 = enzyme.autodiff_region(%1, %cst_3) {
+// CHECK-NEXT:    %1:2 = enzyme.randomSplit %arg0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT:    %2:3 = enzyme.randomSplit %1#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT:    %3:3 = enzyme.randomSplit %2#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT:    %4 = enzyme.getFlattenedSamplesFromTrace %0 {selection = {{\[}}[#enzyme.symbol<1>], [#enzyme.symbol<2>]{{\]}}} : tensor<2xf64>
+// CHECK-NEXT:    %5 = enzyme.getWeightFromTrace %0 : tensor<f64>
+// CHECK-NEXT:    %6 = arith.negf %5 : tensor<f64>
+// CHECK-NEXT:    %7 = enzyme.randomSplit %3#1 : (tensor<2xui64>) -> tensor<2xui64>
+// CHECK-NEXT:    %output_rng_state, %result = enzyme.random %7, %cst_4, %cst_3 {rng_distribution = #enzyme<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
+// CHECK-NEXT:    %8 = enzyme.cholesky_solve %cst_7, %cst_7 : (tensor<2x2xf64>, tensor<2x2xf64>) -> tensor<2x2xf64>
+// CHECK-NEXT:    %9 = enzyme.dot %8, %result {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %10 = enzyme.dot %cst_7, %9 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %11 = enzyme.dot %9, %10 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+// CHECK-NEXT:    %12 = arith.mulf %11, %cst_2 : tensor<f64>
+// CHECK-NEXT:    %13 = arith.addf %6, %12 : tensor<f64>
+// CHECK-NEXT:    %14:2 = enzyme.autodiff_region(%4, %cst_3) {
 // CHECK-NEXT:    ^bb0(%arg3: tensor<2xf64>):
-// CHECK-NEXT:      %24:3 = func.call @test.update_1(%0, %arg3, %output_rng_state, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:      %25 = arith.negf %24#1 : tensor<f64>
-// CHECK-NEXT:      enzyme.yield %25, %24#2 : tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:      %27:3 = func.call @test.update_1(%0, %arg3, %output_rng_state, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT:      %28 = arith.negf %27#1 : tensor<f64>
+// CHECK-NEXT:      enzyme.yield %28, %27#2 : tensor<f64>, tensor<2xui64>
 // CHECK-NEXT:    } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_const>]} : (tensor<2xf64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT:    %12:4 = enzyme.for_loop(%cst_1 : tensor<i64>) to(%cst_5 : tensor<i64>) step(%cst_0 : tensor<i64>) iter_args(%1, %6, %11#1, %11#0 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64>) -> tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64> {
+// CHECK-NEXT:    %15:4 = enzyme.for_loop(%cst_1 : tensor<i64>) to(%cst_5 : tensor<i64>) step(%cst_0 : tensor<i64>) iter_args(%4, %9, %14#1, %14#0 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64>) -> tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64> {
 // CHECK-NEXT:    ^bb0(%arg3: tensor<i64>, %arg4: tensor<2xf64>, %arg5: tensor<2xf64>, %arg6: tensor<2xf64>, %arg7: tensor<2xui64>):
-// CHECK-NEXT:      %24 = "enzyme.broadcast"(%cst_6) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
-// CHECK-NEXT:      %25 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
-// CHECK-NEXT:      %26 = arith.mulf %25, %arg6 : tensor<2xf64>
-// CHECK-NEXT:      %27 = arith.subf %arg5, %26 : tensor<2xf64>
-// CHECK-NEXT:      %28 = enzyme.dot %cst_7, %27 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT:      %29 = arith.mulf %24, %28 : tensor<2xf64>
-// CHECK-NEXT:      %30 = arith.addf %arg4, %29 : tensor<2xf64>
-// CHECK-NEXT:      %31:2 = enzyme.autodiff_region(%30, %cst_3) {
+// CHECK-NEXT:      %27 = "enzyme.broadcast"(%cst_6) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
+// CHECK-NEXT:      %28 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
+// CHECK-NEXT:      %29 = arith.mulf %28, %arg6 : tensor<2xf64>
+// CHECK-NEXT:      %30 = arith.subf %arg5, %29 : tensor<2xf64>
+// CHECK-NEXT:      %31 = enzyme.dot %cst_7, %30 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:      %32 = arith.mulf %27, %31 : tensor<2xf64>
+// CHECK-NEXT:      %33 = arith.addf %arg4, %32 : tensor<2xf64>
+// CHECK-NEXT:      %34:2 = enzyme.autodiff_region(%33, %cst_3) {
 // CHECK-NEXT:      ^bb0(%arg8: tensor<2xf64>):
-// CHECK-NEXT:        %34:3 = func.call @test.update_0(%0, %arg8, %arg7, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:        %35 = arith.negf %34#1 : tensor<f64>
-// CHECK-NEXT:        enzyme.yield %35, %34#2 : tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:        %37:3 = func.call @test.update_0(%0, %arg8, %arg7, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT:        %38 = arith.negf %37#1 : tensor<f64>
+// CHECK-NEXT:        enzyme.yield %38, %37#2 : tensor<f64>, tensor<2xui64>
 // CHECK-NEXT:      } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_const>]} : (tensor<2xf64>, tensor<f64>) -> (tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT:      %32 = arith.mulf %25, %31#1 : tensor<2xf64>
-// CHECK-NEXT:      %33 = arith.subf %27, %32 : tensor<2xf64>
-// CHECK-NEXT:      enzyme.yield %30, %33, %31#1, %31#0 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64>
+// CHECK-NEXT:      %35 = arith.mulf %28, %34#1 : tensor<2xf64>
+// CHECK-NEXT:      %36 = arith.subf %30, %35 : tensor<2xf64>
+// CHECK-NEXT:      enzyme.yield %33, %36, %34#1, %34#0 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<2xui64>
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %13:3 = call @test.update(%0, %12#0, %12#3, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:    %14 = arith.negf %13#1 : tensor<f64>
-// CHECK-NEXT:    %15 = enzyme.dot %cst_7, %12#1 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT:    %16 = enzyme.dot %12#1, %15 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
-// CHECK-NEXT:    %17 = arith.mulf %16, %cst_2 : tensor<f64>
-// CHECK-NEXT:    %18 = arith.addf %14, %17 : tensor<f64>
-// CHECK-NEXT:    %19 = arith.subf %10, %18 : tensor<f64>
-// CHECK-NEXT:    %20 = math.exp %19 : tensor<f64>
-// CHECK-NEXT:    %21 = arith.minimumf %20, %cst_3 : tensor<f64>
-// CHECK-NEXT:    %output_rng_state_8, %result_9 = enzyme.random %13#2, %cst_4, %cst_3 {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT:    %22 = arith.cmpf olt, %result_9, %21 : tensor<f64>
-// CHECK-NEXT:    %23 = enzyme.selectTrace %22, %13#0, %0 : tensor<i1>
-// CHECK-NEXT:    return %23, %22, %output_rng_state_8 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
-// CHECK-NEXT:  }
-
-// CHECK:  func.func @test.update(%arg0: !enzyme.Trace, %arg1: tensor<2xf64>, %arg2: tensor<2xui64>, %arg3: tensor<f64>, %arg4: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>) {
-// CHECK-NEXT:    %cst = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %0 = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:    %1 = enzyme.unflatten_slice %arg1[0] : tensor<2xf64> -> tensor<f64>
-// CHECK-NEXT:    %2 = call @logpdf(%1, %arg3, %arg4) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %3 = arith.addf %2, %cst : tensor<f64>
-// CHECK-NEXT:    %4 = enzyme.addSampleToTrace(%1 : tensor<f64>) into %0 {symbol = #enzyme.symbol<1>}
-// CHECK-NEXT:    %5 = enzyme.unflatten_slice %arg1[1] : tensor<2xf64> -> tensor<f64>
-// CHECK-NEXT:    %6 = call @logpdf(%5, %1, %arg4) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %7 = arith.addf %3, %6 : tensor<f64>
-// CHECK-NEXT:    %8 = enzyme.addSampleToTrace(%5 : tensor<f64>) into %4 {symbol = #enzyme.symbol<2>}
-// CHECK-NEXT:    %9 = enzyme.addWeightToTrace(%7 : tensor<f64>) into %8
-// CHECK-NEXT:    %10 = enzyme.addRetvalToTrace(%5 : tensor<f64>) into %9
-// CHECK-NEXT:    return %10, %7, %arg2 : !enzyme.Trace, tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:    %16:3 = call @test.update(%0, %15#0, %15#3, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT:    %17 = arith.negf %16#1 : tensor<f64>
+// CHECK-NEXT:    %18 = enzyme.dot %cst_7, %15#1 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:    %19 = enzyme.dot %15#1, %18 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+// CHECK-NEXT:    %20 = arith.mulf %19, %cst_2 : tensor<f64>
+// CHECK-NEXT:    %21 = arith.addf %17, %20 : tensor<f64>
+// CHECK-NEXT:    %22 = arith.subf %13, %21 : tensor<f64>
+// CHECK-NEXT:    %23 = math.exp %22 : tensor<f64>
+// CHECK-NEXT:    %24 = arith.minimumf %23, %cst_3 : tensor<f64>
+// CHECK-NEXT:    %output_rng_state_8, %result_9 = enzyme.random %16#2, %cst_4, %cst_3 {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT:    %25 = arith.cmpf olt, %result_9, %24 : tensor<f64>
+// CHECK-NEXT:    %26 = enzyme.selectTrace %25, %16#0, %0 : tensor<i1>
+// CHECK-NEXT:    return %26, %25, %output_rng_state_8 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
 // CHECK-NEXT:  }
