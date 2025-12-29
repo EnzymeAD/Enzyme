@@ -655,7 +655,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           TypeRange{rngInput.getType(), rngInput.getType(), rngInput.getType()},
           initSplit.getResult(0));
       auto rngTree = kernelSplit.getResult(0);
-      auto rngMomentumInit = kernelSplit.getResult(2);
+      // auto rngWarmup = kernelSplit.getResult(1); TODO (ascertain)
+      // auto rngMomentumInit = kernelSplit.getResult(2); TODO (diagnostics)
 
       // Extract initial position vector q0
       int64_t positionSize =
