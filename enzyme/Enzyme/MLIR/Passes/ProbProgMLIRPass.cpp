@@ -409,14 +409,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
     LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
-      auto alg = mcmcOp.getAlg();
-
-      switch (alg) {
-      case enzyme::MCMCAlgorithm::HMC:
+      if (mcmcOp.getHmcConfig().has_value()) {
         return lowerHMC(mcmcOp, rewriter);
-      case enzyme::MCMCAlgorithm::NUTS:
+      } else if (mcmcOp.getNutsConfig().has_value()) {
         return lowerNUTS(mcmcOp, rewriter);
-      default:
+      } else {
         mcmcOp.emitError("ProbProg: Unknown MCMC algorithm");
         return failure();
       }
@@ -439,15 +436,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto tensorType = RankedTensorType::get({}, rewriter.getF64Type());
       auto traceType = enzyme::TraceType::get(mcmcOp.getContext());
 
-      if (!mcmcOp.getStepSize() || !mcmcOp.getNumSteps()) {
-        mcmcOp.emitError(
-            "ProbProg: HMC requires step_size and num_steps parameters");
+      if (!mcmcOp.getStepSize()) {
+        mcmcOp.emitError("ProbProg: HMC requires step_size parameter");
         return failure();
       }
 
       auto invMass = mcmcOp.getInverseMassMatrix();
       auto stepSize = mcmcOp.getStepSize();
-      auto numSteps = mcmcOp.getNumSteps();
+
+      auto hmcConfig = mcmcOp.getHmcConfig().value();
+      int64_t numStepsVal = hmcConfig.getNumSteps();
+
+      auto loc = mcmcOp.getLoc();
+      auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
+      auto numSteps = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType,
+                                 rewriter.getI64IntegerAttr(numStepsVal)));
 
       auto inputs = mcmcOp.getInputs();
       if (inputs.empty()) {
@@ -458,7 +463,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto rngInput = inputs[0];
       SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
 
-      auto loc = mcmcOp.getLoc();
       auto originalTrace = mcmcOp.getOriginalTrace();
       auto selection = mcmcOp.getSelectionAttr();
 
@@ -552,7 +556,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value grad0 = autodiffInit.getResult(1);
 
       // Leapfrog integration
-      auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
       auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
       auto c0 = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
@@ -780,13 +783,17 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                    .p_sum = p0,
                                    .rng = rngTransition};
 
-      int64_t maxTreeDepthVal = 10; // TODO: Make configurable
+      auto nutsConfig = mcmcOp.getNutsConfig().value();
+      int64_t maxTreeDepthVal = nutsConfig.getMaxTreeDepth();
+      double maxDeltaEnergyVal =
+          nutsConfig.getMaxDeltaEnergy()
+              ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
+              : 1000.0;
 
       auto maxDeltaEnergy = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
-          DenseElementsAttr::get(
-              F64TensorType,
-              rewriter.getF64FloatAttr(1000.0))); // TODO: Make adjustable
+          DenseElementsAttr::get(F64TensorType,
+                                 rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
 
       NUTSContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                       invMass, stepSize, positionSize, H0_tree, maxDeltaEnergy,
