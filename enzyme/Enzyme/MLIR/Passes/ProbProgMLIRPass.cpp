@@ -487,9 +487,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc,
           TypeRange{rngHmc.getType(), rngHmc.getType(), rngHmc.getType()},
           rngHmc);
-      auto rngNext = sampleKernelSplit.getResult(0);
+      // auto rngNext = sampleKernelSplit.getResult(0); TODO: full MCMC
+      // implementation
       auto rngMomentum = sampleKernelSplit.getResult(1);
-      auto rngTransition = sampleKernelSplit.getResult(2);
+      // auto rngTransition = sampleKernelSplit.getResult(2); TODO: full MCMC
+      // implementation
 
       // Extract initial position vector q0
       auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
@@ -499,10 +501,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto weight0 = enzyme::GetWeightFromTraceOp::create(
           rewriter, loc, tensorType, originalTrace);
       auto U0 = arith::NegFOp::create(rewriter, loc, weight0);
-
-      auto zeroConst = arith::ConstantOp::create(
-          rewriter, loc, tensorType,
-          DenseElementsAttr::get(tensorType, rewriter.getF64FloatAttr(0.0)));
 
       // Sample initial momentum p0 ~ N(0, M)
       auto [p0, rng1] =
@@ -679,13 +677,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto zeroConst = arith::ConstantOp::create(
           rewriter, loc, F64TensorType,
           DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(0.0)));
-      auto oneConst = arith::ConstantOp::create(
-          rewriter, loc, F64TensorType,
-          DenseElementsAttr::get(F64TensorType, rewriter.getF64FloatAttr(1.0)));
-
-      // Sample initial momentum p0 ~ N(0, M)
-      auto [pInit, rngAfterMomentumInit] =
-          sampleMomentum(rewriter, loc, rngMomentumInit, invMass, positionType);
 
       // Compute initial gradient
       auto gradSeedInit = arith::ConstantOp::create(
@@ -733,7 +724,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           TypeRange{rngAfterGrad.getType(), rngAfterGrad.getType(),
                     rngAfterGrad.getType()},
           rngAfterGrad);
-      auto rngNext = treeSplit.getResult(0);
+      // auto rngNext = treeSplit.getResult(0); TODO: full MCMC implementation
       auto rngMomentum = treeSplit.getResult(1);
       auto rngTransition = treeSplit.getResult(2);
 
@@ -754,9 +745,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto zeroI64 = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
-      auto oneI64 = arith::ConstantOp::create(
-          rewriter, loc, i64TensorType,
-          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
       auto falseConst = arith::ConstantOp::create(
           rewriter, loc, i1TensorType,
           DenseElementsAttr::get(i1TensorType, rewriter.getBoolAttr(false)));
