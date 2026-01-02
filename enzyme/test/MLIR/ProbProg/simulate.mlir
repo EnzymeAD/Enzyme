@@ -23,12 +23,12 @@ module {
 // CHECK-NEXT:    %[[normal_call1:.+]]:2 = call @normal(%[[arg0]], %[[arg1]], %[[arg2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:    %[[logpdf_call1:.+]] = call @logpdf(%[[normal_call1]]#1, %[[arg1]], %[[arg2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %[[addf1:.+]] = arith.addf %[[logpdf_call1]], %[[cst]] : tensor<f64>
-// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace(%[[normal_call1]]#1 : tensor<f64>) into %[[trace_init]] {symbol = #enzyme.symbol<1>}
+// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace %[[normal_call1]]#1 into %[[trace_init]] {symbol = #enzyme.symbol<1>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
 // CHECK-NEXT:    %[[normal_call2:.+]]:2 = call @normal(%[[normal_call1]]#0, %[[normal_call1]]#1, %[[arg2]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:    %[[logpdf_call2:.+]] = call @logpdf(%[[normal_call2]]#1, %[[normal_call1]]#1, %[[arg2]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %[[addf2:.+]] = arith.addf %[[addf1]], %[[logpdf_call2]] : tensor<f64>
-// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addSampleToTrace(%[[normal_call2]]#1 : tensor<f64>) into %[[trace1]] {symbol = #enzyme.symbol<2>}
-// CHECK-NEXT:    %[[trace3:.+]] = enzyme.addWeightToTrace(%[[addf2]] : tensor<f64>) into %[[trace2]]
-// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace(%[[normal_call2]]#1 : tensor<f64>) into %[[trace3]]
+// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addSampleToTrace %[[normal_call2]]#1 into %[[trace1]] {symbol = #enzyme.symbol<2>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
+// CHECK-NEXT:    %[[trace3:.+]] = enzyme.addWeightToTrace %[[addf2]] into %[[trace2]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
+// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace %[[normal_call2]]#1 into %[[trace3]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
 // CHECK-NEXT:    return %[[final_trace]], %[[addf2]], %[[normal_call2]]#0, %[[normal_call2]]#1 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>
 // CHECK-NEXT:  }
