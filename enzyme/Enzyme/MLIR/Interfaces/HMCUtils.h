@@ -40,18 +40,24 @@ struct GradientResult {
 
 struct InitialHMCState {
   Value q0;    // Flattened position vector
-  Value p0;    // Sampled momentum vector
   Value U0;    // Initial potential energy
-  Value K0;    // Initial kinetic energy
-  Value H0;    // Initial Hamiltonian
   Value grad0; // Initial gradient at position q0
-  Value rng;
+  Value rng;   // RNG state for SampleHMC
 };
 
 struct HMCResult {
   Value trace;
   Value accepted;
   Value rng;
+};
+
+/// Result of one MCMC kernel step
+struct MCMCKernelResult {
+  Value q;        // New position vector
+  Value grad;     // Gradient at new position
+  Value U;        // Potential energy at new position
+  Value accepted; // Whether proposal was accepted
+  Value rng;      // Updated RNG state
 };
 
 struct IntegratorState {
@@ -201,23 +207,34 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
                            const NUTSTreeState &subTree, Value direction,
                            Value rng, bool biased, const NUTSContext &ctx);
 
-/// Initializes HMC/NUTS state from a trace.
+/// Initializes HMC/NUTS state from a trace
 /// Specifically:
-///   - Extracts position
-///   - Samples momentum
-///   - Computes initial energies and gradient
-InitialHMCState initializeHMCState(OpBuilder &builder, Location loc, Value rng,
-                                   const HMCContext &ctx,
-                                   bool debugDump = false);
+///   - Extracts position from trace
+///   - Computes initial potential energy U0 = -weight
+///   - Samples initial momentum p0 ~ N(0, M)
+///   - Computes initial kinetic energy and Hamiltonian
+///   - Computes initial gradient via AutoDiffRegionOp
+InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
+                        const HMCContext &ctx, bool debugDump = false);
 
-/// Creates the final trace and computes acceptance for HMC.
-HMCResult finalizeHMCStep(OpBuilder &builder, Location loc, Value q, Value p,
-                          Value H0, Value rng, const HMCContext &ctx,
-                          bool debugDump = false);
+/// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
+MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
+                           Value grad, Value U, Value rng,
+                           int64_t numLeapfrogSteps, const HMCContext &ctx,
+                           bool debugDump = false);
 
-/// Creates the final trace for NUTS (always accepts).
-HMCResult finalizeNUTSStep(OpBuilder &builder, Location loc, Value q, Value rng,
-                           const NUTSContext &ctx);
+/// Single NUTS iteration: momentum sampling + tree building
+MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
+                            Value grad, Value U, Value rng,
+                            const NUTSContext &ctx, bool debugDump = false);
+
+/// PostProcess HMC samples
+HMCResult PostProcessHMC(OpBuilder &builder, Location loc, Value q,
+                         Value accepted, Value rng, const HMCContext &ctx);
+
+/// PostProcess NUTS samples
+HMCResult PostProcessNUTS(OpBuilder &builder, Location loc, Value q, Value rng,
+                          const NUTSContext &ctx);
 
 /// Builds a base tree (leaf node) by taking one leapfrog step.
 NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
