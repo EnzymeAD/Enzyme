@@ -43,9 +43,9 @@ module {
 // CHECK-NEXT:    %5 = arith.negf %4 : tensor<f64>
 // CHECK-NEXT:    %6 = enzyme.autodiff_region(%3, %cst_5) {
 // CHECK-NEXT:    ^bb0(%arg3: tensor<2xf64>):
-// CHECK-NEXT:      %27:3 = func.call @test.update_1(%0, %arg3, %2#1, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:      %28 = arith.negf %27#1 : tensor<f64>
-// CHECK-NEXT:      enzyme.yield %28, %27#2 : tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:      %28:3 = func.call @test.update_1(%0, %arg3, %2#1, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT:      %29 = arith.negf %28#1 : tensor<f64>
+// CHECK-NEXT:      enzyme.yield %29, %28#2 : tensor<f64>, tensor<2xui64>
 // CHECK-NEXT:    } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>, #enzyme<activity enzyme_constnoneed>]} : (tensor<2xf64>, tensor<f64>) -> tensor<2xf64>
 // CHECK-NEXT:    %7:3 = enzyme.randomSplit %2#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT:    %8 = enzyme.randomSplit %7#1 : (tensor<2xui64>) -> tensor<2xui64>
@@ -58,22 +58,22 @@ module {
 // CHECK-NEXT:    %14 = arith.addf %5, %13 : tensor<f64>
 // CHECK-NEXT:    %15:5 = enzyme.for_loop(%cst_2 : tensor<i64>) to(%cst_0 : tensor<i64>) step(%cst_1 : tensor<i64>) iter_args(%3, %10, %6, %5, %7#2 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<f64>, tensor<2xui64>) -> tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<f64>, tensor<2xui64> {
 // CHECK-NEXT:    ^bb0(%arg3: tensor<i64>, %arg4: tensor<2xf64>, %arg5: tensor<2xf64>, %arg6: tensor<2xf64>, %arg7: tensor<f64>, %arg8: tensor<2xui64>):
-// CHECK-NEXT:      %27 = "enzyme.broadcast"(%cst_6) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
-// CHECK-NEXT:      %28 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
-// CHECK-NEXT:      %29 = arith.mulf %28, %arg6 : tensor<2xf64>
-// CHECK-NEXT:      %30 = arith.subf %arg5, %29 : tensor<2xf64>
-// CHECK-NEXT:      %31 = enzyme.dot %cst_7, %30 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
-// CHECK-NEXT:      %32 = arith.mulf %27, %31 : tensor<2xf64>
-// CHECK-NEXT:      %33 = arith.addf %arg4, %32 : tensor<2xf64>
-// CHECK-NEXT:      %34:3 = enzyme.autodiff_region(%33, %cst_5) {
+// CHECK-NEXT:      %28 = "enzyme.broadcast"(%cst_6) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
+// CHECK-NEXT:      %29 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (tensor<f64>) -> tensor<2xf64>
+// CHECK-NEXT:      %30 = arith.mulf %29, %arg6 : tensor<2xf64>
+// CHECK-NEXT:      %31 = arith.subf %arg5, %30 : tensor<2xf64>
+// CHECK-NEXT:      %32 = enzyme.dot %cst_7, %31 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
+// CHECK-NEXT:      %33 = arith.mulf %28, %32 : tensor<2xf64>
+// CHECK-NEXT:      %34 = arith.addf %arg4, %33 : tensor<2xf64>
+// CHECK-NEXT:      %35:3 = enzyme.autodiff_region(%34, %cst_5) {
 // CHECK-NEXT:      ^bb0(%arg9: tensor<2xf64>):
-// CHECK-NEXT:        %37:3 = func.call @test.update_0(%0, %arg9, %arg8, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:        %38 = arith.negf %37#1 : tensor<f64>
-// CHECK-NEXT:        enzyme.yield %38, %37#2 : tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:        %38:3 = func.call @test.update_0(%0, %arg9, %arg8, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT:        %39 = arith.negf %38#1 : tensor<f64>
+// CHECK-NEXT:        enzyme.yield %39, %38#2 : tensor<f64>, tensor<2xui64>
 // CHECK-NEXT:      } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]} : (tensor<2xf64>, tensor<f64>) -> (tensor<f64>, tensor<2xui64>, tensor<2xf64>)
-// CHECK-NEXT:      %35 = arith.mulf %28, %34#2 : tensor<2xf64>
-// CHECK-NEXT:      %36 = arith.subf %30, %35 : tensor<2xf64>
-// CHECK-NEXT:      enzyme.yield %33, %36, %34#2, %34#0, %34#1 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<f64>, tensor<2xui64>
+// CHECK-NEXT:      %36 = arith.mulf %29, %35#2 : tensor<2xf64>
+// CHECK-NEXT:      %37 = arith.subf %31, %36 : tensor<2xf64>
+// CHECK-NEXT:      enzyme.yield %34, %37, %35#2, %35#0, %35#1 : tensor<2xf64>, tensor<2xf64>, tensor<2xf64>, tensor<f64>, tensor<2xui64>
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %16 = enzyme.dot %cst_7, %15#1 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 1>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2x2xf64>, tensor<2xf64>) -> tensor<2xf64>
 // CHECK-NEXT:    %17 = enzyme.dot %15#1, %16 {lhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_batching_dimensions = array<i64>, rhs_contracting_dimensions = array<i64: 0>} : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
@@ -87,5 +87,6 @@ module {
 // CHECK-NEXT:    %24 = "enzyme.broadcast"(%23) <{shape = array<i64: 2>}> : (tensor<i1>) -> tensor<2xi1>
 // CHECK-NEXT:    %25 = arith.select %24, %15#0, %3 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %26:3 = call @test.update(%0, %25, %7#0, %arg1, %arg2) : (!enzyme.Trace, tensor<2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:    return %26#0, %23, %26#2 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
+// CHECK-NEXT:    %27 = enzyme.selectTrace %23, %26#0, %0 : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
+// CHECK-NEXT:    return %27, %23, %26#2 : !enzyme.Trace, tensor<i1>, tensor<2xui64>
 // CHECK-NEXT:  }
