@@ -451,7 +451,17 @@ def Trace : Enzyme_Type<"Trace"> {
     Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
     and various other information from executing a traced probabilistic function.
   }];
+  let parameters = (ins
+    DefaultValuedParameter<"int64_t", "0">:$num_samples
+  );
   let mnemonic = "Trace";
+  let assemblyFormat = "(`<` $num_samples^ `>`)?";
+
+  let builders = [
+    TypeBuilder<(ins), [{
+      return $_get($_ctxt, 0);
+    }]>
+  ];
 }
 
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
@@ -592,7 +602,7 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
+    $sample `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -611,7 +621,7 @@ def AddSubtraceOp : Enzyme_Op<"addSubtrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    $subtrace `into` $trace attr-dict
+    $subtrace `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -629,7 +639,7 @@ def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
+    $weight `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -647,7 +657,7 @@ def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
+    $retval `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -739,7 +749,7 @@ def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
   let results = (outs Trace:$subtrace);
 
   let assemblyFormat = [{
-    $trace attr-dict
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -753,7 +763,7 @@ def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace", [Pure]> {
   let results = (outs Variadic<AnyType>:$sample);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($sample)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -767,7 +777,7 @@ def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace", [Pure]> {
   let results = (outs AnyRankedTensor:$weight);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($weight)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -782,7 +792,7 @@ def GetFlattenedSamplesFromTraceOp : Enzyme_Op<"getFlattenedSamplesFromTrace", [
   let results = (outs AnyType:$position);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($position)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -849,7 +859,7 @@ def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUser
   let results = (outs Trace:$trace, AnyRankedTensor:$weight, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -874,7 +884,7 @@ def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -882,12 +892,20 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   let summary = "MCMC inference for probabilistic programs";
   let description = [{
     Performs MCMC inference on a probabilistic function.
-    This operation proposes a new trace using the specified algorithm,
-    computes the acceptance probability, and returns the updated trace.
+
+    By default (num_warmup=0, num_samples=1, thinning=1), performs a single MCMC step
+    and returns the resulting trace - backwards compatible with previous behavior.
+
+    When num_samples > 1, runs a full MCMC chain and returns a trace where
+    sampled values have an additional batch dimension (first dim = num_samples / thinning).
+
+    Thinning controls the fraction of samples retained: when thinning=k, every k-th
+    sample is kept, resulting in num_samples/k output samples.
+
+    Warmup iterations are discarded and used only for adaptation.
+
     By convention, the 0th operand in inputs is the initial RNG state
     and the 0th operand in results is the updated RNG state.
-
-    Exactly one of `hmc_config` or `nuts_config` must be provided to determine the algorithm
   }];
 
   let arguments = (ins
@@ -895,6 +913,10 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
     AddressArrayAttr:$selection,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
 
     // Algorithm-specific MCMC parameters
     Optional<AnyRankedTensor>:$inverse_mass_matrix,
@@ -911,9 +933,9 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace
-    (`inverse_mass_matrix` `=` $inverse_mass_matrix^ `:` type($inverse_mass_matrix))?
-    (`step_size` `=` $step_size^ `:` type($step_size))?
-    attr-dict `:` functional-type($inputs, results)
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    attr-dict `:` functional-type(operands, results)
   }];
 
   let hasVerifier = 1;
@@ -970,7 +992,7 @@ def SelectTraceOp : Enzyme_Op<"selectTrace", [Pure]> {
   let results = (outs Trace:$result);
 
   let assemblyFormat = [{
-    $condition `,` $true_value `,` $false_value attr-dict `:` type($condition)
+    $condition `,` $true_value `,` $false_value attr-dict `:` functional-type(operands, results)
   }];
 }
 

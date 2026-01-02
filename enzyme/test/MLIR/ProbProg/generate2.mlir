@@ -30,8 +30,8 @@ module {
 // CHECK-NEXT:    %[[sample_from_constraint:.+]]:2 = enzyme.getSampleFromConstraint %[[arg0]] {symbol = #enzyme.symbol<5>} : tensor<f64>, tensor<2xf64>
 // CHECK-NEXT:    %[[logpdf_call:.+]] = call @joint_logpdf(%[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1, %[[arg2]], %[[arg3]]) : (tensor<f64>, tensor<2xf64>, tensor<f64>, tensor<f64>) -> tensor<f64>
 // CHECK-NEXT:    %[[addf:.+]] = arith.addf %[[logpdf_call]], %[[cst]] : tensor<f64>
-// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace(%[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1 : tensor<f64>, tensor<2xf64>) into %[[trace_init]] {symbol = #enzyme.symbol<5>}
-// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addWeightToTrace(%[[addf]] : tensor<f64>) into %[[trace1]]
-// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace(%[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1 : tensor<f64>, tensor<2xf64>) into %[[trace2]]
+// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace %[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1 into %[[trace_init]] {symbol = #enzyme.symbol<5>} : (!enzyme.Trace, tensor<f64>, tensor<2xf64>) -> !enzyme.Trace
+// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addWeightToTrace %[[addf]] into %[[trace1]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
+// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace %[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1 into %[[trace2]] : (!enzyme.Trace, tensor<f64>, tensor<2xf64>) -> !enzyme.Trace
 // CHECK-NEXT:    return %[[final_trace]], %[[addf]], %[[arg1]], %[[sample_from_constraint]]#0, %[[sample_from_constraint]]#1 : !enzyme.Trace, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<2xf64>
 // CHECK-NEXT:  }
