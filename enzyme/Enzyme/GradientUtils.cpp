@@ -8525,8 +8525,18 @@ void GradientUtils::computeMinCache() {
       if (NeedGraph.count(V) && MinReq.count(V)) {
         CountTrackedPointers T(V->getType());
         if (T.derived) {
-          llvm::errs() << " Illegal cached pointer: " << *V << "\n";
-          assert(0);
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Illegal cached pointer: " << *V << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap((Value *)V),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
+          } else {
+            EmitFailure(
+                "CachedPointerError", cast<Instruction>(V)->getDebugLoc(),
+                cast<Instruction>(V)->getParent()->getParent(), ss.str());
+          }
         }
       }
     }
