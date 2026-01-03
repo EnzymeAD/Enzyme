@@ -2580,7 +2580,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
         auto SI = B.CreateStore(ld, val);
         PostCacheStore(SI, B);
       } else {
-        copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {},
+        copyNonJLValueInto(B, ty, ty, val, {}, ty, gep, {},
                            /*shouldZero*/ false);
       }
     }
