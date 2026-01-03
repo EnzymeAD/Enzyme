@@ -32,6 +32,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
+option(ENZYME_ENABLE_BENCHMARKS "Enable benchmarks" OFF)
 option(ENZYME_BC_LOADER "Enable bitcode loader" ON)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
@@ -296,7 +297,7 @@ endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if (ENZYME_ENABLE_PLUGINS)
+if (ENZYME_ENABLE_PLUGINS AND ENZYME_ENABLE_BENCHMARKS)
 	include (FetchContent)
 	FetchContent_Declare(cpu_benchmarks
 	    GIT_REPOSITORY https://github.com/EnzymeAD/enzyme-benchmarks
