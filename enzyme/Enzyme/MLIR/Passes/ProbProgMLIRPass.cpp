@@ -41,6 +41,50 @@ namespace enzyme {
 
 namespace {
 
+static int64_t computeTensorElementCount(RankedTensorType tensorType) {
+  int64_t elemCount = 1;
+  for (auto dim : tensorType.getShape()) {
+    if (dim == ShapedType::kDynamic)
+      return -1;
+    elemCount *= dim;
+  }
+  return elemCount;
+}
+
+static enzyme::SampleOp findSampleBySymbol(FunctionOpInterface fn,
+                                           Attribute targetSymbol) {
+  enzyme::SampleOp result = nullptr;
+  fn.walk([&](enzyme::SampleOp sampleOp) {
+    auto sampleSymbol = sampleOp.getSymbolAttr();
+    if (sampleSymbol && sampleSymbol == targetSymbol) {
+      result = sampleOp;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return result;
+}
+
+static int64_t computeSampleElementCount(Operation *op,
+                                         enzyme::SampleOp sampleOp) {
+  int64_t totalCount = 0;
+  for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+    auto resultType = sampleOp.getResult(i).getType();
+    auto tensorType = dyn_cast<RankedTensorType>(resultType);
+    if (!tensorType) {
+      op->emitError("Expected ranked tensor type for sample result");
+      return -1;
+    }
+    int64_t elemCount = computeTensorElementCount(tensorType);
+    if (elemCount < 0) {
+      op->emitError("Dynamic tensor dimensions not supported");
+      return -1;
+    }
+    totalCount += elemCount;
+  }
+  return totalCount;
+}
+
 static bool computePositionSizeForAddress(Operation *op,
                                           FunctionOpInterface func,
                                           ArrayRef<Attribute> address,
@@ -49,61 +93,33 @@ static bool computePositionSizeForAddress(Operation *op,
   if (address.empty())
     return false;
 
-  auto targetSymbol = address[0];
-  bool found = false;
+  auto sampleOp = findSampleBySymbol(func, address[0]);
+  if (!sampleOp)
+    return false;
 
-  func.walk([&](enzyme::SampleOp sampleOp) {
-    if (found)
-      return WalkResult::interrupt();
-
-    auto sampleSymbol = sampleOp.getSymbolAttr();
-    if (!sampleSymbol || sampleSymbol != targetSymbol)
-      return WalkResult::advance();
-
-    found = true;
-
-    if (address.size() > 1) {
-      if (sampleOp.getLogpdfAttr()) {
-        op->emitError("Cannot select nested address in distribution function");
-        return WalkResult::interrupt();
-      }
-
-      auto genFn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-      if (!genFn || genFn.getFunctionBody().empty()) {
-        op->emitError("Cannot find generative function for nested address");
-        return WalkResult::interrupt();
-      }
-
-      if (!computePositionSizeForAddress(op, genFn, address.drop_front(),
-                                         symbolTable, positionSize))
-        return WalkResult::interrupt();
-
-      return WalkResult::interrupt();
+  if (address.size() > 1) {
+    if (sampleOp.getLogpdfAttr()) {
+      op->emitError("Cannot select nested address in distribution function");
+      return false;
     }
 
-    for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-      auto resultType = sampleOp.getResult(i).getType();
-      if (auto tensorType = dyn_cast<RankedTensorType>(resultType)) {
-        int64_t elemCount = 1;
-        for (auto dim : tensorType.getShape()) {
-          if (dim == ShapedType::kDynamic) {
-            op->emitError("Dynamic tensor dimensions not supported");
-            return WalkResult::interrupt();
-          }
-          elemCount *= dim;
-        }
-        positionSize += elemCount;
-      } else {
-        op->emitError("Expected ranked tensor type for sample result");
-        return WalkResult::interrupt();
-      }
+    auto genFn = cast<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+    if (!genFn || genFn.getFunctionBody().empty()) {
+      op->emitError("Cannot find generative function for nested address");
+      return false;
     }
 
-    return WalkResult::interrupt();
-  });
+    return computePositionSizeForAddress(op, genFn, address.drop_front(),
+                                         symbolTable, positionSize);
+  }
 
-  return found;
+  int64_t elemCount = computeSampleElementCount(op, sampleOp);
+  if (elemCount < 0)
+    return false;
+
+  positionSize += elemCount;
+  return true;
 }
 
 static int64_t
@@ -409,45 +425,35 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
     LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
-      if (mcmcOp.getHmcConfig().has_value()) {
-        return lowerHMC(mcmcOp, rewriter);
-      } else if (mcmcOp.getNutsConfig().has_value()) {
-        return lowerNUTS(mcmcOp, rewriter);
-      } else {
+      SymbolTableCollection symbolTable;
+
+      auto fn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
+
+      if (fn.getFunctionBody().empty()) {
+        mcmcOp.emitError("ProbProg: calling `mcmc` on an empty function");
+        return failure();
+      }
+
+      if (!mcmcOp.getStepSize()) {
+        mcmcOp.emitError("ProbProg: MCMC requires step_size parameter");
+        return failure();
+      }
+
+      bool isHMC = mcmcOp.getHmcConfig().has_value();
+      bool isNUTS = mcmcOp.getNutsConfig().has_value();
+      if (!isHMC && !isNUTS) {
         mcmcOp.emitError("ProbProg: Unknown MCMC algorithm");
         return failure();
       }
-    }
-
-  private:
-    LogicalResult lowerHMC(enzyme::MCMCOp mcmcOp,
-                           PatternRewriter &rewriter) const {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        mcmcOp.emitError(
-            "ProbProg: calling `mcmc` with HMC on an empty function");
-        return failure();
-      }
-
-      if (!mcmcOp.getStepSize()) {
-        mcmcOp.emitError("ProbProg: HMC requires step_size parameter");
-        return failure();
-      }
 
       auto loc = mcmcOp.getLoc();
       auto invMass = mcmcOp.getInverseMassMatrix();
       auto stepSize = mcmcOp.getStepSize();
 
-      auto hmcConfig = mcmcOp.getHmcConfig().value();
-      int64_t numLeapfrogSteps = hmcConfig.getNumSteps();
-
       auto inputs = mcmcOp.getInputs();
       if (inputs.empty()) {
-        mcmcOp.emitError("ProbProg: HMC requires at least rng_state input");
+        mcmcOp.emitError("ProbProg: MCMC requires at least rng_state input");
         return failure();
       }
 
@@ -462,100 +468,262 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       if (positionSize <= 0)
         return failure();
 
-      // 1. Setup context
-      HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                     invMass, stepSize, positionSize);
+      int64_t numSamples = mcmcOp.getNumSamples();
+      int64_t thinning = mcmcOp.getThinning();
+      // int64_t numWarmup = mcmcOp.getNumWarmup(); // TODO: warmup adaptation
 
-      // 2. Initialize HMC state from trace
-      auto initState = InitHMC(rewriter, loc, rngInput, ctx, debugDump);
-
-      // 3. Single kernel sample step
-      auto sample =
-          SampleHMC(rewriter, loc, initState.q0, initState.grad0, initState.U0,
-                    initState.rng, numLeapfrogSteps, ctx, debugDump);
-
-      // 4. PostProcess
-      auto result = PostProcessHMC(rewriter, loc, sample.q, sample.accepted,
-                                   sample.rng, ctx);
-
-      rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
-
-      return success();
-    }
-
-    LogicalResult lowerNUTS(enzyme::MCMCOp mcmcOp,
-                            PatternRewriter &rewriter) const {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(mcmcOp, mcmcOp.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        mcmcOp.emitError(
-            "ProbProg: calling `mcmc` with NUTS on an empty function");
-        return failure();
-      }
-
-      if (!mcmcOp.getStepSize()) {
-        mcmcOp.emitError("ProbProg: NUTS requires step_size parameter");
-        return failure();
-      }
-
-      auto loc = mcmcOp.getLoc();
-      auto invMass = mcmcOp.getInverseMassMatrix();
-      auto stepSize = mcmcOp.getStepSize();
-
-      auto inputs = mcmcOp.getInputs();
-      if (inputs.empty()) {
-        mcmcOp.emitError("ProbProg: NUTS requires at least rng_state input");
-        return failure();
-      }
-
-      auto rngInput = inputs[0];
-      SmallVector<Value> fnInputs(inputs.begin() + 1, inputs.end());
-
-      auto originalTrace = mcmcOp.getOriginalTrace();
-      auto selection = mcmcOp.getSelectionAttr();
-
-      int64_t positionSize =
-          computePositionSizeForSelection(mcmcOp, fn, selection, symbolTable);
-      if (positionSize <= 0)
-        return failure();
-
-      // 1. Setup base context for InitHMC
       HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                          invMass, stepSize, positionSize);
 
-      // 2. Initialize HMC state from trace
       auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
 
-      // 3. Get NUTS-specific configuration
-      auto nutsConfig = mcmcOp.getNutsConfig().value();
-      int64_t maxTreeDepthVal = nutsConfig.getMaxTreeDepth();
-      double maxDeltaEnergyVal =
-          nutsConfig.getMaxDeltaEnergy()
-              ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
-              : 1000.0;
+      // Algorithm-specific configuration
+      int64_t numLeapfrogSteps = 0;
+      Value maxDeltaEnergy;
+      int64_t maxTreeDepth = 0;
 
-      auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
-      auto maxDeltaEnergy = arith::ConstantOp::create(
-          rewriter, loc, F64TensorType,
-          DenseElementsAttr::get(F64TensorType,
-                                 rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
+      if (isHMC) {
+        auto hmcConfig = mcmcOp.getHmcConfig().value();
+        numLeapfrogSteps = hmcConfig.getNumSteps();
+      } else {
+        auto nutsConfig = mcmcOp.getNutsConfig().value();
+        maxTreeDepth = nutsConfig.getMaxTreeDepth();
+        double maxDeltaEnergyVal =
+            nutsConfig.getMaxDeltaEnergy()
+                ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
+                : 1000.0;
+        auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
+        maxDeltaEnergy = arith::ConstantOp::create(
+            rewriter, loc, F64TensorType,
+            DenseElementsAttr::get(
+                F64TensorType, rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
+      }
 
-      // Create NUTSContext (energyCurrent will be recomputed by SampleNUTS)
-      NUTSContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                      invMass, stepSize, positionSize, initState.U0,
-                      maxDeltaEnergy, maxTreeDepthVal);
+      auto runSampleStep = [&](OpBuilder &builder, Location loc, Value q,
+                               Value grad, Value U,
+                               Value rng) -> MCMCKernelResult {
+        if (isHMC) {
+          return SampleHMC(builder, loc, q, grad, U, rng, numLeapfrogSteps,
+                           baseCtx, debugDump);
+        } else {
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
+                              selection, invMass, stepSize, positionSize, U,
+                              maxDeltaEnergy, maxTreeDepth);
+          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
+        }
+      };
 
-      // 4. Single kernel sample step
-      auto sample = SampleNUTS(rewriter, loc, initState.q0, initState.grad0,
-                               initState.U0, initState.rng, ctx, debugDump);
+      auto runPostProcess = [&](OpBuilder &builder, Location loc, Value q,
+                                Value accepted, Value rng) -> HMCResult {
+        if (isHMC) {
+          return PostProcessHMC(builder, loc, q, accepted, rng, baseCtx);
+        } else {
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
+                              selection, invMass, stepSize, positionSize,
+                              initState.U0, maxDeltaEnergy, maxTreeDepth);
+          return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
+        }
+      };
 
-      // 5. PostProcess
-      auto result = PostProcessNUTS(rewriter, loc, sample.q, sample.rng, ctx);
+      if (numSamples == 1) {
+        auto sample =
+            runSampleStep(rewriter, loc, initState.q0, initState.grad0,
+                          initState.U0, initState.rng);
+        auto result = runPostProcess(rewriter, loc, sample.q, sample.accepted,
+                                     sample.rng);
+        rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
+        return success();
+      }
 
-      rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
+      auto elemType =
+          cast<RankedTensorType>(stepSize.getType()).getElementType();
+      auto positionType = RankedTensorType::get({positionSize}, elemType);
+      auto scalarType = RankedTensorType::get({}, elemType);
+      auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
+      auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
+
+      int64_t collectionSize = numSamples / thinning;
+      int64_t startIdx = numSamples % thinning;
+
+      auto samplesBufferType =
+          RankedTensorType::get({collectionSize, positionSize}, elemType);
+      auto acceptedBufferType =
+          RankedTensorType::get({collectionSize}, rewriter.getI1Type());
+
+      auto samplesBuffer = arith::ConstantOp::create(
+          rewriter, loc, samplesBufferType,
+          DenseElementsAttr::get(samplesBufferType,
+                                 rewriter.getFloatAttr(elemType, 0.0)));
+      auto acceptedBuffer = arith::ConstantOp::create(
+          rewriter, loc, acceptedBufferType,
+          DenseElementsAttr::get(acceptedBufferType,
+                                 rewriter.getBoolAttr(isNUTS)));
+
+      auto c0 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
+      auto c1 = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(1)));
+      auto numSamplesConst = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType,
+                                 rewriter.getI64IntegerAttr(numSamples)));
+      auto startIdxConst = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType,
+                                 rewriter.getI64IntegerAttr(startIdx)));
+      auto thinningConst = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType,
+                                 rewriter.getI64IntegerAttr(thinning)));
+
+      // Loop carries: [q, grad, U, rng, samplesBuffer, acceptedBuffer]
+      SmallVector<Type> loopResultTypes = {
+          positionType,       positionType,      scalarType,
+          rngInput.getType(), samplesBufferType, acceptedBufferType};
+      auto forLoopOp = enzyme::ForLoopOp::create(
+          rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
+          ValueRange{initState.q0, initState.grad0, initState.U0, initState.rng,
+                     samplesBuffer, acceptedBuffer});
+
+      Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
+      loopBody->addArgument(i64TensorType, loc);      // i (iteration index)
+      loopBody->addArgument(positionType, loc);       // q
+      loopBody->addArgument(positionType, loc);       // grad
+      loopBody->addArgument(scalarType, loc);         // U
+      loopBody->addArgument(rngInput.getType(), loc); // rng
+      loopBody->addArgument(samplesBufferType, loc);  // samplesBuffer
+      loopBody->addArgument(acceptedBufferType, loc); // acceptedBuffer
+
+      rewriter.setInsertionPointToStart(loopBody);
+      Value iterIdx = loopBody->getArgument(0);
+      Value qLoop = loopBody->getArgument(1);
+      Value gradLoop = loopBody->getArgument(2);
+      Value ULoop = loopBody->getArgument(3);
+      Value rngLoop = loopBody->getArgument(4);
+      Value samplesBufferLoop = loopBody->getArgument(5);
+      Value acceptedBufferLoop = loopBody->getArgument(6);
+
+      auto sample =
+          runSampleStep(rewriter, loc, qLoop, gradLoop, ULoop, rngLoop);
+
+      // Storage index: idx = (i - start_idx) / thinning
+      auto iMinusStart =
+          arith::SubIOp::create(rewriter, loc, iterIdx, startIdxConst);
+      auto storageIdx =
+          arith::DivSIOp::create(rewriter, loc, iMinusStart, thinningConst);
+
+      // Store condition:
+      // (i >= start_idx) && ((i - start_idx) % thinning == 0)
+      auto geStartIdx = arith::CmpIOp::create(
+          rewriter, loc, arith::CmpIPredicate::sge, iterIdx, startIdxConst);
+      auto modThinning =
+          arith::RemSIOp::create(rewriter, loc, iMinusStart, thinningConst);
+      auto modIsZero = arith::CmpIOp::create(
+          rewriter, loc, arith::CmpIPredicate::eq, modThinning, c0);
+      auto shouldStore =
+          arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
+
+      auto updatedSamplesBuffer = enzyme::DynamicUpdateOp::create(
+          rewriter, loc, samplesBufferType, samplesBufferLoop, storageIdx,
+          sample.q);
+      auto samplesCondType = RankedTensorType::get(samplesBufferType.getShape(),
+                                                   rewriter.getI1Type());
+      auto shouldStoreSamplesBcast = enzyme::BroadcastOp::create(
+          rewriter, loc, samplesCondType, shouldStore,
+          samplesBufferType.getShape());
+      auto selectedSamplesBuffer =
+          arith::SelectOp::create(rewriter, loc, shouldStoreSamplesBcast,
+                                  updatedSamplesBuffer, samplesBufferLoop);
+
+      auto updatedAcceptedBuffer = enzyme::DynamicUpdateOp::create(
+          rewriter, loc, acceptedBufferType, acceptedBufferLoop, storageIdx,
+          sample.accepted);
+      auto acceptedCondType = RankedTensorType::get(
+          acceptedBufferType.getShape(), rewriter.getI1Type());
+      auto shouldStoreAcceptedBcast = enzyme::BroadcastOp::create(
+          rewriter, loc, acceptedCondType, shouldStore,
+          acceptedBufferType.getShape());
+      auto selectedAcceptedBuffer =
+          arith::SelectOp::create(rewriter, loc, shouldStoreAcceptedBcast,
+                                  updatedAcceptedBuffer, acceptedBufferLoop);
+
+      enzyme::YieldOp::create(rewriter, loc,
+                              ValueRange{sample.q, sample.grad, sample.U,
+                                         sample.rng, selectedSamplesBuffer,
+                                         selectedAcceptedBuffer});
+
+      rewriter.setInsertionPointAfter(forLoopOp);
+      Value finalSamplesBuffer = forLoopOp.getResult(4);
+      Value finalAcceptedBuffer = forLoopOp.getResult(5);
+      Value finalRng = forLoopOp.getResult(3);
+
+      finalSamplesBuffer =
+          conditionalDump(rewriter, loc, finalSamplesBuffer,
+                          "MCMC: collected samples", debugDump);
+
+      auto traceType = enzyme::TraceType::get(rewriter.getContext());
+      auto initTraceOp = enzyme::InitTraceOp::create(rewriter, loc, traceType);
+      Value currTrace = initTraceOp.getTrace();
+
+      size_t positionOffset = 0;
+
+      for (auto addr : selection) {
+        auto address = cast<ArrayAttr>(addr);
+        if (address.empty())
+          continue;
+
+        auto targetSymbol = cast<enzyme::SymbolAttr>(address[0]);
+        auto sampleOp = findSampleBySymbol(fn, targetSymbol);
+        if (!sampleOp) {
+          mcmcOp.emitError("Could not find sample for address in selection");
+          return failure();
+        }
+
+        SmallVector<Value> batchedSamples;
+        for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
+          auto resultType =
+              cast<RankedTensorType>(sampleOp.getResult(i).getType());
+          auto shape = resultType.getShape();
+
+          int64_t numElements = computeTensorElementCount(resultType);
+          if (numElements < 0) {
+            mcmcOp.emitError("Dynamic tensor dimensions not supported");
+            return failure();
+          }
+
+          // Result type: [collectionSize, originalShape...]
+          SmallVector<int64_t> batchedShape;
+          batchedShape.push_back(collectionSize);
+          batchedShape.append(shape.begin(), shape.end());
+          auto batchedResultType =
+              RankedTensorType::get(batchedShape, resultType.getElementType());
+
+          auto unflattenOp = enzyme::UnflattenSliceOp::create(
+              rewriter, loc, batchedResultType, finalSamplesBuffer,
+              rewriter.getI64IntegerAttr(positionOffset));
+
+          batchedSamples.push_back(unflattenOp.getResult());
+          positionOffset += numElements;
+        }
+
+        if (!batchedSamples.empty()) {
+          auto addSampleOp = enzyme::AddSampleToTraceOp::create(
+              rewriter, loc, traceType, currTrace, targetSymbol,
+              batchedSamples);
+          currTrace = addSampleOp.getUpdatedTrace();
+        }
+      }
+
+      // TODO
+      auto getWeightOp = enzyme::GetWeightFromTraceOp::create(
+          rewriter, loc, RankedTensorType::get({}, elemType), originalTrace);
+      auto addWeightOp = enzyme::AddWeightToTraceOp::create(
+          rewriter, loc, traceType, currTrace, getWeightOp.getWeight());
+      currTrace = addWeightOp.getUpdatedTrace();
+
+      rewriter.replaceOp(mcmcOp, {currTrace, finalAcceptedBuffer, finalRng});
 
       return success();
     }
@@ -1321,17 +1489,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
               auto resultType =
                   cast<RankedTensorType>(sampleOp.getResult(i).getType());
-              auto shape = resultType.getShape();
 
-              int64_t numElements = 1;
-              for (auto dim : shape) {
-                if (dim == ShapedType::kDynamic) {
-                  sampleOp.emitError(
-                      "ProbProg: dynamic tensor dimensions not supported in "
-                      "update");
-                  return WalkResult::interrupt();
-                }
-                numElements *= dim;
+              int64_t numElements = computeTensorElementCount(resultType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "ProbProg: dynamic tensor dimensions not supported in "
+                    "update");
+                return WalkResult::interrupt();
               }
 
               // Reconstruct multi-dimensional tensor from position vector
