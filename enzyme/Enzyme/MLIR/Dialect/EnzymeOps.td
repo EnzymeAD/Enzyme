@@ -977,6 +977,48 @@ def CholeskySolveOp : Enzyme_Op<"cholesky_solve", [Pure]> {
   }];
 }
 
+def CholeskyOp : Enzyme_Op<"cholesky", [Pure]> {
+  let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
+  let description = [{
+    Computes the Cholesky decomposition of a symmetric positive definite matrix A.
+    Returns L such that A = L @ L^T (if lower=true) or A = U^T @ U (if lower=false).
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$input,
+    DefaultValuedAttr<BoolAttr, "true">:$lower
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def TriangularSolveOp : Enzyme_Op<"triangular_solve", [Pure]> {
+  let summary = "Solve a triangular linear system";
+  let description = [{
+    Solves a system of linear equations with a triangular coefficient matrix.
+    If left_side=true, solves op(A) @ X = B for X.
+    If left_side=false, solves X @ op(A) = B for X.
+    op(A) is determined by transpose_a: NO_TRANSPOSE, TRANSPOSE, or ADJOINT.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$a,
+    AnyRankedTensor:$b,
+    DefaultValuedAttr<BoolAttr, "true">:$left_side,
+    DefaultValuedAttr<BoolAttr, "true">:$lower,
+    DefaultValuedAttr<BoolAttr, "false">:$unit_diagonal,
+    DefaultValuedAttr<TransposeAttr, "Transpose::NO_TRANSPOSE">:$transpose_a
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $a `,` $b attr-dict `:` functional-type(operands, results)
+  }];
+}
+
 def SelectTraceOp : Enzyme_Op<"selectTrace", [Pure]> {
   let summary = "Select between two probabilistic traces based on a boolean tensor condition";
   let description = [{
