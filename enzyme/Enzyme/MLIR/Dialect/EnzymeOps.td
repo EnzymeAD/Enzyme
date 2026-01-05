@@ -962,21 +962,6 @@ def DotOp : Enzyme_Op<"dot", [Pure]> {
   }];
 }
 
-def CholeskySolveOp : Enzyme_Op<"cholesky_solve", [Pure]> {
-  let summary = "Solve linear system Ax = b using Cholesky decomposition";
-  let description = [{
-    Solves the linear system Ax = b for x using Cholesky decomposition.
-    Assuming A is symmetric positive definite!
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
 def CholeskyOp : Enzyme_Op<"cholesky", [Pure]> {
   let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
   let description = [{
