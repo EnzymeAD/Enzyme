@@ -122,10 +122,6 @@ struct SubtreeBuildResult {
   Value pSumCkpts;
 };
 
-/// Create an identity matrix of the given type.
-Value createIdentityMatrix(OpBuilder &builder, Location loc,
-                           RankedTensorType matrixType);
-
 /// Create sigmoid function: 1 / (1 + exp(-x))
 Value createSigmoid(OpBuilder &builder, Location loc, Value x);
 
