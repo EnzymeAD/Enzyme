@@ -1004,19 +1004,22 @@ def TriangularSolveOp : Enzyme_Op<"triangular_solve", [Pure]> {
   }];
 }
 
-def SelectTraceOp : Enzyme_Op<"selectTrace", [Pure]> {
-  let summary = "Select between two probabilistic traces based on a boolean tensor condition";
+def SelectOp : Enzyme_Op<"select", [Pure]> {
+  let summary = "Exteneded select operation";
   let description = [{
-    Selects between two !enzyme.Trace values (considered scalars here) based on a tensor<i1> condition.
+    Extended select operation that supports:
+    - `tensor<i1>` conditions with differently-sized operands
+    - `!enzyme.Trace` operands
+    - standard cases supported by `arith.select`
   }];
 
   let arguments = (ins
-    AnyTypeOf<[I1Tensor, I1]>:$condition,
-    Trace:$true_value,
-    Trace:$false_value
+    AnyRankedTensor:$condition,
+    AnyType:$true_value,
+    AnyType:$false_value
   );
 
-  let results = (outs Trace:$result);
+  let results = (outs AnyType:$result);
 
   let assemblyFormat = [{
     $condition `,` $true_value `,` $false_value attr-dict `:` functional-type(operands, results)

@@ -41,14 +41,14 @@ module {
 // CHECK-NEXT:      %[[output_rng_state:.+]], %[[result:.+]] = enzyme.random %[[v2]]#2, %[[cst_0]], %[[cst]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:      %[[v5:.+]] = math.log %[[result]] : tensor<f64>
 // CHECK-NEXT:      %[[v6:.+]] = arith.cmpf olt, %[[v5]], %[[v4]] : tensor<f64>
-// CHECK-NEXT:      %[[v7:.+]] = enzyme.selectTrace %[[v6]], %[[v2]]#0, %[[arg4]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
+// CHECK-NEXT:      %[[v7:.+]] = enzyme.select %[[v6]], %[[v2]]#0, %[[arg4]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
 // CHECK-NEXT:      %[[v8:.+]]:3 = func.call @test.regenerate(%[[v7]], %[[output_rng_state]], %[[arg1]], %[[arg2]]) : (!enzyme.Trace, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
 // CHECK-NEXT:      %[[v9:.+]] = enzyme.getWeightFromTrace %[[v7]] : (!enzyme.Trace) -> tensor<f64>
 // CHECK-NEXT:      %[[v10:.+]] = arith.subf %[[v8]]#1, %[[v9]] : tensor<f64>
 // CHECK-NEXT:      %[[output_rng_state_2:.+]], %[[result_3:.+]] = enzyme.random %[[v8]]#2, %[[cst_0]], %[[cst]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
 // CHECK-NEXT:      %[[v11:.+]] = math.log %[[result_3]] : tensor<f64>
 // CHECK-NEXT:      %[[v12:.+]] = arith.cmpf olt, %[[v11]], %[[v10]] : tensor<f64>
-// CHECK-NEXT:      %[[v13:.+]] = enzyme.selectTrace %[[v12]], %[[v8]]#0, %[[v7]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
+// CHECK-NEXT:      %[[v13:.+]] = enzyme.select %[[v12]], %[[v8]]#0, %[[v7]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
 // CHECK-NEXT:      scf.yield %[[v13]], %[[output_rng_state_2]] : !enzyme.Trace, tensor<2xui64>
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return %[[v1]]#0, %[[v1]]#1 : !enzyme.Trace, tensor<2xui64>

@@ -747,26 +747,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto updatedSamplesBuffer = enzyme::DynamicUpdateOp::create(
           rewriter, loc, samplesBufferType, samplesBufferLoop, storageIdx,
           sample.q);
-      auto samplesCondType = RankedTensorType::get(samplesBufferType.getShape(),
-                                                   rewriter.getI1Type());
-      auto shouldStoreSamplesBcast = enzyme::BroadcastOp::create(
-          rewriter, loc, samplesCondType, shouldStore,
-          samplesBufferType.getShape());
-      auto selectedSamplesBuffer =
-          arith::SelectOp::create(rewriter, loc, shouldStoreSamplesBcast,
-                                  updatedSamplesBuffer, samplesBufferLoop);
+      auto selectedSamplesBuffer = enzyme::SelectOp::create(
+          rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
+          samplesBufferLoop);
 
       auto updatedAcceptedBuffer = enzyme::DynamicUpdateOp::create(
           rewriter, loc, acceptedBufferType, acceptedBufferLoop, storageIdx,
           sample.accepted);
-      auto acceptedCondType = RankedTensorType::get(
-          acceptedBufferType.getShape(), rewriter.getI1Type());
-      auto shouldStoreAcceptedBcast = enzyme::BroadcastOp::create(
-          rewriter, loc, acceptedCondType, shouldStore,
-          acceptedBufferType.getShape());
-      auto selectedAcceptedBuffer =
-          arith::SelectOp::create(rewriter, loc, shouldStoreAcceptedBcast,
-                                  updatedAcceptedBuffer, acceptedBufferLoop);
+      auto selectedAcceptedBuffer = enzyme::SelectOp::create(
+          rewriter, loc, acceptedBufferType, shouldStore, updatedAcceptedBuffer,
+          acceptedBufferLoop);
 
       enzyme::YieldOp::create(rewriter, loc,
                               ValueRange{sample.q, sample.grad, sample.U,
@@ -914,7 +904,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                 arith::CmpFPredicate::OLT, logRand, logAlpha);
 
       // 4. Select between new and original trace based on acceptance
-      auto selectedTrace = enzyme::SelectTraceOp::create(
+      auto selectedTrace = enzyme::SelectOp::create(
           rewriter, mhOp.getLoc(), traceType, accepted, regenerateOp.getTrace(),
           mhOp.getOriginalTrace());
 

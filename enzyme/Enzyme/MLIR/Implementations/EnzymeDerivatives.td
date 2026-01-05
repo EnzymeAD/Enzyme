@@ -11,6 +11,5 @@ def : InactiveOp<"enzyme", "GetSampleFromTraceOp">;
 def : InactiveOp<"enzyme", "GetSubtraceOp">;
 def : InactiveOp<"enzyme", "GetWeightFromTraceOp">;
 def : InactiveOp<"enzyme", "GetFlattenedSamplesFromTraceOp">;
-def : InactiveOp<"enzyme", "SelectTraceOp">;
 def : InactiveOp<"enzyme", "GetSampleFromConstraintOp">;
 def : InactiveOp<"enzyme", "GetSubconstraintOp">;
