@@ -262,7 +262,7 @@ IntegrationResult MCMC::computeIntegrationStep(OpBuilder &builder, Location loc,
   auto scalarType = RankedTensorType::get({}, elemType);
 
   auto negStepSize = arith::NegFOp::create(builder, loc, ctx.stepSize);
-  Value signedStepSize = arith::SelectOp::create(
+  Value signedStepSize = enzyme::SelectOp::create(
       builder, loc, scalarType, direction, ctx.stepSize, negStepSize);
 
   auto halfConst = arith::ConstantOp::create(
@@ -397,29 +397,19 @@ NUTSTreeState MCMC::combineTrees(OpBuilder &builder, Location loc,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  auto directionBroadcast = enzyme::BroadcastOp::create(
-      builder, loc,
-      RankedTensorType::get(positionType.getShape(), builder.getI1Type()),
-      direction, builder.getDenseI64ArrayAttr(positionType.getShape()));
-
-  auto qLeft =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.q_left, subTree.q_left);
-  auto pLeft =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.p_left, subTree.p_left);
-  auto gradLeft =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.grad_left, subTree.grad_left);
-  auto qRight =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              subTree.q_right, tree.q_right);
-  auto pRight =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              subTree.p_right, tree.p_right);
+  auto qLeft = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                        tree.q_left, subTree.q_left);
+  auto pLeft = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                        tree.p_left, subTree.p_left);
+  auto gradLeft = enzyme::SelectOp::create(
+      builder, loc, positionType, direction, tree.grad_left, subTree.grad_left);
+  auto qRight = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                         subTree.q_right, tree.q_right);
+  auto pRight = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                         subTree.p_right, tree.p_right);
   auto gradRight =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              subTree.grad_right, tree.grad_right);
+      enzyme::SelectOp::create(builder, loc, positionType, direction,
+                               subTree.grad_right, tree.grad_right);
 
   auto combinedWeight = enzyme::LogAddExpOp::create(
       builder, loc, scalarType, tree.weight, subTree.weight);
@@ -445,21 +435,17 @@ NUTSTreeState MCMC::combineTrees(OpBuilder &builder, Location loc,
 
   auto acceptNew = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, uniformSample, transitionProb);
-  auto acceptNewBroadcast = enzyme::BroadcastOp::create(
-      builder, loc,
-      RankedTensorType::get(positionType.getShape(), builder.getI1Type()),
-      acceptNew, builder.getDenseI64ArrayAttr(positionType.getShape()));
 
   auto qProposal =
-      arith::SelectOp::create(builder, loc, positionType, acceptNewBroadcast,
-                              subTree.q_proposal, tree.q_proposal);
+      enzyme::SelectOp::create(builder, loc, positionType, acceptNew,
+                               subTree.q_proposal, tree.q_proposal);
   auto gradProposal =
-      arith::SelectOp::create(builder, loc, positionType, acceptNewBroadcast,
-                              subTree.grad_proposal, tree.grad_proposal);
-  auto UProposal = arith::SelectOp::create(builder, loc, scalarType, acceptNew,
-                                           subTree.U_proposal, tree.U_proposal);
-  auto HProposal = arith::SelectOp::create(builder, loc, scalarType, acceptNew,
-                                           subTree.H_proposal, tree.H_proposal);
+      enzyme::SelectOp::create(builder, loc, positionType, acceptNew,
+                               subTree.grad_proposal, tree.grad_proposal);
+  auto UProposal = enzyme::SelectOp::create(
+      builder, loc, scalarType, acceptNew, subTree.U_proposal, tree.U_proposal);
+  auto HProposal = enzyme::SelectOp::create(
+      builder, loc, scalarType, acceptNew, subTree.H_proposal, tree.H_proposal);
 
   auto oneI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -711,18 +697,12 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
   // 8. Select between original and proposal
-  auto i1PositionType =
-      RankedTensorType::get({ctx.positionSize}, builder.getI1Type());
-  auto acceptedBroadcast = enzyme::BroadcastOp::create(
-      builder, loc, i1PositionType, acceptedTensor,
-      builder.getDenseI64ArrayAttr({ctx.positionSize}));
-
-  Value qFinal =
-      arith::SelectOp::create(builder, loc, acceptedBroadcast, qProposal, q);
-  Value gradFinal = arith::SelectOp::create(builder, loc, acceptedBroadcast,
-                                            gradProposal, grad);
-  Value UFinal =
-      arith::SelectOp::create(builder, loc, acceptedTensor, UProposal, U);
+  Value qFinal = enzyme::SelectOp::create(builder, loc, positionType,
+                                          acceptedTensor, qProposal, q);
+  Value gradFinal = enzyme::SelectOp::create(
+      builder, loc, positionType, acceptedTensor, gradProposal, grad);
+  Value UFinal = enzyme::SelectOp::create(builder, loc, scalarType,
+                                          acceptedTensor, UProposal, U);
 
   qFinal =
       conditionalDump(builder, loc, qFinal, "SampleHMC: q final", debugDump);
@@ -845,7 +825,7 @@ HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
   Value finalTrace = finalUpdateOp.getUpdatedTrace();
   Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
-  auto selectedTrace = enzyme::SelectTraceOp::create(
+  auto selectedTrace = enzyme::SelectOp::create(
       builder, loc, traceType, accepted, finalTrace, ctx.originalTrace);
 
   // TODO: Add diagnostics via addDiagnosticsToTrace op:
@@ -975,20 +955,12 @@ IntegratorState MCMC::getLeafFromTree(OpBuilder &builder, Location loc,
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
   auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
 
-  auto directionBroadcast = enzyme::BroadcastOp::create(
-      builder, loc,
-      RankedTensorType::get(positionType.getShape(), builder.getI1Type()),
-      direction, builder.getDenseI64ArrayAttr(positionType.getShape()));
-
-  auto leafQ =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.q_right, tree.q_left);
-  auto leafP =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.p_right, tree.p_left);
-  auto leafGrad =
-      arith::SelectOp::create(builder, loc, positionType, directionBroadcast,
-                              tree.grad_right, tree.grad_left);
+  auto leafQ = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                        tree.q_right, tree.q_left);
+  auto leafP = enzyme::SelectOp::create(builder, loc, positionType, direction,
+                                        tree.p_right, tree.p_left);
+  auto leafGrad = enzyme::SelectOp::create(
+      builder, loc, positionType, direction, tree.grad_right, tree.grad_left);
   return {leafQ, leafP, leafGrad};
 }
 
@@ -1094,58 +1066,61 @@ SubtreeBuildResult MCMC::buildIterativeSubtree(OpBuilder &builder, Location loc,
   auto positionType = RankedTensorType::get(
       {ctx.positionSize},
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType());
-  auto positionBoolType =
-      RankedTensorType::get({ctx.positionSize}, builder.getI1Type());
-  auto isFirstLeafBroadcast = enzyme::BroadcastOp::create(
-      builder, loc, positionBoolType, isFirstLeaf,
-      builder.getDenseI64ArrayAttr({ctx.positionSize}));
+  auto scalarType = RankedTensorType::get(
+      {}, cast<RankedTensorType>(ctx.stepSize.getType()).getElementType());
 
   NUTSTreeState updatedTree;
   updatedTree.q_left =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.q_left, combinedTree.q_left);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.q_left, combinedTree.q_left);
   updatedTree.p_left =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.p_left, combinedTree.p_left);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.p_left, combinedTree.p_left);
   updatedTree.grad_left =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.grad_left, combinedTree.grad_left);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.grad_left, combinedTree.grad_left);
   updatedTree.q_right =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.q_right, combinedTree.q_right);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.q_right, combinedTree.q_right);
   updatedTree.p_right =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.p_right, combinedTree.p_right);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.p_right, combinedTree.p_right);
   updatedTree.grad_right =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.grad_right, combinedTree.grad_right);
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.grad_right, combinedTree.grad_right);
   updatedTree.q_proposal =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.q_proposal, combinedTree.q_proposal);
-  updatedTree.grad_proposal = arith::SelectOp::create(
-      builder, loc, positionType, isFirstLeafBroadcast, newLeaf.grad_proposal,
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.q_proposal, combinedTree.q_proposal);
+  updatedTree.grad_proposal = enzyme::SelectOp::create(
+      builder, loc, positionType, isFirstLeaf, newLeaf.grad_proposal,
       combinedTree.grad_proposal);
   updatedTree.p_sum =
-      arith::SelectOp::create(builder, loc, positionType, isFirstLeafBroadcast,
-                              newLeaf.p_sum, combinedTree.p_sum);
-  updatedTree.U_proposal = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.U_proposal, combinedTree.U_proposal);
-  updatedTree.H_proposal = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.H_proposal, combinedTree.H_proposal);
-  updatedTree.depth = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.depth, combinedTree.depth);
-  updatedTree.weight = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.weight, combinedTree.weight);
-  updatedTree.turning = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.turning, combinedTree.turning);
-  updatedTree.diverging = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.diverging, combinedTree.diverging);
-  updatedTree.sum_accept_probs = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.sum_accept_probs,
+      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
+                               newLeaf.p_sum, combinedTree.p_sum);
+  updatedTree.U_proposal =
+      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
+                               newLeaf.U_proposal, combinedTree.U_proposal);
+  updatedTree.H_proposal =
+      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
+                               newLeaf.H_proposal, combinedTree.H_proposal);
+  updatedTree.depth =
+      enzyme::SelectOp::create(builder, loc, i64TensorType, isFirstLeaf,
+                               newLeaf.depth, combinedTree.depth);
+  updatedTree.weight =
+      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
+                               newLeaf.weight, combinedTree.weight);
+  updatedTree.turning =
+      enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
+                               newLeaf.turning, combinedTree.turning);
+  updatedTree.diverging =
+      enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
+                               newLeaf.diverging, combinedTree.diverging);
+  updatedTree.sum_accept_probs = enzyme::SelectOp::create(
+      builder, loc, scalarType, isFirstLeaf, newLeaf.sum_accept_probs,
       combinedTree.sum_accept_probs);
-  updatedTree.num_proposals =
-      arith::SelectOp::create(builder, loc, isFirstLeaf, newLeaf.num_proposals,
-                              combinedTree.num_proposals);
+  updatedTree.num_proposals = enzyme::SelectOp::create(
+      builder, loc, i64TensorType, isFirstLeaf, newLeaf.num_proposals,
+      combinedTree.num_proposals);
 
   // Update and check iterative turning
   auto [ckptIdxMin, ckptIdxMax] =
@@ -1157,8 +1132,9 @@ SubtreeBuildResult MCMC::buildIterativeSubtree(OpBuilder &builder, Location loc,
       builder, loc, newLeaf.p_right, updatedTree.p_sum, updatedPCkpts,
       updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx, debugDump);
 
-  updatedTree.turning = arith::SelectOp::create(
-      builder, loc, isFirstLeaf, newLeaf.turning, iterativeTurning);
+  updatedTree.turning =
+      enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
+                               newLeaf.turning, iterativeTurning);
   updatedTree.rng = rngNext;
 
   auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
@@ -1447,17 +1423,10 @@ MCMC::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
   auto updatedPSumCkpts = enzyme::DynamicUpdateOp::create(
       builder, loc, pCkptsType, pSumCkpts, ckptIdxMax, pSum);
 
-  auto i1CheckpointType =
-      RankedTensorType::get(pCkptsShape, builder.getI1Type());
-  Value isEvenBroadcast = enzyme::BroadcastOp::create(
-      builder, loc, i1CheckpointType, isEven,
-      builder.getDenseI64ArrayAttr(
-          SmallVector<int64_t>(pCkptsShape.begin(), pCkptsShape.end())));
-
-  Value finalPCkpts = arith::SelectOp::create(
-      builder, loc, pCkptsType, isEvenBroadcast, updatedPCkpts, pCkpts);
-  Value finalPSumCkpts = arith::SelectOp::create(
-      builder, loc, pCkptsType, isEvenBroadcast, updatedPSumCkpts, pSumCkpts);
+  Value finalPCkpts = enzyme::SelectOp::create(builder, loc, pCkptsType, isEven,
+                                               updatedPCkpts, pCkpts);
+  Value finalPSumCkpts = enzyme::SelectOp::create(
+      builder, loc, pCkptsType, isEven, updatedPSumCkpts, pSumCkpts);
 
   return {finalPCkpts, finalPSumCkpts};
 }
