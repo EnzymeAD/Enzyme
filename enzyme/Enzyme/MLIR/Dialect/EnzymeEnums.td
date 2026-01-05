@@ -46,6 +46,19 @@ def RngDistribution : I32EnumAttr<"RngDistribution",
 
 def RngDistributionAttr : EnumAttr<Enzyme_Dialect, RngDistribution, "rng_distribution">;
 
+def Transpose : I32EnumAttr<"Transpose",
+    "Transpose mode for matrix operations",
+    [
+      I32EnumAttrCase<"NO_TRANSPOSE", 0>,
+      I32EnumAttrCase<"TRANSPOSE", 1>,
+      I32EnumAttrCase<"ADJOINT", 2>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::enzyme";
+}
+
+def TransposeAttr : EnumAttr<Enzyme_Dialect, Transpose, "transpose">;
+
 def HMCConfigAttr : Enzyme_Attr<"HMCConfig", "hmc_config"> {
   let summary = "Configuration for HMC inference";
   let description = [{
