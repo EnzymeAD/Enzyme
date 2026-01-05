@@ -470,70 +470,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       int64_t numSamples = mcmcOp.getNumSamples();
       int64_t thinning = mcmcOp.getThinning();
-      // int64_t numWarmup = mcmcOp.getNumWarmup(); // TODO: warmup adaptation
-
-      HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         invMass, stepSize, positionSize);
-
-      auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
-
-      // Algorithm-specific configuration
-      int64_t numLeapfrogSteps = 0;
-      Value maxDeltaEnergy;
-      int64_t maxTreeDepth = 0;
-
-      if (isHMC) {
-        auto hmcConfig = mcmcOp.getHmcConfig().value();
-        numLeapfrogSteps = hmcConfig.getNumSteps();
-      } else {
-        auto nutsConfig = mcmcOp.getNutsConfig().value();
-        maxTreeDepth = nutsConfig.getMaxTreeDepth();
-        double maxDeltaEnergyVal =
-            nutsConfig.getMaxDeltaEnergy()
-                ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
-                : 1000.0;
-        auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
-        maxDeltaEnergy = arith::ConstantOp::create(
-            rewriter, loc, F64TensorType,
-            DenseElementsAttr::get(
-                F64TensorType, rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
-      }
-
-      auto runSampleStep = [&](OpBuilder &builder, Location loc, Value q,
-                               Value grad, Value U,
-                               Value rng) -> MCMCKernelResult {
-        if (isHMC) {
-          return SampleHMC(builder, loc, q, grad, U, rng, numLeapfrogSteps,
-                           baseCtx, debugDump);
-        } else {
-          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, invMass, stepSize, positionSize, U,
-                              maxDeltaEnergy, maxTreeDepth);
-          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      auto runPostProcess = [&](OpBuilder &builder, Location loc, Value q,
-                                Value accepted, Value rng) -> HMCResult {
-        if (isHMC) {
-          return PostProcessHMC(builder, loc, q, accepted, rng, baseCtx);
-        } else {
-          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, invMass, stepSize, positionSize,
-                              initState.U0, maxDeltaEnergy, maxTreeDepth);
-          return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
-        }
-      };
-
-      if (numSamples == 1) {
-        auto sample =
-            runSampleStep(rewriter, loc, initState.q0, initState.grad0,
-                          initState.U0, initState.rng);
-        auto result = runPostProcess(rewriter, loc, sample.q, sample.accepted,
-                                     sample.rng);
-        rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
-        return success();
-      }
+      int64_t numWarmup = mcmcOp.getNumWarmup();
 
       auto elemType =
           cast<RankedTensorType>(stepSize.getType()).getElementType();
@@ -541,6 +478,188 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto scalarType = RankedTensorType::get({}, elemType);
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
       auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
+
+      // Algorithm-specific configuration
+      Value trajectoryLength;
+      Value maxDeltaEnergy;
+      int64_t maxTreeDepth = 0;
+
+      bool adaptStepSize = false;
+      auto F64TensorType = RankedTensorType::get({}, rewriter.getF64Type());
+      if (isHMC) {
+        auto hmcConfig = mcmcOp.getHmcConfig().value();
+        double length = hmcConfig.getTrajectoryLength().getValueAsDouble();
+        trajectoryLength = arith::ConstantOp::create(
+            rewriter, loc, F64TensorType,
+            DenseElementsAttr::get(F64TensorType,
+                                   rewriter.getF64FloatAttr(length)));
+        adaptStepSize = hmcConfig.getAdaptStepSize();
+      } else {
+        auto nutsConfig = mcmcOp.getNutsConfig().value();
+        maxTreeDepth = nutsConfig.getMaxTreeDepth();
+        adaptStepSize = nutsConfig.getAdaptStepSize();
+        double maxDeltaEnergyVal =
+            nutsConfig.getMaxDeltaEnergy()
+                ? nutsConfig.getMaxDeltaEnergy().getValueAsDouble()
+                : 1000.0;
+        maxDeltaEnergy = arith::ConstantOp::create(
+            rewriter, loc, F64TensorType,
+            DenseElementsAttr::get(
+                F64TensorType, rewriter.getF64FloatAttr(maxDeltaEnergyVal)));
+      }
+
+      HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
+                         invMass, stepSize, trajectoryLength, positionSize);
+      auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
+
+      auto runSampleStepWithStepSize =
+          [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
+              Value rng, Value currentStepSize) -> MCMCKernelResult {
+        if (isHMC) {
+          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
+                         invMass, currentStepSize, trajectoryLength,
+                         positionSize);
+          return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
+        } else {
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
+                              selection, invMass, currentStepSize, positionSize,
+                              U, maxDeltaEnergy, maxTreeDepth);
+          return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
+        }
+      };
+
+      auto runPostProcess = [&](OpBuilder &builder, Location loc, Value q,
+                                Value accepted, Value rng,
+                                Value currentStepSize) -> HMCResult {
+        if (isHMC) {
+          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
+                         invMass, currentStepSize, trajectoryLength,
+                         positionSize);
+          return PostProcessHMC(builder, loc, q, accepted, rng, ctx);
+        } else {
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
+                              selection, invMass, currentStepSize, positionSize,
+                              initState.U0, maxDeltaEnergy, maxTreeDepth);
+          return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
+        }
+      };
+
+      Value currentQ = initState.q0;
+      Value currentGrad = initState.grad0;
+      Value currentU = initState.U0;
+      Value currentRng = initState.rng;
+      Value adaptedStepSize = stepSize;
+
+      if (numWarmup > 0) {
+        auto c0 = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(0)));
+        auto c1 = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(1)));
+        auto numWarmupConst = arith::ConstantOp::create(
+            rewriter, loc, i64TensorType,
+            DenseElementsAttr::get(i64TensorType,
+                                   rewriter.getI64IntegerAttr(numWarmup)));
+
+        // Warmup loop always carries: [q, grad, U, rng]
+        SmallVector<Type> warmupLoopTypes = {positionType, positionType,
+                                             scalarType, currentRng.getType()};
+        SmallVector<Value> warmupInitArgs = {currentQ, currentGrad, currentU,
+                                             currentRng};
+
+        // Conditionally add adaptation states to warmup loop structure
+        DualAveragingState daState;
+        DualAveragingConfig daConfig;
+        if (adaptStepSize) {
+          daState = initDualAveraging(rewriter, loc, stepSize);
+          warmupLoopTypes.push_back(scalarType); // stepSize
+          for (Type t : daState.getTypes())
+            warmupLoopTypes.push_back(t);
+          warmupInitArgs.push_back(stepSize);
+          for (Value v : daState.toValues())
+            warmupInitArgs.push_back(v);
+        }
+
+        auto warmupLoop =
+            enzyme::ForLoopOp::create(rewriter, loc, warmupLoopTypes, c0,
+                                      numWarmupConst, c1, warmupInitArgs);
+
+        Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
+        warmupBody->addArgument(i64TensorType, loc);
+        for (Type t : warmupLoopTypes)
+          warmupBody->addArgument(t, loc);
+
+        rewriter.setInsertionPointToStart(warmupBody);
+
+        Value qWarmup = warmupBody->getArgument(1);
+        Value gradWarmup = warmupBody->getArgument(2);
+        Value UWarmup = warmupBody->getArgument(3);
+        Value rngWarmup = warmupBody->getArgument(4);
+
+        Value stepSizeWarmup =
+            adaptStepSize ? warmupBody->getArgument(5) : adaptedStepSize;
+
+        auto sample =
+            runSampleStepWithStepSize(rewriter, loc, qWarmup, gradWarmup,
+                                      UWarmup, rngWarmup, stepSizeWarmup);
+
+        SmallVector<Value> warmupYieldValues = {sample.q, sample.grad, sample.U,
+                                                sample.rng};
+
+        // Compute *updated* step size from *current* dual averaging state
+        if (adaptStepSize) {
+          SmallVector<Value> daStateValues;
+          for (int i = 0; i < 5; ++i)
+            daStateValues.push_back(warmupBody->getArgument(6 + i));
+          auto daStateLoop = DualAveragingState::fromValues(daStateValues);
+
+          auto updatedDaState = updateDualAveraging(
+              rewriter, loc, daStateLoop, sample.accept_prob, daConfig);
+          Value newStepSize =
+              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
+
+          warmupYieldValues.push_back(newStepSize);
+          for (Value v : updatedDaState.toValues())
+            warmupYieldValues.push_back(v);
+        }
+
+        enzyme::YieldOp::create(rewriter, loc, warmupYieldValues);
+
+        rewriter.setInsertionPointAfter(warmupLoop);
+
+        currentQ = warmupLoop.getResult(0);
+        currentGrad = warmupLoop.getResult(1);
+        currentU = warmupLoop.getResult(2);
+        currentRng = warmupLoop.getResult(3);
+
+        // Compute *final* step size using the *averaged* step size
+        if (adaptStepSize) {
+          SmallVector<Value> finalDaStateValues;
+          for (int i = 0; i < 5; ++i)
+            finalDaStateValues.push_back(warmupLoop.getResult(5 + i));
+          auto finalDaState =
+              DualAveragingState::fromValues(finalDaStateValues);
+          adaptedStepSize = getFinalStepSize(rewriter, loc, finalDaState);
+
+          adaptedStepSize = conditionalDump(
+              rewriter, loc, adaptedStepSize,
+              "MCMC: adapted step size after warmup", debugDump);
+        }
+      }
+
+      // TODO: Remove?
+      if (numSamples == 1) {
+        auto sample =
+            runSampleStepWithStepSize(rewriter, loc, currentQ, currentGrad,
+                                      currentU, currentRng, adaptedStepSize);
+        auto result = runPostProcess(rewriter, loc, sample.q, sample.accepted,
+                                     sample.rng, adaptedStepSize);
+        rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
+        return success();
+      }
 
       int64_t collectionSize = numSamples / thinning;
       int64_t startIdx = numSamples % thinning;
@@ -580,21 +699,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       // Loop carries: [q, grad, U, rng, samplesBuffer, acceptedBuffer]
       SmallVector<Type> loopResultTypes = {
-          positionType,       positionType,      scalarType,
-          rngInput.getType(), samplesBufferType, acceptedBufferType};
+          positionType,         positionType,      scalarType,
+          currentRng.getType(), samplesBufferType, acceptedBufferType};
       auto forLoopOp = enzyme::ForLoopOp::create(
           rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
-          ValueRange{initState.q0, initState.grad0, initState.U0, initState.rng,
-                     samplesBuffer, acceptedBuffer});
+          ValueRange{currentQ, currentGrad, currentU, currentRng, samplesBuffer,
+                     acceptedBuffer});
 
       Block *loopBody = rewriter.createBlock(&forLoopOp.getRegion());
-      loopBody->addArgument(i64TensorType, loc);      // i (iteration index)
-      loopBody->addArgument(positionType, loc);       // q
-      loopBody->addArgument(positionType, loc);       // grad
-      loopBody->addArgument(scalarType, loc);         // U
-      loopBody->addArgument(rngInput.getType(), loc); // rng
-      loopBody->addArgument(samplesBufferType, loc);  // samplesBuffer
-      loopBody->addArgument(acceptedBufferType, loc); // acceptedBuffer
+      loopBody->addArgument(i64TensorType, loc);        // i (iteration index)
+      loopBody->addArgument(positionType, loc);         // q
+      loopBody->addArgument(positionType, loc);         // grad
+      loopBody->addArgument(scalarType, loc);           // U
+      loopBody->addArgument(currentRng.getType(), loc); // rng
+      loopBody->addArgument(samplesBufferType, loc);    // samplesBuffer
+      loopBody->addArgument(acceptedBufferType, loc);   // acceptedBuffer
 
       rewriter.setInsertionPointToStart(loopBody);
       Value iterIdx = loopBody->getArgument(0);
@@ -605,8 +724,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value samplesBufferLoop = loopBody->getArgument(5);
       Value acceptedBufferLoop = loopBody->getArgument(6);
 
-      auto sample =
-          runSampleStep(rewriter, loc, qLoop, gradLoop, ULoop, rngLoop);
+      auto sample = runSampleStepWithStepSize(rewriter, loc, qLoop, gradLoop,
+                                              ULoop, rngLoop, adaptedStepSize);
 
       // Storage index: idx = (i - start_idx) / thinning
       auto iMinusStart =

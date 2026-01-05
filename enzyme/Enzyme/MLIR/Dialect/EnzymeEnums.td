@@ -63,12 +63,15 @@ def HMCConfigAttr : Enzyme_Attr<"HMCConfig", "hmc_config"> {
   let summary = "Configuration for HMC inference";
   let description = [{
     HMC-specific parameters for fixed-trajectory Hamiltonian Monte Carlo.
-    - num_steps: Number of leapfrog integration steps per sample
+    - trajectory_length: Total trajectory length for leapfrog integration.
+    - adapt_step_size: Whether to adapt step size during warmup using dual averaging.
+                       Default: true
   }];
   let parameters = (ins
-    "int64_t":$num_steps
+    "FloatAttr":$trajectory_length,
+    DefaultValuedParameter<"bool", "true">:$adapt_step_size
   );
-  let assemblyFormat = "`<` `num_steps` `=` $num_steps `>`";
+  let assemblyFormat = "`<` `trajectory_length` `=` $trajectory_length (`,` `adapt_step_size` `=` $adapt_step_size^)? `>`";
 }
 
 def NUTSConfigAttr : Enzyme_Attr<"NUTSConfig", "nuts_config"> {
@@ -78,12 +81,15 @@ def NUTSConfigAttr : Enzyme_Attr<"NUTSConfig", "nuts_config"> {
     - max_tree_depth: Maximum tree depth, controls max leapfrog steps (2^max_tree_depth).
     - max_delta_energy: Threshold for trajectory divergence (rejected if energy change exceeds this).
                         Default: 1000.0
+    - adapt_step_size: Whether to adapt step size during warmup using dual averaging.
+                       Default: true
   }];
   let parameters = (ins
     DefaultValuedParameter<"int64_t", "10">:$max_tree_depth,
-    OptionalParameter<"FloatAttr">:$max_delta_energy
+    OptionalParameter<"FloatAttr">:$max_delta_energy,
+    DefaultValuedParameter<"bool", "true">:$adapt_step_size
   );
-  let assemblyFormat = "`<` `max_tree_depth` `=` $max_tree_depth (`,` `max_delta_energy` `=` $max_delta_energy^)? `>`";
+  let assemblyFormat = "`<` `max_tree_depth` `=` $max_tree_depth (`,` `max_delta_energy` `=` $max_delta_energy^)? (`,` `adapt_step_size` `=` $adapt_step_size^)? `>`";
 }
 
 #endif // ENZYME_ENUMS

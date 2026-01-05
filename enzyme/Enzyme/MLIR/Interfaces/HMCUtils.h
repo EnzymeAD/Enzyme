@@ -53,11 +53,33 @@ struct HMCResult {
 
 /// Result of one MCMC kernel step
 struct MCMCKernelResult {
-  Value q;        // New position vector
-  Value grad;     // Gradient at new position
-  Value U;        // Potential energy at new position
-  Value accepted; // Whether proposal was accepted
-  Value rng;      // Updated RNG state
+  Value q;           // New position vector
+  Value grad;        // Gradient at new position
+  Value U;           // Potential energy at new position
+  Value accepted;    // Whether proposal was accepted
+  Value accept_prob; // Mean acceptance probability
+  Value rng;         // Updated RNG state
+};
+
+struct DualAveragingState {
+  Value log_step_size;
+  Value log_step_size_avg;
+  Value gradient_avg;
+  Value step_count;
+  Value prox_center;
+
+  SmallVector<Value> toValues() const {
+    return {log_step_size, log_step_size_avg, gradient_avg, step_count,
+            prox_center};
+  }
+  static DualAveragingState fromValues(ArrayRef<Value> values) {
+    return {values[0], values[1], values[2], values[3], values[4]};
+  }
+  SmallVector<Type> getTypes() const {
+    return {log_step_size.getType(), log_step_size_avg.getType(),
+            gradient_avg.getType(), step_count.getType(),
+            prox_center.getType()};
+  }
 };
 
 struct IntegratorState {
@@ -73,14 +95,15 @@ struct HMCContext {
   ArrayAttr selection;
   Value invMass;
   Value stepSize;
+  Value trajectoryLength;
   int64_t positionSize;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              Value originalTrace, ArrayAttr selection, Value invMass,
-             Value stepSize, int64_t positionSize)
+             Value stepSize, Value trajectoryLength, int64_t positionSize)
       : fn(fn), fnInputs(fnInputs), originalTrace(originalTrace),
         selection(selection), invMass(invMass), stepSize(stepSize),
-        positionSize(positionSize) {}
+        trajectoryLength(trajectoryLength), positionSize(positionSize) {}
 };
 
 struct NUTSContext : public HMCContext {
@@ -93,7 +116,7 @@ struct NUTSContext : public HMCContext {
               Value stepSize, int64_t positionSize, Value energyCurrent,
               Value maxDeltaEnergy, int64_t maxTreeDepth)
       : HMCContext(fn, fnInputs, originalTrace, selection, invMass, stepSize,
-                   positionSize),
+                   /*trajectoryLength=*/Value(), positionSize),
         energyCurrent(energyCurrent), maxDeltaEnergy(maxDeltaEnergy),
         maxTreeDepth(maxTreeDepth) {}
 };
@@ -216,8 +239,7 @@ InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
 /// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
 MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
                            Value grad, Value U, Value rng,
-                           int64_t numLeapfrogSteps, const HMCContext &ctx,
-                           bool debugDump = false);
+                           const HMCContext &ctx, bool debugDump = false);
 
 /// Single NUTS iteration: momentum sampling + tree building
 MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
@@ -278,6 +300,33 @@ std::pair<Value, Value> updateCheckpoints(OpBuilder &builder, Location loc,
                                           Value pSumCkpts,
                                           const NUTSContext &ctx,
                                           bool debugDump = false);
+
+// TODO: Proper customization
+struct DualAveragingConfig {
+  double t0 = 10.0;    // Stabilization
+  double kappa = 0.75; // Weight decay
+  double gamma = 0.05; // Convergence
+  double target_accept_prob = 0.8;
+};
+
+/// Initialize dual averaging state from initial step size.
+DualAveragingState initDualAveraging(OpBuilder &builder, Location loc,
+                                     Value stepSize);
+
+/// Update dual averaging state with observed acceptance probability.
+DualAveragingState updateDualAveraging(OpBuilder &builder, Location loc,
+                                       const DualAveragingState &state,
+                                       Value acceptProb,
+                                       const DualAveragingConfig &config);
+
+/// Get updated step size from dual averaging state.
+Value getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
+                                   const DualAveragingState &state);
+
+/// Get final step size from dual averaging state.
+Value getFinalStepSize(OpBuilder &builder, Location loc,
+                       const DualAveragingState &state);
+
 } // namespace MCMC
 } // namespace enzyme
 } // namespace mlir
