@@ -59,23 +59,6 @@ SmallVector<Type> NUTSTreeState::getTypes() const {
   return types;
 }
 
-Value MCMC::createIdentityMatrix(OpBuilder &builder, Location loc,
-                                 RankedTensorType matrixType) {
-  auto shape = matrixType.getShape();
-  assert(shape.size() == 2 && shape[0] == shape[1] &&
-         "Identity matrix must be square");
-  int64_t n = shape[0];
-
-  SmallVector<double> identityData(n * n, 0.0);
-  for (int64_t i = 0; i < n; ++i) {
-    identityData[i * n + i] = 1.0;
-  }
-
-  return arith::ConstantOp::create(
-      builder, loc, matrixType,
-      DenseElementsAttr::get(matrixType, ArrayRef<double>(identityData)));
-}
-
 Value MCMC::createSigmoid(OpBuilder &builder, Location loc, Value x) {
   auto xType = cast<RankedTensorType>(x.getType());
   auto elemType = xType.getElementType();
@@ -194,14 +177,22 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
     auto p = arith::MulFOp::create(builder, loc, massMatrixSqrt, eps);
     return {p, rngOut};
   } else {
-    // Dense: p = chol(M) @ eps where M = inv(invMass)
-    auto identityMatrix = createIdentityMatrix(builder, loc, invMassType);
-    auto massMatrixSqrt = enzyme::CholeskySolveOp::create(
-        builder, loc, invMassType, invMass, identityMatrix);
-    auto p = enzyme::DotOp::create(
-        builder, loc, positionType, massMatrixSqrt, eps,
-        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
+    // Dense: p ~ N(0, M)
+    // Compute L = chol(invMass), so that invMass = L @ L^T
+    // Therefore, M = invMass^{-1} = (L @ L^T)^{-1} = L^{-T} @ L^{-1}
+    // Then we can solve L^T @ p = eps for p, i.e., p = L^{-T} @ eps
+
+    auto L = enzyme::CholeskyOp::create(builder, loc, invMassType, invMass,
+                                        /*lower=*/builder.getBoolAttr(true));
+    auto p = enzyme::TriangularSolveOp::create(
+        builder, loc, positionType, L, eps,
+        /*left_side=*/builder.getBoolAttr(true),
+        /*lower=*/builder.getBoolAttr(true),
+        /*unit_diagonal=*/builder.getBoolAttr(false),
+        /*transpose_a=*/
+        enzyme::TransposeAttr::get(builder.getContext(),
+                                   enzyme::Transpose::TRANSPOSE));
+
     return {p, rngOut};
   }
 }
