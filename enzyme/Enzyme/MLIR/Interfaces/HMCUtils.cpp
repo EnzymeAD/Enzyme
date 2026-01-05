@@ -574,7 +574,6 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
 MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                  Value grad, Value U, Value rng,
-                                 int64_t numLeapfrogSteps,
                                  const HMCContext &ctx, bool debugDump) {
   auto elemType =
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
@@ -582,6 +581,27 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto scalarType = RankedTensorType::get({}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
+
+  // 0. Compute num_steps and adjusted step_size
+  // num_steps = ceil(trajectory_length / step_size)
+  // adjusted_step_size = trajectory_length / num_steps
+  Value trajDivStep =
+      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
+  Value numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
+  Value numSteps =
+      arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
+  Value adjustedStepSize =
+      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+
+  adjustedStepSize =
+      conditionalDump(builder, loc, adjustedStepSize,
+                      "SampleHMC: adjusted step size", debugDump);
+  numSteps = conditionalDump(builder, loc, numSteps, "SampleHMC: num_steps",
+                             debugDump);
+
+  HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
+                         ctx.invMass, adjustedStepSize, ctx.trajectoryLength,
+                         ctx.positionSize);
 
   // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
@@ -614,10 +634,6 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto c1 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
       DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto numSteps = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(numLeapfrogSteps)));
 
   // Loop carries: [q, p, grad, U, rng]
   SmallVector<Type> loopResultTypes = {positionType, positionType, positionType,
@@ -642,8 +658,8 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   Value rngLoop = loopBody->getArgument(5);
 
   IntegratorState leaf = {qLoop, pLoop, gradLoop};
-  auto step =
-      computeIntegrationStep(builder, loc, leaf, rngLoop, direction, ctx);
+  auto step = computeIntegrationStep(builder, loc, leaf, rngLoop, direction,
+                                     adjustedCtx);
 
   // Yield [q, p, grad, U, rng]
   enzyme::YieldOp::create(
@@ -711,7 +727,7 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   qFinal =
       conditionalDump(builder, loc, qFinal, "SampleHMC: q final", debugDump);
 
-  return {qFinal, gradFinal, UFinal, acceptedTensor, rngNext};
+  return {qFinal, gradFinal, UFinal, acceptedTensor, accProb, rngNext};
 }
 
 MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
@@ -791,8 +807,23 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
       builder, loc, i1TensorType,
       DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
 
-  return {finalTree.q_proposal, finalTree.grad_proposal, finalTree.U_proposal,
-          trueConst, rngNext};
+  // 8. Compute mean acceptance probability for step size adaptation
+  auto oneI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  auto numProposalsClamped =
+      arith::MaxSIOp::create(builder, loc, finalTree.num_proposals, oneI64);
+  auto numProposalsFloat =
+      arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
+  Value meanAcceptProb = arith::DivFOp::create(
+      builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
+
+  conditionalDump(builder, loc, meanAcceptProb,
+                  "SampleNUTS: mean acceptance probability", debugDump);
+
+  return {finalTree.q_proposal, finalTree.grad_proposal,
+          finalTree.U_proposal, trueConst,
+          meanAcceptProb,       rngNext};
 }
 
 HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
@@ -803,7 +834,6 @@ HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
   auto scalarType = RankedTensorType::get({}, elemType);
   auto traceType = enzyme::TraceType::get(builder.getContext());
 
-  // TODO: Replace UpdateOp with batched addSampleToTrace
   SmallVector<Value> finalUpdateInputs;
   finalUpdateInputs.push_back(rng);
   finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -833,7 +863,6 @@ HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
   auto traceType = enzyme::TraceType::get(builder.getContext());
 
-  // TODO: Replace UpdateOp with batched addSampleToTrace 
   SmallVector<Value> finalUpdateInputs;
   finalUpdateInputs.push_back(rng);
   finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -1431,4 +1460,143 @@ MCMC::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
       builder, loc, pCkptsType, isEvenBroadcast, updatedPSumCkpts, pSumCkpts);
 
   return {finalPCkpts, finalPSumCkpts};
+}
+
+DualAveragingState MCMC::initDualAveraging(OpBuilder &builder, Location loc,
+                                           Value stepSize) {
+  auto stepSizeType = cast<RankedTensorType>(stepSize.getType());
+  auto elemType = stepSizeType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+
+  // prox_center = log(10) + log(step_size)
+  auto log10Const = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(elemType, std::log(10.0))));
+  Value logStepSize = math::LogOp::create(builder, loc, stepSize);
+  Value proxCenter =
+      arith::AddFOp::create(builder, loc, log10Const, logStepSize);
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  auto zeroI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+
+  return {
+      .log_step_size = zeroConst,
+      .log_step_size_avg = zeroConst,
+      .gradient_avg = zeroConst,
+      .step_count = zeroI64,
+      .prox_center = proxCenter,
+  };
+}
+
+DualAveragingState
+MCMC::updateDualAveraging(OpBuilder &builder, Location loc,
+                          const DualAveragingState &state, Value acceptProb,
+                          const DualAveragingConfig &config) {
+  // Dual Averaging update:
+  //   g = target_accept_prob - accept_prob
+  //   g_avg = (1 - 1/(t+t0)) * g_avg + g/(t+t0)
+  //   log_step_size = prox_center - sqrt(t)/gamma * g_avg
+  //   log_step_size_avg = (1 - t^(-kappa)) * log_step_size_avg +
+  //                        t^(-kappa) * log_step_size
+  auto acceptProbType = cast<RankedTensorType>(acceptProb.getType());
+  auto elemType = acceptProbType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+
+  // t = t + 1
+  auto oneI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value tNew = arith::AddIOp::create(builder, loc, state.step_count, oneI64);
+  Value tFloat = arith::SIToFPOp::create(builder, loc, scalarType, tNew);
+
+  // t0
+  auto t0Const = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(elemType, config.t0)));
+
+  // g = target_accept_prob - accept_prob
+  auto targetConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(
+          scalarType,
+          builder.getFloatAttr(elemType, config.target_accept_prob)));
+  Value g = arith::SubFOp::create(builder, loc, targetConst, acceptProb);
+
+  // t_plus_t0 = t + t0
+  Value tPlusT0 = arith::AddFOp::create(builder, loc, tFloat, t0Const);
+
+  // weight = 1 / (t + t0)
+  auto oneConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value weight = arith::DivFOp::create(builder, loc, oneConst, tPlusT0);
+
+  // decay = 1 - weight = 1 - 1/(t + t0)
+  Value decay = arith::SubFOp::create(builder, loc, oneConst, weight);
+
+  // g_avg = decay * g_avg + weight * g
+  // g_avg = (1 - 1/(t+t0)) * g_avg + g/(t+t0)
+  Value gAvgDecayed =
+      arith::MulFOp::create(builder, loc, decay, state.gradient_avg);
+  Value gWeighted = arith::MulFOp::create(builder, loc, weight, g);
+  Value gAvgNew = arith::AddFOp::create(builder, loc, gAvgDecayed, gWeighted);
+
+  // x_t = prox_center - sqrt(t) / gamma * g_avg
+  Value sqrtT = math::SqrtOp::create(builder, loc, tFloat);
+  auto gammaConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(elemType, config.gamma)));
+  Value sqrtTOverGamma = arith::DivFOp::create(builder, loc, sqrtT, gammaConst);
+  Value adjustment =
+      arith::MulFOp::create(builder, loc, sqrtTOverGamma, gAvgNew);
+  Value logStepSizeNew =
+      arith::SubFOp::create(builder, loc, state.prox_center, adjustment);
+
+  // weight_t = t^(-kappa)
+  // Compute t^(-kappa) = exp(-kappa * log(t))
+  auto kappaConst = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(elemType, config.kappa)));
+  Value logT = math::LogOp::create(builder, loc, tFloat);
+  Value negKappaLogT = arith::MulFOp::create(
+      builder, loc, arith::NegFOp::create(builder, loc, kappaConst), logT);
+  Value weightT = math::ExpOp::create(builder, loc, negKappaLogT);
+
+  // x_avg = (1 - weight_t) * x_avg + weight_t * x_t
+  Value oneMinusWeightT =
+      arith::SubFOp::create(builder, loc, oneConst, weightT);
+  Value avgDecayed = arith::MulFOp::create(builder, loc, oneMinusWeightT,
+                                           state.log_step_size_avg);
+  Value newContribution =
+      arith::MulFOp::create(builder, loc, weightT, logStepSizeNew);
+  Value logStepSizeAvgNew =
+      arith::AddFOp::create(builder, loc, avgDecayed, newContribution);
+
+  return {
+      .log_step_size = logStepSizeNew,
+      .log_step_size_avg = logStepSizeAvgNew,
+      .gradient_avg = gAvgNew,
+      .step_count = tNew,
+      .prox_center = state.prox_center,
+  };
+}
+
+Value MCMC::getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
+                                         const DualAveragingState &state) {
+  return math::ExpOp::create(builder, loc, state.log_step_size);
+}
+
+Value MCMC::getFinalStepSize(OpBuilder &builder, Location loc,
+                             const DualAveragingState &state) {
+  return math::ExpOp::create(builder, loc, state.log_step_size_avg);
 }
