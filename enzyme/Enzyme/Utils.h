@@ -2480,4 +2480,26 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
                         llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix,
                         bool shouldZero);
 
+static bool anyJuliaObjects(llvm::Type *T) {
+  if (isSpecialPtr(T))
+    return true;
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    for (auto elem : ST->elements()) {
+      if (anyJuliaObjects(elem))
+        return true;
+    }
+    return false;
+  }
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    return anyJuliaObjects(AT->getElementType());
+  }
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T)) {
+    return anyJuliaObjects(VT->getElementType());
+  }
+  return false;
+}
+
+llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
+                                                    llvm::IRBuilder<> &B);
+
 #endif // ENZYME_UTILS_H

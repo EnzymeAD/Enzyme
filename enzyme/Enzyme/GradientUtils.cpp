@@ -4947,7 +4947,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
-                                ArrayRef<Metadata *> scopes) {
+                                ArrayRef<Metadata *> scopes,
+                                bool needs_post_cache) {
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
@@ -4974,7 +4975,50 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
 
-  auto rule = [&](Value *ptr, Value *newval) {
+  Value *invertedBarrier = nullptr;
+  if (needs_post_cache && EnzymeJuliaAddrLoad &&
+      anyJuliaObjects(newval->getType())) {
+    auto obj = origptr;
+    while (true) {
+      if (auto CI = dyn_cast<CastInst>(obj)) {
+        obj = CI->getOperand(0);
+        continue;
+      }
+      if (auto GO = dyn_cast<GetElementPtrInst>(obj)) {
+        obj = GO->getOperand(0);
+        continue;
+      }
+      if (auto CI = dyn_cast<CallInst>(obj)) {
+        if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
+          obj = CI->getArgOperand(0);
+          continue;
+        }
+      }
+      if (auto PT = dyn_cast<PointerType>(obj->getType())) {
+        if (PT->getAddressSpace() == 13) {
+          if (auto LI = dyn_cast<LoadInst>(obj)) {
+            obj = LI->getOperand(0);
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    auto PT = cast<PointerType>(obj->getType());
+    assert(PT->getAddressSpace() != 11 && PT->getAddressSpace() != 13);
+    if (PT->getAddressSpace() == 10) {
+      obj = invertPointerM(obj, BuilderM);
+
+      if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError)
+        obj = lookupM(obj, BuilderM);
+
+      invertedBarrier = obj;
+    }
+  }
+
+  auto rule = [&](Value *ptr, Value *newval, Value *invertedBarrier) {
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
 
@@ -5028,6 +5072,28 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       if (align)
         ts->setAlignment(*align);
 
+      if (invertedBarrier) {
+        auto T_jlvalue = StructType::get(ptr->getContext(), {});
+        auto T_prjlvalue = PointerType::get(T_jlvalue, 10);
+
+        if (invertedBarrier->getType() != T_prjlvalue) {
+          invertedBarrier =
+              BuilderM.CreateBitCast(invertedBarrier, T_prjlvalue);
+        }
+
+        auto FT = FunctionType::get(Type::getVoidTy(newval->getContext()),
+                                    {T_prjlvalue}, true);
+        auto wb = BuilderM.GetInsertBlock()
+                      ->getParent()
+                      ->getParent()
+                      ->getOrInsertFunction("julia.write_barrier", FT);
+
+        auto subvals = getJuliaObjects(newval, BuilderM);
+
+        subvals.insert(subvals.begin(), invertedBarrier);
+        BuilderM.CreateCall(wb, subvals);
+      }
+
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
@@ -5063,6 +5129,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       auto F = getIntrinsicDeclaration(oldFunc->getParent(),
                                        Intrinsic::masked_store, tys);
       assert(align);
+      assert(!needs_post_cache);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
       Value *args[] = {newval, ptr, alignv, mask};
@@ -5077,7 +5144,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     idx++;
   };
 
-  applyChainRule(BuilderM, rule, ptr, newval);
+  applyChainRule(BuilderM, rule, ptr, newval, invertedBarrier);
 }
 
 Type *GradientUtils::getShadowType(Type *ty, unsigned width) {

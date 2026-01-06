@@ -282,66 +282,6 @@ static inline bool OnlyUsedInOMP(AllocaInst *AI) {
   return true;
 }
 
-bool anyJuliaObjects(Type *T) {
-  if (isSpecialPtr(T))
-    return true;
-  if (auto ST = dyn_cast<StructType>(T)) {
-    for (auto elem : ST->elements()) {
-      if (anyJuliaObjects(elem))
-        return true;
-    }
-    return false;
-  }
-  if (auto AT = dyn_cast<ArrayType>(T)) {
-    return anyJuliaObjects(AT->getElementType());
-  }
-  if (auto VT = dyn_cast<VectorType>(T)) {
-    return anyJuliaObjects(VT->getElementType());
-  }
-  return false;
-}
-
-SmallVector<Value *, 1> getJuliaObjects(Value *v, IRBuilder<> &B) {
-  SmallVector<Value *, 1> todo = {v};
-  SmallVector<Value *, 1> done;
-  while (todo.size()) {
-    auto cur = todo.pop_back_val();
-    auto T = cur->getType();
-    if (!anyJuliaObjects(T)) {
-      continue;
-    }
-    if (isSpecialPtr(T)) {
-      done.push_back(cur);
-      continue;
-    }
-    if (auto ST = dyn_cast<StructType>(T)) {
-      for (auto en : llvm::enumerate(ST->elements())) {
-        if (anyJuliaObjects(en.value())) {
-          auto V2 = B.CreateExtractValue(cur, en.index());
-          todo.push_back(V2);
-        }
-      }
-      continue;
-    }
-    if (auto AT = dyn_cast<ArrayType>(T)) {
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.push_back(B.CreateExtractValue(cur, i));
-      }
-      continue;
-    }
-    if (auto VT = dyn_cast<VectorType>(T)) {
-      assert(!VT->getElementCount().isScalable());
-      size_t numElems = VT->getElementCount().getKnownMinValue();
-      for (size_t i = 0; i < numElems; i++) {
-        todo.push_back(B.CreateExtractElement(cur, i));
-      }
-      continue;
-    }
-    llvm_unreachable("unknown source of julia type");
-  }
-  return done;
-}
-
 void RecursivelyReplaceAddressSpace(
     SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
     SmallVector<Instruction *, 1> &toErase, bool legal) {
@@ -557,7 +497,8 @@ void RecursivelyReplaceAddressSpace(
           if (subvals.size()) {
             auto JLT =
                 PointerType::get(StructType::get(SI->getContext(), {}), 10);
-            auto FT = FunctionType::get(JLT, {}, true);
+            auto FT = FunctionType::get(Type::getVoidTy(rep->getContext()),
+                                        {JLT}, true);
             auto wb = B.GetInsertBlock()
                           ->getParent()
                           ->getParent()

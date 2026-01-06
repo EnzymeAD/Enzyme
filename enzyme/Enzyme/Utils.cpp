@@ -4434,3 +4434,45 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
   (void)tracked;
   (void)numRootsSeen;
 }
+
+llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
+                                                    llvm::IRBuilder<> &B) {
+  SmallVector<Value *, 1> todo = {v};
+  SmallVector<Value *, 1> done;
+  while (todo.size()) {
+    auto cur = todo.pop_back_val();
+    auto T = cur->getType();
+    if (!anyJuliaObjects(T)) {
+      continue;
+    }
+    if (isSpecialPtr(T)) {
+      done.push_back(cur);
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      for (auto en : llvm::enumerate(ST->elements())) {
+        if (anyJuliaObjects(en.value())) {
+          auto V2 = B.CreateExtractValue(cur, en.index());
+          todo.push_back(V2);
+        }
+      }
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
+        todo.push_back(B.CreateExtractValue(cur, i));
+      }
+      continue;
+    }
+    if (auto VT = dyn_cast<VectorType>(T)) {
+      assert(!VT->getElementCount().isScalable());
+      size_t numElems = VT->getElementCount().getKnownMinValue();
+      for (size_t i = 0; i < numElems; i++) {
+        todo.push_back(B.CreateExtractElement(cur, i));
+      }
+      continue;
+    }
+    llvm_unreachable("unknown source of julia type");
+  }
+  return done;
+}
