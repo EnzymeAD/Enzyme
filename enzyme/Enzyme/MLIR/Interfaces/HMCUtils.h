@@ -319,13 +319,12 @@ DualAveragingState updateDualAveraging(OpBuilder &builder, Location loc,
                                        Value acceptProb,
                                        const DualAveragingConfig &config);
 
-/// Get updated step size from dual averaging state.
+/// Get step size from dual averaging state.
+/// If `final` is true, returns the averaged step size.
+/// Otherwise, returns the updated step size.
 Value getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
-                                   const DualAveragingState &state);
-
-/// Get final step size from dual averaging state.
-Value getFinalStepSize(OpBuilder &builder, Location loc,
-                       const DualAveragingState &state);
+                                   const DualAveragingState &state,
+                                   bool final = false);
 
 /// State for Welford covariance estimation
 struct WelfordState {

@@ -1585,13 +1585,10 @@ MCMC::updateDualAveraging(OpBuilder &builder, Location loc,
 }
 
 Value MCMC::getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
-                                         const DualAveragingState &state) {
-  return math::ExpOp::create(builder, loc, state.log_step_size);
-}
-
-Value MCMC::getFinalStepSize(OpBuilder &builder, Location loc,
-                             const DualAveragingState &state) {
-  return math::ExpOp::create(builder, loc, state.log_step_size_avg);
+                                         const DualAveragingState &state,
+                                         bool final) {
+  Value logStepSize = final ? state.log_step_size_avg : state.log_step_size;
+  return math::ExpOp::create(builder, loc, logStepSize);
 }
 
 WelfordState MCMC::initWelford(OpBuilder &builder, Location loc,
