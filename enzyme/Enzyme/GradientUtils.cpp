@@ -4990,7 +4990,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       }
       if (auto CI = dyn_cast<CallInst>(obj)) {
         if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
-          obj = getBaseObject(CI->getArgOperand(0));
+          obj = CI->getArgOperand(0);
           continue;
         }
       }
