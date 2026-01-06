@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 
+#include <cmath>
 #include <limits>
 
 using namespace mlir;
@@ -1741,3 +1742,53 @@ Value MCMC::finalizeWelford(OpBuilder &builder, Location loc,
   return cov;
 }
 
+SmallVector<AdaptWindow> MCMC::buildAdaptationSchedule(int64_t numSteps) {
+  // |<-- start buffer -->|<-- middle windows (doubling) -->|<-- end buffer -->|
+  // |      (no mass)     |     (collect + adapt mass)      |    (no mass)     |
+  // |   step size only   |   step size + mass matrix       |  step size only  |
+
+  SmallVector<AdaptWindow> schedule;
+
+  if (numSteps < 20) {
+    schedule.push_back({0, numSteps - 1});
+    return schedule;
+  }
+
+  // Stan-style window schedule
+  int64_t startBufferSize = 75;
+  int64_t endBufferSize = 50;
+  int64_t initWindowSize = 25;
+
+  if ((startBufferSize + endBufferSize + initWindowSize) > numSteps) {
+    startBufferSize = static_cast<int64_t>(0.15 * numSteps);
+    endBufferSize = static_cast<int64_t>(0.1 * numSteps);
+    initWindowSize = numSteps - startBufferSize - endBufferSize;
+  }
+
+  // Start buffer window
+  schedule.push_back({0, startBufferSize - 1});
+
+  int64_t endWindowStart = numSteps - endBufferSize;
+  int64_t nextWindowSize = initWindowSize;
+  int64_t nextWindowStart = startBufferSize;
+
+  // Middle windows
+  while (nextWindowStart < endWindowStart) {
+    int64_t curWindowStart = nextWindowStart;
+    int64_t curWindowSize = nextWindowSize;
+
+    if (3 * curWindowSize <= endWindowStart - curWindowStart) {
+      nextWindowSize = 2 * curWindowSize;
+    } else {
+      curWindowSize = endWindowStart - curWindowStart;
+    }
+
+    nextWindowStart = curWindowStart + curWindowSize;
+    schedule.push_back({curWindowStart, nextWindowStart - 1});
+  }
+
+  // End buffer window
+  schedule.push_back({endWindowStart, numSteps - 1});
+
+  return schedule;
+}
