@@ -430,7 +430,8 @@ public:
                    bool isVolatile, llvm::AtomicOrdering ordering,
                    llvm::SyncScope::ID syncScope, llvm::Value *mask,
                    llvm::ArrayRef<llvm::Metadata *> noAlias,
-                   llvm::ArrayRef<llvm::Metadata *> scopes);
+                   llvm::ArrayRef<llvm::Metadata *> scopes,
+                   bool needs_post_cache = false);
 
 private:
   llvm::BasicBlock *originalForReverseBlock(llvm::BasicBlock &BB2) const;

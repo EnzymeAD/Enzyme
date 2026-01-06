@@ -4947,7 +4947,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
-                                ArrayRef<Metadata *> scopes) {
+                                ArrayRef<Metadata *> scopes,
+                                bool needs_post_cache) {
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
@@ -5028,6 +5029,9 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       if (align)
         ts->setAlignment(*align);
 
+      if (needs_post_cache) {
+        PostCacheStore(ts, BuilderM);
+      }
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
@@ -5063,6 +5067,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       auto F = getIntrinsicDeclaration(oldFunc->getParent(),
                                        Intrinsic::masked_store, tys);
       assert(align);
+      assert(!needs_post_cache);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
       Value *args[] = {newval, ptr, alignv, mask};

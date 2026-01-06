@@ -1006,6 +1006,7 @@ public:
         }
 
       Value *diff = nullptr;
+      bool needs_writebarrier = false;
       if (!gutils->runtimeActivity && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
@@ -1014,11 +1015,13 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
               diff = unwrap(CustomErrorHandler(
                   str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
                   wrap(orig_val), wrap(&BuilderZ)));
-            else
+              if (diff)
+                needs_writebarrier = true;
+            } else
               EmitWarning("MixedActivityError", I, ss.str());
           }
         }
@@ -1040,7 +1043,7 @@ public:
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, prevalign, 0, storeSize,
                           isVolatile, ordering, syncScope, mask, prevNoAlias,
-                          prevScopes);
+                          prevScopes, needs_writebarrier);
 
       return;
     }
@@ -1265,6 +1268,7 @@ public:
 
           Value *valueop = nullptr;
 
+          bool needs_writebarrier = false;
           if (constantval) {
             if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
@@ -1274,11 +1278,13 @@ public:
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
-                  if (CustomErrorHandler)
+                  if (CustomErrorHandler) {
                     valueop = unwrap(CustomErrorHandler(
                         str.c_str(), wrap(&I), ErrorType::MixedActivityError,
                         gutils, wrap(orig_val), wrap(&BuilderZ)));
-                  else
+                    if (valueop)
+                      needs_writebarrier = true;
+                  } else
                     EmitWarning("MixedActivityError", I, ss.str());
                 }
               }
@@ -1299,7 +1305,7 @@ public:
           }
           gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
                               size, isVolatile, ordering, syncScope, mask,
-                              prevNoAlias, prevScopes);
+                              prevNoAlias, prevScopes, needs_writebarrier);
         }
       }
 
