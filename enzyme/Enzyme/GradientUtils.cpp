@@ -4975,7 +4975,30 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
 
-  auto rule = [&](Value *ptr, Value *newval) {
+  Value *invertedBarrier = nullptr;
+  if (needs_post_cache && EnzymeJuliaAddrLoad &&
+      anyJuliaObjects(newval->getType())) {
+    auto obj = getBaseObject(origptr);
+    if (auto CI = dyn_cast<CallInst>(obj)) {
+      if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
+        obj = getBaseObject(CI->getArgOperand(0));
+      }
+    }
+    auto PT = cast<PointerType>(obj->getType());
+    assert(PT->getAddressSpace() != 11 && PT->getAddressSpace() != 13);
+    if (PT->getAddressSpace() == 10) {
+      obj = invertPointerM(obj, BuilderM);
+
+      if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError)
+        obj = lookupM(obj, BuilderM);
+
+      invertedBarrier = obj;
+    }
+  }
+
+  auto rule = [&](Value *ptr, Value *newval, Value *invertedBarrier) {
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
 
@@ -5029,9 +5052,27 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       if (align)
         ts->setAlignment(*align);
 
-      if (needs_post_cache) {
-        PostCacheStore(ts, BuilderM);
+      if (invertedBarrier) {
+        auto T_jlvalue = StructType::get(ptr->getContext(), {});
+        auto T_prjlvalue = PointerType::get(T_jlvalue, 10);
+
+        if (invertedBarrier->getType() != T_prjlvalue) {
+          invertedBarrier =
+              BuilderM.CreateBitCast(invertedBarrier, T_prjlvalue);
+        }
+
+        auto FT = FunctionType::get(T_prjlvalue, {}, true);
+        auto wb = BuilderM.GetInsertBlock()
+                      ->getParent()
+                      ->getParent()
+                      ->getOrInsertFunction("julia.write_barrier", FT);
+
+        auto subvals = getJuliaObjects(newval, BuilderM);
+
+        subvals.insert(subvals.begin(), invertedBarrier);
+        BuilderM.CreateCall(wb, subvals);
       }
+
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
@@ -5082,7 +5123,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     idx++;
   };
 
-  applyChainRule(BuilderM, rule, ptr, newval);
+  applyChainRule(BuilderM, rule, ptr, newval, invertedBarrier);
 }
 
 Type *GradientUtils::getShadowType(Type *ty, unsigned width) {
