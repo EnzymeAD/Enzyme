@@ -1569,3 +1569,152 @@ Value MCMC::getFinalStepSize(OpBuilder &builder, Location loc,
                              const DualAveragingState &state) {
   return math::ExpOp::create(builder, loc, state.log_step_size_avg);
 }
+
+WelfordState MCMC::initWelford(OpBuilder &builder, Location loc,
+                               int64_t positionSize, bool diagonal) {
+  auto elemType = builder.getF64Type();
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto meanType = RankedTensorType::get({positionSize}, elemType);
+
+  Value mean = arith::ConstantOp::create(
+      builder, loc, meanType,
+      DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+
+  // Diagonal -> tensor<positionSize>
+  // Dense -> tensor<positionSize x positionSize>
+  Value m2;
+  if (diagonal) {
+    m2 = arith::ConstantOp::create(
+        builder, loc, meanType,
+        DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+  } else {
+    auto m2Type = RankedTensorType::get({positionSize, positionSize}, elemType);
+    m2 = arith::ConstantOp::create(
+        builder, loc, m2Type,
+        DenseElementsAttr::get(m2Type, builder.getFloatAttr(elemType, 0.0)));
+  }
+
+  Value n = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+
+  return {mean, m2, n};
+}
+
+WelfordState MCMC::updateWelford(OpBuilder &builder, Location loc,
+                                 const WelfordState &state, Value sample,
+                                 const WelfordConfig &config) {
+  // Algorithm:
+  //   n = n + 1
+  //   delta_pre = sample - mean
+  //   mean = mean + delta_pre / n
+  //   delta_post = sample - mean
+  //   (if diagonal) m2 = m2 + delta_pre * delta_post
+  //   (if dense)    m2 = m2 + outer(delta_post, delta_pre)
+
+  auto sampleType = cast<RankedTensorType>(sample.getType());
+  auto elemType = sampleType.getElementType();
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+
+  auto oneI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value nNew = arith::AddIOp::create(builder, loc, state.n, oneI64);
+
+  auto scalarType = RankedTensorType::get({}, elemType);
+  Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, nNew);
+
+  Value nBroadcast = enzyme::BroadcastOp::create(builder, loc, sampleType,
+                                                 nFloat, sampleType.getShape());
+
+  Value deltaPre = arith::SubFOp::create(builder, loc, sample, state.mean);
+
+  Value deltaPreOverN =
+      arith::DivFOp::create(builder, loc, deltaPre, nBroadcast);
+  Value meanNew =
+      arith::AddFOp::create(builder, loc, state.mean, deltaPreOverN);
+
+  Value deltaPost = arith::SubFOp::create(builder, loc, sample, meanNew);
+
+  Value m2New;
+  if (config.diagonal) {
+    Value product = arith::MulFOp::create(builder, loc, deltaPre, deltaPost);
+    m2New = arith::AddFOp::create(builder, loc, state.m2, product);
+  } else { // Dense
+    auto m2Type = cast<RankedTensorType>(state.m2.getType());
+    Value outerProduct = enzyme::DotOp::create(
+        builder, loc, m2Type, deltaPost, deltaPre,
+        /*lhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
+        /*rhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
+        /*lhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}),
+        /*rhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}));
+    m2New = arith::AddFOp::create(builder, loc, state.m2, outerProduct);
+  }
+
+  return {meanNew, m2New, nNew};
+}
+
+Value MCMC::finalizeWelford(OpBuilder &builder, Location loc,
+                            const WelfordState &state,
+                            const WelfordConfig &config) {
+  // Compute sample covariance: cov = m2 / (n - 1)
+  auto m2Type = cast<RankedTensorType>(state.m2.getType());
+  auto elemType = m2Type.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+
+  auto oneI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value nMinus1 = arith::SubIOp::create(builder, loc, state.n, oneI64);
+  Value nMinus1Float =
+      arith::SIToFPOp::create(builder, loc, scalarType, nMinus1);
+
+  Value nMinus1Bcast = enzyme::BroadcastOp::create(
+      builder, loc, m2Type, nMinus1Float, m2Type.getShape());
+
+  Value cov = arith::DivFOp::create(builder, loc, state.m2, nMinus1Bcast);
+
+  // (Optional) Regularization (Stan's shrinkage):
+  //   scaled_cov = (n / (n + 5)) * cov
+  //   shrinkage = 1e-3 * (5 / (n + 5))
+  //   (if diagonal) cov = scaled_cov + shrinkage
+  //   (if dense)    cov = scaled_cov + shrinkage * I
+  if (config.regularize) {
+    Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, state.n);
+
+    auto fiveConst = arith::ConstantOp::create(
+        builder, loc, scalarType,
+        DenseElementsAttr::get(scalarType,
+                               builder.getFloatAttr(elemType, 5.0)));
+    Value nPlusFive = arith::AddFOp::create(builder, loc, nFloat, fiveConst);
+
+    Value scale = arith::DivFOp::create(builder, loc, nFloat, nPlusFive);
+    Value scaleBcast = enzyme::BroadcastOp::create(builder, loc, m2Type, scale,
+                                                   m2Type.getShape());
+    Value scaledCov = arith::MulFOp::create(builder, loc, scaleBcast, cov);
+
+    auto shrinkageBaseConst = arith::ConstantOp::create(
+        builder, loc, scalarType,
+        DenseElementsAttr::get(scalarType,
+                               builder.getFloatAttr(elemType, 1e-3 * 5.0)));
+    Value shrinkage =
+        arith::DivFOp::create(builder, loc, shrinkageBaseConst, nPlusFive);
+
+    if (config.diagonal) {
+      Value shrinkageBcast = enzyme::BroadcastOp::create(
+          builder, loc, m2Type, shrinkage, m2Type.getShape());
+      cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageBcast);
+    } else {
+      Value identity = createIdentityMatrix(builder, loc, m2Type);
+      Value shrinkageBcast = enzyme::BroadcastOp::create(
+          builder, loc, m2Type, shrinkage, m2Type.getShape());
+      Value shrinkageI =
+          arith::MulFOp::create(builder, loc, shrinkageBcast, identity);
+      cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageI);
+    }
+  }
+
+  return cov;
+}
+
