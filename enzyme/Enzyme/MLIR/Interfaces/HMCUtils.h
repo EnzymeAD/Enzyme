@@ -362,6 +362,14 @@ WelfordState updateWelford(OpBuilder &builder, Location loc,
 Value finalizeWelford(OpBuilder &builder, Location loc,
                       const WelfordState &state, const WelfordConfig &config);
 
+struct AdaptWindow {
+  int64_t start;
+  int64_t end;
+};
+
+/// Build warmup adaptation schedule.
+/// TODO: Make customizable
+SmallVector<AdaptWindow> buildAdaptationSchedule(int64_t numSteps);
 } // namespace MCMC
 } // namespace enzyme
 } // namespace mlir
