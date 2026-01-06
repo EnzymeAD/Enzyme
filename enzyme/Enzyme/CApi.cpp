@@ -1703,6 +1703,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         continue;
       }
 
+      if (isa<MemSetInst>(I))
+        continue;
+
       std::string s;
       llvm::raw_string_ostream ss(s);
       ss << "Unknown user of sret-like argument\n";
