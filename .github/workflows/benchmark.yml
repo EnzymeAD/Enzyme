@@ -42,7 +42,7 @@ jobs:
       run: rm -rf build && mkdir build
     - name: cmake
       working-directory: build
-      run: cmake ../enzyme -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+      run: cmake ../enzyme -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DENZYME_ENABLE_BENCHMARKS=On
     - name: make
       working-directory: build
       run: make -j `nproc` LLVMEnzyme-${{ matrix.llvm }}
