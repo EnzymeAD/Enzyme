@@ -4994,6 +4994,14 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
           continue;
         }
       }
+      if (auto PT = dyn_cast<PointerType>(obj->getType())) {
+        if (PT->getAddressSpace() == 13) {
+          if (auto LI = dyn_cast<LoadInst>(obj)) {
+            obj = LI->getOperand(0);
+            continue;
+          }
+        }
+      }
       break;
     }
     auto PT = cast<PointerType>(obj->getType());
