@@ -4978,11 +4978,23 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
   Value *invertedBarrier = nullptr;
   if (needs_post_cache && EnzymeJuliaAddrLoad &&
       anyJuliaObjects(newval->getType())) {
-    auto obj = getBaseObject(origptr);
-    if (auto CI = dyn_cast<CallInst>(obj)) {
-      if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
-        obj = getBaseObject(CI->getArgOperand(0));
+    auto obj = origptr;
+    while (true) {
+      if (auto CI = dyn_cast<CastInst>(obj)) {
+        obj = CI->getOperand(0);
+        continue;
       }
+      if (auto GO = dyn_cast<GetElementPtrInst>(obj)) {
+        obj = GO->getOperand(0);
+        continue;
+      }
+      if (auto CI = dyn_cast<CallInst>(obj)) {
+        if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
+          obj = getBaseObject(CI->getArgOperand(0));
+          continue;
+        }
+      }
+      break;
     }
     auto PT = cast<PointerType>(obj->getType());
     assert(PT->getAddressSpace() != 11 && PT->getAddressSpace() != 13);
