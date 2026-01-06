@@ -497,7 +497,8 @@ void RecursivelyReplaceAddressSpace(
           if (subvals.size()) {
             auto JLT =
                 PointerType::get(StructType::get(SI->getContext(), {}), 10);
-            auto FT = FunctionType::get(JLT, {}, true);
+            auto FT = FunctionType::get(Type::getVoidTy(rep->getContext()),
+                                        {JLT}, true);
             auto wb = B.GetInsertBlock()
                           ->getParent()
                           ->getParent()

@@ -5081,7 +5081,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
               BuilderM.CreateBitCast(invertedBarrier, T_prjlvalue);
         }
 
-        auto FT = FunctionType::get(T_prjlvalue, {}, true);
+        auto FT = FunctionType::get(Type::getVoidTy(newval->getContext()),
+                                    {T_prjlvalue}, true);
         auto wb = BuilderM.GetInsertBlock()
                       ->getParent()
                       ->getParent()
