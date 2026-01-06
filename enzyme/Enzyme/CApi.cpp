@@ -1982,7 +1982,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
       // (https://godbolt.org/z/ebY3exW9K)
 #if LLVM_VERSION_MAJOR >= 16
       if (rerooting) {
-        llvm::errs() << "F: " << *F << "\n";
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Illegal GC setup in which rerooting is required\n";
+        ss << " + F: " << *F << "\n";
+        CustomErrorHandler(s.c_str(), wrap(F), ErrorType::InternalError,
+                           nullptr, nullptr, nullptr);
       }
       assert(!rerooting);
 #endif
