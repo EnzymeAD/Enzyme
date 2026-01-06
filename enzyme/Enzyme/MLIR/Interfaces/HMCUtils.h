@@ -327,6 +327,41 @@ Value getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
 Value getFinalStepSize(OpBuilder &builder, Location loc,
                        const DualAveragingState &state);
 
+/// State for Welford covariance estimation
+struct WelfordState {
+  Value mean;
+  Value m2; // Sum of squared deviations
+  Value n;
+
+  SmallVector<Value> toValues() const { return {mean, m2, n}; }
+  static WelfordState fromValues(ArrayRef<Value> values) {
+    return {values[0], values[1], values[2]};
+  }
+  SmallVector<Type> getTypes() const {
+    return {mean.getType(), m2.getType(), n.getType()};
+  }
+};
+
+/// Configuration for Welford covariance estimation
+struct WelfordConfig {
+  bool diagonal = true;
+  bool regularize = true; // Optional regularization (Stan's shrinkage)
+};
+
+/// Initialize state for Welford covariance estimation.
+WelfordState initWelford(OpBuilder &builder, Location loc, int64_t positionSize,
+                         bool diagonal);
+
+/// Update Welford state with a new sample.
+WelfordState updateWelford(OpBuilder &builder, Location loc,
+                           const WelfordState &state, Value sample,
+                           const WelfordConfig &config);
+
+/// Finalize Welford state to produce sample covariance (returned as inverse
+/// mass matrix).
+Value finalizeWelford(OpBuilder &builder, Location loc,
+                      const WelfordState &state, const WelfordConfig &config);
+
 } // namespace MCMC
 } // namespace enzyme
 } // namespace mlir
