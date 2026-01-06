@@ -83,6 +83,29 @@ Value MCMC::conditionalDump(OpBuilder &builder, Location loc, Value value,
   return value;
 }
 
+/// Creates a 2D identity matrix of the specified type.
+static Value createIdentityMatrix(OpBuilder &builder, Location loc,
+                                  RankedTensorType matrixType) {
+  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
+  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
+         "Expected square matrix type");
+
+  int64_t size = matrixType.getShape()[0];
+  auto elemType = matrixType.getElementType();
+
+  SmallVector<Attribute> values;
+  values.reserve(size * size);
+  for (int64_t i = 0; i < size; ++i) {
+    for (int64_t j = 0; j < size; ++j) {
+      double val = (i == j) ? 1.0 : 0.0;
+      values.push_back(builder.getFloatAttr(elemType, val));
+    }
+  }
+
+  auto denseAttr = DenseElementsAttr::get(matrixType, values);
+  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
+}
+
 Value MCMC::applyInverseMassMatrix(OpBuilder &builder, Location loc,
                                    Value invMass, Value momentum,
                                    RankedTensorType positionType) {
