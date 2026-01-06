@@ -716,7 +716,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                                sample.accept_prob, daConfig);
           currentStepSizeFromDA =
               getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
-          finalStepSizeFromDA = getFinalStepSize(rewriter, loc, updatedDaState);
+          finalStepSizeFromDA =
+              getStepSizeFromDualAveraging(rewriter, loc, updatedDaState, true);
         } else {
           updatedDaState = daStateLoop;
           currentStepSizeFromDA = stepSizeLoop;
