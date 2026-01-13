@@ -734,8 +734,13 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     CI->setMetadata(
         "enzyme_fromstack",
         MDNode::get(CI->getContext(),
-                    {ConstantAsMetadata::get(ConstantInt::get(
-                        IntegerType::get(AI->getContext(), 64), align))}));
+                    {
+                        ConstantAsMetadata::get(ConstantInt::get(
+                            IntegerType::get(AI->getContext(), 64), align)),
+                        ConstantAsMetadata::get(ConstantInt::get(
+                            IntegerType::get(AI->getContext(), 64),
+                            (size_t)AI->getAllocatedType())),
+                    }));
 
     for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
                     "enzymejl_allocart", "enzymejl_allocart_name"})

@@ -77,10 +77,10 @@ declare noalias noundef ptr @calloc(i64 noundef, i64 noundef)
 ; CHECK-NEXT:   %byref.constant.int.022 = alloca i32, align 4
 ; CHECK-NEXT:   %byref.constant.fp.1.023 = alloca double, align 8
 ; CHECK-NEXT:   %[[i1:.+]] = alloca i32, align 4
-; CHECK-NEXT:   %malloccall3 = alloca i8, i64 8, align 8
+; CHECK-NEXT:   %malloccall3 = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %malloccall = alloca i8, i64 1, align 1
-; CHECK-NEXT:   %malloccall2 = alloca i8, i64 8, align 8
-; CHECK-NEXT:   %malloccall1 = alloca i8, i64 4, align 4
+; CHECK-NEXT:   %malloccall2 = alloca double, i64 1, align 8
+; CHECK-NEXT:   %malloccall1 = alloca i32, i64 1, align 4
 ; CHECK-NEXT:   %"calloc'mi" = extractvalue { ptr, ptr, ptr, ptr } %tapeArg, 2
 ; CHECK-NEXT:   %calloc = extractvalue { ptr, ptr, ptr, ptr } %tapeArg, 3
 ; CHECK-NEXT:   store i8 78, ptr %malloccall, align 1
