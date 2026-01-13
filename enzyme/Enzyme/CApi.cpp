@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "CApi.h"
+#include "Utils.h"
 #if LLVM_VERSION_MAJOR >= 16
 #define private public
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -1674,47 +1675,126 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
     return true;
   }
 
-  SmallVector<Value *> todo = {arg};
-
   SmallVector<Value *> storedValues;
 
-  bool legal = true;
-  while (!todo.empty()) {
-    auto cur = todo.pop_back_val();
-    for (auto &U : cur->uses()) {
-      auto I = cast<Instruction>(U.getUser());
-      assert(I->getParent()->getParent() == arg->getParent());
+  auto &DL = arg->getParent()->getParent()->getDataLayout();
+  SmallVector<size_t> sret_offsets;
+  {
+    std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = {
+        {SRetType, {}}};
+    while (!todo.empty()) {
+      auto cur = std::move(todo[0]);
+      todo.pop_front();
+      auto path = std::move(cur.second);
+      auto ty = cur.first;
 
-      if (isPointerArithmeticInst(I)) {
-        todo.emplace_back(I);
-        continue;
-      }
-      if (isa<LoadInst>(I)) {
-        continue;
-      }
-      if (auto SI = dyn_cast<StoreInst>(I)) {
-        assert(SI->getValueOperand() != cur);
-
-        if (CountTrackedPointers(SI->getValueOperand()->getType()).count == 0)
+      if (auto PT = dyn_cast<PointerType>(ty)) {
+        if (!isSpecialPtr(PT))
           continue;
 
-        storedValues.push_back(SI->getValueOperand());
-        anyJLStore = true;
+        SmallVector<Constant *, 1> IdxList;
+        IdxList.push_back(
+            ConstantInt::get(Type::getInt64Ty(PT->getContext()), 0));
+
+        for (auto v : path)
+          IdxList.push_back(
+              ConstantInt::get(Type::getInt32Ty(PT->getContext()), v));
+        auto nullp = ConstantPointerNull::get(PointerType::getUnqual(SRetType));
+        auto gep = ConstantExpr::getGetElementPtr(SRetType, nullp, IdxList);
+
+        if (gep == nullp) {
+          sret_offsets.push_back(0);
+          continue;
+        }
+#if LLVM_VERSION_MAJOR >= 20
+        SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
+        MapVector<Value *, APInt> VariableOffsets;
+#endif
+        auto width = DL.getPointerSize() * 8;
+        APInt Offset(width, 0);
+        bool success = collectOffset(cast<GEPOperator>(gep), DL, width,
+                                     VariableOffsets, Offset);
+        if (!success)
+          llvm_unreachable("Illegal offset collection");
+        sret_offsets.push_back(Offset.getZExtValue());
         continue;
       }
 
-      if (isa<MemSetInst>(I))
+      if (auto AT = dyn_cast<ArrayType>(ty)) {
+        for (size_t i = 0; i < AT->getNumElements(); i++) {
+          std::vector<unsigned> path2(path);
+          path2.push_back(i);
+          todo.emplace_back(AT->getElementType(), path2);
+        }
+        continue;
+      }
+
+      if (auto VT = dyn_cast<VectorType>(ty)) {
+        for (size_t i = 0; i < VT->getElementCount().getKnownMinValue(); i++) {
+          std::vector<unsigned> path2(path);
+          path2.push_back(i);
+          todo.emplace_back(VT->getElementType(), path2);
+        }
+        continue;
+      }
+
+      if (auto ST = dyn_cast<StructType>(ty)) {
+        for (size_t i = 0; i < ST->getNumElements(); i++) {
+          std::vector<unsigned> path2(path);
+          path2.push_back(i);
+          todo.emplace_back(ST->getTypeAtIndex(i), path2);
+        }
+        continue;
+      }
+    }
+  }
+
+  bool legal = true;
+  for (auto &&[I, cur, byteOffset] : findAllUsersOf(arg)) {
+    assert(I->getParent()->getParent() == arg->getParent());
+
+    if (isa<LoadInst>(I)) {
+      continue;
+    }
+    if (auto SI = dyn_cast<StoreInst>(I)) {
+      assert(SI->getValueOperand() != cur);
+
+      if (CountTrackedPointers(SI->getValueOperand()->getType()).count == 0)
         continue;
 
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "Unknown user of sret-like argument\n";
-      CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
-                         wrap(cur), wrap(arg), nullptr);
-      legal = false;
+      storedValues.push_back(SI->getValueOperand());
       anyJLStore = true;
-      break;
+      continue;
     }
+
+    if (isa<MemSetInst>(I))
+      continue;
+
+    if (auto MSI = dyn_cast<MemTransferInst>(I)) {
+      if (auto Len = dyn_cast<ConstantInt>(MSI->getLength())) {
+        bool mlegal = true;
+        for (auto offset : sret_offsets) {
+          if (byteOffset + Len->getSExtValue() <= offset)
+            continue;
+          if (offset + DL.getPointerSize() <= byteOffset)
+            continue;
+          mlegal = false;
+          break;
+        }
+        if (mlegal)
+          break;
+      }
+    }
+
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Unknown user of sret-like argument\n";
+    CustomErrorHandler(ss.str().c_str(), wrap(I), ErrorType::GCRewrite,
+                       wrap(cur), wrap(arg), nullptr);
+    legal = false;
+    anyJLStore = true;
+    break;
   }
 
   if (legal) {

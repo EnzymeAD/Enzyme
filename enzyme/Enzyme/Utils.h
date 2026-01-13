@@ -2502,4 +2502,10 @@ static bool anyJuliaObjects(llvm::Type *T) {
 llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
                                                     llvm::IRBuilder<> &B);
 
+// Find all user instructions of AI, returning tuples of <instruction, value,
+// byte offet from AI> Unlike a simple get users, this will recurse through any
+// constant gep offsets and casts
+llvm::SmallVector<std::tuple<llvm::Instruction *, llvm::Value *, size_t>, 1>
+findAllUsersOf(llvm::Value *AI);
+
 #endif // ENZYME_UTILS_H
