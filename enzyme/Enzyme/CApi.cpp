@@ -1699,10 +1699,13 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         for (auto v : path)
           IdxList.push_back(
               ConstantInt::get(Type::getInt32Ty(PT->getContext()), v));
-        auto gep = ConstantExpr::getGetElementPtr(
-            SRetType,
-            ConstantPointerNull::get(PointerType::getUnqual(SRetType)),
-            IdxList);
+        auto nullp = ConstantPointerNull::get(PointerType::getUnqual(SRetType));
+        auto gep = ConstantExpr::getGetElementPtr(SRetType, nullp, IdxList);
+
+        if (gep == nullp) {
+          sret_offsets.push_back(0);
+          continue;
+        }
 #if LLVM_VERSION_MAJOR >= 20
         SmallMapVector<Value *, APInt, 4> VariableOffsets;
 #else
