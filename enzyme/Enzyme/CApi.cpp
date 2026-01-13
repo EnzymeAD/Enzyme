@@ -1702,7 +1702,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         auto nullp = ConstantPointerNull::get(PointerType::getUnqual(SRetType));
         auto gep = ConstantExpr::getGetElementPtr(SRetType, nullp, IdxList);
 
-        if (gep == nullp) {
+        if (gep == ConstantPointerNull::get(PointerType::getUnqual(PT))) {
           sret_offsets.push_back(0);
           continue;
         }

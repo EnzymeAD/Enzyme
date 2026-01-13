@@ -3129,19 +3129,37 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   llvm_unreachable("Unknown allocation to upgrade");
 
                 Type *elTy = Type::getInt8Ty(call.getContext());
+                if (MD->getNumOperands() == 2) {
+                  elTy = (Type *)cast<ConstantInt>(
+                             cast<ConstantAsMetadata>(MD->getOperand(1))
+                                 ->getValue())
+                             ->getLimitedValue();
+                  Value *tsize = ConstantInt::get(
+                      Size->getType(), (gutils->newFunc->getParent()
+                                            ->getDataLayout()
+                                            .getTypeAllocSizeInBits(elTy) +
+                                        7) /
+                                           8);
+
+                  Size = bb.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                }
                 std::string name = "";
 #if LLVM_VERSION_MAJOR < 17
                 if (call.getContext().supportsTypedPointers()) {
                   for (auto U : call.users()) {
                     if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                      elTy = U->getType()->getPointerElementType();
-                      Value *tsize = ConstantInt::get(
-                          Size->getType(), (gutils->newFunc->getParent()
-                                                ->getDataLayout()
-                                                .getTypeAllocSizeInBits(elTy) +
-                                            7) /
-                                               8);
-                      Size = bb.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                      if (MD->getNumOperands() == 1) {
+                        elTy = U->getType()->getPointerElementType();
+                        Value *tsize = ConstantInt::get(
+                            Size->getType(),
+                            (gutils->newFunc->getParent()
+                                 ->getDataLayout()
+                                 .getTypeAllocSizeInBits(elTy) +
+                             7) /
+                                8);
+
+                        Size = bb.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                      }
                       name = (U->getName() + "'ai").str();
                       break;
                     }
@@ -3333,19 +3351,34 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         B.SetInsertPoint(gutils->inversionAllocs);
       }
       Type *elTy = Type::getInt8Ty(call.getContext());
+      if (MD->getNumOperands() == 2) {
+        elTy = (Type *)cast<ConstantInt>(
+                   cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
+                   ->getLimitedValue();
+        Value *tsize = ConstantInt::get(Size->getType(),
+                                        (gutils->newFunc->getParent()
+                                             ->getDataLayout()
+                                             .getTypeAllocSizeInBits(elTy) +
+                                         7) /
+                                            8);
+        Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+      }
       Instruction *I = nullptr;
 #if LLVM_VERSION_MAJOR < 17
       if (call.getContext().supportsTypedPointers()) {
         for (auto U : call.users()) {
           if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-            elTy = U->getType()->getPointerElementType();
-            Value *tsize = ConstantInt::get(Size->getType(),
-                                            (gutils->newFunc->getParent()
-                                                 ->getDataLayout()
-                                                 .getTypeAllocSizeInBits(elTy) +
-                                             7) /
-                                                8);
-            Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+            if (MD->getNumOperands() == 1) {
+              elTy = U->getType()->getPointerElementType();
+              Value *tsize = ConstantInt::get(
+                  Size->getType(), (gutils->newFunc->getParent()
+                                        ->getDataLayout()
+                                        .getTypeAllocSizeInBits(elTy) +
+                                    7) /
+                                       8);
+
+              Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+            }
             I = gutils->getNewFromOriginal(cast<Instruction>(U));
             break;
           }

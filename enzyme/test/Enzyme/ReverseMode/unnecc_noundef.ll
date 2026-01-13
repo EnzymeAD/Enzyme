@@ -46,7 +46,7 @@ entry:
 
 ; CHECK: define internal void @diffemat(ptr nocapture writeonly %dst, ptr nocapture %"dst'", ptr nocapture readonly align 8 dereferenceable(16) %rhs, ptr nocapture align 8 %"rhs'", { ptr, ptr } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"malloccall'mi" = alloca i8, i64 16, align 8
+; CHECK-NEXT:   %"malloccall'mi" = alloca { ptr, i32 }, i64 1, align 8 
 ; CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr nonnull dereferenceable(16) dereferenceable_or_null(16) %"malloccall'mi", i8 0, i64 16, i1 false)
 ; CHECK-NEXT:   %malloccall = extractvalue { ptr, ptr } %tapeArg, 1
 ; CHECK-NEXT:   %"i15'il_phi" = extractvalue { ptr, ptr } %tapeArg, 0
