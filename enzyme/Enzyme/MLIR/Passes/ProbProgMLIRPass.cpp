@@ -146,6 +146,33 @@ computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
   return positionSize;
 }
 
+static int64_t
+computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
+                                  ArrayAttr selection, Attribute targetSymbol,
+                                  SymbolTableCollection &symbolTable) {
+  int64_t offset = 0;
+
+  for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty())
+      continue;
+
+    auto firstSymbol = address[0];
+
+    if (firstSymbol == targetSymbol) {
+      return offset;
+    }
+
+    SmallVector<Attribute> tailAddresses(address.begin(), address.end());
+    if (!computePositionSizeForAddress(op, fn, tailAddresses, symbolTable,
+                                       offset)) {
+      return -1;
+    }
+  }
+
+  return -1;
+}
+
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   using ProbProgPassBase::ProbProgPassBase;
 
@@ -1787,8 +1814,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       Value originalTrace = NewF.getArgument(0);
       Value position = NewF.getArgument(1);
 
-      size_t positionOffset = 0;
-
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
@@ -1814,6 +1839,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           }
 
           if (isSelected) {
+            int64_t sampleOffset = computeOffsetForSampleInSelection(
+                CI, fn, CI.getSelectionAttr(), sampleOp.getSymbolAttr(),
+                symbolTable);
+            if (sampleOffset < 0) {
+              sampleOp.emitError(
+                  "ProbProg: could not compute offset for sample in selection");
+              return WalkResult::interrupt();
+            }
+
             sampledValues.resize(sampleOp.getNumResults());
             sampledValues[0] = sampleOp.getOperand(0); // RNG state
 
@@ -1832,10 +1866,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               // Reconstruct multi-dimensional tensor from position vector
               auto unflattenOp = enzyme::UnflattenSliceOp::create(
                   rewriter, sampleOp.getLoc(), resultType, position,
-                  rewriter.getI64IntegerAttr(positionOffset));
+                  rewriter.getI64IntegerAttr(sampleOffset));
 
               sampledValues[i] = unflattenOp.getResult();
-              positionOffset += numElements;
+              sampleOffset += numElements;
             }
 
             auto logpdfFn =
