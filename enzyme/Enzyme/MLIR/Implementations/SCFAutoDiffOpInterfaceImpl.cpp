@@ -94,8 +94,12 @@ public:
                                      scf::ForOp otherForOp,
                                      ArrayRef<Value> indOther) {
     IRMapping map;
-    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+
+    auto revBounds = getDimensionBounds(rewriter, otherForOp);
+    auto reversedOther = computeReversedIndices(rewriter, forOp, indOther, revBounds);
+    for (auto &&[f, o] : llvm::zip_equal(indFor, reversedOther)) {
       map.map(f, o);
+    }
 
     Value canIdx = forOp.getBody()->getArgument(0);
     if (!map.contains(canIdx)) {
@@ -652,12 +656,6 @@ struct ParallelOpEnzymeOpsRemover
       }
     }
     return bounds;
-  }
-  static SmallVector<Value>
-  computeReversedIndices(PatternRewriter &rewriter, scf::ParallelOp parOp,
-                         ArrayRef<Value> otherInductionVariable,
-                         ArrayRef<IntOrValue> bounds) {
-    return SmallVector<Value>(otherInductionVariable);
   }
 
   static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
