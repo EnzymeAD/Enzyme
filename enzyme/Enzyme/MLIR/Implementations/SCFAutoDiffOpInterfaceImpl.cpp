@@ -96,7 +96,8 @@ public:
     IRMapping map;
 
     auto revBounds = getDimensionBounds(rewriter, otherForOp);
-    auto reversedOther = computeReversedIndices(rewriter, forOp, indOther, revBounds);
+    auto reversedOther =
+        computeReversedIndices(rewriter, forOp, indOther, revBounds);
     for (auto &&[f, o] : llvm::zip_equal(indFor, reversedOther)) {
       map.map(f, o);
     }
