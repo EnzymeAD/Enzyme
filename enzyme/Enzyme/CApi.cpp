@@ -2666,7 +2666,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C,
       if (jlvalue) {
         auto ld = B.CreateLoad(ty, gep);
         auto SI = B.CreateStore(ld, val);
-        PostCacheStore(SI, B);
+        if (val->getType()->getPointerAddressSpace() == 10)
+          PostCacheStore(SI, B);
       } else {
         copyNonJLValueInto(B, ty, ty, val, {}, ty, gep, {},
                            /*shouldZero*/ false);
