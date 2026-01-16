@@ -1058,7 +1058,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           auto batchedResultType =
               RankedTensorType::get(batchedShape, resultType.getElementType());
 
-          auto unflattenOp = enzyme::UnflattenSliceOp::create(
+          auto unflattenOp = enzyme::RecoverSampleOp::create(
               rewriter, loc, batchedResultType, finalSamplesBuffer,
               rewriter.getI64IntegerAttr(positionOffset));
 
@@ -1864,7 +1864,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               }
 
               // Reconstruct multi-dimensional tensor from position vector
-              auto unflattenOp = enzyme::UnflattenSliceOp::create(
+              auto unflattenOp = enzyme::RecoverSampleOp::create(
                   rewriter, sampleOp.getLoc(), resultType, position,
                   rewriter.getI64IntegerAttr(sampleOffset));
 

@@ -796,11 +796,10 @@ def GetFlattenedSamplesFromTraceOp : Enzyme_Op<"getFlattenedSamplesFromTrace", [
   }];
 }
 
-def UnflattenSliceOp : Enzyme_Op<"unflatten_slice", [Pure]> {
-  let summary = "Extract a slice from a flattened position vector and reshape";
+def RecoverSampleOp : Enzyme_Op<"recover_sample", [Pure]> {
+  let summary = "Recover a sample from a flattened position vector";
   let description = [{
-    Extract a slice from a 1D position vector starting at the given offset,
-    and reconstruct the original multi-dimensional tensor shape (implied by the type).
+    Recover a sample from a flattened position vector.
   }];
 
   let arguments = (ins
@@ -1126,7 +1125,7 @@ def DynamicExtractOp : Enzyme_Op<"dynamic_extract", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $input `[` $index `]` attr-dict `:` functional-type(operands, results)
+    $input `,` $index attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -1144,7 +1143,7 @@ def DynamicUpdateOp : Enzyme_Op<"dynamic_update", [Pure]> {
   let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $input `[` $index `]` `=` $value attr-dict `:` functional-type(operands, results)
+    $input `,` $index `,` $value attr-dict `:` functional-type(operands, results)
   }];
 }
 
