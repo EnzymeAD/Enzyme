@@ -497,6 +497,7 @@ def SampleOp : Enzyme_Op<"sample",
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
+    OptionalAttr<SupportAttr>:$support,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -1095,6 +1096,20 @@ def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
 
   let assemblyFormat = [{
     $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def LogisticOp : Enzyme_Op<"logistic", [Pure]> {
+  let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
+  let description = [{
+    Computes the logistic (sigmoid) function: 1 / (1 + exp(-x)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
   }];
 }
 
