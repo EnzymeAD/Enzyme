@@ -59,6 +59,35 @@ def Transpose : I32EnumAttr<"Transpose",
 
 def TransposeAttr : EnumAttr<Enzyme_Dialect, Transpose, "transpose">;
 
+def SupportKind : I32EnumAttr<"SupportKind",
+    "Domain where distribution density is non-zero",
+    [
+      I32EnumAttrCase<"REAL", 0>,
+      I32EnumAttrCase<"POSITIVE", 1>,
+      I32EnumAttrCase<"UNIT_INTERVAL", 2>,
+      I32EnumAttrCase<"INTERVAL", 3>,
+      I32EnumAttrCase<"GREATER_THAN", 4>,
+      I32EnumAttrCase<"LESS_THAN", 5>,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::enzyme";
+}
+
+def SupportKindAttr : EnumAttr<Enzyme_Dialect, SupportKind, "support_kind">;
+
+def SupportAttr : Enzyme_Attr<"Support", "support"> {
+  let summary = "Distribution support specification for constraint transforms";
+  let description = [{
+    Distribution support specification for constraint transforms.
+  }];
+  let parameters = (ins
+    "SupportKind":$kind,
+    OptionalParameter<"FloatAttr">:$lower_bound,
+    OptionalParameter<"FloatAttr">:$upper_bound
+  );
+  let assemblyFormat = "`<` $kind (`,` `lower` `=` $lower_bound^)? (`,` `upper` `=` $upper_bound^)? `>`";
+}
+
 def HMCConfigAttr : Enzyme_Attr<"HMCConfig", "hmc_config"> {
   let summary = "Configuration for HMC inference";
   let description = [{

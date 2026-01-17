@@ -7,6 +7,7 @@ def : InactiveOp<"enzyme", "AddWeightToTraceOp">;
 def : InactiveOp<"enzyme", "AddSampleToTraceOp">;
 def : InactiveOp<"enzyme", "AddSubtraceOp">;
 def : InactiveOp<"enzyme", "AddRetvalToTraceOp">;
+def : InactiveOp<"enzyme", "DumpOp">;
 def : InactiveOp<"enzyme", "GetSampleFromTraceOp">;
 def : InactiveOp<"enzyme", "GetSubtraceOp">;
 def : InactiveOp<"enzyme", "GetWeightFromTraceOp">;

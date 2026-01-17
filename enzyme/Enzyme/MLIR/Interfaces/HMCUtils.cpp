@@ -60,20 +60,6 @@ SmallVector<Type> NUTSTreeState::getTypes() const {
   return types;
 }
 
-Value MCMC::createSigmoid(OpBuilder &builder, Location loc, Value x) {
-  auto xType = cast<RankedTensorType>(x.getType());
-  auto elemType = xType.getElementType();
-
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, xType,
-      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 1.0)));
-  auto negX = arith::NegFOp::create(builder, loc, x);
-  auto expNegX = math::ExpOp::create(builder, loc, negX);
-  auto onePlusExp = arith::AddFOp::create(builder, loc, oneConst, expNegX);
-  auto result = arith::DivFOp::create(builder, loc, oneConst, onePlusExp);
-  return result;
-}
-
 Value MCMC::conditionalDump(OpBuilder &builder, Location loc, Value value,
                             StringRef label, bool debugDump) {
   if (debugDump) {
@@ -252,6 +238,7 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
 
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
+  Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
 
   SmallVector<Value> updateInputs;
   updateInputs.push_back(rng);
@@ -259,10 +246,13 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
 
   auto updateOp = enzyme::UpdateOp::create(
       builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      updateInputs, ctx.originalTrace, qArg, ctx.selection,
+      updateInputs, ctx.originalTrace, q_constrained, ctx.selection,
       builder.getStringAttr(""));
 
-  Value U = arith::NegFOp::create(builder, loc, updateOp.getWeight());
+  Value negWeight = arith::NegFOp::create(builder, loc, updateOp.getWeight());
+  Value jacobianCorrection =
+      computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
+  Value U = arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
 
   enzyme::YieldOp::create(builder, loc,
                           ValueRange{U, updateOp.getOutputRngState()});
@@ -376,7 +366,8 @@ Value MCMC::computeUniformTransitionProb(OpBuilder &builder, Location loc,
                                          Value currentWeight, Value newWeight) {
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
-  return createSigmoid(builder, loc, weightDiff);
+  return enzyme::LogisticOp::create(builder, loc, weightDiff.getType(),
+                                    weightDiff);
 }
 
 Value MCMC::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
@@ -531,27 +522,42 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto rngForSampleKernel = kernelSplit.getResult(0);
   auto rngForAutodiff = kernelSplit.getResult(1);
 
-  // 1. Extract initial position vector q0
-  auto q0 = enzyme::GetFlattenedSamplesFromTraceOp::create(
+  // 1. Extract initial position vector (constrained)
+  auto q0_constrained = enzyme::GetFlattenedSamplesFromTraceOp::create(
       builder, loc, positionType, ctx.originalTrace, ctx.selection);
 
-  // 2. Compute initial potential energy U0 = -weight
-  auto weight0 = enzyme::GetWeightFromTraceOp::create(builder, loc, scalarType,
-                                                      ctx.originalTrace);
-  Value U0 = arith::NegFOp::create(builder, loc, weight0);
+  // 2. Unconstrain to get position vector for HMC
+  Value q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
+  q0 = conditionalDump(builder, loc, q0, "InitHMC: q0 (unconstrained position)",
+                       debugDump);
 
-  // 3. Compute initial gradient at q0
+  // 3. Compute initial potential energy: U0 = -weight + correction
+  Value weight0 = enzyme::GetWeightFromTraceOp::create(builder, loc, scalarType,
+                                                       ctx.originalTrace);
+  Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
+  Value jacobian0 =
+      computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
+  Value U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+  weight0 = conditionalDump(builder, loc, weight0, "InitHMC: weight from trace",
+                            debugDump);
+  jacobian0 = conditionalDump(builder, loc, jacobian0,
+                              "InitHMC: jacobian correction", debugDump);
+  U0 = conditionalDump(builder, loc, U0,
+                       "InitHMC: U0 (initial potential energy)", debugDump);
+
+  // 4. Compute initial gradient at q0
   auto gradSeedInit = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
   auto autodiffInit = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{rngForAutodiff.getType(), positionType},
+      builder, loc,
+      TypeRange{scalarType, rngForAutodiff.getType(), positionType},
       ValueRange{q0, gradSeedInit},
       builder.getArrayAttr({enzyme::ActivityAttr::get(
           builder.getContext(), enzyme::Activity::enzyme_active)}),
       builder.getArrayAttr(
           {enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_activenoneed),
+                                     enzyme::Activity::enzyme_active),
            enzyme::ActivityAttr::get(builder.getContext(),
                                      enzyme::Activity::enzyme_const)}),
       builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
@@ -560,7 +566,10 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   autodiffInitBlock->addArgument(positionType, loc);
 
   builder.setInsertionPointToStart(autodiffInitBlock);
-  Value q0Arg = autodiffInitBlock->getArgument(0);
+  Value q0Arg = autodiffInitBlock->getArgument(0); // unconstrained position
+  // `UpdateOp` expects a constrained position vector.
+  Value q0Arg_constrained =
+      constrainPosition(builder, loc, q0Arg, ctx.supports);
 
   SmallVector<Value> updateInputsInit;
   updateInputsInit.push_back(rngForAutodiff);
@@ -568,16 +577,24 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   auto updateOpInit = enzyme::UpdateOp::create(
       builder, loc, TypeRange{traceType, scalarType, rngForAutodiff.getType()},
-      ctx.fn, updateInputsInit, ctx.originalTrace, q0Arg, ctx.selection,
-      builder.getStringAttr(""));
-  Value w0 = updateOpInit.getWeight();
-  Value rng0_out = updateOpInit.getOutputRngState();
-  Value U0_init = arith::NegFOp::create(builder, loc, w0);
+      ctx.fn, updateInputsInit, ctx.originalTrace, q0Arg_constrained,
+      ctx.selection, builder.getStringAttr(""));
 
-  enzyme::YieldOp::create(builder, loc, ValueRange{U0_init, rng0_out});
+  Value negWeightInit =
+      arith::NegFOp::create(builder, loc, updateOpInit.getWeight());
+  Value jacobianInit =
+      computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
+  Value U0_init =
+      arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
 
+  enzyme::YieldOp::create(
+      builder, loc, ValueRange{U0_init, updateOpInit.getOutputRngState()});
   builder.setInsertionPointAfter(autodiffInit);
-  Value grad0 = autodiffInit.getResult(1);
+
+  // (U, rng, grad)
+  Value grad0 = autodiffInit.getResult(2);
+  grad0 = conditionalDump(builder, loc, grad0,
+                          "InitHMC: grad0 (initial gradient)", debugDump);
 
   return {q0, U0, grad0, rngForSampleKernel};
 }
@@ -611,7 +628,7 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
   HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
                          ctx.invMass, adjustedStepSize, ctx.trajectoryLength,
-                         ctx.positionSize);
+                         ctx.positionSize, ctx.supports);
 
   // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
@@ -753,21 +770,26 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   Value rngTree = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
-  auto [p0, rngAfterMomentum] =
+  auto momentumResult =
       sampleMomentum(builder, loc, rngMomentum, ctx.invMass, positionType);
+  Value p0 = momentumResult.first;
+  Value rngAfterMomentum = momentumResult.second;
+  p0 = conditionalDump(builder, loc, p0, "SampleNUTS: momentum p0", debugDump);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
   Value K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
+  K0 = conditionalDump(builder, loc, K0,
+                       "SampleNUTS: initial kinetic energy K0", debugDump);
 
   // 4. Compute H0 = U + K0
-  Value H0 =
-      conditionalDump(builder, loc, arith::AddFOp::create(builder, loc, U, K0),
-                      "SampleNUTS: initial Hamiltonian H0", debugDump);
+  Value H0 = arith::AddFOp::create(builder, loc, U, K0);
+  H0 = conditionalDump(builder, loc, H0, "SampleNUTS: initial Hamiltonian H0",
+                       debugDump);
 
   // 5. Initialize NUTS tree state
   NUTSContext iterCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
-                      ctx.invMass, ctx.stepSize, ctx.positionSize, H0,
-                      ctx.maxDeltaEnergy, ctx.maxTreeDepth);
+                      ctx.invMass, ctx.stepSize, ctx.positionSize, ctx.supports,
+                      H0, ctx.maxDeltaEnergy, ctx.maxTreeDepth);
 
   auto zeroI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -837,6 +859,7 @@ HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
   auto traceType = enzyme::TraceType::get(builder.getContext());
+  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
 
   SmallVector<Value> finalUpdateInputs;
   finalUpdateInputs.push_back(rng);
@@ -844,7 +867,7 @@ HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
 
   auto finalUpdateOp = enzyme::UpdateOp::create(
       builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q, ctx.selection,
+      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
       builder.getStringAttr(""));
   Value finalTrace = finalUpdateOp.getUpdatedTrace();
   Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
@@ -866,6 +889,7 @@ HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
   auto scalarType = RankedTensorType::get({}, elemType);
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
   auto traceType = enzyme::TraceType::get(builder.getContext());
+  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
 
   SmallVector<Value> finalUpdateInputs;
   finalUpdateInputs.push_back(rng);
@@ -873,7 +897,7 @@ HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
 
   auto finalUpdateOp = enzyme::UpdateOp::create(
       builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q, ctx.selection,
+      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
       builder.getStringAttr(""));
   Value finalTrace = finalUpdateOp.getUpdatedTrace();
   Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
@@ -927,29 +951,28 @@ NUTSTreeState MCMC::buildBaseTree(OpBuilder &builder, Location loc,
   auto KNew =
       computeKineticEnergy(builder, loc, pNew, ctx.invMass, positionType);
   auto HNew = arith::AddFOp::create(builder, loc, UNew, KNew);
-  Value deltaEnergy =
-      arith::SubFOp::create(builder, loc, HNew, ctx.energyCurrent);
+  Value deltaH = arith::SubFOp::create(builder, loc, HNew, ctx.H0);
 
   // NaN check
   auto isNan = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
-                                     deltaEnergy, deltaEnergy);
+                                     deltaH, deltaH);
   auto infConst = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(
           scalarType, builder.getFloatAttr(
                           elemType, std::numeric_limits<double>::infinity())));
-  deltaEnergy = arith::SelectOp::create(builder, loc, scalarType, isNan,
-                                        infConst, deltaEnergy);
+  deltaH = arith::SelectOp::create(builder, loc, scalarType, isNan, infConst,
+                                   deltaH);
 
-  auto treeWeight = arith::NegFOp::create(builder, loc, deltaEnergy);
+  auto treeWeight = arith::NegFOp::create(builder, loc, deltaH);
 
   // Check for divergence
   auto diverging = arith::CmpFOp::create(
-      builder, loc, arith::CmpFPredicate::OGT, deltaEnergy, ctx.maxDeltaEnergy);
+      builder, loc, arith::CmpFPredicate::OGT, deltaH, ctx.maxDeltaEnergy);
 
-  auto negDeltaEnergy = arith::NegFOp::create(builder, loc, deltaEnergy);
-  auto expNegDelta = math::ExpOp::create(builder, loc, negDeltaEnergy);
-  Value acceptProb =
+  auto negDeltaH = arith::NegFOp::create(builder, loc, deltaH);
+  auto expNegDelta = math::ExpOp::create(builder, loc, negDeltaH);
+  auto acceptProb =
       arith::MinimumFOp::create(builder, loc, oneConst, expNegDelta);
 
   return {.q_left = qNew,
@@ -1788,4 +1811,183 @@ SmallVector<AdaptWindow> MCMC::buildAdaptationSchedule(int64_t numSteps) {
   schedule.push_back({endWindowStart, numSteps - 1});
 
   return schedule;
+}
+
+Value MCMC::unconstrainPosition(OpBuilder &builder, Location loc,
+                                Value constrained,
+                                ArrayRef<SupportInfo> supports) {
+  bool hasConstraints = false;
+  for (const auto &info : supports) {
+    if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
+      hasConstraints = true;
+      break;
+    }
+  }
+  if (!hasConstraints || supports.empty())
+    return constrained;
+
+  auto positionType = cast<RankedTensorType>(constrained.getType());
+  auto elemType = positionType.getElementType();
+  int64_t positionSize = positionType.getShape()[0];
+
+  SmallVector<Value> slices;
+  for (const auto &info : supports) {
+    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto slice =
+        enzyme::RecoverSampleOp::create(builder, loc, sliceType, constrained,
+                                        builder.getI64IntegerAttr(info.offset));
+    Value unconstrainedSlice;
+    if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
+      unconstrainedSlice =
+          transforms::unconstrain(builder, loc, slice, info.support);
+    } else {
+      unconstrainedSlice = slice;
+    }
+
+    slices.push_back(unconstrainedSlice);
+  }
+
+  if (slices.size() == 1) {
+    return slices[0];
+  }
+
+  // TODO: Improve
+  auto resultType = RankedTensorType::get({positionSize}, elemType);
+  Value result = arith::ConstantOp::create(
+      builder, loc, resultType,
+      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
+
+  int64_t offset = 0;
+  for (size_t i = 0; i < slices.size(); ++i) {
+    auto sliceType = cast<RankedTensorType>(slices[i].getType());
+    int64_t sliceSize = sliceType.getShape()[0];
+
+    for (int64_t j = 0; j < sliceSize; ++j) {
+      auto elemIdxType = RankedTensorType::get({}, builder.getI64Type());
+      auto elemIdx = arith::ConstantOp::create(
+          builder, loc, elemIdxType,
+          DenseElementsAttr::get(elemIdxType, builder.getI64IntegerAttr(j)));
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, elemIdxType,
+          DenseElementsAttr::get(elemIdxType,
+                                 builder.getI64IntegerAttr(offset + j)));
+
+      auto elemType0D = RankedTensorType::get({}, elemType);
+      auto elem = enzyme::DynamicExtractOp::create(builder, loc, elemType0D,
+                                                   slices[i], elemIdx);
+
+      result = enzyme::DynamicUpdateOp::create(builder, loc, resultType, result,
+                                               resultIdx, elem);
+    }
+
+    offset += sliceSize;
+  }
+
+  return result;
+}
+
+Value MCMC::constrainPosition(OpBuilder &builder, Location loc,
+                              Value unconstrained,
+                              ArrayRef<SupportInfo> supports) {
+  bool hasConstraints = false;
+  for (const auto &info : supports) {
+    if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
+      hasConstraints = true;
+      break;
+    }
+  }
+  if (!hasConstraints || supports.empty())
+    return unconstrained;
+
+  auto positionType = cast<RankedTensorType>(unconstrained.getType());
+  auto elemType = positionType.getElementType();
+  int64_t positionSize = positionType.getShape()[0];
+
+  SmallVector<Value> slices;
+  for (const auto &info : supports) {
+    auto sliceType = RankedTensorType::get({info.size}, elemType);
+
+    auto slice =
+        enzyme::RecoverSampleOp::create(builder, loc, sliceType, unconstrained,
+                                        builder.getI64IntegerAttr(info.offset));
+
+    Value constrainedSlice;
+    if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
+      constrainedSlice =
+          transforms::constrain(builder, loc, slice, info.support);
+    } else {
+      constrainedSlice = slice;
+    }
+
+    slices.push_back(constrainedSlice);
+  }
+
+  if (slices.size() == 1) {
+    return slices[0];
+  }
+
+  // TODO: Improve
+  auto resultType = RankedTensorType::get({positionSize}, elemType);
+  Value result = arith::ConstantOp::create(
+      builder, loc, resultType,
+      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
+
+  int64_t offset = 0;
+  for (size_t i = 0; i < slices.size(); ++i) {
+    auto sliceType = cast<RankedTensorType>(slices[i].getType());
+    int64_t sliceSize = sliceType.getShape()[0];
+
+    for (int64_t j = 0; j < sliceSize; ++j) {
+      auto elemIdxType = RankedTensorType::get({}, builder.getI64Type());
+      auto elemIdx = arith::ConstantOp::create(
+          builder, loc, elemIdxType,
+          DenseElementsAttr::get(elemIdxType, builder.getI64IntegerAttr(j)));
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, elemIdxType,
+          DenseElementsAttr::get(elemIdxType,
+                                 builder.getI64IntegerAttr(offset + j)));
+
+      auto elemType0D = RankedTensorType::get({}, elemType);
+      auto elem = enzyme::DynamicExtractOp::create(builder, loc, elemType0D,
+                                                   slices[i], elemIdx);
+
+      result = enzyme::DynamicUpdateOp::create(builder, loc, resultType, result,
+                                               resultIdx, elem);
+    }
+
+    offset += sliceSize;
+  }
+
+  return result;
+}
+
+Value MCMC::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
+                                           Value unconstrained,
+                                           ArrayRef<SupportInfo> supports) {
+  auto positionType = cast<RankedTensorType>(unconstrained.getType());
+  auto elemType = positionType.getElementType();
+  auto scalarType = RankedTensorType::get({}, elemType);
+
+  Value total = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+
+  if (supports.empty())
+    return total;
+
+  for (const auto &info : supports) {
+    if (!info.support || info.support.getKind() == enzyme::SupportKind::REAL)
+      continue;
+
+    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto slice =
+        enzyme::RecoverSampleOp::create(builder, loc, sliceType, unconstrained,
+                                        builder.getI64IntegerAttr(info.offset));
+    auto jacobian =
+        transforms::logAbsDetJacobian(builder, loc, slice, info.support);
+
+    total = arith::AddFOp::create(builder, loc, total, jacobian);
+  }
+
+  return total;
 }

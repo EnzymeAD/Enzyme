@@ -173,6 +173,40 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+static SmallVector<MCMC::SupportInfo>
+collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
+                               ArrayAttr selection,
+                               SymbolTableCollection &symbolTable) {
+  SmallVector<MCMC::SupportInfo> supports;
+  int64_t currentOffset = 0;
+
+  for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty())
+      continue;
+
+    // TODO: Handle nested cases
+    if (address.size() != 1)
+      continue;
+
+    auto targetSymbol = address[0];
+    auto sampleOp = findSampleBySymbol(fn, targetSymbol);
+    if (!sampleOp)
+      continue;
+
+    auto supportAttr = sampleOp.getSupportAttr();
+
+    int64_t sampleSize = computeSampleElementCount(op, sampleOp);
+    if (sampleSize < 0)
+      continue;
+
+    supports.emplace_back(currentOffset, sampleSize, supportAttr);
+    currentOffset += sampleSize;
+  }
+
+  return supports;
+}
+
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   using ProbProgPassBase::ProbProgPassBase;
 
@@ -496,6 +530,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       if (positionSize <= 0)
         return failure();
 
+      auto supports =
+          collectSupportInfoForSelection(mcmcOp, fn, selection, symbolTable);
+
       int64_t numSamples = mcmcOp.getNumSamples();
       int64_t thinning = mcmcOp.getThinning();
       int64_t numWarmup = mcmcOp.getNumWarmup();
@@ -547,7 +584,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                          adaptedInvMass, stepSize, trajectoryLength,
-                         positionSize);
+                         positionSize, supports);
       auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
 
       auto runSampleStepWithStepSize =
@@ -556,12 +593,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                          adaptedInvMass, currentStepSize, trajectoryLength,
-                         positionSize);
+                         positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
                               selection, adaptedInvMass, currentStepSize,
-                              positionSize, U, maxDeltaEnergy, maxTreeDepth);
+                              positionSize, supports, U, maxDeltaEnergy,
+                              maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -572,13 +610,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                          adaptedInvMass, currentStepSize, trajectoryLength,
-                         positionSize);
+                         positionSize, supports);
           return PostProcessHMC(builder, loc, q, accepted, rng, ctx);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
                               selection, adaptedInvMass, currentStepSize,
-                              positionSize, initState.U0, maxDeltaEnergy,
-                              maxTreeDepth);
+                              positionSize, supports, initState.U0,
+                              maxDeltaEnergy, maxTreeDepth);
           return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
         }
       };
@@ -596,12 +634,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
                          currentInvMass, currentStepSize, trajectoryLength,
-                         positionSize);
+                         positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
                               selection, currentInvMass, currentStepSize,
-                              positionSize, U, maxDeltaEnergy, maxTreeDepth);
+                              positionSize, supports, U, maxDeltaEnergy,
+                              maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };

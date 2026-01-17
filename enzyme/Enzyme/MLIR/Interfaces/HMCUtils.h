@@ -12,6 +12,7 @@
 #define ENZYME_MLIR_INTERFACES_HMC_UTILS_H
 
 #include "Dialect/Ops.h"
+#include "Interfaces/TransformUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -23,6 +24,15 @@
 namespace mlir {
 namespace enzyme {
 namespace MCMC {
+
+struct SupportInfo {
+  int64_t offset;
+  int64_t size;
+  enzyme::SupportAttr support;
+
+  SupportInfo(int64_t offset, int64_t size, enzyme::SupportAttr support)
+      : offset(offset), size(size), support(support) {}
+};
 
 struct IntegrationResult {
   Value q;
@@ -97,28 +107,40 @@ struct HMCContext {
   Value stepSize;
   Value trajectoryLength;
   int64_t positionSize;
+  SmallVector<SupportInfo> supports;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              Value originalTrace, ArrayAttr selection, Value invMass,
-             Value stepSize, Value trajectoryLength, int64_t positionSize)
+             Value stepSize, Value trajectoryLength, int64_t positionSize,
+             ArrayRef<SupportInfo> supports)
       : fn(fn), fnInputs(fnInputs), originalTrace(originalTrace),
         selection(selection), invMass(invMass), stepSize(stepSize),
-        trajectoryLength(trajectoryLength), positionSize(positionSize) {}
+        trajectoryLength(trajectoryLength), positionSize(positionSize),
+        supports(supports.begin(), supports.end()) {}
+
+  bool hasConstrainedSupports() const {
+    for (const auto &info : supports) {
+      if (info.support && info.support.getKind() != enzyme::SupportKind::REAL)
+        return true;
+    }
+    return false;
+  }
 };
 
 struct NUTSContext : public HMCContext {
-  Value energyCurrent;
+  Value H0;
   Value maxDeltaEnergy;
   int64_t maxTreeDepth;
 
   NUTSContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
               Value originalTrace, ArrayAttr selection, Value invMass,
-              Value stepSize, int64_t positionSize, Value energyCurrent,
-              Value maxDeltaEnergy, int64_t maxTreeDepth)
+              Value stepSize, int64_t positionSize,
+              ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
+              int64_t maxTreeDepth)
       : HMCContext(fn, fnInputs, originalTrace, selection, invMass, stepSize,
-                   /*trajectoryLength=*/Value(), positionSize),
-        energyCurrent(energyCurrent), maxDeltaEnergy(maxDeltaEnergy),
-        maxTreeDepth(maxTreeDepth) {}
+                   /* Unused trajectoryLength */ Value(), positionSize,
+                   supports),
+        H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
 };
 
 struct NUTSTreeState {
@@ -144,9 +166,6 @@ struct SubtreeBuildResult {
   Value pCkpts;
   Value pSumCkpts;
 };
-
-/// Create sigmoid function: 1 / (1 + exp(-x))
-Value createSigmoid(OpBuilder &builder, Location loc, Value x);
 
 /// Conditionally dump a value for debugging.
 /// Emits an enzyme::DumpOp if `debugDump` is true; otherwise has no effect.
@@ -369,6 +388,22 @@ struct AdaptWindow {
 /// Build warmup adaptation schedule.
 /// TODO: Make customizable
 SmallVector<AdaptWindow> buildAdaptationSchedule(int64_t numSteps);
+
+/// Transform an entire position vector from constrained to unconstrained space
+/// based on the support information.
+Value unconstrainPosition(OpBuilder &builder, Location loc, Value constrained,
+                          ArrayRef<SupportInfo> supports);
+
+/// Transform an entire position vector from unconstrained to constrained space.
+/// based on the support information.
+Value constrainPosition(OpBuilder &builder, Location loc, Value unconstrained,
+                        ArrayRef<SupportInfo> supports);
+
+/// Compute total Jacobian correction for the constrain transform over all
+/// position vector slices.
+Value computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
+                                     Value unconstrained,
+                                     ArrayRef<SupportInfo> supports);
 } // namespace MCMC
 } // namespace enzyme
 } // namespace mlir
