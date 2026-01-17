@@ -1014,6 +1014,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto sample = runSampleStepWithStepSize(rewriter, loc, qLoop, gradLoop,
                                               ULoop, rngLoop, adaptedStepSize);
+      auto q_constrained =
+          MCMC::constrainPosition(rewriter, loc, sample.q, supports);
 
       // Storage index: idx = (i - start_idx) / thinning
       auto iMinusStart =
@@ -1034,7 +1036,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto updatedSamplesBuffer = enzyme::DynamicUpdateOp::create(
           rewriter, loc, samplesBufferType, samplesBufferLoop, storageIdx,
-          sample.q);
+          q_constrained);
       auto selectedSamplesBuffer = enzyme::SelectOp::create(
           rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
           samplesBufferLoop);
