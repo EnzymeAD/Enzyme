@@ -216,10 +216,20 @@ const static unsigned constantIntrinsics[] = {
     llvm::Intrinsic::nvvm_barrier0,
 #else
     llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_all,
+    llvm::Intrinsic::nvvm_barrier_cta_sync_aligned_count,
 #endif
+#if LLVM_VERSION_MAJOR < 22
     llvm::Intrinsic::nvvm_barrier0_popc,
     llvm::Intrinsic::nvvm_barrier0_and,
     llvm::Intrinsic::nvvm_barrier0_or,
+#else
+    llvm::Intrinsic::nvvm_barrier_cta_red_and_aligned_all,
+    llvm::Intrinsic::nvvm_barrier_cta_red_and_aligned_count,
+    llvm::Intrinsic::nvvm_barrier_cta_red_or_aligned_all,
+    llvm::Intrinsic::nvvm_barrier_cta_red_or_aligned_count,
+    llvm::Intrinsic::nvvm_barrier_cta_red_popc_aligned_all,
+    llvm::Intrinsic::nvvm_barrier_cta_red_popc_aligned_count,
+#endif
     llvm::Intrinsic::nvvm_membar_cta,
     llvm::Intrinsic::nvvm_membar_gl,
     llvm::Intrinsic::nvvm_membar_sys,
