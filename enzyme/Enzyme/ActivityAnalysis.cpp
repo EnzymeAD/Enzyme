@@ -321,12 +321,22 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::llround,
 #if LLVM_VERSION_MAJOR <= 20
     Intrinsic::nvvm_barrier0,
-#else
+#else 
     Intrinsic::nvvm_barrier_cta_sync_aligned_all,
-#endif
+    Intrinsic::nvvm_barrier_cta_sync_aligned_count,
+#endif 
+#if LLVM_VERSION_MAJOR < 22
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,
+#else
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_count,
+#endif
     Intrinsic::nvvm_membar_cta,
     Intrinsic::nvvm_membar_gl,
     Intrinsic::nvvm_membar_sys,
