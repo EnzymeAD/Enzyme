@@ -19,7 +19,7 @@ declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture r
 ; Function Attrs: nounwind uwtable
 define dso_local void @dmemcpy_align(double* %dst, double* %dstp1, double* %src, i64 %n) local_unnamed_addr #0 {
 entry:
-  tail call void (...) @__enzyme_fwddiff.f64(void (double*, double*, i64)* nonnull @memcpy_align, metadata !"enzyme_width", i64 1, metadata !"enzyme_dup", double* %dst, double* %dstp1, metadata !"enzyme_const", double* %src, i64 %n)
+  tail call void (...) @__enzyme_fwddiff.f64(void (double*, double*, i64)* nonnull @memcpy_align, metadata !"enzyme_dup", double* %dst, double* %dstp1, metadata !"enzyme_const", double* %src, i64 %n)
   ret void
 }
 
