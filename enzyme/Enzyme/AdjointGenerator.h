@@ -3674,7 +3674,7 @@ public:
         if (floatTy && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, salign, isVolatile);
+              length, dalign, isVolatile);
         } else {
           if (dsrc->getType()->isIntegerTy())
             dsrc =
