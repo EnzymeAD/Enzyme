@@ -9970,6 +9970,10 @@ bool GradientUtils::needsCacheWholeAllocation(
               returnedSameValue = true;
             }
           }
+      } else {
+        // Either this is the called function, or this is a jlrooted, either way
+        // continue.
+        continue;
       }
     }
 
