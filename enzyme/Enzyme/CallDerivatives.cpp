@@ -3387,7 +3387,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 #endif
       Value *replacement = B.CreateAlloca(elTy, Size);
       for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                      "enzymejl_allocart", "enzymejl_allocart_name"})
+                      "enzymejl_allocart", "enzymejl_allocart_name",
+                      "enzymejl_gc_alloc_rt"})
         if (auto M = call.getMetadata(MD))
           cast<AllocaInst>(replacement)->setMetadata(MD, M);
       if (I)

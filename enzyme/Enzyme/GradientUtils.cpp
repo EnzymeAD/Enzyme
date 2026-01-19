@@ -3360,7 +3360,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
             for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                            "enzymejl_allocart", "enzymejl_allocart_name"})
+                            "enzymejl_allocart", "enzymejl_allocart_name",
+                            "enzymejl_gc_alloc_rt"})
               if (auto M = I.getMetadata(MD))
                 replacement->setMetadata(MD, M);
             auto Alignment =
