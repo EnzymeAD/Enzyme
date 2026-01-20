@@ -51,7 +51,7 @@ struct CacheInfo {
     }
     (void)nusers;
     assert(nusers == 2); // TODO: support more uses
- }
+  }
 
   Value pushedValue() { return pushOp.getValue(); }
   Type cachedType() {
@@ -759,11 +759,7 @@ public:
           sizes.append(shape.begin(), shape.end());
 
           SmallVector<Value> dynSizes;
-<<<<<<< HEAD
           for (size_t i = reversedIndex.size(); i < newShape.size(); ++i) {
-=======
-          for (int i = reversedIndex.size(); i < newShape.size(); ++i) {
->>>>>>> dfb080b4 (mlir: single memref cache allocation for dynamic sizes)
             // we use memref.dim here to know the size, hopefully further
             // optimization/canonicalizations can just forward the right size
             // here.
