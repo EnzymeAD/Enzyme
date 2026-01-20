@@ -24,6 +24,9 @@
 
 namespace mlir {
 namespace enzyme {
+
+constexpr static llvm::StringLiteral kPreserveCacheAttrName = "preserve_cache";
+
 /// Information about a cache, each cache init should have one corresponding
 /// push and pop.
 struct CacheInfo {
@@ -176,9 +179,7 @@ public:
 
     Block *body = forOp.getBody();
 
-    for (auto &it : *body) {
-      Operation *op = &it;
-
+    body->walk([&](Operation *op) {
       if (auto setOp = dyn_cast<enzyme::SetOp>(op)) {
         if (setOp.getGradient().getDefiningOp()->getBlock() != body)
           updatedGradients.insert(setOp.getGradient());
@@ -195,13 +196,15 @@ public:
         if (info.pushOp->getBlock() == body && info.popOp->getBlock() == body &&
             info.pushOp->isBeforeInBlock(info.popOp)) {
           toDelete.push_back(info);
-          continue;
+          return;
         }
         cachesMap[pushedValue] = info;
 
-        otherForOp = cast<OpName>(info.popOp->getParentOp());
+        if (isa<OpName>(info.popOp->getParentOp())) {
+          otherForOp = cast<OpName>(info.popOp->getParentOp());
+        }
       }
-    }
+    });
 
     while (!toDelete.empty()) {
       CacheInfo info = toDelete.pop_back_val();
@@ -371,7 +374,7 @@ public:
 
       Value pushedValue = info.pushedValue();
       if (mincut)
-        assert(pushedValue.getParentRegion() == &forOp.getRegion());
+        assert(forOp.getRegion().isAncestor(pushedValue.getParentRegion()));
 
       // Otherwise, add a new variable to keep track.
       if (!inductionVariable.size()) {
@@ -583,7 +586,8 @@ public:
     }
     for (auto &info : caches) {
       if (mincut)
-        assert(info.pushedValue().getParentRegion() == &forOp.getRegion());
+        assert(
+            forOp.getRegion().isAncestor(info.pushedValue().getParentRegion()));
 
       Value cache = info.initOp.getResult();
 
@@ -860,6 +864,7 @@ struct IfLikeEnzymeOpsRemover
 
     if (gradients.empty() && pushedCaches.empty())
       return success();
+    bool removeCaches = !op->hasAttr(kPreserveCacheAttrName);
 
     Operation *trueTerm = trueBlock->getTerminator();
     Operation *falseTerm = falseBlock->getTerminator();
@@ -884,19 +889,21 @@ struct IfLikeEnzymeOpsRemover
                                 ValueRange(falseValue));
     }
 
-    for (auto &[pushedValue, info] : pushedCaches) {
-      Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
-                                              pushedValue.getType());
+    if (removeCaches) {
+      for (auto &[pushedValue, info] : pushedCaches) {
+        Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
+                                                pushedValue.getType());
 
-      Value trueValue =
-          pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
-      Value falseValue =
-          pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
+        Value trueValue =
+            pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
+        Value falseValue =
+            pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
 
-      trueTerm->insertOperands(trueTerm->getNumOperands(),
-                               ValueRange(trueValue));
-      falseTerm->insertOperands(falseTerm->getNumOperands(),
-                                ValueRange(falseValue));
+        trueTerm->insertOperands(trueTerm->getNumOperands(),
+                                 ValueRange(trueValue));
+        falseTerm->insertOperands(falseTerm->getNumOperands(),
+                                  ValueRange(falseValue));
+      }
     }
 
     size_t idx = ifOp->getNumResults();
@@ -908,21 +915,23 @@ struct IfLikeEnzymeOpsRemover
       idx++;
     }
 
-    for (auto &[pushedValue, info] : pushedCaches) {
-      enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                             info.initOp.getResult(), ifOp->getResult(idx));
-      rewriter.eraseOp(info.pushOp);
+    if (removeCaches) {
+      for (auto &[pushedValue, info] : pushedCaches) {
+        enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
+                               info.initOp.getResult(), ifOp->getResult(idx));
+        rewriter.eraseOp(info.pushOp);
 
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPoint(info.popOp->getParentOp());
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.popOp->getParentOp());
 
-      auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
-                                          info.popOp.getResult().getType(),
-                                          info.popOp.getCache());
-      rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
-      rewriter.eraseOp(info.popOp);
+        auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                            info.popOp.getResult().getType(),
+                                            info.popOp.getCache());
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+        rewriter.eraseOp(info.popOp);
 
-      idx++;
+        idx++;
+      }
     }
 
     return success();
