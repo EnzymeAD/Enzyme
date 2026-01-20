@@ -93,6 +93,48 @@ static Value createIdentityMatrix(OpBuilder &builder, Location loc,
   return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
 }
 
+/// Creates a permutation matrix of size n x n.
+static Value createPermutationMatrix(OpBuilder &builder, Location loc,
+                                     RankedTensorType matrixType) {
+  assert(matrixType.getRank() == 2 && "Expected 2D tensor type");
+  assert(matrixType.getShape()[0] == matrixType.getShape()[1] &&
+         "Expected square matrix type");
+
+  int64_t size = matrixType.getShape()[0];
+  auto elemType = matrixType.getElementType();
+
+  SmallVector<Attribute> values;
+  values.reserve(size * size);
+  for (int64_t i = 0; i < size; ++i) {
+    for (int64_t j = 0; j < size; ++j) {
+      double val = (j == size - 1 - i) ? 1.0 : 0.0;
+      values.push_back(builder.getFloatAttr(elemType, val));
+    }
+  }
+
+  auto denseAttr = DenseElementsAttr::get(matrixType, values);
+  return arith::ConstantOp::create(builder, loc, matrixType, denseAttr);
+}
+
+/// Computes A[::-1, ::-1] using permutation matrix through P @ A @ P.
+static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
+                                   Value matrix) {
+  auto matrixType = cast<RankedTensorType>(matrix.getType());
+  auto P = createPermutationMatrix(builder, loc, matrixType);
+
+  // PA = P @ A
+  auto PA = enzyme::DotOp::create(
+      builder, loc, matrixType, P, matrix, builder.getDenseI64ArrayAttr({}),
+      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
+      builder.getDenseI64ArrayAttr({0}));
+
+  // PAP = PA @ P
+  return enzyme::DotOp::create(
+      builder, loc, matrixType, PA, P, builder.getDenseI64ArrayAttr({}),
+      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
+      builder.getDenseI64ArrayAttr({0}));
+}
+
 Value MCMC::applyInverseMassMatrix(OpBuilder &builder, Location loc,
                                    Value invMass, Value momentum,
                                    RankedTensorType positionType) {
@@ -141,6 +183,49 @@ Value MCMC::computeKineticEnergy(OpBuilder &builder, Location loc,
   return arith::MulFOp::create(builder, loc, halfConst, pDotV);
 }
 
+Value MCMC::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
+                                  Value invMass,
+                                  RankedTensorType positionType) {
+  if (!invMass) {
+    return Value();
+  }
+
+  auto invMassType = cast<RankedTensorType>(invMass.getType());
+  auto elemType = invMassType.getElementType();
+
+  if (invMassType.getRank() == 1) {
+    // Diagonal: mass_matrix_sqrt = 1/sqrt(invMass)
+    auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
+    auto onesVector = arith::ConstantOp::create(
+        builder, loc, invMassType,
+        DenseElementsAttr::get(invMassType,
+                               builder.getFloatAttr(elemType, 1.0)));
+    return arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
+  } else {
+    // Dense: mass_matrix_sqrt = M^{1/2}
+    // TODO: improve
+    // Reference:
+    // https://github.com/pyro-ppl/numpyro/blob/6a9cb9a530fe53897edb6c472368e58965b034e4/numpyro/infer/hmc_util.py#L499
+    int64_t n = invMassType.getShape()[0];
+    auto reversedInvMass = reverseRowsAndColumns(builder, loc, invMass);
+    auto L_reversed =
+        enzyme::CholeskyOp::create(builder, loc, invMassType, reversedInvMass,
+                                   /*lower=*/builder.getBoolAttr(true));
+    auto massMatrixSqrtInvT = reverseRowsAndColumns(builder, loc, L_reversed);
+    auto identityMatrix = createIdentityMatrix(builder, loc, invMassType);
+    auto massMatrixSqrt = enzyme::TriangularSolveOp::create(
+        builder, loc, invMassType, massMatrixSqrtInvT, identityMatrix,
+        /*left_side=*/builder.getBoolAttr(true),
+        /*lower=*/builder.getBoolAttr(false),
+        /*unit_diagonal=*/builder.getBoolAttr(false),
+        /*transpose_a=*/
+        enzyme::TransposeAttr::get(builder.getContext(),
+                                   enzyme::Transpose::TRANSPOSE));
+
+    return massMatrixSqrt;
+  }
+}
+
 std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
                                              Value rng, Value invMass,
                                              Value massMatrixSqrt,
@@ -169,41 +254,22 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
   auto rngOut = randomOp.getOutputRngState();
   auto eps = randomOp.getResult();
 
-  if (!invMass) {
+  if (!massMatrixSqrt) {
     return {eps, rngOut};
   }
 
-  auto invMassType = cast<RankedTensorType>(invMass.getType());
+  auto massMatrixSqrtType = cast<RankedTensorType>(massMatrixSqrt.getType());
 
-  if (invMassType.getRank() == 1) {
-    // Diagonal: p = (1/sqrt(invMass)) * eps = sqrt(M) * eps
-    auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
-    auto invMassElemType = invMassType.getElementType();
-    auto onesVector = arith::ConstantOp::create(
-        builder, loc, invMassType,
-        DenseElementsAttr::get(invMassType,
-                               builder.getFloatAttr(invMassElemType, 1.0)));
-    auto massMatrixSqrt =
-        arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
+  if (massMatrixSqrtType.getRank() == 1) {
+    // Diagonal: p = massMatrixSqrt * eps (element-wise)
     auto p = arith::MulFOp::create(builder, loc, massMatrixSqrt, eps);
     return {p, rngOut};
   } else {
-    // Dense: p ~ N(0, M)
-    // Compute L = chol(invMass), so that invMass = L @ L^T
-    // Therefore, M = invMass^{-1} = (L @ L^T)^{-1} = L^{-T} @ L^{-1}
-    // Then we can solve L^T @ p = eps for p, i.e., p = L^{-T} @ eps
-
-    auto L = enzyme::CholeskyOp::create(builder, loc, invMassType, invMass,
-                                        /*lower=*/builder.getBoolAttr(true));
-    auto p = enzyme::TriangularSolveOp::create(
-        builder, loc, positionType, L, eps,
-        /*left_side=*/builder.getBoolAttr(true),
-        /*lower=*/builder.getBoolAttr(true),
-        /*unit_diagonal=*/builder.getBoolAttr(false),
-        /*transpose_a=*/
-        enzyme::TransposeAttr::get(builder.getContext(),
-                                   enzyme::Transpose::TRANSPOSE));
-
+    // Dense: p = massMatrixSqrt @ eps
+    auto p = enzyme::DotOp::create(
+        builder, loc, positionType, massMatrixSqrt, eps,
+        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
+        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
     return {p, rngOut};
   }
 }

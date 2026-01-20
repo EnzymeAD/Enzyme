@@ -186,9 +186,11 @@ Value applyInverseMassMatrix(OpBuilder &builder, Location loc, Value invMass,
 Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
                            Value invMass, RankedTensorType positionType);
 
-/// Samples momentum from `N(0, M)`
-/// If `invMass` is nullptr, samples from `N(0, I)` (assumes identity).
-/// Otherwise, handles either a diagonal or dense inverse mass matrix.
+/// Computes the square root of the mass matrix from the inverse mass matrix.
+Value computeMassMatrixSqrt(OpBuilder &builder, Location loc, Value invMass,
+                            RankedTensorType positionType);
+
+/// Samples momentum from `N(0, M)` where M is the mass matrix.
 /// Returns `(momentum, updated_rng_state)`.
 std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
                                        Value rng, Value invMass,
