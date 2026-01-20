@@ -104,6 +104,7 @@ struct HMCContext {
   Value originalTrace;
   ArrayAttr selection;
   Value invMass;
+  Value massMatrixSqrt;
   Value stepSize;
   Value trajectoryLength;
   int64_t positionSize;
@@ -111,12 +112,13 @@ struct HMCContext {
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              Value originalTrace, ArrayAttr selection, Value invMass,
-             Value stepSize, Value trajectoryLength, int64_t positionSize,
-             ArrayRef<SupportInfo> supports)
+             Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
+             int64_t positionSize, ArrayRef<SupportInfo> supports)
       : fn(fn), fnInputs(fnInputs), originalTrace(originalTrace),
-        selection(selection), invMass(invMass), stepSize(stepSize),
-        trajectoryLength(trajectoryLength), positionSize(positionSize),
-        supports(supports.begin(), supports.end()) {}
+        selection(selection), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
+        stepSize(stepSize), trajectoryLength(trajectoryLength),
+        positionSize(positionSize), supports(supports.begin(), supports.end()) {
+  }
 
   bool hasConstrainedSupports() const {
     for (const auto &info : supports) {
@@ -134,10 +136,11 @@ struct NUTSContext : public HMCContext {
 
   NUTSContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
               Value originalTrace, ArrayAttr selection, Value invMass,
-              Value stepSize, int64_t positionSize,
+              Value massMatrixSqrt, Value stepSize, int64_t positionSize,
               ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
               int64_t maxTreeDepth)
-      : HMCContext(fn, fnInputs, originalTrace, selection, invMass, stepSize,
+      : HMCContext(fn, fnInputs, originalTrace, selection, invMass,
+                   massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize,
                    supports),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
@@ -189,6 +192,7 @@ Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
 /// Returns `(momentum, updated_rng_state)`.
 std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
                                        Value rng, Value invMass,
+                                       Value massMatrixSqrt,
                                        RankedTensorType positionType);
 
 /// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`

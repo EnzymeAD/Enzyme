@@ -143,6 +143,7 @@ Value MCMC::computeKineticEnergy(OpBuilder &builder, Location loc,
 
 std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
                                              Value rng, Value invMass,
+                                             Value massMatrixSqrt,
                                              RankedTensorType positionType) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
@@ -527,23 +528,15 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
       builder, loc, positionType, ctx.originalTrace, ctx.selection);
 
   // 2. Unconstrain to get position vector for HMC
-  Value q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
-  q0 = conditionalDump(builder, loc, q0, "InitHMC: q0 (unconstrained position)",
-                       debugDump);
+  auto q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
 
   // 3. Compute initial potential energy: U0 = -weight + correction
-  Value weight0 = enzyme::GetWeightFromTraceOp::create(builder, loc, scalarType,
-                                                       ctx.originalTrace);
-  Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
-  Value jacobian0 =
+  auto weight0 = enzyme::GetWeightFromTraceOp::create(builder, loc, scalarType,
+                                                      ctx.originalTrace);
+  auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
+  auto jacobian0 =
       computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
-  Value U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
-  weight0 = conditionalDump(builder, loc, weight0, "InitHMC: weight from trace",
-                            debugDump);
-  jacobian0 = conditionalDump(builder, loc, jacobian0,
-                              "InitHMC: jacobian correction", debugDump);
-  U0 = conditionalDump(builder, loc, U0,
-                       "InitHMC: U0 (initial potential energy)", debugDump);
+  auto U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
 
   // 4. Compute initial gradient at q0
   auto gradSeedInit = arith::ConstantOp::create(
@@ -566,10 +559,9 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   autodiffInitBlock->addArgument(positionType, loc);
 
   builder.setInsertionPointToStart(autodiffInitBlock);
-  Value q0Arg = autodiffInitBlock->getArgument(0); // unconstrained position
+  auto q0Arg = autodiffInitBlock->getArgument(0); // unconstrained position
   // `UpdateOp` expects a constrained position vector.
-  Value q0Arg_constrained =
-      constrainPosition(builder, loc, q0Arg, ctx.supports);
+  auto q0Arg_constrained = constrainPosition(builder, loc, q0Arg, ctx.supports);
 
   SmallVector<Value> updateInputsInit;
   updateInputsInit.push_back(rngForAutodiff);
@@ -580,11 +572,11 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
       ctx.fn, updateInputsInit, ctx.originalTrace, q0Arg_constrained,
       ctx.selection, builder.getStringAttr(""));
 
-  Value negWeightInit =
+  auto negWeightInit =
       arith::NegFOp::create(builder, loc, updateOpInit.getWeight());
-  Value jacobianInit =
+  auto jacobianInit =
       computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-  Value U0_init =
+  auto U0_init =
       arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
 
   enzyme::YieldOp::create(
@@ -592,9 +584,7 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointAfter(autodiffInit);
 
   // (U, rng, grad)
-  Value grad0 = autodiffInit.getResult(2);
-  grad0 = conditionalDump(builder, loc, grad0,
-                          "InitHMC: grad0 (initial gradient)", debugDump);
+  auto grad0 = autodiffInit.getResult(2);
 
   return {q0, U0, grad0, rngForSampleKernel};
 }
@@ -612,43 +602,35 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   // 0. Compute num_steps and adjusted step_size
   // num_steps = ceil(trajectory_length / step_size)
   // adjusted_step_size = trajectory_length / num_steps
-  Value trajDivStep =
+  auto trajDivStep =
       arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
-  Value numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
-  Value numSteps =
+  auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
+  auto numSteps =
       arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
-  Value adjustedStepSize =
+  auto adjustedStepSize =
       arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
 
-  adjustedStepSize =
-      conditionalDump(builder, loc, adjustedStepSize,
-                      "SampleHMC: adjusted step size", debugDump);
-  numSteps = conditionalDump(builder, loc, numSteps, "SampleHMC: num_steps",
-                             debugDump);
-
   HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
-                         ctx.invMass, adjustedStepSize, ctx.trajectoryLength,
-                         ctx.positionSize, ctx.supports);
+                         ctx.invMass, ctx.massMatrixSqrt, adjustedStepSize,
+                         ctx.trajectoryLength, ctx.positionSize, ctx.supports);
 
   // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
       rng);
-  Value rngNext = sampleKernelSplit.getResult(0);
-  Value rngMomentum = sampleKernelSplit.getResult(1);
-  Value rngTransition = sampleKernelSplit.getResult(2);
+  auto rngNext = sampleKernelSplit.getResult(0);
+  auto rngMomentum = sampleKernelSplit.getResult(1);
+  auto rngTransition = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
-  auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, positionType);
+  auto [p0, rngAfterMomentum] = sampleMomentum(
+      builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt, positionType);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  Value K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
+  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
 
   // 4. Compute H0 = U + K0
-  Value H0 =
-      conditionalDump(builder, loc, arith::AddFOp::create(builder, loc, U, K0),
-                      "SampleHMC: initial Hamiltonian H0", debugDump);
+  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
 
   // 5. Leapfrog integration loop
   auto direction = arith::ConstantOp::create(
@@ -678,11 +660,10 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   loopBody->addArgument(rngTransition.getType(), loc); // rng
 
   builder.setInsertionPointToStart(loopBody);
-  Value qLoop = loopBody->getArgument(1);
-  Value pLoop = loopBody->getArgument(2);
-  Value gradLoop = loopBody->getArgument(3);
-  // loopBody->getArgument(4) is U
-  Value rngLoop = loopBody->getArgument(5);
+  auto qLoop = loopBody->getArgument(1);
+  auto pLoop = loopBody->getArgument(2);
+  auto gradLoop = loopBody->getArgument(3);
+  auto rngLoop = loopBody->getArgument(5);
 
   IntegratorState leaf = {qLoop, pLoop, gradLoop};
   auto step = computeIntegrationStep(builder, loc, leaf, rngLoop, direction,
@@ -693,20 +674,16 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, ValueRange{step.q, step.p, step.grad, step.U, step.rng});
 
   builder.setInsertionPointAfter(forLoopOp);
-  Value qProposal = forLoopOp.getResult(0);
-  Value pProposal = forLoopOp.getResult(1);
-  Value gradProposal = forLoopOp.getResult(2);
-  Value UProposal = forLoopOp.getResult(3);
-  Value rngAfterLeapfrog = forLoopOp.getResult(4);
+  auto qProposal = forLoopOp.getResult(0);
+  auto pProposal = forLoopOp.getResult(1);
+  auto gradProposal = forLoopOp.getResult(2);
+  auto UProposal = forLoopOp.getResult(3);
+  auto rngAfterLeapfrog = forLoopOp.getResult(4);
 
   // 6. Compute K1, H1 for proposal
-  UProposal = conditionalDump(builder, loc, UProposal, "SampleHMC: U1 proposal",
-                              debugDump);
-
-  Value K1 =
+  auto K1 =
       computeKineticEnergy(builder, loc, pProposal, ctx.invMass, positionType);
-  Value H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
-  H1 = conditionalDump(builder, loc, H1, "SampleHMC: H1 proposal", debugDump);
+  auto H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
 
   // 7. MH accept/reject
   auto zeroConst = arith::ConstantOp::create(
@@ -719,10 +696,7 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   // α = min(1, exp(H0 - H1))
   auto dH = arith::SubFOp::create(builder, loc, H0, H1);
   auto expDH = math::ExpOp::create(builder, loc, dH);
-  Value accProb = arith::MinimumFOp::create(builder, loc, oneConst, expDH);
-
-  accProb = conditionalDump(builder, loc, accProb, "SampleHMC: accept prob",
-                            debugDump);
+  auto accProb = arith::MinimumFOp::create(builder, loc, oneConst, expDH);
 
   // u ~ Uniform(0, 1)
   auto randomOp = enzyme::RandomOp::create(
@@ -730,23 +704,20 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
       rngAfterLeapfrog, zeroConst, oneConst,
       enzyme::RngDistributionAttr::get(builder.getContext(),
                                        enzyme::RngDistribution::UNIFORM));
-  Value rngFinal = randomOp.getOutputRngState();
-  Value randUniform = randomOp.getResult();
+  auto rngFinal = randomOp.getOutputRngState();
+  auto randUniform = randomOp.getResult();
 
   // accepted = u < α
   auto acceptedTensor = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
   // 8. Select between original and proposal
-  Value qFinal = enzyme::SelectOp::create(builder, loc, positionType,
-                                          acceptedTensor, qProposal, q);
-  Value gradFinal = enzyme::SelectOp::create(
-      builder, loc, positionType, acceptedTensor, gradProposal, grad);
-  Value UFinal = enzyme::SelectOp::create(builder, loc, scalarType,
-                                          acceptedTensor, UProposal, U);
-
-  qFinal =
-      conditionalDump(builder, loc, qFinal, "SampleHMC: q final", debugDump);
+  auto qFinal = enzyme::SelectOp::create(builder, loc, positionType,
+                                         acceptedTensor, qProposal, q);
+  auto gradFinal = enzyme::SelectOp::create(builder, loc, positionType,
+                                            acceptedTensor, gradProposal, grad);
+  auto UFinal = enzyme::SelectOp::create(builder, loc, scalarType,
+                                         acceptedTensor, UProposal, U);
 
   return {qFinal, gradFinal, UFinal, acceptedTensor, accProb, rngNext};
 }
@@ -765,31 +736,25 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
       rng);
-  Value rngNext = sampleKernelSplit.getResult(0);
-  Value rngMomentum = sampleKernelSplit.getResult(1);
-  Value rngTree = sampleKernelSplit.getResult(2);
+  auto rngNext = sampleKernelSplit.getResult(0);
+  auto rngMomentum = sampleKernelSplit.getResult(1);
+  auto rngTree = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
-  auto momentumResult =
-      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, positionType);
-  Value p0 = momentumResult.first;
-  Value rngAfterMomentum = momentumResult.second;
-  p0 = conditionalDump(builder, loc, p0, "SampleNUTS: momentum p0", debugDump);
+  auto [p0, rngAfterMomentum] = sampleMomentum(
+      builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt, positionType);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
-  Value K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
-  K0 = conditionalDump(builder, loc, K0,
-                       "SampleNUTS: initial kinetic energy K0", debugDump);
+  auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
 
   // 4. Compute H0 = U + K0
-  Value H0 = arith::AddFOp::create(builder, loc, U, K0);
-  H0 = conditionalDump(builder, loc, H0, "SampleNUTS: initial Hamiltonian H0",
-                       debugDump);
+  auto H0 = arith::AddFOp::create(builder, loc, U, K0);
 
   // 5. Initialize NUTS tree state
   NUTSContext iterCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
-                      ctx.invMass, ctx.stepSize, ctx.positionSize, ctx.supports,
-                      H0, ctx.maxDeltaEnergy, ctx.maxTreeDepth);
+                      ctx.invMass, ctx.massMatrixSqrt, ctx.stepSize,
+                      ctx.positionSize, ctx.supports, H0, ctx.maxDeltaEnergy,
+                      ctx.maxTreeDepth);
 
   auto zeroI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -823,11 +788,6 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   // 6. Build NUTS tree
   auto finalTree = buildTree(builder, loc, initialTree, iterCtx, debugDump);
 
-  conditionalDump(builder, loc, finalTree.q_proposal,
-                  "SampleNUTS: final proposal", debugDump);
-  conditionalDump(builder, loc, finalTree.depth, "SampleNUTS: tree depth",
-                  debugDump);
-
   // 7. NUTS always accepts the proposal (implicit acceptance in the tree)
   auto trueConst = arith::ConstantOp::create(
       builder, loc, i1TensorType,
@@ -841,11 +801,8 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
       arith::MaxSIOp::create(builder, loc, finalTree.num_proposals, oneI64);
   auto numProposalsFloat =
       arith::SIToFPOp::create(builder, loc, scalarType, numProposalsClamped);
-  Value meanAcceptProb = arith::DivFOp::create(
+  auto meanAcceptProb = arith::DivFOp::create(
       builder, loc, finalTree.sum_accept_probs, numProposalsFloat);
-
-  conditionalDump(builder, loc, meanAcceptProb,
-                  "SampleNUTS: mean acceptance probability", debugDump);
 
   return {finalTree.q_proposal, finalTree.grad_proposal,
           finalTree.U_proposal, trueConst,
@@ -869,8 +826,8 @@ HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
       finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
       builder.getStringAttr(""));
-  Value finalTrace = finalUpdateOp.getUpdatedTrace();
-  Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
+  auto finalTrace = finalUpdateOp.getUpdatedTrace();
+  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
   auto selectedTrace = enzyme::SelectOp::create(
       builder, loc, traceType, accepted, finalTrace, ctx.originalTrace);
@@ -899,8 +856,8 @@ HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
       builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
       finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
       builder.getStringAttr(""));
-  Value finalTrace = finalUpdateOp.getUpdatedTrace();
-  Value rngAfterUpdate = finalUpdateOp.getOutputRngState();
+  auto finalTrace = finalUpdateOp.getUpdatedTrace();
+  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
 
   // NUTS always accepts (implicit in tree selection)
   auto acceptedTensor = arith::ConstantOp::create(
@@ -1100,74 +1057,30 @@ SubtreeBuildResult MCMC::buildIterativeSubtree(OpBuilder &builder, Location loc,
   NUTSTreeState newLeaf =
       buildBaseTree(builder, loc, leaf, rngNext, direction, ctx);
 
-  // Tree combine using uniform transition kernel
-  NUTSTreeState combinedTree =
-      combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
-                   /*biased=*/false, ctx);
-
   // First leaf check
   auto isFirstLeaf = arith::CmpIOp::create(
       builder, loc, arith::CmpIPredicate::eq, bodyTree.num_proposals, zeroI64);
 
-  // Select between `newLeaf` (first iteration) and `combinedTree` (subsequent)
-  auto positionType = RankedTensorType::get(
-      {ctx.positionSize},
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType());
-  auto scalarType = RankedTensorType::get(
-      {}, cast<RankedTensorType>(ctx.stepSize.getType()).getElementType());
+  SmallVector<Type> treeTypes = newLeaf.getTypes();
+  auto ifOp = enzyme::IfOp::create(builder, loc, treeTypes, isFirstLeaf);
+  {
+    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
+    builder.setInsertionPointToStart(trueBranch);
+    enzyme::YieldOp::create(builder, loc, newLeaf.toValues());
+  }
+  {
+    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
+    builder.setInsertionPointToStart(falseBranch);
+    NUTSTreeState combinedTree =
+        combineTrees(builder, loc, bodyTree, newLeaf, direction, rngCombine,
+                     /*biased=*/false, ctx);
+    enzyme::YieldOp::create(builder, loc, combinedTree.toValues());
+  }
 
-  NUTSTreeState updatedTree;
-  updatedTree.q_left =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.q_left, combinedTree.q_left);
-  updatedTree.p_left =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.p_left, combinedTree.p_left);
-  updatedTree.grad_left =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.grad_left, combinedTree.grad_left);
-  updatedTree.q_right =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.q_right, combinedTree.q_right);
-  updatedTree.p_right =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.p_right, combinedTree.p_right);
-  updatedTree.grad_right =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.grad_right, combinedTree.grad_right);
-  updatedTree.q_proposal =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.q_proposal, combinedTree.q_proposal);
-  updatedTree.grad_proposal = enzyme::SelectOp::create(
-      builder, loc, positionType, isFirstLeaf, newLeaf.grad_proposal,
-      combinedTree.grad_proposal);
-  updatedTree.p_sum =
-      enzyme::SelectOp::create(builder, loc, positionType, isFirstLeaf,
-                               newLeaf.p_sum, combinedTree.p_sum);
-  updatedTree.U_proposal =
-      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
-                               newLeaf.U_proposal, combinedTree.U_proposal);
-  updatedTree.H_proposal =
-      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
-                               newLeaf.H_proposal, combinedTree.H_proposal);
-  updatedTree.depth =
-      enzyme::SelectOp::create(builder, loc, i64TensorType, isFirstLeaf,
-                               newLeaf.depth, combinedTree.depth);
-  updatedTree.weight =
-      enzyme::SelectOp::create(builder, loc, scalarType, isFirstLeaf,
-                               newLeaf.weight, combinedTree.weight);
-  updatedTree.turning =
-      enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
-                               newLeaf.turning, combinedTree.turning);
-  updatedTree.diverging =
-      enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
-                               newLeaf.diverging, combinedTree.diverging);
-  updatedTree.sum_accept_probs = enzyme::SelectOp::create(
-      builder, loc, scalarType, isFirstLeaf, newLeaf.sum_accept_probs,
-      combinedTree.sum_accept_probs);
-  updatedTree.num_proposals = enzyme::SelectOp::create(
-      builder, loc, i64TensorType, isFirstLeaf, newLeaf.num_proposals,
-      combinedTree.num_proposals);
+  builder.setInsertionPointAfter(ifOp);
+  NUTSTreeState updatedTree = NUTSTreeState::fromValues(
+      SmallVector<Value>(ifOp.getResults().begin(), ifOp.getResults().end()));
+  updatedTree.rng = rngNext;
 
   // Update and check iterative turning
   auto [ckptIdxMin, ckptIdxMax] =
@@ -1182,7 +1095,6 @@ SubtreeBuildResult MCMC::buildIterativeSubtree(OpBuilder &builder, Location loc,
   updatedTree.turning =
       enzyme::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
                                newLeaf.turning, iterativeTurning);
-  updatedTree.rng = rngNext;
 
   auto nextLeafIdx = arith::AddIOp::create(builder, loc, bodyLeafIdx, oneI64);
 
@@ -1463,17 +1375,33 @@ MCMC::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
                                        leafIdxBit0, zeroI64);
 
   auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
-  auto pCkptsShape = pCkptsType.getShape();
 
-  auto updatedPCkpts = enzyme::DynamicUpdateOp::create(builder, loc, pCkptsType,
-                                                       pCkpts, ckptIdxMax, p);
-  auto updatedPSumCkpts = enzyme::DynamicUpdateOp::create(
-      builder, loc, pCkptsType, pSumCkpts, ckptIdxMax, pSum);
+  // Compute updates only on even leafIdx
+  SmallVector<Type> ifResultTypes = {pCkptsType, pCkptsType};
+  auto ifOp = enzyme::IfOp::create(builder, loc, ifResultTypes, isEven);
+  {
+    Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
+    builder.setInsertionPointToStart(trueBranch);
 
-  Value finalPCkpts = enzyme::SelectOp::create(builder, loc, pCkptsType, isEven,
-                                               updatedPCkpts, pCkpts);
-  Value finalPSumCkpts = enzyme::SelectOp::create(
-      builder, loc, pCkptsType, isEven, updatedPSumCkpts, pSumCkpts);
+    auto updatedPCkpts = enzyme::DynamicUpdateOp::create(
+        builder, loc, pCkptsType, pCkpts, ckptIdxMax, p);
+    auto updatedPSumCkpts = enzyme::DynamicUpdateOp::create(
+        builder, loc, pCkptsType, pSumCkpts, ckptIdxMax, pSum);
+
+    enzyme::YieldOp::create(builder, loc,
+                            ValueRange{updatedPCkpts, updatedPSumCkpts});
+  }
+  {
+    Block *falseBranch = builder.createBlock(&ifOp.getFalseBranch());
+    builder.setInsertionPointToStart(falseBranch);
+
+    enzyme::YieldOp::create(builder, loc, ValueRange{pCkpts, pSumCkpts});
+  }
+
+  builder.setInsertionPointAfter(ifOp);
+
+  Value finalPCkpts = ifOp.getResult(0);
+  Value finalPSumCkpts = ifOp.getResult(1);
 
   return {finalPCkpts, finalPSumCkpts};
 }
