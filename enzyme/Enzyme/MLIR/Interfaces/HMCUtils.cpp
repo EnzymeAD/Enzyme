@@ -1506,15 +1506,11 @@ MCMC::updateDualAveraging(OpBuilder &builder, Location loc,
       arith::SubFOp::create(builder, loc, state.prox_center, adjustment);
 
   // weight_t = t^(-kappa)
-  // Compute t^(-kappa) = exp(-kappa * log(t))
-  auto kappaConst = arith::ConstantOp::create(
+  auto negKappaConst = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, config.kappa)));
-  Value logT = math::LogOp::create(builder, loc, tFloat);
-  Value negKappaLogT = arith::MulFOp::create(
-      builder, loc, arith::NegFOp::create(builder, loc, kappaConst), logT);
-  Value weightT = math::ExpOp::create(builder, loc, negKappaLogT);
+                             builder.getFloatAttr(elemType, -config.kappa)));
+  Value weightT = math::PowFOp::create(builder, loc, tFloat, negKappaConst);
 
   // x_avg = (1 - weight_t) * x_avg + weight_t * x_t
   Value oneMinusWeightT =
