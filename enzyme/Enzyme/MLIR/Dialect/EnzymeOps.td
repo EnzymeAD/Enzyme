@@ -228,8 +228,8 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region or loop ops";
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region, loop, or if ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
@@ -1082,6 +1082,24 @@ def WhileLoopOp : Enzyme_Op<"while_loop", [AutomaticAllocationScope]> {
     `condition` $conditionRegion
     `body` $bodyRegion
     attr-dict
+  }];
+}
+
+def IfOp : Enzyme_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> {
+  let summary = "Conditional execution with two branches";
+  let description = [{
+    A conditional operation that executes exactly one of two branches based on a
+    boolean predicate.
+  }];
+
+  let arguments = (ins AnyType:$predicate);
+  let regions = (region SizedRegion<1>:$trueBranch,
+                        SizedRegion<1>:$falseBranch);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $predicate `)` `(` $trueBranch `,` $falseBranch `)`
+    attr-dict `:` functional-type($predicate, results)
   }];
 }
 

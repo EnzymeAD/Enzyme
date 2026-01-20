@@ -25,6 +25,8 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/APFloat.h"
+
 #define DEBUG_TYPE "probprog"
 
 using namespace mlir;
@@ -582,9 +584,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         diagonal = (invMassType.getRank() == 1);
       }
 
+      auto adaptedMassMatrixSqrt =
+          computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
+
       HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, stepSize, trajectoryLength,
-                         positionSize, supports);
+                         adaptedInvMass, adaptedMassMatrixSqrt, stepSize,
+                         trajectoryLength, positionSize, supports);
       auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
 
       auto runSampleStepWithStepSize =
@@ -592,14 +597,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               Value rng, Value currentStepSize) -> MCMCKernelResult {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, currentStepSize, trajectoryLength,
-                         positionSize, supports);
+                         adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, adaptedInvMass, currentStepSize,
-                              positionSize, supports, U, maxDeltaEnergy,
-                              maxTreeDepth);
+                              selection, adaptedInvMass, adaptedMassMatrixSqrt,
+                              currentStepSize, positionSize, supports, U,
+                              maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -609,14 +614,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                 Value currentStepSize) -> HMCResult {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, currentStepSize, trajectoryLength,
-                         positionSize, supports);
+                         adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, supports);
           return PostProcessHMC(builder, loc, q, accepted, rng, ctx);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, adaptedInvMass, currentStepSize,
-                              positionSize, supports, initState.U0,
-                              maxDeltaEnergy, maxTreeDepth);
+                              selection, adaptedInvMass, adaptedMassMatrixSqrt,
+                              currentStepSize, positionSize, supports,
+                              initState.U0, maxDeltaEnergy, maxTreeDepth);
           return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
         }
       };
@@ -629,18 +634,18 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto runSampleStepWithInvMass =
           [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
-              Value rng, Value currentStepSize,
-              Value currentInvMass) -> MCMCKernelResult {
+              Value rng, Value currentStepSize, Value currentInvMass,
+              Value currentMassMatrixSqrt) -> MCMCKernelResult {
         if (isHMC) {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         currentInvMass, currentStepSize, trajectoryLength,
-                         positionSize, supports);
+                         currentInvMass, currentMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, currentInvMass, currentStepSize,
-                              positionSize, supports, U, maxDeltaEnergy,
-                              maxTreeDepth);
+                              selection, currentInvMass, currentMassMatrixSqrt,
+                              currentStepSize, positionSize, supports, U,
+                              maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -684,9 +689,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               rewriter, loc, positionType,
               DenseElementsAttr::get(positionType,
                                      rewriter.getFloatAttr(elemType, 1.0)));
+          adaptedMassMatrixSqrt = arith::ConstantOp::create(
+              rewriter, loc, positionType,
+              DenseElementsAttr::get(positionType,
+                                     rewriter.getFloatAttr(elemType, 1.0)));
         }
 
         Value initialStepSize = stepSize;
+        initialStepSize =
+            conditionalDump(rewriter, loc, initialStepSize,
+                            "MCMC: initial step size before warmup", debugDump);
         DualAveragingState daState =
             initDualAveraging(rewriter, loc, initialStepSize);
 
@@ -704,14 +716,15 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                    rewriter.getI64IntegerAttr(0)));
 
         // Warmup loop carries by default:
-        // [q, grad, U, rng, stepSize, invMass, daState(5), welfordState(3)?,
-        // windowIdx]
+        // [q, grad, U, rng, stepSize, invMass, massMatrixSqrt, daState(5),
+        // welfordState(3)?, windowIdx]
         SmallVector<Type> warmupLoopTypes = {positionType,
                                              positionType,
                                              scalarType,
                                              currentRng.getType(),
                                              scalarType, // stepSize
-                                             adaptedInvMass.getType()};
+                                             adaptedInvMass.getType(),
+                                             adaptedMassMatrixSqrt.getType()};
         for (Type t : daState.getTypes())
           warmupLoopTypes.push_back(t);
         if (adaptMassMatrix) {
@@ -720,9 +733,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
         warmupLoopTypes.push_back(i64TensorType); // windowIdx
 
-        SmallVector<Value> warmupInitArgs = {currentQ,        currentGrad,
-                                             currentU,        currentRng,
-                                             initialStepSize, adaptedInvMass};
+        SmallVector<Value> warmupInitArgs = {currentQ,
+                                             currentGrad,
+                                             currentU,
+                                             currentRng,
+                                             initialStepSize,
+                                             adaptedInvMass,
+                                             adaptedMassMatrixSqrt};
         for (Value v : daState.toValues())
           warmupInitArgs.push_back(v);
         if (adaptMassMatrix) {
@@ -749,10 +766,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         Value rngLoop = warmupBody->getArgument(4);
         Value stepSizeLoop = warmupBody->getArgument(5);
         Value invMassLoop = warmupBody->getArgument(6);
+        Value massMatrixSqrtLoop = warmupBody->getArgument(7);
 
         SmallVector<Value> daStateLoopValues;
         for (int i = 0; i < 5; ++i)
-          daStateLoopValues.push_back(warmupBody->getArgument(7 + i));
+          daStateLoopValues.push_back(warmupBody->getArgument(8 + i));
         auto daStateLoop = DualAveragingState::fromValues(daStateLoopValues);
 
         WelfordState welfordStateLoop;
@@ -760,16 +778,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (adaptMassMatrix) {
           SmallVector<Value> welfordStateLoopValues;
           for (int i = 0; i < 3; ++i)
-            welfordStateLoopValues.push_back(warmupBody->getArgument(12 + i));
+            welfordStateLoopValues.push_back(warmupBody->getArgument(13 + i));
           welfordStateLoop = WelfordState::fromValues(welfordStateLoopValues);
-          windowIdxLoop = warmupBody->getArgument(15);
+          windowIdxLoop = warmupBody->getArgument(16);
         } else {
-          windowIdxLoop = warmupBody->getArgument(12);
+          windowIdxLoop = warmupBody->getArgument(13);
         }
 
-        auto sample =
-            runSampleStepWithInvMass(rewriter, loc, qLoop, gradLoop, ULoop,
-                                     rngLoop, stepSizeLoop, invMassLoop);
+        auto sample = runSampleStepWithInvMass(rewriter, loc, qLoop, gradLoop,
+                                               ULoop, rngLoop, stepSizeLoop,
+                                               invMassLoop, massMatrixSqrtLoop);
 
         // Update dual averaging state
         DualAveragingConfig daConfig;
@@ -796,6 +814,23 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         Value adaptedStepSizeInLoop = enzyme::SelectOp::create(
             rewriter, loc, scalarType, isLastIter, finalStepSizeFromDA,
             currentStepSizeFromDA);
+
+        const auto &floatSemantics =
+            cast<FloatType>(elemType).getFloatSemantics();
+        auto tinyConst = arith::ConstantOp::create(
+            rewriter, loc, scalarType,
+            DenseElementsAttr::get(
+                scalarType, FloatAttr::get(elemType, llvm::APFloat::getSmallest(
+                                                         floatSemantics))));
+        auto maxConst = arith::ConstantOp::create(
+            rewriter, loc, scalarType,
+            DenseElementsAttr::get(
+                scalarType, FloatAttr::get(elemType, llvm::APFloat::getLargest(
+                                                         floatSemantics))));
+        adaptedStepSizeInLoop = arith::MaximumFOp::create(
+            rewriter, loc, adaptedStepSizeInLoop, tinyConst);
+        adaptedStepSizeInLoop = arith::MinimumFOp::create(
+            rewriter, loc, adaptedStepSizeInLoop, maxConst);
 
         auto windowIdxGtZero = arith::CmpIOp::create(
             rewriter, loc, arith::CmpIPredicate::sgt, windowIdxLoop, c0);
@@ -852,63 +887,101 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
 
         Value finalInvMass;
+        Value finalMassMatrixSqrt;
         WelfordState finalWelfordState;
-        if (adaptMassMatrix) {
-          Value newInvMass =
-              finalizeWelford(rewriter, loc, conditionalWelford, welfordConfig);
-          WelfordState reinitWelford =
-              initWelford(rewriter, loc, positionSize, diagonal);
-
-          finalInvMass = enzyme::SelectOp::create(
-              rewriter, loc, invMassLoop.getType(), atMiddleWindowEnd,
-              newInvMass, invMassLoop);
-
-          finalWelfordState.mean = enzyme::SelectOp::create(
-              rewriter, loc, conditionalWelford.mean.getType(),
-              atMiddleWindowEnd, reinitWelford.mean, conditionalWelford.mean);
-          finalWelfordState.m2 = enzyme::SelectOp::create(
-              rewriter, loc, conditionalWelford.m2.getType(), atMiddleWindowEnd,
-              reinitWelford.m2, conditionalWelford.m2);
-          finalWelfordState.n = enzyme::SelectOp::create(
-              rewriter, loc, conditionalWelford.n.getType(), atMiddleWindowEnd,
-              reinitWelford.n, conditionalWelford.n);
-        } else {
-          finalInvMass = invMassLoop;
-        }
-
         Value finalStepSizeValue;
         DualAveragingState finalDaState;
 
-        if (adaptStepSize) {
-          DualAveragingState reinitDaState =
-              initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
+        SmallVector<Type> ifResultTypes;
+        ifResultTypes.push_back(invMassLoop.getType());
+        ifResultTypes.push_back(massMatrixSqrtLoop.getType());
+        if (adaptMassMatrix) {
+          ifResultTypes.push_back(conditionalWelford.mean.getType());
+          ifResultTypes.push_back(conditionalWelford.m2.getType());
+          ifResultTypes.push_back(conditionalWelford.n.getType());
+        }
+        for (Type t : updatedDaState.getTypes())
+          ifResultTypes.push_back(t);
 
-          finalStepSizeValue = adaptedStepSizeInLoop;
+        auto ifOp = enzyme::IfOp::create(rewriter, loc, ifResultTypes,
+                                         atMiddleWindowEnd);
 
-          finalDaState.log_step_size = enzyme::SelectOp::create(
-              rewriter, loc, scalarType, atMiddleWindowEnd,
-              reinitDaState.log_step_size, updatedDaState.log_step_size);
-          finalDaState.log_step_size_avg = enzyme::SelectOp::create(
-              rewriter, loc, scalarType, atMiddleWindowEnd,
-              reinitDaState.log_step_size_avg,
-              updatedDaState.log_step_size_avg);
-          finalDaState.gradient_avg = enzyme::SelectOp::create(
-              rewriter, loc, scalarType, atMiddleWindowEnd,
-              reinitDaState.gradient_avg, updatedDaState.gradient_avg);
-          finalDaState.step_count = enzyme::SelectOp::create(
-              rewriter, loc, i64TensorType, atMiddleWindowEnd,
-              reinitDaState.step_count, updatedDaState.step_count);
-          finalDaState.prox_center = enzyme::SelectOp::create(
-              rewriter, loc, scalarType, atMiddleWindowEnd,
-              reinitDaState.prox_center, updatedDaState.prox_center);
-        } else {
-          finalStepSizeValue = stepSizeLoop;
-          finalDaState = updatedDaState;
+        {
+          Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
+          rewriter.setInsertionPointToStart(trueBranch);
+
+          SmallVector<Value> trueYieldValues;
+
+          if (adaptMassMatrix) {
+            auto newInvMass = finalizeWelford(rewriter, loc, conditionalWelford,
+                                              welfordConfig);
+            auto newMassMatrixSqrt =
+                computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
+            auto reinitWelford =
+                initWelford(rewriter, loc, positionSize, diagonal);
+
+            trueYieldValues.push_back(newInvMass);
+            trueYieldValues.push_back(newMassMatrixSqrt);
+            trueYieldValues.push_back(reinitWelford.mean);
+            trueYieldValues.push_back(reinitWelford.m2);
+            trueYieldValues.push_back(reinitWelford.n);
+          } else {
+            trueYieldValues.push_back(invMassLoop);
+            trueYieldValues.push_back(massMatrixSqrtLoop);
+          }
+
+          if (adaptStepSize) {
+            auto reinitDaState =
+                initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
+            for (auto v : reinitDaState.toValues())
+              trueYieldValues.push_back(v);
+          } else {
+            for (auto v : updatedDaState.toValues())
+              trueYieldValues.push_back(v);
+          }
+
+          enzyme::YieldOp::create(rewriter, loc, trueYieldValues);
         }
 
+        {
+          Block *falseBranch = rewriter.createBlock(&ifOp.getFalseBranch());
+          rewriter.setInsertionPointToStart(falseBranch);
+
+          SmallVector<Value> falseYieldValues;
+          falseYieldValues.push_back(invMassLoop);
+          falseYieldValues.push_back(massMatrixSqrtLoop);
+          if (adaptMassMatrix) {
+            falseYieldValues.push_back(conditionalWelford.mean);
+            falseYieldValues.push_back(conditionalWelford.m2);
+            falseYieldValues.push_back(conditionalWelford.n);
+          }
+          for (auto v : updatedDaState.toValues())
+            falseYieldValues.push_back(v);
+
+          enzyme::YieldOp::create(rewriter, loc, falseYieldValues);
+        }
+
+        rewriter.setInsertionPointAfter(ifOp);
+
+        size_t resultIdx = 0;
+        finalInvMass = ifOp.getResult(resultIdx++);
+        finalMassMatrixSqrt = ifOp.getResult(resultIdx++);
+        if (adaptMassMatrix) {
+          finalWelfordState.mean = ifOp.getResult(resultIdx++);
+          finalWelfordState.m2 = ifOp.getResult(resultIdx++);
+          finalWelfordState.n = ifOp.getResult(resultIdx++);
+        }
+        finalDaState.log_step_size = ifOp.getResult(resultIdx++);
+        finalDaState.log_step_size_avg = ifOp.getResult(resultIdx++);
+        finalDaState.gradient_avg = ifOp.getResult(resultIdx++);
+        finalDaState.step_count = ifOp.getResult(resultIdx++);
+        finalDaState.prox_center = ifOp.getResult(resultIdx++);
+
+        finalStepSizeValue = adaptedStepSizeInLoop;
+
         SmallVector<Value> warmupYieldValues = {
-            sample.q,   sample.grad,        sample.U,
-            sample.rng, finalStepSizeValue, finalInvMass};
+            sample.q,           sample.grad,  sample.U,           sample.rng,
+            finalStepSizeValue, finalInvMass, finalMassMatrixSqrt};
         for (Value v : finalDaState.toValues())
           warmupYieldValues.push_back(v);
         if (adaptMassMatrix) {
@@ -927,6 +1000,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         currentRng = warmupLoop.getResult(3);
         adaptedStepSize = warmupLoop.getResult(4);
         adaptedInvMass = warmupLoop.getResult(5);
+        adaptedMassMatrixSqrt = warmupLoop.getResult(6);
 
         adaptedStepSize =
             conditionalDump(rewriter, loc, adaptedStepSize,
