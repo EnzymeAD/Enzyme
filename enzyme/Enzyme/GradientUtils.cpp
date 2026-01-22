@@ -9124,6 +9124,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
       }
+    } else if (isa<ICmpInst>(cur)) {
+      continue;
     } else if (auto load = dyn_cast<LoadInst>(cur)) {
 
       // If loaded value is an int or pointer, may need
