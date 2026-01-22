@@ -37,6 +37,7 @@ static const char *KnownInactiveFunctionsContains[] = {
 static const std::set<std::string> InactiveGlobals = {
     "ompi_request_null", "ompi_mpi_double", "ompi_mpi_comm_world", "stderr",
     "stdout", "stdin", "_ZSt3cin", "_ZSt4cout", "_ZSt5wcout", "_ZSt4cerr",
+    "RSMPI_DOUBLE", "RSMPI_FLOAT",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
