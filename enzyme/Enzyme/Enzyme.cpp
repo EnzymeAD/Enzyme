@@ -3048,6 +3048,12 @@ public:
   bool run(Module &M) {
     Logic.clear();
 
+    for (Function &F : M) {
+      if (F.getName().contains("enzyme_fp_check")) {
+        F.setLinkage(GlobalValue::LinkageTypes::LinkOnceODRLinkage);
+      }
+    }
+
     for (Function &F : make_early_inc_range(M)) {
       attributeKnownFunctions(F);
     }
