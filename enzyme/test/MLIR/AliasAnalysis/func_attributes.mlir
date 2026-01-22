@@ -1,4 +1,4 @@
-// RUN: %eopt --test-print-alias-analysis --split-input-file %s 2>&1 | FileCheck %s
+// RUN: %eopt --test-print-alias-analysis --split-input-file %s | FileCheck %s
 
 func.func private @callee(%ptr : !llvm.ptr) 
 
@@ -13,9 +13,12 @@ func.func @fully_opaque_call(%input: !llvm.ptr {enzyme.tag = "input"}) {
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -29,9 +32,12 @@ func.func @call_other_none_arg_rw(%input: !llvm.ptr {enzyme.tag = "input"}) {
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = read,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = read,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -45,9 +51,12 @@ func.func @call_other_none_arg_ro(%input: !llvm.ptr {enzyme.tag = "input"}) {
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = write,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = write,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -61,9 +70,12 @@ func.func @call_other_none_arg_wo(%input: !llvm.ptr {enzyme.tag = "input"}) {
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr {llvm.nocapture}) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = write,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = write,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -77,9 +89,12 @@ func.func @call_other_none_arg_wo_nocapture(%input: !llvm.ptr {enzyme.tag = "inp
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr {llvm.nocapture}) attributes {
-  memory = #llvm.memory_effects<other = read, 
-                                argMem = write,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = write,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -93,9 +108,12 @@ func.func @call_other_read_arg_wo_nocapture(%input: !llvm.ptr {enzyme.tag = "inp
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = read, 
-                                argMem = write,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = write,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -109,9 +127,12 @@ func.func @call_other_read_arg_wo(%input: !llvm.ptr {enzyme.tag = "input"}) {
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr {llvm.readonly}) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -126,9 +147,12 @@ func.func @call_other_none_arg_rw_readonly(%input: !llvm.ptr {enzyme.tag = "inpu
 // -----
 
 func.func private @callee(%ptr : !llvm.ptr {llvm.writeonly}) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -142,9 +166,12 @@ func.func @call_other_none_arg_rw_writeonly(%input: !llvm.ptr {enzyme.tag = "inp
 // -----
 
 func.func private @callee(%ptr1 : !llvm.ptr, %ptr2 : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // TODO: the DAG below is due to using DenseMap and printing in no particular
@@ -162,9 +189,12 @@ func.func @call_two_pointers_other_none_arg_rw_simple(%sz: i64) {
 // -----
 
 func.func private @callee(%ptr1 : !llvm.ptr, %ptr2 : !llvm.ptr {llvm.nocapture}) attributes {
-  memory = #llvm.memory_effects<other = none, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // TODO: the DAG below is due to using DenseMap and printing in no particular
@@ -183,9 +213,12 @@ func.func @call_two_pointers_other_none_arg_rw_nocapture(%sz: i64) {
 // -----
 
 func.func private @callee(%ptr1 : !llvm.ptr {llvm.readonly}, %ptr2 : !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = read, 
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // TODO: the DAG below is due to using DenseMap and printing in no particular
@@ -203,9 +236,12 @@ func.func @call_two_pointers_other_read_arg_rw(%sz: i64) {
 // -----
 
 func.func private @callee() -> !llvm.ptr attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -218,9 +254,12 @@ func.func @func_return_simple() -> !llvm.ptr {
 // -----
 
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -237,9 +276,12 @@ func.func @func_return_noalias() -> !llvm.ptr {
 // CHECK: points-to-pointer sets
 // CHECK-NEXT: distinct[{{.*}}]<"func-return0"> points to {<unknown>}
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}, !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 func.func @caller() -> !llvm.ptr {
@@ -250,9 +292,12 @@ func.func @caller() -> !llvm.ptr {
 // -----
 
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: "func-1-return" and "func-2-return": NoAlias
@@ -271,9 +316,12 @@ func.func @caller() -> !llvm.ptr {
 // CHECK: points-to-pointer sets
 // CHECK: <empty>
 func.func private @callee(!llvm.ptr {llvm.readnone}) attributes {
-    memory = #llvm.memory_effects<other = read,
-                                  argMem = readwrite,
-                                  inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 func.func @caller(%arg0: !llvm.ptr {enzyme.tag = "argument"}) {
@@ -284,9 +332,12 @@ func.func @caller(%arg0: !llvm.ptr {enzyme.tag = "argument"}) {
 // -----
 
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -303,9 +354,12 @@ func.func @func_return_noalias_stored() -> !llvm.ptr {
 // -----
 
 func.func private @callee() -> (!llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = read,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = read,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: points-to-pointer sets
@@ -322,9 +376,12 @@ func.func @func_return_stored() -> !llvm.ptr {
 
 
 func.func private @callee() -> (!llvm.ptr, !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // TODO: The two results may alias, but we can't really
@@ -347,9 +404,12 @@ func.func @func_return_multiple() -> !llvm.ptr {
 // -----
 
 func.func private @callee() -> (!llvm.ptr {llvm.noalias}, !llvm.ptr {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = none,
-                                argMem = readwrite,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = readwrite,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // TODO: The two results are known not to alias, but we can't really
@@ -373,9 +433,12 @@ func.func @func_return_noalias() -> !llvm.ptr {
 
 
 func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture}) -> (!llvm.ptr, !llvm.ptr) attributes {
-  memory = #llvm.memory_effects<other = none,
-                                argMem = read,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = read,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // CHECK: "func-return" and "func-return": MayAlias
@@ -406,9 +469,12 @@ func.func @multi_operand_result(%arg0: !llvm.ptr {enzyme.tag = "arg0", llvm.noal
 
 
 func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture}) -> (!llvm.ptr {llvm.noalias}, !llvm.ptr {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = none,
-                                argMem = read,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = read,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // Returned values can pointer to something that was captured, but belong to
@@ -434,9 +500,12 @@ func.func @multi_operand_result(%arg0: !llvm.ptr {enzyme.tag = "arg0", llvm.noal
 
 func.func private @callee(!llvm.ptr, !llvm.ptr {llvm.nocapture})
     -> (!llvm.ptr, !llvm.ptr  {llvm.noalias}) attributes {
-  memory = #llvm.memory_effects<other = none,
-                                argMem = read,
-                                inaccessibleMem = none>
+  memory_effects = #llvm.memory_effects<other = none,
+                                        argMem = read,
+                                        inaccessibleMem = none,
+                                        errnoMem = none,
+                                        targetMem0 = none,
+                                        targetMem1 = none>
 }
 
 // Returned values can pointer to something that was captured, but belong to

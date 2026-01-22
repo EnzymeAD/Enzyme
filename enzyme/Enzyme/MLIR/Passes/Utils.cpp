@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+
 #include "Utils.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -164,4 +166,13 @@ Value mlir::enzyme::getExtractValue(OpBuilder &builder, Location loc,
   IntegerAttr indexAttr = builder.getI64IntegerAttr(index);
   Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexAttr);
   return out;
+}
+
+void mlir::enzyme::computeAffineIndices(OpBuilder &builder, Location loc,
+                                        AffineMap map, ValueRange operands,
+                                        SmallVectorImpl<Value> &indices) {
+  for (unsigned i = 0; i < map.getNumResults(); i++) {
+    indices.push_back(affine::AffineApplyOp::create(
+        builder, loc, map.getSubMap({i}), operands));
+  }
 }

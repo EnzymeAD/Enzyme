@@ -169,14 +169,33 @@ bool mayAlias(Value v1, Value v2) {
   if ((isAlloca[0] || isGlobal[0]) && (isAlloca[1] || isGlobal[1]))
     return false;
 
-  bool isArg[2];
-  isArg[0] = isa<BlockArgument>(v1) &&
-             isa<FunctionOpInterface>(
-                 cast<BlockArgument>(v1).getOwner()->getParentOp());
+  BlockArgument barg1 = dyn_cast<BlockArgument>(v1);
+  BlockArgument barg2 = dyn_cast<BlockArgument>(v2);
 
-  isArg[1] = isa<BlockArgument>(v1) &&
-             isa<FunctionOpInterface>(
-                 cast<BlockArgument>(v1).getOwner()->getParentOp());
+  FunctionOpInterface f1 =
+      barg1 ? dyn_cast<FunctionOpInterface>(barg1.getOwner()->getParentOp())
+            : nullptr;
+  FunctionOpInterface f2 =
+      barg2 ? dyn_cast<FunctionOpInterface>(barg2.getOwner()->getParentOp())
+            : nullptr;
+
+  bool isNoAlias1 =
+      f1 ? !!f1.getArgAttr(barg1.getArgNumber(),
+                           LLVM::LLVMDialect::getNoAliasAttrName())
+         : false;
+  bool isNoAlias2 =
+      f2 ? !!f2.getArgAttr(barg2.getArgNumber(),
+                           LLVM::LLVMDialect::getNoAliasAttrName())
+         : false;
+
+  if (!isCaptured(v1) && isNoAlias1)
+    return false;
+  if (!isCaptured(v2) && isNoAlias2)
+    return false;
+
+  bool isArg[2];
+  isArg[0] = f1;
+  isArg[1] = f2;
 
   // Stack allocations cannot have been passed as an argument.
   if ((isAlloca[0] && isArg[1]) || (isAlloca[1] && isArg[0]))
@@ -189,6 +208,13 @@ bool mayAlias(Value v1, Value v2) {
   if (isAlloca[1] && !isCaptured(v2))
     return false;
 
+  return true;
+}
+
+bool mayAlias(MemoryEffects::EffectInstance a, Value v2) {
+  if (Value v = a.getValue()) {
+    return mayAlias(v, v2);
+  }
   return true;
 }
 
@@ -235,6 +261,37 @@ bool isReadOnly(Operation *op) {
   }
 
   return true;
+}
+
+bool isReadNone(Operation *op) {
+  bool hasRecursiveEffects = op->hasTrait<OpTrait::HasRecursiveMemoryEffects>();
+  if (hasRecursiveEffects) {
+    for (Region &region : op->getRegions()) {
+      for (auto &block : region) {
+        for (auto &nestedOp : block)
+          if (!isReadNone(&nestedOp))
+            return false;
+      }
+    }
+    return true;
+  }
+
+  // If the op has memory effects, try to characterize them to see if the op
+  // is trivially dead here.
+  if (auto effectInterface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    // Check to see if this op either has no effects, or only allocates/reads
+    // memory.
+    SmallVector<MemoryEffects::EffectInstance, 1> effects;
+    effectInterface.getEffects(effects);
+    if (llvm::any_of(effects, [](const MemoryEffects::EffectInstance &it) {
+          return isa<MemoryEffects::Read>(it.getEffect()) ||
+                 isa<MemoryEffects::Write>(it.getEffect());
+        })) {
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 bool collectOpEffects(Operation *rootOp,

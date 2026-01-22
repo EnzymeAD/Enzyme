@@ -11,10 +11,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/Ops.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
+#include "Passes/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/IntegerSet.h"
@@ -361,11 +363,17 @@ struct AffineParallelOpEnzymeOpsRemover
         assert(parOp.getLowerBoundsMap() == otherParOp.getLowerBoundsMap());
         for (auto &&[f, o] :
              llvm::zip_equal(parOp.getLowerBoundsOperands(),
-                             otherParOp.getLowerBoundsOperands()))
+                             otherParOp.getLowerBoundsOperands())) {
+          (void)f;
+          (void)o;
           assert(Equivalent(f, o));
+        }
         for (auto [fstep, ostep] :
-             llvm::zip_equal(parOp.getSteps(), otherParOp.getSteps()))
+             llvm::zip_equal(parOp.getSteps(), otherParOp.getSteps())) {
+          (void)fstep;
+          (void)ostep;
           assert(fstep == ostep);
+        }
         map.map(fiv, oiv);
       }
     }
@@ -414,15 +422,6 @@ struct AffineParallelOpEnzymeOpsRemover
   }
 };
 
-static void computeAffineIndices(OpBuilder &builder, Location loc,
-                                 AffineMap map, ValueRange operands,
-                                 SmallVectorImpl<Value> &indices) {
-  for (unsigned i = 0; i < map.getNumResults(); i++) {
-    indices.push_back(
-        AffineApplyOp::create(builder, loc, map.getSubMap({i}), operands));
-  }
-}
-
 struct AffineLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           AffineLoadOpInterfaceReverse, affine::AffineLoadOp> {
@@ -470,12 +469,22 @@ struct AffineLoadOpInterfaceReverse
                 loadOp.getAffineMap(), ArrayRef<Value>(retrievedArguments));
           }
         } else {
-          SmallVector<Value> indices;
-          computeAffineIndices(builder, loadOp.getLoc(), loadOp.getAffineMap(),
-                               retrievedArguments, indices);
-          memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
-                                      arith::AtomicRMWKind::addf, gradient,
-                                      memrefGradient, indices);
+          bool hasIndex = loadOp.getAffineMap().getNumDims() > 0;
+          // if index had to be cached, the pop is not necessarily a valid index
+          if (hasIndex) {
+            SmallVector<Value> indices;
+            computeAffineIndices(builder, loadOp.getLoc(),
+                                 loadOp.getAffineMap(), retrievedArguments,
+                                 indices);
+            memref::AtomicRMWOp::create(builder, loadOp.getLoc(),
+                                        arith::AtomicRMWKind::addf, gradient,
+                                        memrefGradient, indices);
+          } else {
+            enzyme::AffineAtomicRMWOp::create(
+                builder, loadOp.getLoc(), gradient.getType(),
+                arith::AtomicRMWKind::addf, gradient, memrefGradient,
+                retrievedArguments, loadOp.getAffineMap());
+          }
         }
       }
     }
@@ -716,9 +725,13 @@ public:
     Value canIdx = forOp.getBody()->getArgument(0);
     if (!map.contains(canIdx)) {
       assert(forOp.getLowerBoundMap() == otherForOp.getLowerBoundMap());
-      for (auto &&[f, o] : llvm::zip_equal(forOp.getLowerBoundOperands(),
-                                           otherForOp.getLowerBoundOperands()))
+      for (auto &&[f, o] :
+           llvm::zip_equal(forOp.getLowerBoundOperands(),
+                           otherForOp.getLowerBoundOperands())) {
+        (void)f;
+        (void)o;
         assert(Equivalent(f, o));
+      }
       assert(forOp.getStep() == otherForOp.getStep());
       map.map(forOp.getBody()->getArgument(0),
               otherForOp.getBody()->getArgument(0));

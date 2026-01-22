@@ -117,7 +117,7 @@ entry:
 ; CHECK-NEXT:   %cache.A = bitcast i8* %malloccall10 to double*
 ; CHECK-NEXT:   store double* %cache.A, double** %0
 ; CHECK-NEXT:   store i8 0, i8* %byref.copy.garbage
-; CHECK-NEXT:   call void @dlacpy_64_(i8* %byref.copy.garbage, i8* %20, i8* %21, i8* %A, i8* %lda_p, double* %cache.A, i8* %20)
+; CHECK-NEXT:   call void @dlacpy_64_(i8* %byref.copy.garbage, i8* %20, i8* %21, i8* %A, i8* %lda_p, double* %cache.A, i8* %20, i64 1)
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %malloccall, i8* %malloccall1, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha_p, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta_p, i8* %C, i8* %ldc_p, i64 1, i64 1)
 ; CHECK-NEXT:   %[[ret:.+]] = load double*, double** %0
 ; CHECK-NEXT:   ret double* %[[ret]]

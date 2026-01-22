@@ -181,8 +181,8 @@ template <typename SourceOp,
           std::enable_if_t<
               llvm::is_one_of<SourceOp, ForwardDiffOp, AutoDiffOp>::value,
               bool> = true>
-llvm::SmallVector<SourceOp> pruneGradDefs(BatchDiffCacheKey &key,
-                                          SmallVector<SourceOp> &allDiffs) {
+llvm::SmallVector<SourceOp, 2> pruneGradDefs(BatchDiffCacheKey &key,
+                                             SmallVector<SourceOp> &allDiffs) {
   SmallVector<SourceOp, 2> prunedSources;
 
   // We first prune and check that all derivative arguments are defined before
@@ -242,7 +242,7 @@ llvm::SmallVector<SourceOp> pruneMemoryEffects(
     return prunedSources;
   }
 
-  SmallVector<SourceOp, 2> legalMerge;
+  SmallVector<SourceOp> legalMerge;
   auto lastOp = prunedSources[0];
 
   SmallVector<MemoryEffects::EffectInstance, 4> betweenEffects;

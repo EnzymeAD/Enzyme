@@ -151,8 +151,7 @@ public:
         }
       }
     }
-    Type *pargs[] = {getInt8PtrTy(DT->getContext()),
-                     PointerType::getUnqual(intType)};
+    Type *pargs[] = {getInt8PtrTy(DT->getContext()), getUnqual(intType)};
     auto FT = FunctionType::get(intType, pargs, false);
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
     llvm::Value *args[] = {DT, alloc};
@@ -201,7 +200,7 @@ public:
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
-    Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
+    Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
@@ -235,7 +234,7 @@ public:
                              llvm::Type *rankTy, llvm::Function *caller) {
     using namespace llvm;
 
-    Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
+    Type *pargs[] = {comm->getType(), getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
@@ -1016,6 +1015,7 @@ public:
         }
 
       Value *diff = nullptr;
+      bool needs_writebarrier = false;
       if (!gutils->runtimeActivity && constantval) {
         if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
           if (!isa<UndefValue>(orig_val) &&
@@ -1024,11 +1024,13 @@ public:
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
-            if (CustomErrorHandler)
+            if (CustomErrorHandler) {
               diff = unwrap(CustomErrorHandler(
                   str.c_str(), wrap(&I), ErrorType::MixedActivityError, gutils,
                   wrap(orig_val), wrap(&BuilderZ)));
-            else
+              if (diff)
+                needs_writebarrier = true;
+            } else
               EmitWarning("MixedActivityError", I, ss.str());
           }
         }
@@ -1050,7 +1052,7 @@ public:
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, prevalign, 0, storeSize,
                           isVolatile, ordering, syncScope, mask, prevNoAlias,
-                          prevScopes);
+                          prevScopes, needs_writebarrier);
 
       return;
     }
@@ -1275,6 +1277,7 @@ public:
 
           Value *valueop = nullptr;
 
+          bool needs_writebarrier = false;
           if (constantval) {
             if (!gutils->runtimeActivity) {
               if (dt.isPossiblePointer() && vd[{-1, -1}] != BaseType::Integer) {
@@ -1284,11 +1287,13 @@ public:
                   raw_string_ostream ss(str);
                   ss << "Mismatched activity for: " << I
                      << " const val: " << *orig_val;
-                  if (CustomErrorHandler)
+                  if (CustomErrorHandler) {
                     valueop = unwrap(CustomErrorHandler(
                         str.c_str(), wrap(&I), ErrorType::MixedActivityError,
                         gutils, wrap(orig_val), wrap(&BuilderZ)));
-                  else
+                    if (valueop)
+                      needs_writebarrier = true;
+                  } else
                     EmitWarning("MixedActivityError", I, ss.str());
                 }
               }
@@ -1309,7 +1314,7 @@ public:
           }
           gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
                               size, isVolatile, ordering, syncScope, mask,
-                              prevNoAlias, prevScopes);
+                              prevNoAlias, prevScopes, needs_writebarrier);
         }
       }
 
@@ -3678,7 +3683,7 @@ public:
         if (floatTy && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, salign, isVolatile);
+              length, dalign, isVolatile);
         } else {
           if (dsrc->getType()->isIntegerTy())
             dsrc =
@@ -3877,10 +3882,20 @@ public:
       case Intrinsic::nvvm_barrier0:
 #else
       case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
+#if LLVM_VERSION_MAJOR < 22
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or:
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys:
@@ -3929,10 +3944,19 @@ public:
       (void)vdiff;
 
       switch (ID) {
-
+#if LLVM_VERSION_MAJOR < 22
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or: {
+      case Intrinsic::nvvm_barrier0_or:
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
+      {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
         auto cal = cast<CallInst>(Builder2.CreateCall(
@@ -3956,6 +3980,7 @@ public:
       case Intrinsic::nvvm_barrier0:
 #else
       case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
@@ -4527,8 +4552,7 @@ public:
                 .width = gutils->getWidth(),
                 .freeMemory = true,
                 .AtomicAdd = true,
-                .additionalType =
-                    tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+                .additionalType = tape ? getUnqual(tape->getType()) : nullptr,
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
@@ -4618,7 +4642,7 @@ public:
                cast<Function>(newcalled)->getFunctionType()->params()) {
             MetaTypes.push_back(P);
           }
-          MetaTypes.push_back(PointerType::getUnqual(ST));
+          MetaTypes.push_back(getUnqual(ST));
           auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
                                       MetaTypes, false);
           Function *F =
@@ -5064,9 +5088,8 @@ public:
             ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
             argsInverted, false, /*returnTape*/ false,
             /*returnPrimal*/ subretused, /*returnShadow*/ retActive);
-        PointerType *fptype = PointerType::getUnqual(FT);
-        newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               PointerType::getUnqual(fptype));
+        PointerType *fptype = getUnqual(FT);
+        newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
       }
 
@@ -5425,9 +5448,8 @@ public:
         FT = FunctionType::get(
             StructType::get(newcalled->getContext(), res.second), res.first,
             ft->isVarArg());
-        auto fptype = PointerType::getUnqual(FT);
-        newcalled = BuilderZ.CreatePointerCast(newcalled,
-                                               PointerType::getUnqual(fptype));
+        auto fptype = getUnqual(FT);
+        newcalled = BuilderZ.CreatePointerCast(newcalled, getUnqual(fptype));
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
         tapeIdx = 0;
 
@@ -5941,9 +5963,8 @@ public:
       FT = FunctionType::get(
           StructType::get(newcalled->getContext(), res.second), res.first,
           ft->isVarArg());
-      auto fptype = PointerType::getUnqual(FT);
-      newcalled =
-          Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(fptype));
+      auto fptype = getUnqual(FT);
+      newcalled = Builder2.CreatePointerCast(newcalled, getUnqual(fptype));
       newcalled = Builder2.CreateLoad(
           fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
     }

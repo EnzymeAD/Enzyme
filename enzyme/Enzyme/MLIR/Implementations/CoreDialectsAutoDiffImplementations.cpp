@@ -26,9 +26,17 @@ using namespace mlir::enzyme;
 mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
                                               llvm::StringRef value) {
   using namespace mlir;
+  if (value == "0") {
+    auto ATI = cast<AutoDiffTypeInterface>(type);
+    return cast<TypedAttr>(ATI.createNullAttr());
+  }
   if (auto T = dyn_cast<TensorType>(type)) {
-    APFloat values[] = {APFloat(
-        cast<FloatType>(T.getElementType()).getFloatSemantics(), value)};
+    auto ET = dyn_cast<FloatType>(T.getElementType());
+    if (!ET) {
+      llvm::errs() << " unsupported eltype: " << ET << " of type " << type
+                   << "\n";
+    }
+    APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
     return DenseElementsAttr::get(cast<ShapedType>(type),
                                   ArrayRef<APFloat>(values));
   }

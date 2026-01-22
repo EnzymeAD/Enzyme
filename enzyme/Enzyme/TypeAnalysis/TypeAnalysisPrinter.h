@@ -27,7 +27,6 @@
 #define ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
 
 #include "llvm/IR/PassManager.h"
-#include "llvm/Passes/PassPlugin.h"
 
 namespace llvm {
 class FunctionPass;

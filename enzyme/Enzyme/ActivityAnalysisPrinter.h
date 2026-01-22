@@ -29,7 +29,6 @@
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/IR/PassManager.h"
-#include "llvm/Passes/PassPlugin.h"
 
 namespace llvm {
 class FunctionPass;
@@ -46,7 +45,7 @@ public:
   using Result = llvm::PreservedAnalyses;
   ActivityAnalysisPrinterNewPM() {}
 
-  Result run(llvm::Function &M, llvm::FunctionAnalysisManager &MAM);
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
 
   static bool isRequired() { return true; }
 };

@@ -11,6 +11,7 @@
 
 #include <type_traits>
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
@@ -45,7 +46,7 @@ namespace detail {
 // collected.
 template <typename SourceOp, bool filterGrad, bool includeShadows = true,
           bool includeDifferentialReturns = true>
-llvm::SmallVector<mlir::Value> filterGradInputs(SourceOp uop) {
+llvm::SmallVector<mlir::Value, 2> filterGradInputs(SourceOp uop) {
   llvm::SmallVector<mlir::Value, 2> outs;
   size_t in_idx = 0;
 

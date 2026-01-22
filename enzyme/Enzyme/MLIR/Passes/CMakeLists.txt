@@ -4,6 +4,7 @@ add_public_tablegen_target(MLIREnzymePassIncGen)
 add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 
 add_mlir_dialect_library(MLIREnzymeTransforms
+    LowerAffineAtomicRmwPass.cpp
     EnzymeMLIRPass.cpp
     ProbProgMLIRPass.cpp
     EnzymeBatchPass.cpp
@@ -11,6 +12,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
     InlineEnzymeRegions.cpp
+    HoistEnzymeRegions.cpp
     LowerLLVMExtPass.cpp
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp

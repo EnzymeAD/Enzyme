@@ -212,6 +212,13 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   ];
 }
 
+def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
+  let summary = "Hoist independent primal ops out of autodiff_region.";
+  let dependentDialects = [ 
+  "enzyme::EnzymeDialect",
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
@@ -273,6 +280,13 @@ def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
   let dependentDialects = [
     "mlir::enzyme::llvm_ext::LLVMExtDialect",
     "LLVM::LLVMDialect",
+  ];
+}
+
+def LowerAffineAtomicRmwPass : Pass<"lower-affine-atomic-rmw"> {
+  let summary = "Lower AffineRmw to MemrefRmw";
+  let dependentDialects = [
+    "memref::MemRefDialect"
   ];
 }
 

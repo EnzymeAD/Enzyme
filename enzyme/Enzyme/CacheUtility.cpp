@@ -125,7 +125,7 @@ InsertNewCanonicalIV(Loop *L, Type *Ty, const llvm::Twine &Name) {
 
   BasicBlock *Header = L->getHeader();
   assert(Header);
-  IRBuilder<> B(&Header->front());
+  IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
   B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
@@ -246,8 +246,12 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
 
     // We place that at first non phi as it may produce a non-phi instruction
     // and must thus be expanded after all phi's
@@ -465,7 +469,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
                           /*shouldfree*/ true);
 
   for (auto ExitBlock : found.exitBlocks) {
-    IRBuilder<> B(&ExitBlock->front());
+    IRBuilder<> B(ExitBlock, ExitBlock->begin());
     auto Limit = B.CreatePHI(found.var->getType(), 1);
 
     for (BasicBlock *Pred : predecessors(ExitBlock)) {
@@ -717,8 +721,12 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     if (Limit->getType() != CanonicalIV->getType())
       Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
 
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
     LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
@@ -754,8 +762,12 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
+#if LLVM_VERSION_MAJOR >= 22
+    SCEVExpander Exp(SE, "enzyme");
+#else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
                      "enzyme");
+#endif
 
     loopContexts[L].maxLimit =
         Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),

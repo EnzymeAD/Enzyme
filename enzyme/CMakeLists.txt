@@ -19,7 +19,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (NOT DEFINED ENZYME_CONFIGURED_WITH_PRESETS)
-  set(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch")
+  set(CMAKE_CXX_FLAGS "-Wall -fno-rtti ${CMAKE_CXX_FLAGS} -Werror=implicit-fallthrough -Werror=unused-variable -Werror=dangling-else -Werror=unused-but-set-variable -Werror=return-type -Werror=nonnull -Werror=unused-result -Werror=reorder -Werror=switch")
   set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
   set(CMAKE_CXX_FLAGS_RELEASE "-O2")
   set(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
@@ -32,6 +32,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
+option(ENZYME_ENABLE_BENCHMARKS "Enable benchmarks" OFF)
 option(ENZYME_BC_LOADER "Enable bitcode loader" ON)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
@@ -296,8 +297,18 @@ endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
-if (ENZYME_ENABLE_PLUGINS AND (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks"))
-    add_subdirectory(benchmarks)
+if (ENZYME_ENABLE_PLUGINS AND ENZYME_ENABLE_BENCHMARKS)
+	include (FetchContent)
+	FetchContent_Declare(cpu_benchmarks
+	    GIT_REPOSITORY https://github.com/EnzymeAD/enzyme-benchmarks
+	    GIT_TAG        "9fa1579296b28d9642f8b69a6fffb753211c3f88"
+	)
+
+	if(NOT cpu_benchmarks_POPULATED)
+	  FetchContent_Populate(cpu_benchmarks)
+
+	  add_subdirectory(${cpu_benchmarks_SOURCE_DIR} ${cpu_benchmarks_BINARY_DIR} EXCLUDE_FROM_ALL)
+	endif()
 endif()
 
 # Make relative paths absolute (needed later on)

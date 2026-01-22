@@ -321,12 +321,22 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::llround,
 #if LLVM_VERSION_MAJOR <= 20
     Intrinsic::nvvm_barrier0,
-#else
+#else 
     Intrinsic::nvvm_barrier_cta_sync_aligned_all,
-#endif
+    Intrinsic::nvvm_barrier_cta_sync_aligned_count,
+#endif 
+#if LLVM_VERSION_MAJOR < 22
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,
+#else
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_count,
+#endif
     Intrinsic::nvvm_membar_cta,
     Intrinsic::nvvm_membar_gl,
     Intrinsic::nvvm_membar_sys,
@@ -3350,13 +3360,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
-          if (!isPointerArithmeticInst(I))
+          if (!isPointerArithmeticInst(I) &&
+              !(UA == UseActivity::OnlyNonPointerStores && isa<LoadInst>(I)))
             NU = UseActivity::None;
         }
 
         if (EnzymePrintActivity) {
           llvm::errs() << "Adding users of value " << *I << " now with sub UA "
-                       << to_string(UA) << "\n";
+                       << to_string(NU) << "\n";
         }
         for (auto u : I->users()) {
           todo.push_back(std::make_tuple(u, (Value *)I, NU));
@@ -3434,6 +3445,11 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
     if (isa<LoadInst>(a)) {
       continue;
     }
+
+    if (auto I = dyn_cast<Instruction>(a))
+      if (notForAnalysis.count(I->getParent())) {
+        continue;
+      }
 
     if (isa<ReturnInst>(a)) {
       if (ActiveReturns == DIFFE_TYPE::CONSTANT)

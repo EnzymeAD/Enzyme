@@ -282,66 +282,6 @@ static inline bool OnlyUsedInOMP(AllocaInst *AI) {
   return true;
 }
 
-bool anyJuliaObjects(Type *T) {
-  if (isSpecialPtr(T))
-    return true;
-  if (auto ST = dyn_cast<StructType>(T)) {
-    for (auto elem : ST->elements()) {
-      if (anyJuliaObjects(elem))
-        return true;
-    }
-    return false;
-  }
-  if (auto AT = dyn_cast<ArrayType>(T)) {
-    return anyJuliaObjects(AT->getElementType());
-  }
-  if (auto VT = dyn_cast<VectorType>(T)) {
-    return anyJuliaObjects(VT->getElementType());
-  }
-  return false;
-}
-
-SmallVector<Value *, 1> getJuliaObjects(Value *v, IRBuilder<> &B) {
-  SmallVector<Value *, 1> todo = {v};
-  SmallVector<Value *, 1> done;
-  while (todo.size()) {
-    auto cur = todo.pop_back_val();
-    auto T = cur->getType();
-    if (!anyJuliaObjects(T)) {
-      continue;
-    }
-    if (isSpecialPtr(T)) {
-      done.push_back(cur);
-      continue;
-    }
-    if (auto ST = dyn_cast<StructType>(T)) {
-      for (auto en : llvm::enumerate(ST->elements())) {
-        if (anyJuliaObjects(en.value())) {
-          auto V2 = B.CreateExtractValue(cur, en.index());
-          todo.push_back(V2);
-        }
-      }
-      continue;
-    }
-    if (auto AT = dyn_cast<ArrayType>(T)) {
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.push_back(B.CreateExtractValue(cur, i));
-      }
-      continue;
-    }
-    if (auto VT = dyn_cast<VectorType>(T)) {
-      assert(!VT->getElementCount().isScalable());
-      size_t numElems = VT->getElementCount().getKnownMinValue();
-      for (size_t i = 0; i < numElems; i++) {
-        todo.push_back(B.CreateExtractElement(cur, i));
-      }
-      continue;
-    }
-    llvm_unreachable("unknown source of julia type");
-  }
-  return done;
-}
-
 void RecursivelyReplaceAddressSpace(
     SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
     SmallVector<Instruction *, 1> &toErase, bool legal) {
@@ -557,7 +497,8 @@ void RecursivelyReplaceAddressSpace(
           if (subvals.size()) {
             auto JLT =
                 PointerType::get(StructType::get(SI->getContext(), {}), 10);
-            auto FT = FunctionType::get(JLT, {}, true);
+            auto FT = FunctionType::get(Type::getVoidTy(rep->getContext()),
+                                        {JLT}, true);
             auto wb = B.GetInsertBlock()
                           ->getParent()
                           ->getParent()
@@ -649,9 +590,23 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
-    if (auto I = dyn_cast<Instruction>(inst))
-      llvm::errs() << *I->getParent()->getParent() << "\n";
-    llvm::errs() << " inst: " << *inst << "\n";
+
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "Illegal address space propagation\n";
+    ss << " + rep: " << *rep << "\n";
+    ss << " + prev: " << *prev << "\n";
+    ss << " + inst: " << *inst << "\n";
+
+    if (CustomErrorHandler) {
+      CustomErrorHandler(s.c_str(), wrap(inst), ErrorType::InternalError,
+                         nullptr, nullptr, nullptr);
+    } else {
+      auto instI = cast<Instruction>(inst);
+      ss << *instI->getParent()->getParent() << "\n";
+      EmitFailure("IllegalAddressSpacePropagation", instI->getDebugLoc(), instI,
+                  ss.str());
+    }
     llvm_unreachable("Illegal address space propagation");
   }
 
@@ -779,11 +734,17 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     CI->setMetadata(
         "enzyme_fromstack",
         MDNode::get(CI->getContext(),
-                    {ConstantAsMetadata::get(ConstantInt::get(
-                        IntegerType::get(AI->getContext(), 64), align))}));
+                    {
+                        ConstantAsMetadata::get(ConstantInt::get(
+                            IntegerType::get(AI->getContext(), 64), align)),
+                        ConstantAsMetadata::get(ConstantInt::get(
+                            IntegerType::get(AI->getContext(), 64),
+                            (size_t)AI->getAllocatedType())),
+                    }));
 
     for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                    "enzymejl_allocart", "enzymejl_allocart_name"})
+                    "enzymejl_allocart", "enzymejl_allocart_name",
+                    "enzymejl_gc_alloc_rt"})
       if (auto M = AI->getMetadata(MD))
         CI->setMetadata(MD, M);
 
@@ -1385,8 +1346,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
 #endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
-      storePointer = B.CreateIntToPtr(storePointer,
-                                      PointerType::getUnqual(res->getType()));
+      storePointer = B.CreateIntToPtr(storePointer, getUnqual(res->getType()));
     }
     if (isa<AllocaInst>(storePointer)) {
       // If this is only loaded from, immedaitely replace
@@ -2354,7 +2314,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             }
           }
 
-          if (called && called->getName() == "__enzyme_iter") {
+          if (called && called->getName().contains("__enzyme_iter")) {
             ItersToErase.push_back(CI);
           }
         }
@@ -6423,7 +6383,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
         Value *newIV = nullptr;
         {
+#if LLVM_VERSION_MAJOR >= 22
+          SCEVExpander Exp(SE, "sparseenzyme");
+#else
           SCEVExpander Exp(SE, DL, "sparseenzyme");
+#endif
           // We place that at first non phi as it may produce a non-phi
           // instruction and must thus be expanded after all phi's
           newIV = Exp.expandCodeFor(S, tmp->getType(), point);
@@ -8382,7 +8346,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
 
       IRBuilder<> B(L->getHeader()->getFirstNonPHI());
       {
+#if LLVM_VERSION_MAJOR >= 22
+        SCEVExpander Exp(SE, "sparseenzyme");
+#else
         SCEVExpander Exp(SE, DL, "sparseenzyme");
+#endif
         auto LoopCountS = SE.getBackedgeTakenCount(L);
         LoopCount = B.CreateAdd(
             ConstantInt::get(idx->getType(), 1),
@@ -8543,7 +8511,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto off = en.index();
       auto &solutions = en.value().second;
       ConstraintContext ctx(SE, L, Assumptions, DT);
+#if LLVM_VERSION_MAJOR >= 22
+      SCEVExpander Exp(SE, "sparseenzyme", /*preservelcssa*/ false);
+#else
       SCEVExpander Exp(SE, DL, "sparseenzyme", /*preservelcssa*/ false);
+#endif
       auto sols = solutions->allSolutions(Exp, idxty, phterm, ctx, B);
       SmallVector<Value *, 1> prevSols;
       for (auto [sol, condition] : sols) {
@@ -8668,8 +8640,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       if (PT->getAddressSpace() != 0) {
 #if LLVM_VERSION_MAJOR < 17
         if (CI->getContext().supportsTypedPointers()) {
-          V = B.CreateAddrSpaceCast(
-              V, PointerType::getUnqual(PT->getPointerElementType()));
+          V = B.CreateAddrSpaceCast(V, getUnqual(PT->getPointerElementType()));
         } else {
           V = B.CreateAddrSpaceCast(V,
                                     PointerType::getUnqual(PT->getContext()));
