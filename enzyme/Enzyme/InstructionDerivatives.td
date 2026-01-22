@@ -538,7 +538,7 @@ def : CallPattern<(Op $x, $integral_part_ptr),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["__fd_sincos_1", "__fd_sincos_1f", "__fd_sincos_1l", "__nv_sincos", "__nv_sincosf"],
+                  ["__fd_sincos_1", "__fd_sincos_1f", "__fd_sincos_1l"],
                   [
                   (
                    ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ),

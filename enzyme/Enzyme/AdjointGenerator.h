@@ -265,7 +265,16 @@ public:
     return B.CreateLoad(rankTy, alloc);
   }
 
+  void handleNVSincos(llvm::CallInst &call);
   void visitInstruction(llvm::Instruction &inst) {
+    if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&inst)) {
+      if (auto *F = CI->getCalledFunction()) {
+        if (F->getName() == "__nv_sincos" || F->getName() == "__nv_sincosf") {
+          handleNVSincos(*CI);
+          return;
+        }
+      }
+    }
     using namespace llvm;
 
     // TODO explicitly handle all instructions rather than using the catch all
