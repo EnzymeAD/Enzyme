@@ -328,9 +328,8 @@ public:
 
       reversedIndex = FinalClass::computeReversedIndices(
           rewriter, otherForOp, otherInductionVariable, revNumIters);
-      fwdrevmap =
-          FinalClass::createArgumentMap(rewriter, forOp, inductionVariable,
-                                        otherForOp, reversedIndex);
+      fwdrevmap = FinalClass::createArgumentMap(
+          rewriter, forOp, inductionVariable, otherForOp, reversedIndex);
       for (auto v : inductionVariable) {
         if (auto op = v.getDefiningOp()) {
           op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
