@@ -133,10 +133,10 @@ func.func @f_iter_autodiff(%a: !llvm.ptr, %da: !llvm.ptr, %dres: f32) {
 // CHECK-NEXT:      scf.yield %5 : f32
 // CHECK-NEXT:    }
 // CHECK-NEXT:    %1 = scf.for %arg3 = %c0 to %c9 step %c1 iter_args(%arg4 = %arg2) -> (f32) {
-// CHECK-NEXT:      %2 = arith.subi %c8, %arg3 : index
+// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c8, %arg3 : index
 // CHECK-NEXT:      %3 = memref.load %alloc[%2] : memref<9xf32>
 // CHECK-NEXT:      %4 = memref.load %alloc_0[%2] : memref<9xf32>
-// CHECK-NEXT:      %5 = arith.index_cast %arg3 : index to i32
+// CHECK-NEXT:      %5 = arith.index_cast %[[ridx]] : index to i32
 // CHECK-NEXT:      %6 = llvm.getelementptr %arg1[%5] : (!llvm.ptr, i32) -> !llvm.ptr, f32
 // CHECK-NEXT:      %7 = arith.mulf %arg4, %4 : f32
 // CHECK-NEXT:      %8 = arith.mulf %arg4, %3 : f32

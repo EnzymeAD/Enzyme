@@ -42,11 +42,11 @@ func.func @reduce(%x: f32, %ub_outer: index, %ub_inner: index) -> (f32) {
 // CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %[[iv:.+]] = %c0 to %[[ub_outer]] step %c1 iter_args(%[[iv4:.+]] = %[[dres]], %[[iv5:.+]] = %cst_0) -> (f32, f32) {
 
 // CHECK-NEXT:      %[[nm1:.+]] = arith.subi %[[ub_outer]], %c1 : index 
-// CHECK-NEXT:      %[[idx1:.+]] = arith.subi %[[nm1]], %[[iv]] : index 
+// CHECK-NEXT:      %[[iv_rev:.+]] = arith.subi %[[nm1]], %[[iv]] : index 
 
 
-// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.load %alloc[%[[idx1]]] : memref<?xmemref<?xf32>>
-// CHECK-NEXT:      %[[sz2:.+]] = arith.muli %[[iv]], %[[ub_inner]] : index
+// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.load %alloc[%[[iv_rev]]] : memref<?xmemref<?xf32>>
+// CHECK-NEXT:      %[[sz2:.+]] = arith.muli %[[iv_rev]], %[[ub_inner]] : index
 // CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %[[sz2]] step %c1 iter_args(%[[arg8:.+]] = %[[iv4]], %[[arg9:.+]] = %[[iv5]]) -> (f32, f32) {
 
 // CHECK-NEXT:        %[[idx2:.+]] = arith.subi %[[sz2]], %c1 : index 
