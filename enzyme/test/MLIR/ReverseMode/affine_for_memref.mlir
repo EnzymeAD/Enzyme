@@ -26,12 +26,12 @@ func.func @square_ip(%arg0: memref<?xf32>, %ub: index) {
 // CHECK-NEXT:       %[[nm1:.+]] = arith.subi %arg2, %c1 : index
 // CHECK-NEXT:       %[[ridx:.+]] = arith.subi %[[nm1]], %arg3 : index
 // CHECK-NEXT:       %[[a5:.+]] = memref.load %[[alloc0]][%[[ridx]]] : memref<?xf32>
-// CHECK-NEXT:       %[[a3:.+]] = affine.apply #map(%arg3)
+// CHECK-NEXT:       %[[a3:.+]] = affine.apply #map(%[[ridx]])
 // CHECK-NEXT:       %[[a4:.+]] = memref.load %arg1[%[[a3]]] : memref<?xf32>
 // CHECK-NEXT:       memref.store %cst, %arg1[%[[a3]]] : memref<?xf32>
 // CHECK-NEXT:       %[[a6:.+]] = arith.mulf %[[a4]], %[[a5]] : f32
 // CHECK-NEXT:       %[[a7:.+]] = arith.addf %[[a6]], %[[a6]] : f32
-// CHECK-NEXT:       %[[a8:.+]] = affine.apply #map1(%arg3)
+// CHECK-NEXT:       %[[a8:.+]] = affine.apply #map1(%[[ridx]])
 // CHECK-NEXT:       %[[a9:.+]] = memref.load %arg1[%[[a8]]] : memref<?xf32>
 // CHECK-NEXT:       %[[a10:.+]] = arith.addf %[[a9]], %[[a7]] : f32
 // CHECK-NEXT:       memref.store %[[a10]], %arg1[%[[a8]]] : memref<?xf32>

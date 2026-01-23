@@ -289,6 +289,16 @@ public:
     // [0,..., N - 1] counter
     SmallVector<Value> inductionVariable;
     SmallVector<Value> otherInductionVariable;
+    SmallVector<Value> reversedIndex;
+
+    SmallVector<IntOrValue> revNumIters;
+    SmallVector<IntOrValue> fwdNumIters;
+
+    if (!fwdNumIters.size()) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(forOp);
+      fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
+    }
 
     Operation *lastFwd = nullptr;
     if (caches.size()) {
@@ -301,9 +311,26 @@ public:
       rewriter.setInsertionPointToStart(otherForOp.getBody());
       otherInductionVariable =
           FinalClass::getCanonicalLoopIVs(rewriter, otherForOp);
+
+      // The reverse iteration count may not be known at this point, as it may
+      // be cached via a push/pop, use the fwd count in that case.
+      if (!revNumIters.size()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(otherForOp);
+        revNumIters = FinalClass::getDimensionBounds(rewriter, otherForOp);
+        for (auto &&[rev, fwd] : llvm::zip_equal(revNumIters, fwdNumIters)) {
+          if (!fwd.vval && rev.vval) {
+            rev.vval = nullptr;
+            rev.ival = fwd.ival;
+          }
+        }
+      }
+
+      reversedIndex = FinalClass::computeReversedIndices(
+          rewriter, otherForOp, otherInductionVariable, revNumIters);
       fwdrevmap =
           FinalClass::createArgumentMap(rewriter, forOp, inductionVariable,
-                                        otherForOp, otherInductionVariable);
+                                        otherForOp, reversedIndex);
       for (auto v : inductionVariable) {
         if (auto op = v.getDefiningOp()) {
           op->setAttr("enzyme.no_erase", rewriter.getUnitAttr());
@@ -337,8 +364,6 @@ public:
 
     unsigned numNewValuePushes = 0;
 
-    SmallVector<IntOrValue> fwdNumIters;
-
     if (lastFwd)
       rewriter.setInsertionPointAfter(lastFwd);
     else
@@ -371,11 +396,6 @@ public:
       }
 
       SmallVector<int64_t> newShape;
-      if (!fwdNumIters.size()) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(forOp);
-        fwdNumIters = FinalClass::getDimensionBounds(rewriter, forOp);
-      }
       SmallVector<Value> dynamicDims;
       for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
@@ -555,10 +575,6 @@ public:
     }
 
     int pushedValueIdx = 0;
-
-    SmallVector<Value> reversedIndex;
-
-    SmallVector<IntOrValue> revNumIters;
 
     if (caches.size()) {
       if (otherInductionVariable.size()) {

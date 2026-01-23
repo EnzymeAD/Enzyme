@@ -92,12 +92,8 @@ public:
   static IRMapping createArgumentMap(PatternRewriter &rewriter,
                                      scf::ForOp forOp, ArrayRef<Value> indFor,
                                      scf::ForOp otherForOp,
-                                     ArrayRef<Value> indOther) {
+                                     ArrayRef<Value> reversedOther) {
     IRMapping map;
-
-    auto revBounds = getDimensionBounds(rewriter, otherForOp);
-    auto reversedOther =
-        computeReversedIndices(rewriter, forOp, indOther, revBounds);
     for (auto &&[f, o] : llvm::zip_equal(indFor, reversedOther)) {
       map.map(f, o);
     }
@@ -657,6 +653,13 @@ struct ParallelOpEnzymeOpsRemover
       }
     }
     return bounds;
+  }
+
+  static SmallVector<Value>
+  computeReversedIndices(PatternRewriter &rewriter, scf::ParallelOp parOp,
+                         ArrayRef<Value> otherInductionVariable,
+                         ArrayRef<IntOrValue> bounds) {
+    return SmallVector<Value>(otherInductionVariable);
   }
 
   static SmallVector<Value> getCanonicalLoopIVs(OpBuilder &builder,
