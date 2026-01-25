@@ -1154,6 +1154,14 @@ void EnzymeCopyMetadata(LLVMValueRef inst1, LLVMValueRef inst2) {
   cast<Instruction>(unwrap(inst1))
       ->copyMetadata(*cast<Instruction>(unwrap(inst2)));
 }
+void EnzymeCopyAlignment(LLVMValueRef inst1, LLVMValueRef inst2) {
+  cast<AllocaInst>(unwrap(inst1))
+      ->setAlignment(cast<AllocaInst>(unwrap(inst2))->getAlign());
+}
+void EnzymeTakeName(LLVMValueRef inst1, LLVMValueRef inst2) {
+  unwrap(inst1)->takeName(unwrap(inst2));
+}
+
 LLVMMetadataRef EnzymeAnonymousAliasScopeDomain(const char *str,
                                                 LLVMContextRef ctx) {
   MDBuilder MDB(*unwrap(ctx));
