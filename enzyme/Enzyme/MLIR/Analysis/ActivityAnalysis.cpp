@@ -1066,7 +1066,7 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
         // TODO: the interface may also tell us which regions are allowed to
         // yield parent op results, and which only branch to other regions.
         auto successorOperands = llvm::to_vector(iface.getSuccessorOperands(
-            RegionSuccessor(iface.getOperation(), iface->getResults())));
+            RegionSuccessor::parent(iface->getResults())));
         // TODO: understand/document the assumption of how operands flow.
 
         if (successorOperands.size() != owner->getNumResults()) {
