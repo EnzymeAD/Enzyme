@@ -958,6 +958,65 @@ public:
   }
 };
 
+class RemoveUnusedArgs final : public OpRewritePattern<AutoDiffRegionOp> {
+
+public:
+  using OpRewritePattern<AutoDiffRegionOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AutoDiffRegionOp uop,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> newInArgs;
+    SmallVector<size_t> argIdxToErase;
+    SmallVector<ActivityAttr> newInActivityArgs;
+    llvm::SmallVector<Value> blockArg(uop.getBody().getArguments());
+    auto in_idx = 0;
+    for (auto [idx, act] :
+         llvm::enumerate(uop.getActivity().getAsRange<ActivityAttr>())) {
+      auto act_val = act.getValue();
+      Value res = uop.getInputs()[in_idx++];
+
+      if (blockArg[idx].use_empty()) {
+        argIdxToErase.push_back(idx);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          in_idx++;
+        }
+      } else {
+        newInActivityArgs.push_back(act);
+        newInArgs.push_back(res);
+        if (act_val == Activity::enzyme_dup ||
+            act_val == Activity::enzyme_dupnoneed) {
+          res = uop.getInputs()[in_idx++];
+          newInArgs.push_back(res);
+        }
+      }
+    }
+
+    if (argIdxToErase.empty())
+      return failure();
+
+    newInArgs.append(uop.getDifferentialReturns());
+    ArrayAttr newInActivity =
+        ArrayAttr::get(rewriter.getContext(),
+                       llvm::ArrayRef<Attribute>(newInActivityArgs.begin(),
+                                                 newInActivityArgs.end()));
+
+    auto newOp = AutoDiffRegionOp::create(
+        rewriter, uop.getLoc(), uop.getResultTypes(), newInArgs, newInActivity,
+        uop.getRetActivity(), uop.getWidthAttr(), uop.getStrongZeroAttr(),
+        uop.getFnAttr());
+    rewriter.inlineRegionBefore(uop.getBody(), newOp.getBody(),
+                                newOp.getBody().begin());
+
+    for (auto idx : llvm::reverse(argIdxToErase)) {
+      newOp.getBody().eraseArgument(idx);
+    }
+
+    rewriter.replaceOp(uop, newOp);
+    return success();
+  }
+};
+
 void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<ReverseRetOpt<AutoDiffOp>>(context);
@@ -965,7 +1024,7 @@ void AutoDiffOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
 
 void AutoDiffRegionOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
-  patterns.add<ReverseRetOpt<AutoDiffRegionOp>>(context);
+  patterns.add<ReverseRetOpt<AutoDiffRegionOp>, RemoveUnusedArgs>(context);
 }
 //===----------------------------------------------------------------------===//
 // SampleOp
