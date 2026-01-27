@@ -585,7 +585,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                             (BFMul $alpha, (LoadLookup $layout, (Shadow $C), $i, $i)),
                             (First
                                 (Lookup $layout,
-                                    (Concat $A, (ld $A, $trans, $lda, $n, $k)),
+                                    (Concat $A, (ld $A, $trans, $lda, $k, $n)),
                                     (Rows $trans, $i, ConstantInt<0>),
                                     (Rows $trans, ConstantInt<0>, $i)
                                 )

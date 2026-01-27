@@ -269,3 +269,15 @@ Enzyme can be integrated with any language that compiles to LLVM IR:
 - **Rust**: Via rust-enzyme bindings
 
 When adding language-specific features, ensure they work correctly with the core AD transformation.
+
+### Test Maintenance Guidelines
+
+#### LLVM IR Tests (.ll)
+- **Robustness**: Enable tests to pass across multiple LLVM versions (15+).
+  - **Remove Attribute Groups**: Strip attribute group references (e.g., `#0`) from `CHECK` lines for function calls and definitions. Attribute numbering is unstable.
+  - **Remove Trailing Braces**: Do not include the opening `{` in function definition `CHECK` lines.
+  - **Capture Variables**: Use `FileCheck` variable captures (e.g., `[[VAR:%.+]]`) instead of hardcoded SSA values. IMPORTANT: Remember to include the `%` prefix when using the captured variable (e.g., `%[[VAR]]`), as the capture usually only matches the numeric ID.
+  - **No Empty Checks**: Do not use `CHECK-NEXT:` for empty lines. Resume matching with `CHECK:` for the next basic block or instruction sequence.
+  - **PHI Nodes**: For forward references in PHI nodes (loop backedges), capture the variable in the usage (e.g., `[ %[[VAR:[0-9]+]], ... ]`) and verify it in the subsequent definition (`%[[VAR]] = ...`).
+- **Integration Tests**: Always verify changes to core derivatives (like BLAS) by running relevant integration tests (e.g., `test/Integration/ReverseMode/blas.cpp`).
+- **Run Tests Locally**: Always run `ninja check-enzyme` or `llvm-lit` on modified tests before submitting to ensure they pass.
