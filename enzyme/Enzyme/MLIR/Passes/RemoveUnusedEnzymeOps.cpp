@@ -30,6 +30,8 @@
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "mlir/IR/Verifier.h"
+
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_REMOVEUNUSEDENZYMEOPSPASS
@@ -509,13 +511,39 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
   while (!worklist.empty()) {
     auto op = worklist.pop();
     auto iface = cast<EnzymeOpsRemoverOpInterface>(op);
+    // auto parent = op->getParentOfType<FunctionOpInterface>();
+    // llvm::errs() << "[debug] removing enzyme ops for " << op->getName()
+    //              << " at " << op->getLoc() << " inside function "
+    //              << parent.getName() << "\n";
+    // llvm::errs() << "* * * before removal * * *\n" << parent << "\n* * * * * *\n\n";
     current = op;
     rewriter.setInsertionPoint(current);
     result &= iface.removeEnzymeOps(rewriter).succeeded();
+
+    // if (failed(mlir::verify(parent))) {
+    //   llvm::errs() << "[debug] parent is invalid\n";
+    //   exit(1);
+    // }
+    // llvm::errs() << "[debug] after removal: " << parent << "\n";
+    // if (failed(mlir::verify(parent))) {
+    //   llvm::errs() << "[debug] verification failed\n";
+    // } else {
+    //   llvm::errs() << "[debug] verification succeeded\n";
+    // }
+
     current = nullptr;
   }
 
   return LogicalResult::success(result);
+}
+
+static bool containsInitOps(Operation *op) {
+  bool found = false;
+  op->walk([&](enzyme::InitOp initOp) {
+    found = true;
+    return WalkResult::interrupt();
+  });
+  return found;
 }
 
 struct RemoveUnusedEnzymeOpsPass
@@ -534,6 +562,9 @@ struct RemoveUnusedEnzymeOpsPass
 
     bool failed = false;
     op->walk([&](FunctionOpInterface func) {
+      if (!containsInitOps(func)) {
+        return;
+      }
       PostOrderWalkDriver driver(func);
       driver.initializeWorklist();
       failed |= driver.processWorklist().failed();
