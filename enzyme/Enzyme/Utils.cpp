@@ -4441,7 +4441,8 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
   std::deque<Value *> todo = {v};
   SmallVector<Value *, 1> done;
   while (todo.size()) {
-    auto cur = todo.pop_front_val();
+    auto cur = todo.front();
+    todo.pop_front();
     auto T = cur->getType();
     if (!anyJuliaObjects(T)) {
       continue;
@@ -4451,9 +4452,10 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
       continue;
     }
     if (auto ST = dyn_cast<StructType>(T)) {
-      for (auto en : llvm::reverse(llvm::enumerate(ST->elements()))) {
-        if (anyJuliaObjects(en.value())) {
-          auto V2 = B.CreateExtractValue(cur, en.index());
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
+        auto T2 = ST->getElementType(E - 1 - i);
+        if (anyJuliaObjects(T2)) {
+          auto V2 = B.CreateExtractValue(cur, E - 1 - i);
           todo.push_front(V2);
         }
       }
