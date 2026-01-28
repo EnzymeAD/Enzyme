@@ -1008,6 +1008,82 @@ struct ForOpADDataFlow
   }
 };
 
+struct ParallelOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<ParallelOpADDataFlow, scf::ParallelOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto parOp = cast<scf::ParallelOp>(op);
+    return {
+        parOp->getOperand(res.getResultNumber() + 3), // TO DO:  check if this is right with a multi-d loop (probably not)
+                                                      // I think this needs to be multiplied by the number of init-vals/results
+        parOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    // TO DO:  do we need this?
+    assert(0);
+    return SmallVector<Value>();
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto parOp = cast<scf::ParallelOp>(op);
+    SmallVector<Value> sv;
+
+    for (auto &&[res, arg, barg] :
+         llvm::zip_equal(parOp->getResults(), term->getOperands(),
+                         parOp.getInitVals())) {
+      if (arg == val) {
+        sv.push_back(res);
+        sv.push_back(barg);
+      }
+    }
+
+    return sv;
+  }
+};
+
+struct ReduceOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<ReduceOpADDataFlow, scf::ReduceOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    // ReduceOp's have no results
+    return SmallVector<Value>();
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    // The op here is the parent of the block, which is a ReduceOp
+    // All but the last block arguments match up with the corresponding operand
+    // of the reduce op.  The last matches up with terminator operand as well as
+    // the initial value.  If this is the ith block, it is the ith initial value
+
+    auto redOp = cast<scf::ReduceOp>(op);
+    mlir::Block *ownerBlock = arg.getOwner();
+    auto num_args = ownerBlock->getNumArguments();
+    auto arg_idx = arg.getArgNumber();
+    auto region_idx = ownerBlock->getParent()->getRegionNumber();
+    if (arg_idx == num_args - 1) {
+      auto parOp = cast<scf::ParallelOp>(redOp->getParentOp());
+      auto num_lb = parOp.getLowerBound().size();
+      auto num_ub = parOp.getUpperBound().size();
+      auto num_st = parOp.getStep().size();
+      return { parOp->getOperand(num_lb+num_ub+num_st+region_idx),
+               ownerBlock->getTerminator()->getOperand(0) };
+    }
+    else {
+      return { redOp->getOperand(region_idx) };
+    }
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto redOp = cast<scf::ReduceOp>(op);
+    auto parOp = cast<scf::ParallelOp>(redOp->getParentOp());
+    mlir::Block *ownerBlock = term->getBlock();
+    auto region_idx = ownerBlock->getParent()->getRegionNumber();
+
+    return { parOp->getResult(region_idx), ownerBlock->getArgument(1) };
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
@@ -1018,6 +1094,8 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
     scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
+    scf::ParallelOp::attachInterface<ParallelOpADDataFlow>(*context);
+    scf::ReduceOp::attachInterface<ReduceOpADDataFlow>(*context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
