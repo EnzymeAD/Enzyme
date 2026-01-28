@@ -87,3 +87,49 @@ func.func @dsome_res_inactive(%x: f64, %cond: i1, %dres: f64) -> f64 {
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return %0 : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func private @if_overwrite(%cond: i1, %x: memref<f32>) {
+  scf.if %cond {
+    %val = memref.load %x[] : memref<f32>
+    %cos = math.cos %val : f32
+    memref.store %cos, %x[] : memref<f32>
+  }
+  return
+}
+
+func.func @dif_overwrite(%cond: i1, %x: memref<f32>, %dx: memref<f32>) {
+  enzyme.autodiff @if_overwrite(%cond, %x, %dx) {
+    activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
+    ret_activity=[]
+  } : (i1, memref<f32>, memref<f32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffeif_overwrite(
+// CHECK-SAME:      %[[ARG0:.*]]: i1,
+// CHECK-SAME:      %[[ARG1:.*]]: memref<f32>,
+// CHECK-SAME:      %[[ARG2:.*]]: memref<f32>) {
+// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[IF_0:.*]] = scf.if %[[ARG0]] -> (f32) {
+// CHECK:             %[[LOAD_0:.*]] = memref.load %[[ARG1]][] : memref<f32>
+// CHECK:             %[[COS_0:.*]] = math.cos %[[LOAD_0]] : f32
+// CHECK:             memref.store %[[COS_0]], %[[ARG1]][] : memref<f32>
+// CHECK:             scf.yield %[[LOAD_0]] : f32
+// CHECK:           } else {
+// CHECK:             scf.yield %[[CONSTANT_0]] : f32
+// CHECK:           }
+// CHECK:           scf.if %[[ARG0]] {
+// CHECK:             %[[LOAD_1:.*]] = memref.load %[[ARG2]][] : memref<f32>
+// CHECK:             memref.store %[[CONSTANT_0]], %[[ARG2]][] : memref<f32>
+// CHECK:             %[[SIN_0:.*]] = math.sin %[[IF_0]] : f32
+// CHECK:             %[[NEGF_0:.*]] = arith.negf %[[SIN_0]] : f32
+// CHECK:             %[[MULF_0:.*]] = arith.mulf %[[LOAD_1]], %[[NEGF_0]] : f32
+// CHECK:             %[[LOAD_2:.*]] = memref.load %[[ARG2]][] : memref<f32>
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[LOAD_2]], %[[MULF_0]] : f32
+// CHECK:             memref.store %[[ADDF_0]], %[[ARG2]][] : memref<f32>
+// CHECK:           } else {
+// CHECK:           }
+// CHECK:           return
+// CHECK:         }
