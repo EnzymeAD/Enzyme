@@ -1441,7 +1441,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
       } else if (attr.isStringAttribute() &&
                  attr.getKindAsString() == "enzymejl_returnRoots_v") {
         sretv = true;
-        kind = "enzymejl_returnRoots_v";
+        kind = "enzymejl_returnRoots";
         value = attr.getValueAsString();
       } else {
         NewAttrs = NewAttrs.addAttribute(
@@ -1465,6 +1465,7 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
         }
       }
     }
+    assert(!sretv);
     types.push_back(T);
   }
   if (changed.size() == 0)
@@ -1591,17 +1592,20 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
             attr.getKindAsString() == "enzyme_sret_v") {
           NewAttrs = NewAttrs.addAttribute(
               F->getContext(), AttributeList::FirstArgIndex + vals.size(),
-              Attribute::get(F->getContext(), "enzyme_sret"));
+              Attribute::get(F->getContext(), "enzyme_sret",
+                             attr.getValueAsString()));
         } else if (attr.isStringAttribute() &&
                    attr.getKindAsString() == "enzymejl_returnRoots_v") {
           NewAttrs = NewAttrs.addAttribute(
               F->getContext(), AttributeList::FirstArgIndex + vals.size(),
-              Attribute::get(F->getContext(), "enzymejl_returnRoots"));
+              Attribute::get(F->getContext(), "enzymejl_returnRoots",
+                             attr.getValueAsString()));
         } else if (attr.isStringAttribute() &&
                    attr.getKindAsString() == "enzymejl_rooted_typ_v") {
           NewAttrs = NewAttrs.addAttribute(
               F->getContext(), AttributeList::FirstArgIndex + vals.size(),
-              Attribute::get(F->getContext(), "enzymejl_rooted_typ"));
+              Attribute::get(F->getContext(), "enzymejl_rooted_typ",
+                             attr.getValueAsString()));
         } else {
           NewAttrs = NewAttrs.addAttribute(
               F->getContext(), AttributeList::FirstArgIndex + vals.size(),
