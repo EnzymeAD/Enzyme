@@ -1561,17 +1561,17 @@ void EnzymeFixupBatchedJuliaCallingConvention(LLVMValueRef F_C) {
                   attr.getKindAsString() == "enzyme_sret_v") {
                 sretv = true;
                 kind = "enzyme_sret";
-                attr.getValueAsString();
+                value = attr.getValueAsString();
               } else if (attr.isStringAttribute() &&
                          attr.getKindAsString() == "enzymejl_returnRoots_v") {
                 sretv = true;
                 kind = "enzymejl_returnRoots";
-                attr.getValueAsString();
+                value = attr.getValueAsString();
               } else if (attr.isStringAttribute() &&
                          attr.getKindAsString() == "enzymejl_rooted_typ_v") {
                 sretv = true;
                 kind = "enzymejl_rooted_typ_v";
-                attr.getValueAsString();
+                value = attr.getValueAsString();
               }
             }
             for (unsigned i = 0; i < AT->getNumElements(); i++) {
