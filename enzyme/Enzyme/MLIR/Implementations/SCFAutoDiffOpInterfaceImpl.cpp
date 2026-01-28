@@ -1013,9 +1013,12 @@ struct ParallelOpADDataFlow
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
                                                    OpResult res) const {
     auto parOp = cast<scf::ParallelOp>(op);
+    const size_t num_lower = parOp.getLowerBound().size();
+    const size_t num_upper = parOp.getUpperBound().size();
+    const size_t num_step = parOp.getStep().size();
+    const size_t init_vals_offset = num_lower + num_upper + num_step;
     return {
-        parOp->getOperand(res.getResultNumber() + 3), // TO DO:  check if this is right with a multi-d loop (probably not)
-                                                      // I think this needs to be multiplied by the number of init-vals/results
+        parOp->getOperand(res.getResultNumber() + init_vals_offset), 
         parOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
   }
   SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
