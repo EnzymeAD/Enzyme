@@ -4310,28 +4310,29 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
     }
 
     if (auto AT = dyn_cast<ArrayType>(ty)) {
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
         std::vector<unsigned> path2(path);
-        path2.push_back(i);
-        todo.emplace_back(AT->getElementType(), path2);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(AT->getElementType(), path2);
       }
       continue;
     }
 
     if (auto VT = dyn_cast<VectorType>(ty)) {
-      for (size_t i = 0; i < VT->getElementCount().getKnownMinValue(); i++) {
+      for (size_t i = 0, E = VT->getElementCount().getKnownMinValue(); i < E;
+           i++) {
         std::vector<unsigned> path2(path);
-        path2.push_back(i);
-        todo.emplace_back(VT->getElementType(), path2);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(VT->getElementType(), path2);
       }
       continue;
     }
 
     if (auto ST = dyn_cast<StructType>(ty)) {
-      for (size_t i = 0; i < ST->getNumElements(); i++) {
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
         std::vector<unsigned> path2(path);
-        path2.push_back(i);
-        todo.emplace_back(ST->getTypeAtIndex(i), path2);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(ST->getTypeAtIndex(E - 1 - i), path2);
       }
       continue;
     }
@@ -4394,25 +4395,25 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
     }
 
     if (auto AT = dyn_cast<ArrayType>(ty)) {
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
         std::vector<unsigned> nextDst(dstPrefix);
         std::vector<unsigned> nextSrc(srcPrefix);
-        nextDst.push_back(i);
-        nextSrc.push_back(i);
-        todo.emplace_back(AT->getElementType(), std::move(nextDst),
-                          std::move(nextSrc));
+        nextDst.push_back(E - 1 - i);
+        nextSrc.push_back(E - 1 - i);
+        todo.emplace_front(AT->getElementType(), std::move(nextDst),
+                           std::move(nextSrc));
       }
       continue;
     }
 
     if (auto ST = dyn_cast<StructType>(ty)) {
-      for (size_t i = 0; i < ST->getNumElements(); i++) {
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
         std::vector<unsigned> nextDst(dstPrefix);
         std::vector<unsigned> nextSrc(srcPrefix);
-        nextDst.push_back(i);
-        nextSrc.push_back(i);
-        todo.emplace_back(ST->getElementType(i), std::move(nextDst),
-                          std::move(nextSrc));
+        nextDst.push_back(E - 1 - i);
+        nextSrc.push_back(E - 1 - i);
+        todo.emplace_front(ST->getElementType(E - 1 - i), std::move(nextDst),
+                           std::move(nextSrc));
       }
       continue;
     }
@@ -4437,10 +4438,10 @@ void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
 
 llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
                                                     llvm::IRBuilder<> &B) {
-  SmallVector<Value *, 1> todo = {v};
+  std::deque<Value *> todo = {v};
   SmallVector<Value *, 1> done;
   while (todo.size()) {
-    auto cur = todo.pop_back_val();
+    auto cur = todo.pop_front_val();
     auto T = cur->getType();
     if (!anyJuliaObjects(T)) {
       continue;
@@ -4450,17 +4451,17 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
       continue;
     }
     if (auto ST = dyn_cast<StructType>(T)) {
-      for (auto en : llvm::enumerate(ST->elements())) {
+      for (auto en : llvm::reverse(llvm::enumerate(ST->elements()))) {
         if (anyJuliaObjects(en.value())) {
           auto V2 = B.CreateExtractValue(cur, en.index());
-          todo.push_back(V2);
+          todo.push_front(V2);
         }
       }
       continue;
     }
     if (auto AT = dyn_cast<ArrayType>(T)) {
-      for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.push_back(B.CreateExtractValue(cur, i));
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
+        todo.push_front(B.CreateExtractValue(cur, E - 1 - i));
       }
       continue;
     }
@@ -4468,7 +4469,7 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
       assert(!VT->getElementCount().isScalable());
       size_t numElems = VT->getElementCount().getKnownMinValue();
       for (size_t i = 0; i < numElems; i++) {
-        todo.push_back(B.CreateExtractElement(cur, i));
+        todo.push_front(B.CreateExtractElement(cur, numElems - 1 - i));
       }
       continue;
     }
