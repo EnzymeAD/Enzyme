@@ -56,11 +56,11 @@ def ProbProgPass : Pass<"probprog"> {
       /*description=*/"Optimization passes to apply to generated probabilistic programs"
     >,
     Option<
-      /*C++ variable name=*/"debugMCMC",
-      /*CLI argument=*/"debug-mcmc",
+      /*C++ variable name=*/"debugDump",
+      /*CLI argument=*/"debug-dump",
       /*type=*/"bool",
       /*default=*/"false",
-      /*description=*/"Enable debug prints for MCMC algorithms"
+      /*description=*/"Enable debug dump"
     >,
   ];
 }

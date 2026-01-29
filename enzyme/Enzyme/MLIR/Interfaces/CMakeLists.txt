@@ -11,7 +11,9 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
   CloneFunction.cpp
   GradientUtils.cpp
   GradientUtilsReverse.cpp
+  HMCUtils.cpp
   ProbProgUtils.cpp
+  TransformUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp
   Utils.cpp
