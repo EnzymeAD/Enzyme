@@ -1766,6 +1766,9 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
   for (auto &&[I, cur, byteOffset] : findAllUsersOf(arg)) {
     assert(I->getParent()->getParent() == arg->getParent());
 
+    if (isa<ICmpInst>(I)) {
+      continue;
+    }
     if (isa<LoadInst>(I)) {
       continue;
     }
