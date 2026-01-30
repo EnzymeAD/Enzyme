@@ -53,18 +53,21 @@ static int64_t computeTensorElementCount(RankedTensorType tensorType) {
   return elemCount;
 }
 
-static enzyme::SampleOp findSampleBySymbol(FunctionOpInterface fn,
-                                           Attribute targetSymbol) {
-  enzyme::SampleOp result = nullptr;
+using SampleOpMap = DenseMap<Attribute, enzyme::SampleOp>;
+
+static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
+  SampleOpMap map;
   fn.walk([&](enzyme::SampleOp sampleOp) {
-    auto sampleSymbol = sampleOp.getSymbolAttr();
-    if (sampleSymbol && sampleSymbol == targetSymbol) {
-      result = sampleOp;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
+    if (auto symbol = sampleOp.getSymbolAttr())
+      map[symbol] = sampleOp;
   });
-  return result;
+  return map;
+}
+
+static enzyme::SampleOp findSampleBySymbol(const SampleOpMap &map,
+                                           Attribute targetSymbol) {
+  auto it = map.find(targetSymbol);
+  return it != map.end() ? it->second : nullptr;
 }
 
 static int64_t computeSampleElementCount(Operation *op,
@@ -88,14 +91,14 @@ static int64_t computeSampleElementCount(Operation *op,
 }
 
 static bool computePositionSizeForAddress(Operation *op,
-                                          FunctionOpInterface func,
+                                          const SampleOpMap &sampleMap,
                                           ArrayRef<Attribute> address,
                                           SymbolTableCollection &symbolTable,
                                           int64_t &positionSize) {
   if (address.empty())
     return false;
 
-  auto sampleOp = findSampleBySymbol(func, address[0]);
+  auto sampleOp = findSampleBySymbol(sampleMap, address[0]);
   if (!sampleOp)
     return false;
 
@@ -112,7 +115,8 @@ static bool computePositionSizeForAddress(Operation *op,
       return false;
     }
 
-    return computePositionSizeForAddress(op, genFn, address.drop_front(),
+    auto nestedMap = buildSampleOpMap(genFn);
+    return computePositionSizeForAddress(op, nestedMap, address.drop_front(),
                                          symbolTable, positionSize);
   }
 
@@ -128,6 +132,7 @@ static int64_t
 computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
                                 ArrayAttr selection,
                                 SymbolTableCollection &symbolTable) {
+  auto sampleMap = buildSampleOpMap(fn);
   int64_t positionSize = 0;
 
   for (auto addr : selection) {
@@ -138,8 +143,8 @@ computePositionSizeForSelection(Operation *op, FunctionOpInterface fn,
     }
 
     SmallVector<Attribute> tailAddresses(address.begin(), address.end());
-    if (!computePositionSizeForAddress(op, fn, tailAddresses, symbolTable,
-                                       positionSize)) {
+    if (!computePositionSizeForAddress(op, sampleMap, tailAddresses,
+                                       symbolTable, positionSize)) {
       op->emitError("Could not find sample with symbol in address chain");
       return -1;
     }
@@ -152,6 +157,7 @@ static int64_t
 computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
                                   ArrayAttr selection, Attribute targetSymbol,
                                   SymbolTableCollection &symbolTable) {
+  auto sampleMap = buildSampleOpMap(fn);
   int64_t offset = 0;
 
   for (auto addr : selection) {
@@ -166,8 +172,8 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
     }
 
     SmallVector<Attribute> tailAddresses(address.begin(), address.end());
-    if (!computePositionSizeForAddress(op, fn, tailAddresses, symbolTable,
-                                       offset)) {
+    if (!computePositionSizeForAddress(op, sampleMap, tailAddresses,
+                                       symbolTable, offset)) {
       return -1;
     }
   }
@@ -179,6 +185,7 @@ static SmallVector<MCMC::SupportInfo>
 collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
                                ArrayAttr selection,
                                SymbolTableCollection &symbolTable) {
+  auto sampleMap = buildSampleOpMap(fn);
   SmallVector<MCMC::SupportInfo> supports;
   int64_t currentOffset = 0;
 
@@ -192,7 +199,7 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
       continue;
 
     auto targetSymbol = address[0];
-    auto sampleOp = findSampleBySymbol(fn, targetSymbol);
+    auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
     if (!sampleOp)
       continue;
 
@@ -1140,6 +1147,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto initTraceOp = enzyme::InitTraceOp::create(rewriter, loc, traceType);
       Value currTrace = initTraceOp.getTrace();
 
+      auto sampleMap = buildSampleOpMap(fn);
       size_t positionOffset = 0;
 
       for (auto addr : selection) {
@@ -1148,7 +1156,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           continue;
 
         auto targetSymbol = cast<enzyme::SymbolAttr>(address[0]);
-        auto sampleOp = findSampleBySymbol(fn, targetSymbol);
+        auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
         if (!sampleOp) {
           mcmcOp.emitError("Could not find sample for address in selection");
           return failure();
