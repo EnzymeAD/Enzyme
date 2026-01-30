@@ -195,7 +195,8 @@ Value computeMassMatrixSqrt(OpBuilder &builder, Location loc, Value invMass,
 std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
                                        Value rng, Value invMass,
                                        Value massMatrixSqrt,
-                                       RankedTensorType positionType);
+                                       RankedTensorType positionType,
+                                       bool debugDump = false);
 
 /// Computes potential energy `U(q) = -log p(q)` and its gradient `dU/dq`
 GradientResult computePotentialAndGradient(OpBuilder &builder, Location loc,

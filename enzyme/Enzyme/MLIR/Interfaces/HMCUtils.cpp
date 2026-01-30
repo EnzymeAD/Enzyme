@@ -229,7 +229,8 @@ Value MCMC::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
 std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
                                              Value rng, Value invMass,
                                              Value massMatrixSqrt,
-                                             RankedTensorType positionType) {
+                                             RankedTensorType positionType,
+                                             bool debugDump) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
@@ -243,6 +244,10 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
   auto splitOp = enzyme::RandomSplitOp::create(builder, loc,
                                                TypeRange{rng.getType()}, rng);
   auto rngForSampling = splitOp.getResult(0);
+
+  rngForSampling =
+      conditionalDump(builder, loc, rngForSampling,
+                      "sampleMomentum: rng state for sampling", debugDump);
 
   // Sample eps ~ N(0, I)
   auto randomOp = enzyme::RandomOp::create(
@@ -689,8 +694,9 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto rngTransition = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
-  auto [p0, rngAfterMomentum] = sampleMomentum(
-      builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt, positionType);
+  auto [p0, rngAfterMomentum] =
+      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt,
+                     positionType, debugDump);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
   auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
