@@ -143,14 +143,15 @@ struct AffineForOpInterfaceReverse
 
         auto term = oBB.getTerminator();
 
-        for (auto &&[active, arg, operand] :
-             llvm::zip_equal(operandsActive, revBB.getArguments().slice(1),
-                             term->getOperands())) {
+        unsigned argIdx = 1; // Skip over the reversed IV
+        for (auto &&[active, operand] :
+             llvm::zip_equal(operandsActive, term->getOperands())) {
           if (active) {
             // Set diffe here, not add because it should not accumulate across
             // iterations. Instead the new gradient for this operand is passed
             // in the return of the reverse for body.
-            gutils->setDiffe(operand, arg, bodyBuilder);
+            gutils->setDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
+            argIdx++;
           }
         }
 
@@ -182,11 +183,14 @@ struct AffineForOpInterfaceReverse
       }
     }
 
-    for (auto &&[active, res, arg] : llvm::zip_equal(
-             operandsActive, revFor->getResults(), forOp.getInits())) {
+    unsigned resIdx = 0;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, forOp.getInits())) {
       if (active) {
-        if (!gutils->isConstantValue(arg))
-          gutils->addToDiffe(arg, res, builder);
+        if (!gutils->isConstantValue(arg)) {
+          gutils->addToDiffe(arg, revFor.getResult(resIdx), builder);
+          resIdx++;
+        }
       }
     }
 
