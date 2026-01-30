@@ -206,7 +206,6 @@ Value MCMC::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
     // TODO: improve
     // Reference:
     // https://github.com/pyro-ppl/numpyro/blob/6a9cb9a530fe53897edb6c472368e58965b034e4/numpyro/infer/hmc_util.py#L499
-    int64_t n = invMassType.getShape()[0];
     auto reversedInvMass = reverseRowsAndColumns(builder, loc, invMass);
     auto L_reversed =
         enzyme::CholeskyOp::create(builder, loc, invMassType, reversedInvMass,
@@ -776,7 +775,6 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
       rngAfterLeapfrog, zeroConst, oneConst,
       enzyme::RngDistributionAttr::get(builder.getContext(),
                                        enzyme::RngDistribution::UNIFORM));
-  auto rngFinal = randomOp.getOutputRngState();
   auto randUniform = randomOp.getResult();
 
   // accepted = u < α
