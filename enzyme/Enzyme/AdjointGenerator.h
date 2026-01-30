@@ -5292,13 +5292,22 @@ public:
                   call.getParamAttr(i, attr));
             } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[pre_args.size()].push_back(
-                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v",
+                                 call.getAttributes()
+                                     .getParamAttr(i, attr)
+                                     .getValueAsString()));
             } else if (attr == std::string("enzymejl_sret_union_bytes")) {
               structAttrs[pre_args.size()].push_back(Attribute::get(
-                  call.getContext(), "enzymejl_sret_union_bytes_v"));
+                  call.getContext(), "enzymejl_sret_union_bytes_v",
+                  call.getAttributes()
+                      .getParamAttr(i, attr)
+                      .getValueAsString()));
             } else if (attr == std::string("enzymejl_rooted_typ")) {
               structAttrs[pre_args.size()].push_back(
-                  Attribute::get(call.getContext(), "enzymejl_rooted_typ_v"));
+                  Attribute::get(call.getContext(), "enzymejl_rooted_typ_v",
+                                 call.getAttributes()
+                                     .getParamAttr(i, attr)
+                                     .getValueAsString()));
             }
           }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
