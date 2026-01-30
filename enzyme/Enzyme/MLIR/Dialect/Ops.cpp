@@ -1089,6 +1089,20 @@ LogicalResult MCMCOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult MCMCOp::verify() {
+  bool hasHMC = getHmcConfig().has_value();
+  bool hasNUTS = getNutsConfig().has_value();
+
+  if (hasHMC + hasNUTS != 1) {
+    return emitOpError(
+        "Exactly one of hmc_config or nuts_config must be specified");
+  }
+
+  // TODO: More verification
+
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // InitTraceOp
 //===----------------------------------------------------------------------===//
