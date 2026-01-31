@@ -1362,16 +1362,24 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                                << " dependant on " << *LoadReval << "\n";
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
               }
-              if (StoreReval && EnzymeEnableRecursiveHypotheses)
+              if (StoreReval && EnzymeEnableRecursiveHypotheses) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " global activity of " << *Val
+                               << " dependant on " << *StoreReval << "\n";
                 ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
+              }
               if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
                 if (EnzymePrintActivity)
                   llvm::errs() << " global activity of " << *Val
                                << " dependant on " << *ValLoadReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
               }
-              if (ValStoreReval && EnzymeEnableRecursiveHypotheses)
+              if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " global activity of " << *Val
+                               << " dependant on " << *ValStoreReval << "\n";
                 ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
+              }
             }
           }
         }
