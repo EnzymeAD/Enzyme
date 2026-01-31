@@ -849,7 +849,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     ptr = applyChainRule(
         PointerType::get(
             addingType,
-            cast<PointerType>(origptr->getType())->getAddressSpace()),
+            isa<PointerType>(origptr->getType())
+                ? cast<PointerType>(origptr->getType())->getAddressSpace()
+                : 0),
         BuilderM, rule, ptr);
   }
 
