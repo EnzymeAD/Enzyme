@@ -818,14 +818,18 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR < 17
-  if (origptr->getContext().supportsTypedPointers()) {
+  if (isa<PointerType>(origptr->getType()) &&
+      origptr->getContext().supportsTypedPointers()) {
     needsCast = origptr->getType()->getPointerElementType() != addingType;
   }
 #endif
 
   assert(ptr);
-  if (start != 0 || needsCast) {
+  if (start != 0 || needsCast || !isa<PointerType>(origptr->getType())) {
     auto rule = [&](Value *ptr) {
+      if (!isa<PointerType>(origptr->getType())) {
+        ptr = BuilderM.CreateIntToPtr(ptr, getUnqual(addingType));
+      }
       if (start != 0) {
         auto i8 = Type::getInt8Ty(ptr->getContext());
         ptr = BuilderM.CreatePointerCast(
