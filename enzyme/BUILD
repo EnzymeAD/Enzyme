@@ -746,6 +746,22 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "CInterface",
+    srcs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.cpp"],
+    hdrs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.h"],
+    includes = ["Enzyme/MLIR"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":EnzymeMLIR",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+    alwayslink = True,
+)
+
 cc_binary(
     name = "enzymemlir-opt",
     srcs = ["Enzyme/MLIR/enzymemlir-opt.cpp"],
