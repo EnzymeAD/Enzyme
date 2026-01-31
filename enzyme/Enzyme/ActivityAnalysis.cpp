@@ -3093,6 +3093,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
       auto F = getFunctionFromCall(call);
 
+      if (isDebugFunction(F))
+        continue;
+
       size_t idx = 0;
       for (auto &arg : call->args()) {
         if (arg != parent) {
