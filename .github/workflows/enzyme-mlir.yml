@@ -45,7 +45,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         repository: 'llvm/llvm-project'
-        ref: '01e6245af481dac4604e8a25be6bec0dbe36f99d'
+        ref: '909041e4802c4b9a2223ca04099f35bf1dbbd460'
         path: 'llvm-project'
 
     - name: Set BASE_DIR
