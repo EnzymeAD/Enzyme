@@ -31,9 +31,9 @@ jobs:
         version:
           - '1.10'
           - '1.11'
+          - '1.12'
         os:
           - ubuntu-latest
-          - macOS-latest
         arch:
           - 'default'
     timeout-minutes: 60 
