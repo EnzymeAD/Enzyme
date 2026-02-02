@@ -268,8 +268,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
 
   llvm::SmallDenseSet<unsigned> operandsToShadow;
   auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  if (termIface &&
-      isa<RegionBranchOpInterface>(origTerminator->getParentOp())) {
+  auto regionBranchOp =
+      dyn_cast<RegionBranchOpInterface>(origTerminator->getParentOp());
+  if (termIface && regionBranchOp) {
 
     SmallVector<RegionSuccessor> successors;
     termIface.getSuccessorRegions(
@@ -278,9 +279,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
 
     for (auto &successor : successors) {
       OperandRange operandRange = termIface.getSuccessorOperands(successor);
-      ValueRange targetValues = successor.isParent()
-                                    ? parentOp->getResults()
-                                    : successor.getSuccessorInputs();
+      ValueRange targetValues =
+          successor.isParent() ? parentOp->getResults()
+                               : regionBranchOp.getSuccessorInputs(successor);
       assert(operandRange.size() == targetValues.size());
       for (auto &&[i, target] : llvm::enumerate(targetValues)) {
         if (!gutils->isConstantValue(target))
@@ -337,9 +338,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     OperandRange operandRange =
         regionBranchOp.getEntrySuccessorOperands(successor);
 
-    ValueRange targetValues = successor.isParent()
-                                  ? op->getResults()
-                                  : successor.getSuccessorInputs();
+    ValueRange targetValues =
+        successor.isParent() ? op->getResults()
+                             : regionBranchOp.getSuccessorInputs(successor);
 
     // Need to know which of the arguments are being forwarded to from
     // operands.
