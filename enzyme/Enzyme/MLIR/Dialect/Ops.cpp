@@ -1024,21 +1024,6 @@ LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-//===----------------------------------------------------------------------===//
-// UpdateOp
-//===----------------------------------------------------------------------===//
-
-LogicalResult UpdateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
-
-  return success();
-}
 
 //===----------------------------------------------------------------------===//
 // RegenerateOp
@@ -1101,28 +1086,4 @@ LogicalResult MCMCOp::verify() {
   // TODO: More verification
 
   return success();
-}
-
-//===----------------------------------------------------------------------===//
-// InitTraceOp
-//===----------------------------------------------------------------------===//
-
-namespace {
-struct RemoveUnusedInitTrace : public OpRewritePattern<InitTraceOp> {
-  using OpRewritePattern<InitTraceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(InitTraceOp op,
-                                PatternRewriter &rewriter) const final {
-    if (op.use_empty()) {
-      rewriter.eraseOp(op);
-      return success();
-    }
-    return failure();
-  }
-};
-} // namespace
-
-void InitTraceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
-                                              MLIRContext *context) {
-  patterns.add<RemoveUnusedInitTrace>(context);
 }

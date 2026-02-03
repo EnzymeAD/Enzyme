@@ -26,20 +26,10 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-Value mlir::enzyme::MProbProgUtils::getTrace() {
-  if (!trace) {
-    OpBuilder builder(initializationBlock, initializationBlock->begin());
-    auto initTraceOp = enzyme::InitTraceOp::create(
-        builder, (initializationBlock->rbegin())->getLoc(),
-        enzyme::TraceType::get(initializationBlock->begin()->getContext()));
-    trace = initTraceOp.getTrace();
-  }
-  return trace;
-}
-
 MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
                                                 MProbProgMode mode,
-                                                int64_t positionSize) {
+                                                int64_t positionSize,
+                                                int64_t constraintSize) {
   if (toeval.getFunctionBody().empty()) {
     llvm::errs() << toeval << "\n";
     llvm_unreachable("Creating MProbProgUtils from empty function");
@@ -83,19 +73,6 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
-    break;
-  case MProbProgMode::Update:
-    suffix = "update";
-    if (positionSize < 0) {
-      llvm_unreachable("Update mode requires positionSize >= 0");
-    }
-    OperandTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
-    OperandTypes.push_back(
-        RankedTensorType::get({positionSize}, builder.getF64Type()));
-    OperandTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
-    ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
-    ResultTypes.push_back(originalResults[0]);
     break;
   default:
     llvm_unreachable("Invalid MProbProgMode\n");

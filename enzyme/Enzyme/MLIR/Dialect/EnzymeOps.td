@@ -444,26 +444,6 @@ def ExtractOp : Enzyme_Op<"extract"> {
 }
 
 // Probabilistic programming
-def Trace : Enzyme_Type<"Trace"> {
-  let summary = "Execution trace for probabilistic programs";
-  let description = [{
-    Reference: https://www.gen.dev/docs/stable/tutorials/basics/gfi/#Traces
-    Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
-    and various other information from executing a traced probabilistic function.
-  }];
-  let parameters = (ins
-    DefaultValuedParameter<"int64_t", "0">:$num_samples
-  );
-  let mnemonic = "Trace";
-  let assemblyFormat = "(`<` $num_samples^ `>`)?";
-
-  let builders = [
-    TypeBuilder<(ins), [{
-      return $_get($_ctxt, 0);
-    }]>
-  ];
-}
-
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
   let summary = "Symbol associated with a Sample op";
   let description = [{
@@ -475,14 +455,6 @@ def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
 
 def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
 def AddressArrayAttr : TypedArrayAttrBase<AddressAttr, "Array of addresses">;
-
-def Constraint : Enzyme_Type<"Constraint"> {
-  let summary = "A mutable storage mapping symbols to value constraints";
-  let description = [{
-  A mutable storage mapping symbols to value constraints.
-  }];
-  let mnemonic = "Constraint";
-}
 
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
@@ -570,122 +542,14 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyRankedTensor:$weight, Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
-def InitTraceOp : Enzyme_Op<"initTrace", [MemoryEffects<[MemAlloc]>]> {
-  let summary = "Initialize an execution trace for a probabilistic function";
-  let description = [{
-    Initialize an execution trace for a probabilistic function.
-  }];
-  let arguments = (ins );
-  let results = (outs Trace:$trace);
-  let assemblyFormat = "attr-dict `:` type($trace)";
-  let hasCanonicalizer = 1;
-}
-
-def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
-  let summary = "Add a sampled value into the execution trace";
-  let description = [{
-  Add a sampled value into the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    SymbolAttr:$symbol,
-    Variadic<AnyType>:$sample
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$weight,
+    Variadic<AnyType>:$outputs
   );
 
-  let results = (outs Trace:$updated_trace);
-
   let assemblyFormat = [{
-    $sample `into` $trace attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def AddSubtraceOp : Enzyme_Op<"addSubtrace", [Pure]> {
-  let summary = "Insert a subtrace into a parent trace";
-  let description = [{
-  Insert a subtrace into a parent trace.
-  }];
-
-  let arguments = (ins
-    Trace:$subtrace,
-    SymbolAttr:$symbol,
-    Trace:$trace
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    $subtrace `into` $trace attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace", [Pure]> {
-  let summary = "Add the aggregated weight into the execution trace";
-  let description = [{
-  Add the aggregated log-probability weight to the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    AnyType:$weight
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    $weight `into` $trace attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace", [Pure]> {
-  let summary = "Add the function's return value(s) into the execution trace";
-  let description = [{
-  Add the function's return value(s) into the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    Variadic<AnyType>:$retval
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    $retval `into` $trace attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def GetSampleFromConstraintOp : Enzyme_Op<"getSampleFromConstraint"> {
-  let summary = "Get sampled values from a constraint for a given symbol";
-  let description = [{
-  Get sampled values from a constraint for a given symbol.
-  }];
-  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
-  let results = (outs Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $constraint attr-dict `:` type(results)
-  }];
-}
-
-def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
-  let summary = "Get a subconstraint from a constraint for a given symbol";
-  let description = [{
-  Get a subconstraint from a constraint for a given symbol.
-  }];
-  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
-
-  let results = (outs Constraint:$subconstraint);
-
-  let assemblyFormat = [{
-    $constraint attr-dict
+    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -1142,41 +1006,6 @@ def PopcountOp : Enzyme_Op<"popcount", [Pure, SameOperandsAndResultElementType, 
 
   let assemblyFormat = [{
     $operand attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def DynamicExtractOp : Enzyme_Op<"dynamic_extract", [Pure]> {
-  let summary = "Extract slice from tensor at dynamic index along first dimension";
-  let description = [{
-    Extracts a slice at the specified dynamic index along the first dimension.
-  }];
-
-  let arguments = (ins
-    AnyRankedTensor:$input,
-    AnyRankedTensor:$index
-  );
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $input `,` $index attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def DynamicUpdateOp : Enzyme_Op<"dynamic_update", [Pure]> {
-  let summary = "Update slice in tensor at dynamic index along first dimension";
-  let description = [{
-    Returns a new tensor with the slice at the specified dynamic index replaced.
-  }];
-
-  let arguments = (ins
-    AnyRankedTensor:$input,
-    AnyRankedTensor:$index,
-    AnyRankedTensor:$value
-  );
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $input `,` $index `,` $value attr-dict `:` functional-type(operands, results)
   }];
 }
 

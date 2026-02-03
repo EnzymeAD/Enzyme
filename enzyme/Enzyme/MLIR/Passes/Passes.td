@@ -43,8 +43,6 @@ def ProbProgPass : Pass<"probprog"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect",
-    "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
   ];
   let options = [
