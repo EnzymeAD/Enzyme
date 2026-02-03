@@ -35,6 +35,16 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Constructs the canonical null (zero) attr for the given type. The
+        provided builder should be used to construct the const-like operation.
+        Null can be emitted by the differentiation pass.
+      }],
+      /*retTy=*/"::mlir::Attribute",
+      /*methodName=*/"createNullAttr",
+      /*args=*/(ins)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Construct addition operation for the given type.
       }],
       /*retTy=*/"::mlir::Value",

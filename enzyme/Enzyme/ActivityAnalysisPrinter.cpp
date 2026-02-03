@@ -47,6 +47,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "ActivityAnalysis.h"
 #include "ActivityAnalysisPrinter.h"
@@ -182,20 +183,36 @@ bool printActivityAnalysis(llvm::Function &F, TargetLibraryInfo &TLI) {
   return /*changed*/ false;
 }
 
-class ActivityAnalysisPrinter final : public FunctionPass {
+class ActivityAnalysisPrinter final : public ModulePass {
 public:
   static char ID;
-  ActivityAnalysisPrinter() : FunctionPass(ID) {}
+  ActivityAnalysisPrinter() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+    // Check if function name is specified
+    if (FunctionToAnalyze.empty()) {
+      EmitFailure("NoFunctionSpecified", M,
+                  "No function specified for -activity-analysis-func");
+      return false;
+    }
+
+    // Check if the specified function exists
+    Function *TargetFunc = M.getFunction(FunctionToAnalyze);
+
+    if (!TargetFunc) {
+      EmitFailure("FunctionNotFound", M, "Function '", FunctionToAnalyze,
+                  "' specified by -activity-analysis-func not found in module");
+      return false;
+    }
+
+    // Run analysis only on the target function
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(*TargetFunc);
+    return printActivityAnalysis(*TargetFunc, TLI);
+  }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
-  }
-
-  bool runOnFunction(Function &F) override {
-
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-
-    return printActivityAnalysis(F, TLI);
+    AU.setPreservesAll();
   }
 };
 
@@ -207,10 +224,28 @@ static RegisterPass<ActivityAnalysisPrinter>
     X("print-activity-analysis", "Print Activity Analysis Results");
 
 ActivityAnalysisPrinterNewPM::Result
-ActivityAnalysisPrinterNewPM::run(llvm::Function &F,
-                                  llvm::FunctionAnalysisManager &FAM) {
-  bool changed = false;
-  changed = printActivityAnalysis(F, FAM.getResult<TargetLibraryAnalysis>(F));
+ActivityAnalysisPrinterNewPM::run(llvm::Module &M,
+                                  llvm::ModuleAnalysisManager &MAM) {
+  // Check if function name is specified
+  if (FunctionToAnalyze.empty()) {
+    EmitFailure("NoFunctionSpecified", M,
+                "No function specified for -activity-analysis-func");
+    return PreservedAnalyses::all();
+  }
+
+  // Check if the specified function exists
+  Function *TargetFunc = M.getFunction(FunctionToAnalyze);
+
+  if (!TargetFunc) {
+    EmitFailure("FunctionNotFound", M, "Function '", FunctionToAnalyze,
+                "' specified by -activity-analysis-func not found in module");
+    return PreservedAnalyses::all();
+  }
+
+  // Run analysis only on the target function
+  auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+  bool changed = printActivityAnalysis(
+      *TargetFunc, FAM.getResult<TargetLibraryAnalysis>(*TargetFunc));
   return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 llvm::AnalysisKey ActivityAnalysisPrinterNewPM::Key;

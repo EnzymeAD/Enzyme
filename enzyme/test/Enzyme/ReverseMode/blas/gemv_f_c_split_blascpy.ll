@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-blas-copy=1 -enzyme-lapack-copy=1 -enzyme-detect-readthrow=0 -S | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-blas-copy=1  -enzyme-lapack-copy=1 -enzyme-detect-readthrow=0 -S | FileCheck %s
 
 ; Here we don't transpose the matrix a (78 equals 'N' in ASCII) and we therefore also don't transpose x.
 ; Therfore the first arg to dcopy is n_p, as opposed to the gemv_transpose test.

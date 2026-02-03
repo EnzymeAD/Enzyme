@@ -28,7 +28,7 @@ attributes #0 = { nounwind uwtable }
 attributes #1 = { argmemonly nounwind }
 attributes #2 = { noinline nounwind uwtable }
 
-; CHECK: define internal void @fwddiffe3memcpy_float(double* nocapture %dst, [3 x double*] %"dst'", double* nocapture readonly %src, i64 %num)
+; CHECK: define internal void @fwddiffe3memcpy_float(double* nocapture writeonly %dst, [3 x double*] %"dst'", double* nocapture readonly %src, i64 %num)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue [3 x double*] %"dst'", 0
 ; CHECK-NEXT:   %"'ipc" = bitcast double* %0 to i8*

@@ -856,7 +856,7 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  br label %invertbb13_amerge_amerge
 
 ; CHECK:invertbb13_amerge_amerge:                         ; preds = %invertbb13_amerge_active, %invertbb13_amerge
-; CHECK-NEXT:  call void @diffejl_alloc_genericmemory({} addrspace(10)* addrspacecast ({}* inttoptr (i64 4522732752 to {}*) to {} addrspace(10)*), i64 1)
+; CHECK-NEXT:  call void @diffejl_alloc_genericmemory({} addrspace(10)* {{(undef|poison)}}, i64 1)
 ; CHECK-NEXT:  br label %invertbb
 
 ; CHECK:invertbb60:                                       ; preds = %bb60

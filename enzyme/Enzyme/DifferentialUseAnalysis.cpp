@@ -656,23 +656,34 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
-    for (size_t i = 0; i < CI->arg_size(); i++) {
-      if (val == CI->getArgOperand(i)) {
-        if (!isNoCapture(CI, i)) {
-          writeOnlyNoCapture = false;
-          break;
-        }
-        if (!isWriteOnly(CI, i)) {
-          writeOnlyNoCapture = false;
-          break;
+    // Outside of forward mode, we don't need to keep a primal around in reverse
+    // just for the deallocation
+    if (!(mode == DerivativeMode::ForwardMode ||
+          mode == DerivativeMode::ForwardModeError) &&
+        isDeallocationFunction(funcName, gutils->TLI)) {
+    } else {
+      for (size_t i = 0; i < CI->arg_size(); i++) {
+        if (val == CI->getArgOperand(i)) {
+          if (!isNoCapture(CI, i)) {
+            writeOnlyNoCapture = false;
+            break;
+          }
+          if (!isWriteOnly(CI, i)) {
+            writeOnlyNoCapture = false;
+            break;
+          }
         }
       }
     }
 
     // Don't need the primal argument if it is write only and not captured
     if (!shadow)
-      if (writeOnlyNoCapture)
+      if (writeOnlyNoCapture) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " No Need: primal of " << *val
+                       << " per write-only no-capture use in " << *CI << "\n";
         return false;
+      }
 
     if (shadow) {
       // Don't need the shadow argument if it is a pointer to pointers, which
@@ -763,7 +774,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   }
   if (neededFB) {
     if (EnzymePrintDiffUse)
-      llvm::errs() << " Need direct primal of " << *val
+      llvm::errs() << " Need direct primal(" << mode << ") of " << *val
                    << " in reverse from fallback " << *user << "\n";
   }
   return neededFB;
@@ -916,9 +927,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           assert(pair.first.outgoing == 0 && N.outgoing == 1);
           assert(pair.first.V == N.V);
           MinReq.insert(N.V);
-          if (Orig.find(Node(N.V, true)) != Orig.end()) {
-            todo.insert(N.V);
-          }
+          todo.insert(N.V);
         }
       }
   }
@@ -926,15 +935,10 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
   while (todo.size()) {
     auto V = todo.front();
     todo.remove(V);
-    auto found = Orig.find(Node(V, true));
-    assert(found != Orig.end());
-    const auto &mp = found->second;
-
     assert(MinReq.count(V));
 
     // Fix up non-cacheable calls to use their operand(s) instead
     if (hasNoCache(V)) {
-      assert(!Required.count(V));
       MinReq.remove(V);
       for (auto &pair : Orig) {
         if (pair.second.count(Node(V, false))) {
@@ -945,68 +949,75 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       continue;
     }
 
-    // When ambiguous, push to cache the last value in a computation chain
-    // This should be considered in a cost for the max flow
-    if (mp.size() == 1 && !Required.count(V)) {
-      bool potentiallyRecursive =
-          isa<PHINode>((*mp.begin()).V) &&
-          OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
-      int moreOuterLoop = cmpLoopNest(
-          OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-          OrigLI.getLoopFor(cast<Instruction>(((*mp.begin()).V))->getParent()));
-      if (potentiallyRecursive)
-        continue;
-      if (moreOuterLoop == -1)
-        continue;
-      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*mp.begin()).V)) {
-        if (ASC->getDestAddressSpace() == 11 ||
-            ASC->getDestAddressSpace() == 13)
+    auto found = Orig.find(Node(V, true));
+    if (found != Orig.end()) {
+      const auto &mp = found->second;
+
+      // When ambiguous, push to cache the last value in a computation chain
+      // This should be considered in a cost for the max flow
+      if (mp.size() == 1 && !Required.count(V)) {
+        bool potentiallyRecursive =
+            isa<PHINode>((*mp.begin()).V) &&
+            OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
+        int moreOuterLoop =
+            cmpLoopNest(OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
+                        OrigLI.getLoopFor(
+                            cast<Instruction>(((*mp.begin()).V))->getParent()));
+        if (potentiallyRecursive)
           continue;
-        if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
+        if (moreOuterLoop == -1)
           continue;
-      }
-      if (auto CI = dyn_cast<CastInst>((*mp.begin()).V)) {
-        if (CI->getType()->isPointerTy() &&
-            CI->getType()->getPointerAddressSpace() == 13)
+        if (auto ASC = dyn_cast<AddrSpaceCastInst>((*mp.begin()).V)) {
+          if (ASC->getDestAddressSpace() == 11 ||
+              ASC->getDestAddressSpace() == 13)
+            continue;
+          if (ASC->getSrcAddressSpace() == 10 &&
+              ASC->getDestAddressSpace() == 0)
+            continue;
+        }
+        if (auto CI = dyn_cast<CastInst>((*mp.begin()).V)) {
+          if (CI->getType()->isPointerTy() &&
+              CI->getType()->getPointerAddressSpace() == 13)
+            continue;
+        }
+        if (auto G = dyn_cast<GetElementPtrInst>((*mp.begin()).V)) {
+          if (G->getType()->getPointerAddressSpace() == 13)
+            continue;
+        }
+        if (hasNoCache((*mp.begin()).V)) {
           continue;
-      }
-      if (auto G = dyn_cast<GetElementPtrInst>((*mp.begin()).V)) {
-        if (G->getType()->getPointerAddressSpace() == 13)
-          continue;
-      }
-      if (hasNoCache((*mp.begin()).V)) {
-        continue;
-      }
-      // If an allocation call, we cannot cache any "capturing" users
-      if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
-        auto next = (*mp.begin()).V;
-        bool noncapture = false;
-        if (isa<LoadInst>(next) || isNVLoad(next)) {
-          noncapture = true;
-        } else if (auto CI = dyn_cast<CallInst>(next)) {
-          bool captures = false;
-          for (size_t i = 0; i < CI->arg_size(); i++) {
-            if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
-              captures = true;
-              break;
+        }
+        // If an allocation call, we cannot cache any "capturing" users
+        if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
+          auto next = (*mp.begin()).V;
+          bool noncapture = false;
+          if (isa<LoadInst>(next) || isNVLoad(next)) {
+            noncapture = true;
+          } else if (auto CI = dyn_cast<CallInst>(next)) {
+            bool captures = false;
+            for (size_t i = 0; i < CI->arg_size(); i++) {
+              if (CI->getArgOperand(i) == V && !isNoCapture(CI, i)) {
+                captures = true;
+                break;
+              }
             }
+            noncapture = !captures;
           }
-          noncapture = !captures;
+
+          if (!noncapture)
+            continue;
         }
 
-        if (!noncapture)
-          continue;
-      }
-
-      if (moreOuterLoop == 1 ||
-          (moreOuterLoop == 0 &&
-           DL.getTypeSizeInBits(V->getType()) >=
-               DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
-        MinReq.remove(V);
-        auto nnode = (*mp.begin()).V;
-        MinReq.insert(nnode);
-        if (Orig.find(Node(nnode, true)) != Orig.end())
-          todo.insert(nnode);
+        if (moreOuterLoop == 1 ||
+            (moreOuterLoop == 0 &&
+             DL.getTypeSizeInBits(V->getType()) >=
+                 DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
+          MinReq.remove(V);
+          auto nnode = (*mp.begin()).V;
+          MinReq.insert(nnode);
+          if (Orig.find(Node(nnode, true)) != Orig.end())
+            todo.insert(nnode);
+        }
       }
     }
   }

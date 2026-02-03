@@ -149,6 +149,8 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       custom = F->getName() != "malloc";
     }
     allocType = cast<PointerType>(malloccall->getType());
+    if (ZeroInit && !SubZero)
+      ZeroInit = false;
     BB->eraseFromParent();
   }
 
@@ -771,7 +773,7 @@ Value *lookup_with_layout(IRBuilder<> &B, Type *fpType, Value *layout,
 
   Value *ptr = base;
   if (base->getType()->isIntegerTy())
-    ptr = B.CreateIntToPtr(ptr, PointerType::getUnqual(fpType));
+    ptr = B.CreateIntToPtr(ptr, getUnqual(fpType));
 
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
@@ -912,9 +914,9 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
                    (cublasv2 ? "" : blas.suffix);
 
   auto copyfn = M.getOrInsertFunction(copy_name, FT);
-  if (Function *copyF = dyn_cast<Function>(copyfn.getCallee()))
-    attributeKnownFunctions(*copyF);
   LB.CreateCall(copyfn, copyArgs);
+  if (auto F = GetFunctionFromValue(copyfn.getCallee()))
+    attributeKnownFunctions(*F);
   LB.CreateCondBr(LB.CreateICmpEQ(i_plus_one, N_minus_1), end, loop);
 
   EB.CreateCondBr(EB.CreateICmpSLE(N_minus_1, zero), end, loop);
@@ -944,27 +946,9 @@ void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
 
   FunctionType *FT = FunctionType::get(copy_retty, tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
-  Value *callVal = fn.getCallee();
-  Function *called = nullptr;
-  while (!called) {
-    if (auto castinst = dyn_cast<ConstantExpr>(callVal))
-      if (castinst->isCast()) {
-        callVal = castinst->getOperand(0);
-        continue;
-      }
-    if (auto fn = dyn_cast<Function>(callVal)) {
-      called = fn;
-      break;
-    }
-    if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
-      callVal = alias->getAliasee();
-      continue;
-    }
-    break;
-  }
-  attributeKnownFunctions(*called);
-
   B.CreateCall(fn, args, bundles);
+  if (auto F = GetFunctionFromValue(fn.getCallee()))
+    attributeKnownFunctions(*F);
 }
 
 void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
@@ -979,10 +963,10 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
 
   auto FT = FunctionType::get(Type::getVoidTy(M.getContext()), tys, false);
   auto fn = M.getOrInsertFunction(copy_name, FT);
+  B.CreateCall(fn, args, bundles);
+
   if (auto F = GetFunctionFromValue(fn.getCallee()))
     attributeKnownFunctions(*F);
-
-  B.CreateCall(fn, args, bundles);
 }
 
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
@@ -1195,8 +1179,6 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   auto FDotT =
       FunctionType::get(fpTy, {BlasIT, BlasPT, BlasIT, BlasPT, BlasIT}, false);
   auto FDot = M.getOrInsertFunction(dot_name, FDotT);
-  if (auto F = GetFunctionFromValue(FDot.getCallee()))
-    attributeKnownFunctions(*F);
 
   // now add the implementation for the inner_prod call
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -1318,7 +1300,10 @@ getorInsertInnerProd(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
     B5.CreateRet(res);
   }
 
-  return B.CreateCall(F, args, bundles);
+  auto res = B.CreateCall(F, args, bundles);
+  if (auto F = GetFunctionFromValue(FDot.getCallee()))
+    attributeKnownFunctions(*F);
+  return res;
 }
 
 Function *getOrInsertMemcpyStrided(Module &M, Type *elementType, PointerType *T,
@@ -1483,9 +1468,10 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 
   {
     IRBuilder<> B(entry);
-    Value *l = B.CreateAdd(M, N, "mul", true, true);
+    Value *l0 = B.CreateICmpEQ(M, ConstantInt::get(IT, 0));
+    Value *l1 = B.CreateICmpEQ(N, ConstantInt::get(IT, 0));
     // Don't copy a 0*0 matrix
-    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(IT, 0)), end, init);
+    B.CreateCondBr(B.CreateOr(l0, l1), end, init);
   }
 
   PHINode *j;
@@ -1532,6 +1518,164 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
         B.CreateAdd(j, ConstantInt::get(IT, 1), "j.next", true, true);
     j->addIncoming(nextj, initend);
     B.CreateCondBr(B.CreateICmpEQ(nextj, N), end, init);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
+Function *getOrInsertDifferentialFloatMemcpyMat(
+    Module &Mod, Type *elementType, PointerType *PT, IntegerType *IT,
+    IntegerType *CT, unsigned dstalign, unsigned srcalign, bool zeroSrc) {
+  assert(elementType->isFPOrFPVectorTy());
+#if LLVM_VERSION_MAJOR < 17
+#if LLVM_VERSION_MAJOR >= 15
+  if (Mod.getContext().supportsTypedPointers()) {
+#endif
+#if LLVM_VERSION_MAJOR >= 13
+    if (!PT->isOpaquePointerTy())
+#endif
+      assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 15
+  }
+#endif
+#endif
+  std::string name = "__enzyme_dmemcpy_" + tofltstr(elementType) + "_mat_" +
+                     std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
+                     (zeroSrc ? "_zero" : "");
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(Mod.getContext()),
+                                       {CT, IT, IT, PT, IT, PT, IT}, false);
+
+  Function *F = cast<Function>(Mod.getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  F->addParamAttr(3, Attribute::NoAlias);
+  F->addParamAttr(5, Attribute::NoAlias);
+
+  BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+  BasicBlock *swtch = BasicBlock::Create(F->getContext(), "swtch", F);
+  BasicBlock *Ginit = BasicBlock::Create(F->getContext(), "Ginit.idx", F);
+  BasicBlock *Uinit = BasicBlock::Create(F->getContext(), "Uinit.idx", F);
+  BasicBlock *Linit = BasicBlock::Create(F->getContext(), "Linit.idx", F);
+  BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+  auto uplo = F->arg_begin();
+  uplo->setName("uplo");
+  auto M = uplo + 1;
+  M->setName("M");
+  auto N = M + 1;
+  N->setName("N");
+
+  auto dst = N + 1;
+  dst->setName("dst");
+  auto ldst = dst + 1;
+  ldst->setName("ldst");
+  auto src = ldst + 1;
+  src->setName("src");
+  auto lsrc = src + 1;
+  lsrc->setName("lsrc");
+
+  {
+    IRBuilder<> B(entry);
+    Value *l0 = B.CreateICmpEQ(M, ConstantInt::get(IT, 0));
+    Value *l1 = B.CreateICmpEQ(N, ConstantInt::get(IT, 0));
+    // Don't copy a 0*0 matrix
+    B.CreateCondBr(B.CreateOr(l0, l1), end, swtch);
+  }
+
+  {
+    IRBuilder<> B(swtch);
+    auto swtchT = B.CreateSwitch(uplo, Ginit);
+    swtchT->addCase(ConstantInt::get(CT, 'U'), Uinit);
+    swtchT->addCase(ConstantInt::get(CT, 'L'), Linit);
+  }
+
+  std::pair<char, BasicBlock *> todo[] = {
+      {'G', Ginit}, {'U', Uinit}, {'L', Linit}};
+  for (auto &&[direction, init] : todo) {
+
+    std::string dir(1, direction);
+    BasicBlock *body = BasicBlock::Create(F->getContext(), dir + "for.body", F);
+    BasicBlock *initend =
+        BasicBlock::Create(F->getContext(), dir + "init.end", F);
+
+    Value *istart = ConstantInt::get(IT, 0);
+    Value *iend = M;
+
+    PHINode *j;
+    {
+      IRBuilder<> B(init);
+      j = B.CreatePHI(IT, 2, dir + "j");
+      j->addIncoming(ConstantInt::get(IT, 0), swtch);
+
+      if (direction == 'L') {
+        istart = j;
+      } else if (direction == 'U') {
+        auto jp1 = B.CreateAdd(j, ConstantInt::get(IT, 1), "", true, true);
+        iend = B.CreateSelect(B.CreateICmpULT(jp1, M), jp1, M);
+      }
+
+      B.CreateBr(body);
+    }
+
+    {
+      IRBuilder<> B(body);
+      PHINode *i = B.CreatePHI(IT, 2, dir + "i");
+      i->addIncoming(istart, init);
+
+      Value *srci = B.CreateInBoundsGEP(
+          elementType, src,
+          B.CreateAdd(i, B.CreateMul(j, lsrc, "", true, true), "", true, true),
+          dir + "src.i");
+
+      Value *dsti = B.CreateInBoundsGEP(
+          elementType, dst,
+          B.CreateAdd(i, B.CreateMul(j, ldst, "", true, true), "", true, true),
+          dir + "dst.i");
+      LoadInst *srcl = B.CreateLoad(elementType, srci, dir + "src.i.l");
+      LoadInst *dstl = B.CreateLoad(elementType, dsti, dir + "dst.i.l");
+      auto res = B.CreateFAdd(srcl, dstl);
+      StoreInst *dsts = B.CreateStore(res, dsti);
+      StoreInst *srcs = nullptr;
+      if (zeroSrc)
+        srcs = B.CreateStore(Constant::getNullValue(res->getType()), srci);
+      if (dstalign) {
+        dsts->setAlignment(Align(dstalign));
+        dstl->setAlignment(Align(dstalign));
+      }
+      if (srcalign) {
+        if (zeroSrc)
+          srcs->setAlignment(Align(srcalign));
+        srcl->setAlignment(Align(srcalign));
+      }
+
+      Value *nexti =
+          B.CreateAdd(i, ConstantInt::get(IT, 1), dir + "i.next", true, true);
+      i->addIncoming(nexti, body);
+      B.CreateCondBr(B.CreateICmpEQ(nexti, iend), initend, body);
+    }
+
+    {
+      IRBuilder<> B(initend);
+      Value *nextj =
+          B.CreateAdd(j, ConstantInt::get(IT, 1), dir + "j.next", true, true);
+      j->addIncoming(nextj, initend);
+      B.CreateCondBr(B.CreateICmpEQ(nextj, N), end, init);
+    }
   }
 
   {
@@ -1678,8 +1822,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
                                                    ArrayRef<llvm::Type *> T,
                                                    PointerType *reqType) {
   std::string name = "__enzyme_differential_waitall_save";
-  FunctionType *FT =
-      FunctionType::get(PointerType::getUnqual(reqType), T, false);
+  FunctionType *FT = FunctionType::get(getUnqual(reqType), T, false);
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
 
   if (!F->empty())
@@ -1723,13 +1866,12 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
-    Value *reql =
-        B.CreatePointerCast(ireq, PointerType::getUnqual(GV->getType()));
+    Value *reql = B.CreatePointerCast(ireq, getUnqual(GV->getType()));
     reql = B.CreateLoad(GV->getType(), reql);
     isNull = B.CreateICmpEQ(reql, GV);
   }
 
-  idreq = B.CreatePointerCast(idreq, PointerType::getUnqual(reqType));
+  idreq = B.CreatePointerCast(idreq, getUnqual(reqType));
   Value *d_reqp = B.CreateLoad(reqType, idreq);
   if (isNull)
     d_reqp = B.CreateSelect(isNull, Constant::getNullValue(d_reqp->getType()),
@@ -1862,9 +2004,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     return B2.CreateLoad(Glob->getValueType(), Glob);
   }
 
-  llvm::Type *types[] = {PointerType::getUnqual(FlT),
-                         PointerType::getUnqual(FlT),
-                         PointerType::getUnqual(intType), OpPtr};
+  llvm::Type *types[] = {getUnqual(FlT), getUnqual(FlT), getUnqual(intType),
+                         OpPtr};
   FunctionType *FuT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
   Function *F =
@@ -1939,7 +2080,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     RF =
         cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
   } else {
-    RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
+    RF = ConstantExpr::getBitCast(RF, getUnqual(RFT));
   }
 
   GlobalVariable *GV =
@@ -2919,8 +3060,7 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
         vec.push_back(
             ConstantInt::get(Type::getInt32Ty(EVI->getContext()), ind));
       }
-      auto ud = UndefValue::get(
-          PointerType::getUnqual(EVI->getOperand(0)->getType()));
+      auto ud = UndefValue::get(getUnqual(EVI->getOperand(0)->getType()));
       auto g2 =
           GetElementPtrInst::Create(EVI->getOperand(0)->getType(), ud, vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -3026,6 +3166,15 @@ Function *GetFunctionFromValue(Value *fn) {
   return dyn_cast<Function>(GetFunctionValFromValue(fn));
 }
 
+Function *getFirstFunctionDefinition(Module &M) {
+  for (auto &F : M) {
+    if (!F.isDeclaration()) {
+      return &F;
+    }
+  }
+  return nullptr;
+}
+
 #if LLVM_VERSION_MAJOR >= 16
 std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #else
@@ -3033,9 +3182,9 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   const char *extractable[] = {
-      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk", "nrm2",
-      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv", "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv",
+      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
+      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
+      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
   };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -3459,7 +3608,7 @@ llvm::Value *load_if_ref(llvm::IRBuilder<> &B, llvm::Type *intType,
     return V;
 
   if (V->getType()->isIntegerTy())
-    V = B.CreateIntToPtr(V, PointerType::getUnqual(intType));
+    V = B.CreateIntToPtr(V, getUnqual(intType));
   else
     V = B.CreatePointerCast(
         V, PointerType::get(
@@ -3898,6 +4047,7 @@ bool notCapturedBefore(llvm::Value *V, Instruction *inst,
     auto pair = todo.pop_back_val();
     if (seen.count(pair))
       continue;
+    seen.insert(pair);
     auto UI = std::get<0>(pair);
     auto level = std::get<1>(pair);
     auto prev = std::get<2>(pair);
@@ -4073,4 +4223,259 @@ bool isTargetNVPTX(llvm::Module &M) {
 #else
   return M.getTargetTriple().find("nvptx") != std::string::npos;
 #endif
+}
+
+static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
+                                        llvm::Value *value,
+                                        ArrayRef<unsigned> path) {
+  SmallVector<Value *, 2> vals;
+  vals.push_back(ConstantInt::get(B.getInt64Ty(), 0));
+  for (auto v : path) {
+    vals.push_back(ConstantInt::get(B.getInt32Ty(), v));
+  }
+  return B.CreateInBoundsGEP(type, value, vals);
+}
+
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+                                 llvm::Value *sret, llvm::Type *root_ty,
+                                 llvm::Value *rootRet, size_t rootOffset,
+                                 SRetRootMovement direction) {
+  std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = {
+      {jltype, {}}};
+  SmallVector<Value *> extracted;
+  Value *val = sret;
+  auto rootOffset0 = rootOffset;
+  while (!todo.empty()) {
+    auto cur = std::move(todo[0]);
+    todo.pop_front();
+    auto path = std::move(cur.second);
+    auto ty = cur.first;
+
+    if (auto PT = dyn_cast<PointerType>(ty)) {
+      if (!isSpecialPtr(PT))
+        continue;
+
+      Value *loc = nullptr;
+      switch (direction) {
+      case SRetRootMovement::SRetPointerToRootPointer:
+      case SRetRootMovement::SRetValueToRootPointer:
+      case SRetRootMovement::RootPointerToSRetPointer:
+      case SRetRootMovement::RootPointerToSRetValue:
+        loc = constantInBoundsGEPHelper(B, root_ty, rootRet, rootOffset);
+        break;
+      default:
+        llvm_unreachable("Unhandled");
+      }
+
+      switch (direction) {
+      case SRetRootMovement::SRetPointerToRootPointer: {
+        Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
+        outloc = B.CreateLoad(ty, outloc);
+        B.CreateStore(outloc, loc);
+        break;
+      }
+      case SRetRootMovement::SRetValueToRootPointer: {
+        Value *outloc = GradientUtils::extractMeta(B, sret, path);
+        outloc = B.CreatePointerCast(
+            outloc, PointerType::get(StructType::get(outloc->getContext(), {}),
+                                     Tracked));
+        B.CreateStore(outloc, loc);
+        break;
+      }
+      case SRetRootMovement::RootPointerToSRetValue: {
+        loc = B.CreateLoad(ty, loc);
+        val = B.CreateInsertValue(val, loc, path);
+        break;
+      }
+      case SRetRootMovement::NullifySRetValue: {
+        loc = getUndefinedValueForType(
+            *B.GetInsertBlock()->getParent()->getParent(), ty, false);
+        val = B.CreateInsertValue(val, loc, path);
+        break;
+      }
+      case SRetRootMovement::RootPointerToSRetPointer: {
+        Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);
+        loc = B.CreateLoad(ty, loc);
+        extracted.push_back(loc);
+        B.CreateStore(loc, outloc);
+        break;
+      }
+      default:
+        llvm_unreachable("Unhandled");
+        break;
+      }
+
+      rootOffset += 1;
+      continue;
+    }
+
+    if (auto AT = dyn_cast<ArrayType>(ty)) {
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(AT->getElementType(), path2);
+      }
+      continue;
+    }
+
+    if (auto VT = dyn_cast<VectorType>(ty)) {
+      for (size_t i = 0, E = VT->getElementCount().getKnownMinValue(); i < E;
+           i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(VT->getElementType(), path2);
+      }
+      continue;
+    }
+
+    if (auto ST = dyn_cast<StructType>(ty)) {
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
+        std::vector<unsigned> path2(path);
+        path2.push_back(E - 1 - i);
+        todo.emplace_front(ST->getTypeAtIndex(E - 1 - i), path2);
+      }
+      continue;
+    }
+  }
+
+  if (direction == SRetRootMovement::RootPointerToSRetPointer) {
+    auto obj = getBaseObject(sret);
+    auto PT = cast<PointerType>(obj->getType());
+    assert(PT->getAddressSpace() == 0 || PT->getAddressSpace() == 10);
+    if (PT->getAddressSpace() == 10 && extracted.size()) {
+      extracted.insert(extracted.begin(), obj);
+      auto JLT = PointerType::get(StructType::get(PT->getContext(), {}), 10);
+      auto FT = FunctionType::get(JLT, {}, true);
+      auto wb =
+          B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+              "julia.write_barrier", FT);
+      assert(obj->getType() == JLT);
+      B.CreateCall(wb, extracted);
+    }
+  }
+
+  CountTrackedPointers tracked(jltype);
+  assert(rootOffset - rootOffset0 == tracked.count);
+
+  return val;
+}
+
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix0,
+                        llvm::Type *srcType, llvm::Value *src,
+                        llvm::ArrayRef<unsigned> srcPrefix0, bool shouldZero) {
+  std::deque<
+      std::tuple<llvm::Type *, std::vector<unsigned>, std::vector<unsigned>>>
+      todo = {{curType,
+               std::vector<unsigned>(dstPrefix0.begin(), dstPrefix0.end()),
+               std::vector<unsigned>(srcPrefix0.begin(), srcPrefix0.end())}};
+
+  auto &M = *B.GetInsertBlock()->getParent()->getParent();
+
+  size_t numRootsSeen = 0;
+
+  while (!todo.empty()) {
+    auto cur = std::move(todo[0]);
+    auto &&[ty, dstPrefix, srcPrefix] = cur;
+    todo.pop_front();
+
+    if (auto PT = dyn_cast<PointerType>(ty)) {
+      if (PT->getAddressSpace() == 10) {
+        numRootsSeen++;
+        if (shouldZero) {
+          Value *out = dst;
+          if (dstPrefix.size() > 0)
+            out = constantInBoundsGEPHelper(B, dstType, out, dstPrefix);
+          B.CreateStore(getUndefinedValueForType(M, ty), out);
+        }
+      }
+      // We don't actually need pointers either here
+      continue;
+    }
+
+    if (auto AT = dyn_cast<ArrayType>(ty)) {
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
+        std::vector<unsigned> nextDst(dstPrefix);
+        std::vector<unsigned> nextSrc(srcPrefix);
+        nextDst.push_back(E - 1 - i);
+        nextSrc.push_back(E - 1 - i);
+        todo.emplace_front(AT->getElementType(), std::move(nextDst),
+                           std::move(nextSrc));
+      }
+      continue;
+    }
+
+    if (auto ST = dyn_cast<StructType>(ty)) {
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
+        std::vector<unsigned> nextDst(dstPrefix);
+        std::vector<unsigned> nextSrc(srcPrefix);
+        nextDst.push_back(E - 1 - i);
+        nextSrc.push_back(E - 1 - i);
+        todo.emplace_front(ST->getElementType(E - 1 - i), std::move(nextDst),
+                           std::move(nextSrc));
+      }
+      continue;
+    }
+
+    Value *out = dst;
+    if (dstPrefix.size() > 0)
+      out = constantInBoundsGEPHelper(B, dstType, out, dstPrefix);
+
+    Value *in = src;
+    if (srcPrefix.size() > 0)
+      in = constantInBoundsGEPHelper(B, srcType, in, srcPrefix);
+
+    auto ld = B.CreateLoad(ty, in);
+    B.CreateStore(ld, out);
+  }
+
+  CountTrackedPointers tracked(curType);
+  assert(numRootsSeen == tracked.count);
+  (void)tracked;
+  (void)numRootsSeen;
+}
+
+llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
+                                                    llvm::IRBuilder<> &B) {
+  std::deque<Value *> todo = {v};
+  SmallVector<Value *, 1> done;
+  while (todo.size()) {
+    auto cur = todo.front();
+    todo.pop_front();
+    auto T = cur->getType();
+    if (!anyJuliaObjects(T)) {
+      continue;
+    }
+    if (isSpecialPtr(T)) {
+      done.push_back(cur);
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      for (size_t i = 0, E = ST->getNumElements(); i < E; i++) {
+        auto T2 = ST->getElementType(E - 1 - i);
+        if (anyJuliaObjects(T2)) {
+          auto V2 = B.CreateExtractValue(cur, E - 1 - i);
+          todo.push_front(V2);
+        }
+      }
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      for (size_t i = 0, E = AT->getNumElements(); i < E; i++) {
+        todo.push_front(B.CreateExtractValue(cur, E - 1 - i));
+      }
+      continue;
+    }
+    if (auto VT = dyn_cast<VectorType>(T)) {
+      assert(!VT->getElementCount().isScalable());
+      size_t numElems = VT->getElementCount().getKnownMinValue();
+      for (size_t i = 0; i < numElems; i++) {
+        todo.push_front(B.CreateExtractElement(cur, numElems - 1 - i));
+      }
+      continue;
+    }
+    llvm_unreachable("unknown source of julia type");
+  }
+  return done;
 }

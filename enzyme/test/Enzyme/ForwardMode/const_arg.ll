@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s
 
 declare double @__enzyme_fwddiff(...) 
 
@@ -19,7 +19,7 @@ top:
 define double @julia_g_6797_inner.1(double %a0, i8* %a1) {
 entry:
   %a2 = bitcast i8* %a1 to [1 x double]*
-  %a7 = call double @julia_f_kw__kw_6800([1 x double]* %a2, double %a0) readnone
+  %a7 = call double @julia_f_kw__kw_6800([1 x double]* %a2, double %a0) readnone nounwind
   ret double %a7
 }
 

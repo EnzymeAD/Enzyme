@@ -340,6 +340,20 @@ static void applyPatterns(Operation *op) {
   (void)applyPatternsGreedily(op, std::move(patterns), config);
 }
 
+static void annotateRegionOpsInLoops(Operation *op) {
+  // When we have non-looping region branch ops (e.g. scf.if) inside of a loop,
+  // we want the pushes/pops to be removed by the outer loop remover, not the
+  // inner op remover. This helps mincut reduce the overall caching overhead.
+  op->walk([](LoopLikeOpInterface loop) {
+    loop->walk([](RegionBranchOpInterface regionBranch) {
+      if (!regionBranch.hasLoop()) {
+        regionBranch->setAttr(kPreserveCacheAttrName,
+                              UnitAttr::get(regionBranch.getContext()));
+      }
+    });
+  });
+}
+
 // A worklist that supports removing operations
 // original implementation is from
 // https://github.com/llvm/llvm-project/blob/9d8d538e40ef040cb53e8db7a32f3024865187f3/mlir/lib/Transforms/Utils/GreedyPatternRewriteDriver.cpp#L198
@@ -512,6 +526,7 @@ struct RemoveUnusedEnzymeOpsPass
 
     applyPatterns(op);
 
+    annotateRegionOpsInLoops(op);
     bool failed = false;
     op->walk([&](FunctionOpInterface func) {
       PostOrderWalkDriver driver(func);

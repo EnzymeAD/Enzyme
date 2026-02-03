@@ -15,7 +15,7 @@ entry:
   ret i8* %0
 }
 
-; CHECK: define internal i8* @augmented_square({ {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %out, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %"out'", { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %in, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %"in'")
+; CHECK: define internal i8* @augmented_square({ {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* nocapture writeonly "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %out, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* nocapture "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %"out'", { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %in, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %"in'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }
 ; CHECK-NEXT:   %1 = alloca { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }
@@ -47,7 +47,7 @@ entry:
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesquare({ {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %out, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %"out'", { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %in, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %"in'", i8* %tapeArg)
+; CHECK: define internal void @diffesquare({ {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* nocapture writeonly "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %out, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }* nocapture "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Float@double, [-1,40]:Pointer}" %"out'", { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %in, { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* } %"in'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %0 = alloca { {} addrspace(10)*, double, double, i8, double, {} addrspace(10)* }

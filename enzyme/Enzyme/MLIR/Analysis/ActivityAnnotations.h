@@ -109,6 +109,10 @@ public:
 
   void visitCallOperand(OpOperand &operand) override {}
 
+  void
+  visitNonControlFlowArguments(RegionSuccessor &successor,
+                               ArrayRef<BlockArgument> arguments) override {}
+
   void setToExitState(BackwardOriginsLattice *lattice) override;
 
   LogicalResult

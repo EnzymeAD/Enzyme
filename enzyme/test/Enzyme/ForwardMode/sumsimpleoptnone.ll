@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -instsimplify -adce -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify,adce)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify,adce)" -enzyme-preopt=false -enzyme-detect-readthrow=0 -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local void @f(double* %x, double** %y, i64 %n) #0 {

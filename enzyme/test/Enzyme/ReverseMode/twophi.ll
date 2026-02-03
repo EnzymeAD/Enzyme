@@ -36,7 +36,7 @@ attributes #0 = { norecurse nounwind readonly uwtable }
 attributes #1 = { nounwind uwtable } 
 attributes #2 = { nounwind }
 
-; CHECK: define internal void @diffesum(i64* %x, i64* %"x'", i64 %n)
+; CHECK: define internal void @diffesum(i64* nocapture writeonly %x, i64* nocapture %"x'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp = icmp eq i64 %n, 0
 ; CHECK-NEXT:   br i1 %cmp, label %one, label %two

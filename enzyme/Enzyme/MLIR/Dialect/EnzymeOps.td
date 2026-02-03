@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-//include "mlir/Dialect/Linalg/IR/LinalgBase.td"
-
 #ifndef ENZYME_OPS
 #define ENZYME_OPS
+
+include "EnzymeEnums.td"
 
 include "Dialect.td"
 include "mlir/Interfaces/ViewLikeInterface.td"
@@ -26,12 +26,8 @@ include "mlir/Interfaces/FunctionInterfaces.td"
 include "mlir/Interfaces/LoopLikeInterface.td"
 include "mlir/Interfaces/MemorySlotInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Dialect/Arith/IR/ArithBase.td"
 
-
-class Enzyme_Attr<string name, string attrMnemonic, list<Trait> traits = []>
-    : AttrDef<Enzyme_Dialect, name, traits> {
-  let mnemonic = attrMnemonic;
-}
 
 def PseudoAliasClassAttr : Enzyme_Attr<"PseudoAliasClass", "pseudoclass"> {
   let summary = "A pseudo alias class represents a memory allocation passed into a function.";
@@ -92,47 +88,6 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
 
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
-
-def Activity : I32EnumAttr<"Activity",
-    "Possible activity states for variables",
-    [
-      I32EnumAttrCase<"enzyme_active",  0>,
-      I32EnumAttrCase<"enzyme_dup",  1>,
-      I32EnumAttrCase<"enzyme_const",2>,
-      I32EnumAttrCase<"enzyme_dupnoneed", 3>,
-      I32EnumAttrCase<"enzyme_activenoneed",  4>,
-      I32EnumAttrCase<"enzyme_constnoneed",  5>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
-
-def RngDistribution : I32EnumAttr<"RngDistribution",
-    "Random number distribution type",
-    [
-      I32EnumAttrCase<"UNIFORM", 0>,
-      I32EnumAttrCase<"NORMAL", 1>,
-      I32EnumAttrCase<"MULTINORMAL", 2>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def RngDistributionAttr : EnumAttr<Enzyme_Dialect, RngDistribution, "rng_distribution">;
-
-def MCMCAlgorithm : I32EnumAttr<"MCMCAlgorithm",
-    "MCMC algorithm type",
-    [
-      I32EnumAttrCase<"HMC", 0>,
-      I32EnumAttrCase<"NUTS", 1>,
-    ]> {
-  let genSpecializedAttr = 0;
-  let cppNamespace = "::mlir::enzyme";
-}
-
-def MCMCAlgorithmAttr : EnumAttr<Enzyme_Dialect, MCMCAlgorithm, "mcmc_algorithm">;
 
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
@@ -331,16 +286,45 @@ def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> 
   }];
 }
 
+def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]> {
+  let summary = "Perform forward mode AD on a child region";
+  let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
+  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` $body attr-dict-with-keyword `:` functional-type($inputs, results)
+  }];
+  
+  let hasCanonicalizer = 1;
+  let extraClassDeclaration = [{
+
+    /// Collect all primal input values
+    ::llvm::SmallVector<::mlir::Value> getPrimalInputs() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffRegionOp, false>(
+          *this);
+    }
+
+    /// Collect all input shadow values(for primals with activity marked as
+    /// `enzyme_dup`/`enzyme_dupnoneed`
+    ::llvm::SmallVector<::mlir::Value> getShadows() {
+      return ::mlir::enzyme::detail::filterGradInputs<ForwardDiffRegionOp, true,
+                                                      true, false>(*this);
+    }
+
+  }];
+}
+
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "LoopOp", "CustomReverseRuleReverseOp", "CustomReverseRuleAugmentedPrimalOp", "CustomReverseRuleOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region, loop op, reverse op, aug primal op or custom reverse rule op";
+    ParentOneOf<["AutoDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp", "CustomReverseRuleReverseOp", "CustomReverseRuleAugmentedPrimalOp", "CustomReverseRuleOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region, loop, or if ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
   }];
 }
 
-def LoopOp : Enzyme_Op<"loop", [AutomaticAllocationScope]> {
+def ForLoopOp : Enzyme_Op<"for_loop", [AutomaticAllocationScope]> {
   let summary = "Counted loop for probabilistic programming";
   let description = [{
     A counted loop operation that iterates from `lowerBound` to `upperBound`
@@ -564,7 +548,17 @@ def Trace : Enzyme_Type<"Trace"> {
     Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
     and various other information from executing a traced probabilistic function.
   }];
+  let parameters = (ins
+    DefaultValuedParameter<"int64_t", "0">:$num_samples
+  );
   let mnemonic = "Trace";
+  let assemblyFormat = "(`<` $num_samples^ `>`)?";
+
+  let builders = [
+    TypeBuilder<(ins), [{
+      return $_get($_ctxt, 0);
+    }]>
+  ];
 }
 
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
@@ -600,6 +594,7 @@ def SampleOp : Enzyme_Op<"sample",
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
+    OptionalAttr<SupportAttr>:$support,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -646,7 +641,7 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -672,7 +667,7 @@ def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpIn
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
@@ -705,7 +700,7 @@ def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
+    $sample `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -724,7 +719,7 @@ def AddSubtraceOp : Enzyme_Op<"addSubtrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    $subtrace `into` $trace attr-dict
+    $subtrace `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -742,7 +737,7 @@ def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
+    $weight `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -760,7 +755,7 @@ def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace", [Pure]> {
   let results = (outs Trace:$updated_trace);
 
   let assemblyFormat = [{
-    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
+    $retval `into` $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -827,6 +822,21 @@ def RandomOp : Enzyme_Op<"random"> {
   }];
 }
 
+def RandomSplitOp : Enzyme_Op<"randomSplit"> {
+  let summary = "Split RNG state into multiple independent states";
+  let description = [{
+    Splits an RNG state into multiple independent RNG states.
+    Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
+  }];
+
+  let arguments = (ins AnyType:$rng_state);
+  let results = (outs Variadic<AnyType>:$output_rng_states);
+
+  let assemblyFormat = [{
+    $rng_state attr-dict `:` functional-type(operands, results)
+  }];
+}
+
 def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
   let summary = "Get a subtrace from a trace for a given symbol";
   let description = [{
@@ -837,7 +847,7 @@ def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
   let results = (outs Trace:$subtrace);
 
   let assemblyFormat = [{
-    $trace attr-dict
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -851,7 +861,7 @@ def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace", [Pure]> {
   let results = (outs Variadic<AnyType>:$sample);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($sample)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -862,10 +872,10 @@ def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace", [Pure]> {
   }];
   let arguments = (ins Trace:$trace);
 
-  let results = (outs AnyType:$weight);
+  let results = (outs AnyRankedTensor:$weight);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($weight)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -880,15 +890,14 @@ def GetFlattenedSamplesFromTraceOp : Enzyme_Op<"getFlattenedSamplesFromTrace", [
   let results = (outs AnyType:$position);
 
   let assemblyFormat = [{
-    $trace attr-dict `:` type($position)
+    $trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
-def UnflattenSliceOp : Enzyme_Op<"unflatten_slice", [Pure]> {
-  let summary = "Extract a slice from a flattened position vector and reshape";
+def RecoverSampleOp : Enzyme_Op<"recover_sample", [Pure]> {
+  let summary = "Recover a sample from a flattened position vector";
   let description = [{
-    Extract a slice from a 1D position vector starting at the given offset,
-    and reconstruct the original multi-dimensional tensor shape (implied by the type).
+    Recover a sample from a flattened position vector.
   }];
 
   let arguments = (ins
@@ -915,12 +924,12 @@ def UpdateOp : Enzyme_Op<"update", [DeclareOpInterfaceMethods<SymbolUserOpInterf
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
-    AnyType:$position,
+    AnyRankedTensor:$position,
     AddressArrayAttr:$selection,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$updated_trace, AnyType:$weight, AnyType:$output_rng_state);
+  let results = (outs Trace:$updated_trace, AnyRankedTensor:$weight, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace `at` $position attr-dict `:` functional-type(operands, results)
@@ -944,10 +953,10 @@ def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUser
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, AnyType:$output_rng_state);
+  let results = (outs Trace:$trace, AnyRankedTensor:$weight, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -969,99 +978,148 @@ def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
 def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference step for probabilistic programs";
+  let summary = "MCMC inference for probabilistic programs";
   let description = [{
-    Perform an MCMC inference step (HMC, NUTS, etc.) on a probabilistic function.
-    This operation proposes a new trace using the specified algorithm,
-    computes the acceptance probability, and returns the updated trace.
+    Performs MCMC inference on a probabilistic function.
+
+    By default (num_warmup=0, num_samples=1, thinning=1), performs a single MCMC step
+    and returns the resulting trace - backwards compatible with previous behavior.
+
+    When num_samples > 1, runs a full MCMC chain and returns a trace where
+    sampled values have an additional batch dimension (first dim = num_samples / thinning).
+
+    Thinning controls the fraction of samples retained: when thinning=k, every k-th
+    sample is kept, resulting in num_samples/k output samples.
+
+    Warmup iterations are discarded and used only for adaptation.
+
     By convention, the 0th operand in inputs is the initial RNG state
     and the 0th operand in results is the updated RNG state.
-
-    Optional HMC-specific parameters:
-    - mass: Mass matrix (identity assumed if not provided)
-    - step_size: Leapfrong integration step size
-    - num_steps: Number of leapfrog steps
-    - initial_momentum: deterministic initial momentum (debug)
   }];
 
   let arguments = (ins
-    MCMCAlgorithmAttr:$alg,
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     Trace:$original_trace,
     AddressArrayAttr:$selection,
-    Optional<AnyType>:$mass,
-    Optional<AnyType>:$step_size,
-    Optional<AnyType>:$num_steps,
-    Optional<AnyType>:$initial_momentum,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    // Algorithm-specific MCMC parameters
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+
+    // Algorithm-specific configurations
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
 
   let assemblyFormat = [{
-    `algorithm` `=` $alg $fn `(` $inputs `)` `given` $original_trace
-    (`mass` `=` $mass^ `:` type($mass))?
-    (`step_size` `=` $step_size^ `:` type($step_size))?
-    (`num_steps` `=` $num_steps^ `:` type($num_steps))?
-    (`initial_momentum` `=` $initial_momentum^ `:` type($initial_momentum))?
-    attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    attr-dict `:` functional-type(operands, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 def DotOp : Enzyme_Op<"dot", [Pure]> {
-  let summary = "Compute dot product of two vectors";
+  let summary = "Computes a general dot product operation";
   let description = [{
-    Computes the dot product of two 1D tensors (vectors).
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def CholeskySolveOp : Enzyme_Op<"cholesky_solve", [Pure]> {
-  let summary = "Solve linear system Ax = b using Cholesky decomposition";
-  let description = [{
-    Solves the linear system Ax = b for x using Cholesky decomposition.
-    Assuming A is symmetric positive definite!
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def SelectTraceOp : Enzyme_Op<"selectTrace", [Pure]> {
-  let summary = "Select between two probabilistic traces based on a boolean tensor condition";
-  let description = [{
-    Selects between two !enzyme.Trace values (considered scalars here) based on a tensor<i1> condition.
+    Computes a general dot product operation. To be lowered to `stablehlo.dot_general`.
   }];
 
   let arguments = (ins
-    AnyTypeOf<[I1Tensor, I1]>:$condition,
-    Trace:$true_value,
-    Trace:$false_value
+    AnyRankedTensor:$lhs,
+    AnyRankedTensor:$rhs,
+    DenseI64ArrayAttr:$lhs_batching_dimensions,
+    DenseI64ArrayAttr:$rhs_batching_dimensions,
+    DenseI64ArrayAttr:$lhs_contracting_dimensions,
+    DenseI64ArrayAttr:$rhs_contracting_dimensions
   );
-
-  let results = (outs Trace:$result);
+  let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $condition `,` $true_value `,` $false_value attr-dict `:` type($condition)
+    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def CholeskyOp : Enzyme_Op<"cholesky", [Pure]> {
+  let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
+  let description = [{
+    Computes the Cholesky decomposition of a symmetric positive definite matrix A.
+    Returns L such that A = L @ L^T (if lower=true) or A = U^T @ U (if lower=false).
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$input,
+    DefaultValuedAttr<BoolAttr, "true">:$lower
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def TriangularSolveOp : Enzyme_Op<"triangular_solve", [Pure]> {
+  let summary = "Solve a triangular linear system";
+  let description = [{
+    Solves a system of linear equations with a triangular coefficient matrix.
+    If left_side=true, solves op(A) @ X = B for X.
+    If left_side=false, solves X @ op(A) = B for X.
+    op(A) is determined by transpose_a: NO_TRANSPOSE, TRANSPOSE, or ADJOINT.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$a,
+    AnyRankedTensor:$b,
+    DefaultValuedAttr<BoolAttr, "true">:$left_side,
+    DefaultValuedAttr<BoolAttr, "true">:$lower,
+    DefaultValuedAttr<BoolAttr, "false">:$unit_diagonal,
+    DefaultValuedAttr<TransposeAttr, "Transpose::NO_TRANSPOSE">:$transpose_a
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $a `,` $b attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def SelectOp : Enzyme_Op<"select", [Pure]> {
+  let summary = "Exteneded select operation";
+  let description = [{
+    Extended select operation that supports:
+    - `tensor<i1>` conditions with differently-sized operands
+    - `!enzyme.Trace` operands
+    - standard cases supported by `arith.select`
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$condition,
+    AnyType:$true_value,
+    AnyType:$false_value
+  );
+
+  let results = (outs AnyType:$result);
+
+  let assemblyFormat = [{
+    $condition `,` $true_value `,` $false_value attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -1080,6 +1138,142 @@ def DumpOp : Enzyme_Op<"dump"> {
 
   let assemblyFormat = [{
     $value attr-dict `:` functional-type($value, results)
+  }];
+}
+
+def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
+  let summary = "affine atomic rmw operation";
+  let description = [{
+  }];
+
+  let results = (outs AnyType:$result);
+
+  let arguments = (ins
+      AtomicRMWKindAttr:$kind,
+      AnyType:$value,
+      Arg<AnyMemRef, "the reference to rmw", [MemRead, MemWrite]>:$memref,
+      Variadic<Index>:$indices,
+      AffineMapAttr:$map);
+
+  let assemblyFormat = [{
+    $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`
+    type($memref) `)` `->` type($result)
+  }];
+}
+
+def WhileLoopOp : Enzyme_Op<"while_loop", [AutomaticAllocationScope]> {
+  let summary = "While loop with condition";
+  let description = [{
+    A while loop operation that continues iterating as long as the condition
+    evaluates to true. Intended to be lowered to `stablehlo.while`.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$initArgs);
+  let regions = (region SizedRegion<1>:$conditionRegion,
+                        SizedRegion<1>:$bodyRegion);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $initArgs `:` type($initArgs) `)`
+    `->` type(results)
+    `condition` $conditionRegion
+    `body` $bodyRegion
+    attr-dict
+  }];
+}
+
+def IfOp : Enzyme_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> {
+  let summary = "Conditional execution with two branches";
+  let description = [{
+    A conditional operation that executes exactly one of two branches based on a
+    boolean predicate.
+  }];
+
+  let arguments = (ins AnyType:$predicate);
+  let regions = (region SizedRegion<1>:$trueBranch,
+                        SizedRegion<1>:$falseBranch);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $predicate `)` `(` $trueBranch `,` $falseBranch `)`
+    attr-dict `:` functional-type($predicate, results)
+  }];
+}
+
+def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
+  let summary = "Computes log(exp(x) + exp(y))";
+  let description = [{
+    Computes log(exp(x) + exp(y)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def LogisticOp : Enzyme_Op<"logistic", [Pure]> {
+  let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
+  let description = [{
+    Computes the logistic (sigmoid) function: 1 / (1 + exp(-x)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def PopcountOp : Enzyme_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Computes population count";
+  let description = [{
+    Returns the number of 1-bits elementwise.
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def DynamicExtractOp : Enzyme_Op<"dynamic_extract", [Pure]> {
+  let summary = "Extract slice from tensor at dynamic index along first dimension";
+  let description = [{
+    Extracts a slice at the specified dynamic index along the first dimension.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$input,
+    AnyRankedTensor:$index
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input `,` $index attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def DynamicUpdateOp : Enzyme_Op<"dynamic_update", [Pure]> {
+  let summary = "Update slice in tensor at dynamic index along first dimension";
+  let description = [{
+    Returns a new tensor with the slice at the specified dynamic index replaced.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$input,
+    AnyRankedTensor:$index,
+    AnyRankedTensor:$value
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input `,` $index `,` $value attr-dict `:` functional-type(operands, results)
   }];
 }
 

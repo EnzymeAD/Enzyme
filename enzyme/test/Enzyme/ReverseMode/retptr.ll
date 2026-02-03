@@ -24,7 +24,7 @@ entry:
 
 declare float @__enzyme_autodiff(float (float**)*, ...)
 
-; CHECK: define internal void @diffef(float** %this, float** %"this'", float %differeturn)
+; CHECK: define internal void @diffef(float** nocapture readonly %this, float** nocapture %"this'", float %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[augsub:.+]] = call float* @augmented_sub(float** %this, float** %"this'")
 ; CHECK-NEXT:   %[[loadsub:.+]] = load float, float* %[[augsub]]
@@ -34,13 +34,13 @@ declare float @__enzyme_autodiff(float (float**)*, ...)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal float* @augmented_sub(float** %this, float** %"this'")
+; CHECK: define internal float* @augmented_sub(float** nocapture readonly %this, float** nocapture %"this'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'ipl" = load float*, float** %"this'", align 8
 ; CHECK-NEXT:   ret float* %"'ipl"
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesub(float** %this, float** %"this'")
+; CHECK: define internal void @diffesub(float** nocapture readonly %this, float** nocapture %"this'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

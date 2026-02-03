@@ -326,6 +326,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
                  << "   llvm::SmallVector<int64_t>({gutils->width}));\n";
             }
             os << curIndent << "}";
+            vecValue = true;
           }
         }
 
@@ -611,10 +612,9 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         if (resultRoot->getNumArgs() > 1)
           PrintFatalError(pattern->getLoc(),
                           "only zero or single op constantfp supported");
-        os << builder << ".create<"
-           << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
+        os << cast<StringInit>(Def->getValueInit("dialect"))->getValue()
            << "::" << cast<StringInit>(Def->getValueInit("opName"))->getValue()
-           << ">(op.getLoc(), ";
+           << "::create(" << builder << ", op.getLoc(), ";
         std::string ord;
         bool shadowType = false;
         if (resultRoot->getNumArgs() == 0) {
@@ -1150,8 +1150,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
           os << preop;
         }
         auto dialect = Def->getValueAsString("dialect");
-        os << builder << ".create<" << dialect << "::" << opName
-           << ">(op.getLoc(), ";
+        os << dialect << "::" << opName << "::create(" << builder
+           << ", op.getLoc(), ";
       } else {
         os << builder << ".Create" << opName << "(";
       }

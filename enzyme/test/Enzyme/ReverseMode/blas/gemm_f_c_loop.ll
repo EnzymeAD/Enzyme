@@ -1,5 +1,5 @@
-;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S | FileCheck %s; fi
-;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S | FileCheck %s
+;RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -S -enzyme-detect-readthrow=0 | FileCheck %s; fi
+;RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -S -enzyme-detect-readthrow=0 | FileCheck %s
 
 declare void @dgemm_64_(i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i8*, i8* nocapture readonly, i8* nocapture readonly, i8*, i8* nocapture readonly, i64, i64) 
 
@@ -158,9 +158,12 @@ entry:
 ; CHECK-NEXT:   %[[z14:.+]] = bitcast i8* %lda_p to i64*
 ; CHECK-NEXT:   %[[z15:.+]] = load i64, i64* %[[z14]]
 ; CHECK-NEXT:   %[[z16:.+]] = bitcast i8* %A to double*
-; CHECK:   %mul.i = add nuw nsw i64 %[[i7]], %[[i8]]
-; CHECK-NEXT:   %[[z17:.+]] = icmp eq i64 %mul.i, 0
-; CHECK-NEXT:   br i1 %[[z17]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   call void @llvm.experimental.noalias.scope.decl
+; CHECK-NEXT:   %[[y18:.+]] = icmp eq i64 %[[i7]], 0
+; CHECK-NEXT:   %[[y19:.+]] = icmp eq i64 %[[i8]], 0
+; CHECK-NEXT:   %[[y20:.+]] = or i1 %[[y18]], %[[y19]]
+; CHECK-NEXT:   br i1 %[[y20]], label %__enzyme_memcpy_double_mat_64.exit, label %init.idx.i
 
 ; CHECK: init.idx.i:                                       ; preds = %init.end.i, %loop
 ; CHECK-NEXT:   %j.i = phi i64 [ 0, %loop ], [ %j.next.i, %init.end.i ]
@@ -332,9 +335,10 @@ entry:
 
 ; CHECK: define internal void @__enzyme_memcpy_double_mat_64(double* noalias nocapture writeonly %dst, double* noalias nocapture readonly %src, i64 %M, i64 %N, i64 %LDA)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mul = add nuw nsw i64 %M, %N
-; CHECK-NEXT:   %0 = icmp eq i64 %mul, 0
-; CHECK-NEXT:   br i1 %0, label %for.end, label %init.idx
+; CHECK-NEXT:   %[[v0:.+]] = icmp eq i64 %M, 0
+; CHECK-NEXT:   %[[v1:.+]] = icmp eq i64 %N, 0
+; CHECK-NEXT:   %[[v2:.+]] = or i1 %[[v0]], %[[v1]]
+; CHECK-NEXT:   br i1 %[[v2]], label %for.end, label %init.idx
 
 ; CHECK: init.idx:                                         ; preds = %init.end, %entry
 ; CHECK-NEXT:   %j = phi i64 [ 0, %entry ], [ %j.next, %init.end ]
@@ -342,22 +346,22 @@ entry:
 
 ; CHECK: for.body:                                         ; preds = %for.body, %init.idx
 ; CHECK-NEXT:   %i = phi i64 [ 0, %init.idx ], [ %i.next, %for.body ]
-; CHECK-NEXT:   %1 = mul nuw nsw i64 %j, %M
-; CHECK-NEXT:   %2 = add nuw nsw i64 %i, %1
-; CHECK-NEXT:   %dst.i = getelementptr inbounds double, double* %dst, i64 %2
-; CHECK-NEXT:   %3 = mul nuw nsw i64 %j, %LDA
-; CHECK-NEXT:   %4 = add nuw nsw i64 %i, %3
-; CHECK-NEXT:   %dst.i1 = getelementptr inbounds double, double* %src, i64 %4
+; CHECK-NEXT:   %[[s1:.+]] = mul nuw nsw i64 %j, %M
+; CHECK-NEXT:   %[[s2:.+]] = add nuw nsw i64 %i, %[[s1]]
+; CHECK-NEXT:   %dst.i = getelementptr inbounds double, double* %dst, i64 %[[s2]]
+; CHECK-NEXT:   %[[s3:.+]] = mul nuw nsw i64 %j, %LDA
+; CHECK-NEXT:   %[[s4:.+]] = add nuw nsw i64 %i, %[[s3]]
+; CHECK-NEXT:   %dst.i1 = getelementptr inbounds double, double* %src, i64 %[[s4]]
 ; CHECK-NEXT:   %src.i.l = load double, double* %dst.i1
 ; CHECK-NEXT:   store double %src.i.l, double* %dst.i
 ; CHECK-NEXT:   %i.next = add nuw nsw i64 %i, 1
-; CHECK-NEXT:   %5 = icmp eq i64 %i.next, %M
-; CHECK-NEXT:   br i1 %5, label %init.end, label %for.body
+; CHECK-NEXT:   %[[s5:.+]] = icmp eq i64 %i.next, %M
+; CHECK-NEXT:   br i1 %[[s5]], label %init.end, label %for.body
 
 ; CHECK: init.end:                                         ; preds = %for.body
 ; CHECK-NEXT:   %j.next = add nuw nsw i64 %j, 1
-; CHECK-NEXT:   %6 = icmp eq i64 %j.next, %N
-; CHECK-NEXT:   br i1 %6, label %for.end, label %init.idx
+; CHECK-NEXT:   %[[s6:.+]] = icmp eq i64 %j.next, %N
+; CHECK-NEXT:   br i1 %[[s6]], label %for.end, label %init.idx
 
 ; CHECK: for.end:                                          ; preds = %init.end, %entry
 ; CHECK-NEXT:   ret void

@@ -18,7 +18,7 @@ define void @caller(i8* %a, i8* %b) {
   ret void
 }
 
-; CHECK: define internal void @diffef({ double }* %r2, { double }* %"r2'", double %differeturn)
+; CHECK: define internal void @diffef({ double }* nocapture readonly %r2, { double }* nocapture %"r2'", double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = fadd fast double %differeturn, %differeturn
 ; CHECK-NEXT:   %1 = bitcast { double }* %"r2'" to double*

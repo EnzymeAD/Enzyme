@@ -56,11 +56,11 @@ def ProbProgPass : Pass<"probprog"> {
       /*description=*/"Optimization passes to apply to generated probabilistic programs"
     >,
     Option<
-      /*C++ variable name=*/"debugMCMC",
-      /*CLI argument=*/"debug-mcmc",
+      /*C++ variable name=*/"debugDump",
+      /*CLI argument=*/"debug-dump",
       /*type=*/"bool",
       /*default=*/"false",
-      /*description=*/"Enable debug prints for MCMC algorithms"
+      /*description=*/"Enable debug dump"
     >,
   ];
 }
@@ -220,6 +220,13 @@ def LowerEnzymeCustomRulesToFuncPass : Pass<"lower-enzyme-custom-rules-to-func">
   ];
 }
 
+def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
+  let summary = "Hoist independent primal ops out of autodiff_region.";
+  let dependentDialects = [ 
+  "enzyme::EnzymeDialect",
+  ];
+}
+
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
   let dependentDialects = [
@@ -281,6 +288,13 @@ def RaiseLLVMExtPass : Pass<"raise-llvm-ext"> {
   let dependentDialects = [
     "mlir::enzyme::llvm_ext::LLVMExtDialect",
     "LLVM::LLVMDialect",
+  ];
+}
+
+def LowerAffineAtomicRmwPass : Pass<"lower-affine-atomic-rmw"> {
+  let summary = "Lower AffineRmw to MemrefRmw";
+  let dependentDialects = [
+    "memref::MemRefDialect"
   ];
 }
 

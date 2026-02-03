@@ -133,7 +133,7 @@ void emit_cacheTypes(const TGPattern &pattern, raw_ostream &os) {
     if (isVecLikeArg(ty)) {
       os
 << "  if (cache_" << nameVec[i] << ")\n"
-<< "    cacheTypes.push_back(PointerType::getUnqual(fpType));\n";
+<< "    cacheTypes.push_back(getUnqual(fpType));\n";
     }
   }
 }
@@ -301,6 +301,8 @@ os << "      if (EnzymeLapackCopy) {\n"
 << "        SmallVector<Value *, 7> args = {uplo, M, N, arg_" << matName << ", arg_" << ldName << ", malins, M};\n"
 << "        if (!byRef) {\n"
 << "           args.insert(args.begin(), arg_layout); valueTypes.insert(valueTypes.begin(), ValueType::Primal); }\n"
+<< "        else\n"
+<< "           args.push_back(ConstantInt::get(intType, 1));\n"
 << "        callMemcpyStridedLapack(BuilderZ, *gutils->oldFunc->getParent(), blas, args, gutils->getInvertedBundles(&call, valueTypes, BuilderZ, /*lookup*/false));\n"
 << "      } else {\n"
 << "        auto dmemcpy = getOrInsertMemcpyMat(*gutils->oldFunc->getParent(), fpType, cast<PointerType>(malins->getType()), intType, 0, 0);\n"

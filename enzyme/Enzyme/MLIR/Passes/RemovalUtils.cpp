@@ -23,6 +23,12 @@ using namespace mlir::enzyme;
 
 #define DEBUG_TYPE "enzyme-mincut"
 
+static llvm::cl::opt<bool>
+    DebugGraphviz("mincut-print-graphviz", llvm::cl::init(false),
+                  llvm::cl::Hidden,
+                  llvm::cl::desc("Use with DEBUG_TYPE 'enzyme-mincut' to print "
+                                 "the mincut graphs in GraphViz"));
+
 void mlir::enzyme::localizeGradients(OpBuilder &builder,
                                      MGradientUtilsReverse *gutils,
                                      Block *fwd) {
@@ -161,12 +167,61 @@ struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
   }
 };
 
-static void dump(Graph &G) {
+static void dumpGraphviz(Graph &G) {
+  auto serialize = [&](Node n) -> std::string {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    if (isa<Value>(n)) {
+      auto v = cast<Value>(n);
+      if (isa<OpResult>(v)) {
+        auto res = cast<OpResult>(v);
+        ss << "[val](" << res.getResultNumber() << ")";
+        if (res.getOwner()->hasAttr("dbg")) {
+          auto dbg = res.getOwner()->getAttrOfType<StringAttr>("dbg");
+          ss << dbg.getValue();
+        } else {
+          ss << res.getOwner()->getName().getStringRef();
+        }
+      } else {
+        ss << "[val]" << v;
+      }
+    } else if (isa<Operation *>(n)) {
+      auto op = cast<Operation *>(n);
+      ss << "[op]";
+      if (op->hasAttr("dbg")) {
+        auto dbg = op->getAttrOfType<StringAttr>("dbg");
+        ss << dbg.getValue();
+      } else {
+        ss << op->getName().getStringRef();
+      }
+    } else {
+      ss << "none";
+    }
+    return s;
+  };
+
+  using llvm::errs;
+  errs() << "digraph G {\n";
   for (auto &pair : G) {
-    dump(pair.first);
     for (const auto &N : pair.second) {
-      llvm::errs() << "\t";
-      dump(N);
+      errs() << "  \"" << serialize(pair.first) << "\" -> \"" << serialize(N)
+             << "\";\n";
+    }
+  }
+
+  errs() << "}\n";
+}
+
+static void dump(Graph &G) {
+  if (DebugGraphviz) {
+    dumpGraphviz(G);
+  } else {
+    for (auto &pair : G) {
+      dump(pair.first);
+      for (const auto &N : pair.second) {
+        llvm::errs() << "\t";
+        dump(N);
+      }
     }
   }
 }
@@ -345,6 +400,24 @@ static Operation *findCommonAncestor(ArrayRef<Operation *> ops) {
   return commonAncestor;
 }
 
+// Annotate operations with a debug attribute. This makes the GraphViz printing
+// nicer.
+static void annotate_ops(Block *forward, Block *reverse) {
+  unsigned counter = 0;
+  forward->walk([&](Operation *op) {
+    auto debugName =
+        StringAttr::get(op->getContext(),
+                        op->getName().stripDialect() + llvm::Twine(counter++));
+    op->setAttr("dbg", debugName);
+  });
+  reverse->walk([&](Operation *op) {
+    auto debugName =
+        StringAttr::get(op->getContext(),
+                        op->getName().stripDialect() + llvm::Twine(counter++));
+    op->setAttr("dbg", debugName);
+  });
+}
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
@@ -360,14 +433,19 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   if (caches0.empty())
     return;
 
+  LLVM_DEBUG(if (DebugGraphviz) annotate_ops(forward, reverse));
+
   // where to build the new inits
   Operation *entry = caches0[0].initOp;
 
   IRMapping mapping = fwdrevmap;
   SmallVector<CacheInfo> caches;
+  // Hoist out pushes of values that are defined outside of the block
   for (auto &info : caches0) {
     auto todo = info.pushedValue();
-    if (todo.getParentBlock() != forward) {
+    bool isDefinedOutside =
+        !forward->getParent()->isAncestor(todo.getParentRegion());
+    if (isDefinedOutside) {
       rewriter.modifyOpInPlace(info.pushOp, [&]() {
         if (&*rewriter.getInsertionPoint() == info.pushOp)
           rewriter.setInsertionPoint(info.pushOp->getNextNode());
@@ -389,6 +467,23 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   if (caches.empty()) {
     caches0.clear();
     return;
+  }
+
+  // Maintain a mapping of forward to reverse blocks. We later use this to place
+  // the new cache pops and cloned ops to the correct blocks.
+  DenseMap<Block *, OpBuilder::InsertPoint> insertionPointMap;
+  for (const auto &info : caches) {
+    Block *fwdBlock = info.pushOp->getBlock();
+    Block *revBlock = info.popOp->getBlock();
+    // For the top-level reverse block, we use the provided rewriter's insertion
+    // point (to skip over things like IV calculations). New operations in inner
+    // blocks should be inserted at the beginning of those blocks.
+    if (revBlock == reverse) {
+      insertionPointMap[fwdBlock] = rewriter.saveInsertionPoint();
+    } else {
+      insertionPointMap[fwdBlock] =
+          OpBuilder::InsertPoint(revBlock, revBlock->begin());
+    }
   }
 
   Graph G;
@@ -416,7 +511,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   while (!worklist.empty()) {
     Value todo = worklist.pop_back_val();
 
-    if (todo.getParentBlock() != forward || fwdrevmap.contains(todo)) {
+    bool isDefinedOutside =
+        !forward->getParent()->isAncestor(todo.getParentRegion());
+    if (isDefinedOutside || fwdrevmap.contains(todo)) {
       continue;
     }
 
@@ -677,7 +774,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
     SetVector<Value> reverseCaches;
     for (Value newCache : newCaches) {
-      if (newCache.getParentBlock() != forward) {
+      if (!forward->getParent()->isAncestor(newCache.getParentRegion())) {
         reverseCaches.insert(newCache);
         continue;
       }
@@ -702,10 +799,13 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
                                newCache);
       });
 
-      assert(rewriter.getInsertionBlock() == reverse);
-      assert(rewriter.getInsertionPoint()->getBlock() == reverse);
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.restoreInsertionPoint(
+          insertionPointMap.lookup(newCache.getParentBlock()));
       enzyme::PopOp popOp = enzyme::PopOp::create(
           rewriter, newCache.getLoc(), newCache.getType(), initOp.getResult());
+      insertionPointMap[newCache.getParentBlock()] =
+          rewriter.saveInsertionPoint();
       if (!firstClone)
         firstClone = popOp;
       mapping.map(newCache, popOp.getResult());
@@ -790,22 +890,22 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
   }
 
-  for (auto &op : llvm::make_early_inc_range(*forward)) {
-    if (!cacheGraph.contains(Node(&op)))
-      continue;
+  forward->walk([&](Operation *op) {
+    if (!cacheGraph.contains(Node(op)))
+      return;
     bool hasUse = false;
-    for (auto res : op.getResults()) {
+    for (auto res : op->getResults()) {
       if (newCaches.contains(res)) {
         continue;
       }
       hasUse = true;
     }
     if (!hasUse)
-      continue;
-    for (auto v : op.getOperands()) {
+      return;
+    for (auto v : op->getOperands()) {
       if (mapping.contains(v))
         continue;
-      if (v.getParentBlock() == forward)
+      if (forward->getParent()->isAncestor(v.getParentRegion()))
         continue;
 
       enzyme::InitOp initOp = ({
@@ -830,10 +930,14 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       });
       mapping.map(v, popOp->getResult(0));
     }
-    auto cop = rewriter.clone(op, mapping);
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.restoreInsertionPoint(insertionPointMap.lookup(op->getBlock()));
+    auto cop = rewriter.clone(*op, mapping);
+    insertionPointMap[op->getBlock()] = rewriter.saveInsertionPoint();
     if (!firstClone)
       firstClone = cop;
-  }
+  });
+
   if (firstClone)
     rewriter.setInsertionPoint(firstClone);
 

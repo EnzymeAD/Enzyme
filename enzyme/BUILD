@@ -261,6 +261,7 @@ td_library(
     name = "EnzymeDialectTdFiles",
     srcs = [
         "Enzyme/MLIR/Dialect/Dialect.td",
+        "Enzyme/MLIR/Dialect/EnzymeEnums.td",
     ],
     includes = ["."],
     deps = [
@@ -271,6 +272,7 @@ td_library(
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
+        "@llvm-project//mlir:ArithOpsTdFiles",
     ],
 )
 
@@ -416,7 +418,7 @@ gentbl_cc_library(
         ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
-    td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
+    td_file = "Enzyme/MLIR/Dialect/EnzymeEnums.td",
     deps = [":EnzymeDialectTdFiles"],
 )
 
@@ -438,11 +440,13 @@ gentbl_cc_library(
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
-            ["-gen-attrdef-decls"],
+            ["-gen-attrdef-decls",
+             "-attrdefs-dialect=enzyme"],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.h.inc",
         ),
         (
-            ["-gen-attrdef-defs"],
+            ["-gen-attrdef-defs",
+             "-attrdefs-dialect=enzyme"],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.cpp.inc",
         ),
     ],
@@ -719,6 +723,7 @@ cc_library(
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:InliningUtils",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
@@ -726,6 +731,7 @@ cc_library(
         "@llvm-project//mlir:LinalgInterfaces",
         "@llvm-project//mlir:LinalgStructuredOpsIncGen",
         "@llvm-project//mlir:LinalgTransforms",
+        "@llvm-project//mlir:LoopLikeInterface",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MemorySlotInterfaces",
@@ -744,6 +750,22 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "CInterface",
+    srcs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.cpp"],
+    hdrs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.h"],
+    includes = ["Enzyme/MLIR"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":EnzymeMLIR",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+    alwayslink = True,
+)
+
 cc_binary(
     name = "enzymemlir-opt",
     srcs = ["Enzyme/MLIR/enzymemlir-opt.cpp"],
@@ -751,6 +773,7 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeMLIR",
+        ":LLVMExtDialect",
         "@llvm-project//mlir:AffineDialect",
         "@llvm-project//mlir:AffineTransforms",
         "@llvm-project//mlir:AllPassesAndDialects",
@@ -766,6 +789,7 @@ cc_binary(
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LLVMIRTransforms",
         "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:MathDialect",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MlirOptLib",

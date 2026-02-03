@@ -59,12 +59,12 @@ llvm.func internal @d_Z6squarePfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !l
     %8 = llvm.getelementptr inbounds|nuw %arg5[%2] : (!llvm.ptr, i64) -> !llvm.ptr, f32
     llvm.store %7, %8 {alignment = 4 : i64} : f32, !llvm.ptr
     enzyme.yield
-  } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+  } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z6squarePfS_", fn_attrs = {CConv = #llvm.cconv<ccc>, arg_attrs = [{llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}], dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], sym_visibility = "private", target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return}, ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
   llvm.return
 }
 
 // Attributes should be passed back to the outlined function
-// CHECK: func.func private @d_Z6squarePfS__to_diff0(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}, %arg2: f64) attributes {CConv = #llvm.cconv<ccc>, dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return} {
+// CHECK: func.func private @d_Z6squarePfS__to_diff0(%arg0: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.readonly}, %arg1: !llvm.ptr {llvm.noalias, llvm.nocapture, llvm.noundef, llvm.writeonly}, %arg2: f64) attributes {CConv = #llvm.cconv<ccc>, dso_local, frame_pointer = #llvm.framePointerKind<all>, linkage = #llvm.linkage<internal>, memory_effects = #llvm.memory_effects<other = none, argMem = readwrite, inaccessibleMem = none, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind, passthrough = ["mustprogress", "nofree", "norecurse", "nosync", ["no-trapping-math", "true"], ["stack-protector-buffer-size", "8"], ["target-cpu", "sm_86"]], target_cpu = "sm_86", target_features = #llvm.target_features<["+ptx88", "+sm_86"]>, unnamed_addr = 0 : i64, visibility_ = 0 : i64, will_return} {
 
 // -----
 
@@ -160,3 +160,45 @@ func.func @free_var_with_dup(%x: memref<f64>, %dx: memref<f64>) {
 // CHECK-NEXT:    %[[MUL:.*]] = arith.mulf %[[LOAD]], %arg1 : f64
 // CHECK-NEXT:    return %[[MUL]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
+  %0 = enzyme.autodiff_region(%arg0, %arg1) {
+  ^bb0(%arg2: f64):
+    %1 = arith.mulf %arg0, %arg2 : f64
+    enzyme.yield %1 : f64
+  } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+  return %0 : f64
+}
+
+
+// CHECK:  func.func @dsquare(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:    %0 = enzyme.autodiff @dsquare_to_diff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_activenoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:    return %0 : f64
+// CHECK-NEXT:  }
+// CHECK:  func.func @dsquare_to_diff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:    %0 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:    return %0 : f64
+// CHECK-NEXT:  }
+
+// ----- 
+
+func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
+  %0 = enzyme.fwddiff_region(%arg0, %arg1) {
+  ^bb0(%arg2: f64):
+    %1 = arith.mulf %arg0, %arg2 : f64
+    enzyme.yield %1 : f64
+  } attributes {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+  return %0 : f64
+}
+
+
+// CHECK: func.func @dsquare_fwd(%arg0: f64, %arg1: f64) -> f64 {
+// CHECK-NEXT:   %0 = enzyme.fwddiff @dsquare_fwd_to_fwddiff0(%arg0, %arg1) {activity = [#enzyme<activity enzyme_dup>], ret_activity = [#enzyme<activity enzyme_dupnoneed>]} : (f64, f64) -> f64
+// CHECK-NEXT:   return %0 : f64
+// CHECK-NEXT: }
+// CHECK: func.func @dsquare_fwd_to_fwddiff0(%arg0: f64) -> f64 {
+// CHECK-NEXT:   %0 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:   return %0 : f64
+// CHECK-NEXT: }

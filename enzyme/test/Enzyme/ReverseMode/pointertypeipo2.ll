@@ -1,4 +1,3 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -sroa -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
@@ -67,7 +66,7 @@ attributes #4 = { nounwind }
 !4 = !{!5, i64 1, !"omnipotent char"}
 !5 = !{!"Simple C++ TBAA"}
 
-; CHECK: define internal void @diffemv(i64* %m_dims, i64* %"m_dims'", i64* %out, i64* %"out'")
+; CHECK: define internal void @diffemv(i64* nocapture readonly %m_dims, i64* nocapture %"m_dims'", i64* nocapture writeonly %out, i64* nocapture %"out'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %call4_augmented = call { {{.*}}, i64 } @augmented_sub(i64* %m_dims, i64* %"m_dims'")
 ; CHECK-NEXT:   %[[tape:.+]] = extractvalue { {{.*}}, i64 } %call4_augmented, 0
@@ -112,7 +111,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret { { i64*, i8*, i8*, i64 }, i64 } %.fca.1.insert
 ; CHECK-NEXT: }
 
-; CHECK: define internal { {{.*}}, i64 } @augmented_sub(i64* %this, i64* %"this'")
+; CHECK: define internal { { { i64*, i8*, i8*, i64 }, i64 }, i64 } @augmented_sub(i64* nocapture readonly %this, i64* nocapture %"this'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %agg = load i64, i64* %this
 ; CHECK-NEXT:   %call_augmented = call { {{.*}}, i64 } @augmented_pop(i64 %agg)
@@ -121,7 +120,7 @@ attributes #4 = { nounwind }
 ; CHECK:    insertvalue {{.*}} i64 %agg
 ; CHECK:    insertvalue {{.*}} i64 %call
 
-; CHECK: define internal void @diffesub(i64* %this, i64* %"this'", i64 %differeturn, { {{.*}}, i64 } %tapeArg)
+; CHECK: define internal void @diffesub(i64* nocapture readonly %this, i64* nocapture %"this'", i64 %differeturn, { { i64*, i8*, i8*, i64 }, i64 } %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[agg:.+]] = extractvalue { {{.*}}, i64 } %tapeArg, 1
 ; CHECK-NEXT:   %[[pret:.+]] = extractvalue { {{.*}}, i64 } %tapeArg, 0

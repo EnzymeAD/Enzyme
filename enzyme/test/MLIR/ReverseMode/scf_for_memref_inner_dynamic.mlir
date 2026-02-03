@@ -9,7 +9,8 @@ func.func @reduce(%x: f32, %ub_outer: index, %ub_inner: index) -> (f32) {
   // iter_args binds initial values to the loop's region arguments.
   %sum2 = scf.for %iv2 = %lb to %ub_outer step %step
       iter_args(%sum_iter2 = %sum_0) -> (f32) {
-    %sum = scf.for %iv = %lb to %ub_inner step %step
+    %sz = arith.muli %iv2, %ub_inner : index
+    %sum = scf.for %iv = %lb to %sz step %step
         iter_args(%sum_iter = %sum_iter2) -> (f32) {
       %sum_next = arith.mulf %sum_iter, %x : f32
       // Yield current iteration sum to next iteration %sum_iter or to %sum
@@ -28,9 +29,10 @@ func.func @reduce(%x: f32, %ub_outer: index, %ub_inner: index) -> (f32) {
 // CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %alloc = memref.alloc(%[[ub_outer]]) : memref<?xmemref<?xf32>>
 // CHECK-NEXT:    %[[v0:.+]] = scf.for %[[it:.+]] = %c0 to %[[ub_outer]] step %c1 iter_args(%[[iv4:.+]] = %cst) -> (f32) {
-// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.alloc(%[[ub_inner]]) : memref<?xf32>
+// CHECK-NEXT:      %[[sz1:.+]] = arith.muli %[[it]], %[[ub_inner]] : index
+// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.alloc(%[[sz1]]) : memref<?xf32>
 // CHECK-NEXT:      memref.store %[[INNER_CACHE]], %alloc[%[[it]]] : memref<?xmemref<?xf32>>
-// CHECK-NEXT:      %[[v2:.+]] = scf.for %[[iv_inner:.+]] = %c0 to %[[ub_inner]] step %c1 iter_args(%[[iv6:.+]] = %[[iv4]]) -> (f32) {
+// CHECK-NEXT:      %[[v2:.+]] = scf.for %[[iv_inner:.+]] = %c0 to %[[sz1]] step %c1 iter_args(%[[iv6:.+]] = %[[iv4]]) -> (f32) {
 // CHECK-NEXT:        memref.store %[[iv6]], %[[INNER_CACHE]][%[[iv_inner]]] : memref<?xf32>
 // CHECK-NEXT:        %[[v3:.+]] = arith.mulf %[[iv6]], %[[arg0]] : f32
 // CHECK-NEXT:        scf.yield %[[v3]] : f32
@@ -40,13 +42,14 @@ func.func @reduce(%x: f32, %ub_outer: index, %ub_inner: index) -> (f32) {
 // CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %[[iv:.+]] = %c0 to %[[ub_outer]] step %c1 iter_args(%[[iv4:.+]] = %[[dres]], %[[iv5:.+]] = %cst_0) -> (f32, f32) {
 
 // CHECK-NEXT:      %[[nm1:.+]] = arith.subi %[[ub_outer]], %c1 : index 
-// CHECK-NEXT:      %[[idx1:.+]] = arith.subi %[[nm1]], %[[iv]] : index 
+// CHECK-NEXT:      %[[iv_rev:.+]] = arith.subi %[[nm1]], %[[iv]] : index 
 
 
-// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.load %alloc[%[[idx1]]] : memref<?xmemref<?xf32>>
-// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %[[ub_inner]] step %c1 iter_args(%[[arg8:.+]] = %[[iv4]], %[[arg9:.+]] = %[[iv5]]) -> (f32, f32) {
+// CHECK-NEXT:      %[[INNER_CACHE:.+]] = memref.load %alloc[%[[iv_rev]]] : memref<?xmemref<?xf32>>
+// CHECK-NEXT:      %[[sz2:.+]] = arith.muli %[[iv_rev]], %[[ub_inner]] : index
+// CHECK-NEXT:      %[[v2:.+]]:2 = scf.for %[[arg7:.+]] = %c0 to %[[sz2]] step %c1 iter_args(%[[arg8:.+]] = %[[iv4]], %[[arg9:.+]] = %[[iv5]]) -> (f32, f32) {
 
-// CHECK-NEXT:        %[[idx2:.+]] = arith.subi %[[ub_inner]], %c1 : index 
+// CHECK-NEXT:        %[[idx2:.+]] = arith.subi %[[sz2]], %c1 : index 
 // CHECK-NEXT:        %[[idx3:.+]] = arith.subi %[[idx2]], %[[arg7]] : index
 
 // CHECK-NEXT:        %[[v4:.+]] = memref.load %[[INNER_CACHE]][%[[idx3]]] : memref<?xf32>

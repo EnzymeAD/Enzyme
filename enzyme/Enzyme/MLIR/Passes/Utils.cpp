@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+
 #include "Utils.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -125,5 +127,52 @@ bool mlir::enzyme::valueCmp(mlir::Value a, mlir::Value b) {
     return ra.getResultNumber() < rb.getResultNumber();
   } else {
     return opCmp(ra.getOwner(), rb.getOwner());
+  }
+}
+
+Type mlir::enzyme::getConcatType(Value val, int64_t width) {
+  auto valTy = val.getType();
+  if (auto valTensorTy = dyn_cast<TensorType>(valTy)) {
+    // val is a tensor, prepend batch width to shape
+    SmallVector<int64_t> out_shape = {width};
+    out_shape.append(valTensorTy.getShape().begin(),
+                     valTensorTy.getShape().end());
+    auto outTy = valTensorTy.clone(out_shape);
+    return outTy;
+  } else if (auto valMemrefTy = dyn_cast<MemRefType>(valTy)) {
+    // val is a memref, prepend batch width
+    SmallVector<int64_t> out_shape = {width};
+    out_shape.append(valMemrefTy.getShape().begin(),
+                     valMemrefTy.getShape().end());
+    auto outTy = valMemrefTy.clone(out_shape);
+    return outTy;
+  } else {
+    // val is a scalar
+    return RankedTensorType::get(width, valTy);
+  }
+}
+
+Value mlir::enzyme::getConcatValue(OpBuilder &builder, Location loc,
+                                   ArrayRef<Value> argList) {
+  int64_t width = argList.size();
+  Type out_type = mlir::enzyme::getConcatType(argList.front(), width);
+  mlir::Value out = enzyme::ConcatOp::create(builder, loc, out_type, argList);
+  return out;
+}
+
+Value mlir::enzyme::getExtractValue(OpBuilder &builder, Location loc,
+                                    Type argTy, Value val, int64_t index) {
+  // Extract the original output from the tensorized output at the given index.
+  IntegerAttr indexAttr = builder.getI64IntegerAttr(index);
+  Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexAttr);
+  return out;
+}
+
+void mlir::enzyme::computeAffineIndices(OpBuilder &builder, Location loc,
+                                        AffineMap map, ValueRange operands,
+                                        SmallVectorImpl<Value> &indices) {
+  for (unsigned i = 0; i < map.getNumResults(); i++) {
+    indices.push_back(affine::AffineApplyOp::create(
+        builder, loc, map.getSubMap({i}), operands));
   }
 }

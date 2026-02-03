@@ -54,7 +54,7 @@ entry:
 ; CHECK-NEXT:   ret { double*, double* } %.fca.1.insert
 ; CHECK-NEXT: }
 
-; CHECK: define internal i8* @augmented_indirect(double* %x, double* %"x'", double* %dxdt, double* %"dxdt'", double %t)
+; CHECK: define internal i8* @augmented_indirect(double* nocapture readonly %x, double* nocapture %"x'", double* %dxdt, double* %"dxdt'", double %t)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %tapemem = bitcast i8* %malloccall to double**
@@ -67,7 +67,7 @@ entry:
 ; CHECK-NEXT:   ret i8* %malloccall
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffeindirect(double* %x, double* %"x'", double* %dxdt, double* %"dxdt'", double %t, i8* %tapeArg)
+; CHECK: define internal { double } @diffeindirect(double* nocapture readonly %x, double* nocapture %"x'", double* %dxdt, double* %"dxdt'", double %t, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[elt1:.+]] = bitcast i8* %tapeArg to double**
 ; CHECK-NEXT:   %[[unpack:.+]] = load double*, double** %[[elt1]]
@@ -86,7 +86,7 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffesubfn(double %init, void (double*, double*, double)* %system, void (double*, double*, double)* %"system'", double %differeturn)
+; CHECK: define internal { double } @diffesubfn(double %init, void (double*, double*, double)* nocapture readnone %system, void (double*, double*, double)* nocapture readnone %"system'", double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = insertvalue { double } undef, double %differeturn, 0
 ; CHECK-NEXT:   ret { double } %0

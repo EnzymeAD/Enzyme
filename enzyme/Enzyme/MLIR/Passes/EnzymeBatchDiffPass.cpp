@@ -14,6 +14,7 @@
 #include "Interfaces/Utils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
+#include "Passes/Utils.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -36,51 +37,6 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
-namespace mlir {
-namespace enzyme {
-namespace batchutils {
-
-Type getConcatType(Value val, int64_t width) {
-  auto valTy = val.getType();
-  if (auto valTensorTy = dyn_cast<TensorType>(valTy)) {
-    // val is a tensor, prepend batch width to shape
-    SmallVector<int64_t> out_shape = {width};
-    out_shape.append(valTensorTy.getShape().begin(),
-                     valTensorTy.getShape().end());
-    auto outTy = valTensorTy.clone(out_shape);
-    return outTy;
-  } else if (auto valMemrefTy = dyn_cast<MemRefType>(valTy)) {
-    // val is a memref, prepend batch width
-    SmallVector<int64_t> out_shape = {width};
-    out_shape.append(valMemrefTy.getShape().begin(),
-                     valMemrefTy.getShape().end());
-    auto outTy = valMemrefTy.clone(out_shape);
-    return outTy;
-  } else {
-    // val is a scalar
-    return RankedTensorType::get(width, valTy);
-  }
-}
-
-Value getConcatValue(OpBuilder &builder, Location &loc,
-                     SmallVector<Value> &argList) {
-  int64_t width = argList.size();
-  Type out_type = getConcatType(argList.front(), width);
-  mlir::Value out = enzyme::ConcatOp::create(builder, loc, out_type, argList);
-  return out;
-}
-
-Value getExtractValue(OpBuilder &builder, Location &loc, Type &argTy,
-                      Value &val, int64_t index) {
-  // Extract the original output from the tensorized output at the given index.
-  IntegerAttr indexAttr = builder.getI64IntegerAttr(index);
-  Value out = enzyme::ExtractOp::create(builder, loc, argTy, val, indexAttr);
-  return out;
-}
-
-} // namespace batchutils
-} // namespace enzyme
-} // namespace mlir
 namespace {
 
 struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
@@ -165,7 +121,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // Find primal argument corresponding to effect value
-          auto primalArgPos = 0;
+          size_t primalArgPos = 0;
           bool foundPrimal = false;
           if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
             if (llvm::is_contained(key.function.getArguments(), effBA)) {
@@ -199,7 +155,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
           if (primalIsDup) {
-            auto gradArgPos = 0;
+            size_t gradArgPos = 0;
             for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
               ++gradArgPos;
 
@@ -265,7 +221,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               }
 
               mlir::Value batchedDeriv =
-                  batchutils::getConcatValue(builder, loc, derivList);
+                  getConcatValue(builder, loc, derivList);
               in_args.push_back(batchedDeriv);
               in_idx++;
             }
@@ -297,7 +253,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               // derivative
 
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getConcatType(dres, width));
+              out_ty.push_back(getConcatType(dres, width));
               ++out_idx;
               break;
             }
@@ -310,7 +266,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
               // derivative
               mlir::Value dres = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getConcatType(dres, width));
+              out_ty.push_back(getConcatType(dres, width));
               ++out_idx;
               break;
             }
@@ -373,8 +329,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::getExtractValue(
-                    builder, loc, doutTy, batch_dout, dop_idx);
+                auto new_dout =
+                    getExtractValue(builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
               }
@@ -396,8 +352,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
 
                 auto old_dout = dop.getOutputs()[out_idx];
                 auto doutTy = old_dout.getType();
-                auto new_dout = batchutils::getExtractValue(
-                    builder, loc, doutTy, batch_dout, dop_idx);
+                auto new_dout =
+                    getExtractValue(builder, loc, doutTy, batch_dout, dop_idx);
 
                 old_dout.replaceAllUsesWith(new_dout);
               }
@@ -503,7 +459,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // Find primal argument corresponding to effect value
-          auto primalArgPos = 0;
+          size_t primalArgPos = 0;
           bool foundPrimal = false;
           if (auto effBA = dyn_cast<BlockArgument>(effVal)) {
             if (llvm::is_contained(key.function.getArguments(), effBA)) {
@@ -537,7 +493,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               (key.inActivity[primalArgPos] == Activity::enzyme_dupnoneed);
 
           if (primalIsDup) {
-            auto gradArgPos = 0;
+            size_t gradArgPos = 0;
             for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
               ++gradArgPos;
 
@@ -592,7 +548,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           SmallVector<mlir::Type, 2> out_ty;
 
           // fill in_args using inputs
-          auto call_idx = 0;
+          size_t call_idx = 0;
           for (auto [idx, act] : llvm::enumerate(key.inActivity)) {
             auto iattr = ActivityAttr::get(context, act);
             inActivityAttrs.push_back(iattr);
@@ -607,8 +563,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 derivList.push_back(uop.getInputs()[call_idx]);
               }
 
-              mlir::Value b_din =
-                  batchutils::getConcatValue(builder, loc, derivList);
+              mlir::Value b_din = getConcatValue(builder, loc, derivList);
 
               in_args.push_back(b_din);
               call_idx++;
@@ -621,7 +576,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           }
 
           // fill in_args using d<out>, fill out_ty using out
-          auto out_idx = 0;
+          size_t out_idx = 0;
           for (auto ract : key.retActivity) {
             auto iattr = ActivityAttr::get(context, ract);
             retActivityAttrs.push_back(iattr);
@@ -640,8 +595,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
                 derivList.push_back(uop.getInputs()[call_idx]);
               }
 
-              Value batch_dout =
-                  batchutils::getConcatValue(builder, loc, derivList);
+              Value batch_dout = getConcatValue(builder, loc, derivList);
               in_args.push_back(batch_dout);
               call_idx++;
             }
@@ -660,7 +614,7 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
           for (auto act : key.inActivity) {
             if (act == Activity::enzyme_active) {
               Value din = firstDiffOp.getOutputs()[out_idx];
-              out_ty.push_back(batchutils::getConcatType(din, width));
+              out_ty.push_back(getConcatType(din, width));
               ++out_idx;
             }
           }
@@ -701,8 +655,8 @@ struct BatchDiffPass : public enzyme::impl::BatchDiffPassBase<BatchDiffPass> {
               for (auto [dop_idx, dop] : llvm::enumerate(allOps)) {
                 Value old_din = dop.getOutputs()[out_idx];
                 auto dinTy = old_din.getType();
-                auto new_din = batchutils::getExtractValue(builder, loc, dinTy,
-                                                           batch_din, dop_idx);
+                auto new_din =
+                    getExtractValue(builder, loc, dinTy, batch_din, dop_idx);
 
                 old_din.replaceAllUsesWith(new_din);
               }

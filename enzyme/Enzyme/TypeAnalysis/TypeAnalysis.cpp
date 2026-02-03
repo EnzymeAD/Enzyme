@@ -754,8 +754,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
           ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
       };
       auto g2 = GetElementPtrInst::Create(
-          Val->getType(),
-          UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
+          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -807,8 +806,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
           ConstantInt::get(Type::getInt32Ty(Val->getContext()), i),
       };
       auto g2 = GetElementPtrInst::Create(
-          Val->getType(),
-          UndefValue::get(PointerType::getUnqual(Val->getType())), vec);
+          Val->getType(), UndefValue::get(getUnqual(Val->getType())), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -1422,6 +1420,8 @@ void TypeAnalyzer::considerTBAA() {
                                          "ijl_gc_alloc_typed",
                                          "jl_alloc_genericmemory",
                                          "ijl_alloc_genericmemory",
+                                         "jl_alloc_genericmemory_unchecked",
+                                         "ijl_alloc_genericmemory_unchecked",
                                          "jl_new_array",
                                          "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
@@ -1948,9 +1948,20 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   // is valid. We could make it always valid by checking the pointer
   // operand explicitly is a pointer.
   if (direction & UP) {
-    if (gep.isInBounds() || (!EnzymeStrictAliasing &&
-                             pointerAnalysis.Inner0() == BaseType::Pointer &&
-                             getAnalysis(&gep).Inner0() == BaseType::Pointer)) {
+    bool has_non_const_idx = false;
+    for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
+      auto ind = I->get();
+      if (!isa<ConstantInt>(ind)) {
+        has_non_const_idx = true;
+        break;
+      }
+    }
+
+    if (has_non_const_idx &&
+        (gep.isInBounds() ||
+         (!EnzymeStrictAliasing &&
+          pointerAnalysis.Inner0() == BaseType::Pointer &&
+          getAnalysis(&gep).Inner0() == BaseType::Pointer))) {
       for (auto I = gep.idx_begin(), E = gep.idx_end(); I != E; I++) {
         auto ind = I->get();
         updateAnalysis(ind, TypeTree(BaseType::Integer).Only(-1, inst), &gep);
@@ -1993,8 +2004,11 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       }
     }
     updateAnalysis(&gep, keepMinus, &gep);
-    updateAnalysis(&gep, TypeTree(pointerAnalysis.Inner0()).Only(-1, inst),
-                   &gep);
+    // Don't propagate pointer type when the input pointer is null
+    if (!isa<ConstantPointerNull>(gep.getPointerOperand())) {
+      updateAnalysis(&gep, TypeTree(pointerAnalysis.Inner0()).Only(-1, inst),
+                     &gep);
+    }
   }
   if (direction & UP)
     updateAnalysis(gep.getPointerOperand(),
@@ -2713,8 +2727,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
     {
       Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
                        ConstantInt::get(Type::getInt64Ty(I.getContext()), i)};
-      auto ud =
-          UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+      auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
       auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
       APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(dl, ai);
@@ -2747,8 +2760,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         Value *vec[2] = {
             ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
             ConstantInt::get(Type::getInt64Ty(I.getContext()), mask[i])};
-        auto ud =
-            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -2776,8 +2788,7 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
         Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
                          ConstantInt::get(Type::getInt64Ty(I.getContext()),
                                           mask[i] - numFirst)};
-        auto ud =
-            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
         auto g2 =
             GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
         APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
@@ -2817,7 +2828,7 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   for (auto ind : I.indices()) {
     vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
   }
-  auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
   g2->accumulateConstantOffset(dl, ai);
@@ -2846,7 +2857,7 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   for (auto ind : I.indices()) {
     vec.push_back(ConstantInt::get(Type::getInt32Ty(I.getContext()), ind));
   }
-  auto ud = UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+  auto ud = UndefValue::get(getUnqual(I.getOperand(0)->getType()));
   auto g2 = GetElementPtrInst::Create(I.getOperand(0)->getType(), ud, vec);
   APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
   g2->accumulateConstantOffset(dl, ai);
@@ -3599,9 +3610,18 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     return;
 
+#if LLVM_VERSION_MAJOR < 22
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
+#else
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
     // No direction check as always valid
     updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     updateAnalysis(I.getOperand(0), TypeTree(BaseType::Integer).Only(-1, &I),
@@ -5623,7 +5643,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           Value *vec[2] = {
               ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
-          auto ud = UndefValue::get(PointerType::getUnqual(ST));
+          auto ud = UndefValue::get(getUnqual(ST));
           auto g2 = GetElementPtrInst::Create(ST, ud, vec);
           APInt ai(DL.getIndexSizeInBits(0), 0);
           g2->accumulateConstantOffset(DL, ai);
@@ -5637,7 +5657,7 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
             Value *vec[2] = {
                 ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(call.getContext()), i + 1)};
-            auto ud = UndefValue::get(PointerType::getUnqual(ST));
+            auto ud = UndefValue::get(getUnqual(ST));
             auto g2 = GetElementPtrInst::Create(ST, ud, vec);
             APInt ai(DL.getIndexSizeInBits(0), 0);
             g2->accumulateConstantOffset(DL, ai);
@@ -6390,8 +6410,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          ST, UndefValue::get(PointerType::getUnqual(ST)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(ST, UndefValue::get(getUnqual(ST)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -6414,8 +6434,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent
@@ -6444,8 +6464,8 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
           ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
           ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
       };
-      auto g2 = GetElementPtrInst::Create(
-          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+      auto g2 =
+          GetElementPtrInst::Create(AT, UndefValue::get(getUnqual(AT)), vec);
       APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
       g2->accumulateConstantOffset(DL, ai);
       // Using destructor rather than eraseFromParent

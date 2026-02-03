@@ -86,6 +86,7 @@ enum class ErrorType {
   IllegalReplaceFicticiousPHIs = 8,
   GetIndexError = 9,
   NoTruncate = 10,
+  GCRewrite = 11,
 };
 
 extern "C" {
@@ -194,6 +195,9 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+// Forward declaration needed for EmitFailure template
+llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
+
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
@@ -214,6 +218,21 @@ void EmitFailure(llvm::StringRef RemarkName,
   (ss << ... << args);
   CodeRegion->getContext().diagnose(
       (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+}
+
+template <typename... Args>
+void EmitFailure(llvm::StringRef RemarkName, llvm::Module &M, Args &...args) {
+  // Use the first function definition in the module as context for the
+  // diagnostic
+  if (llvm::Function *FirstFunc = getFirstFunctionDefinition(M)) {
+    EmitFailure(RemarkName, FirstFunc->getSubprogram(), FirstFunc, args...);
+  } else {
+    // Fallback if no functions in module
+    std::string *str = new std::string();
+    llvm::raw_string_ostream ss(*str);
+    (ss << ... << args);
+    llvm::report_fatal_error(llvm::StringRef(*str));
+  }
 }
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
@@ -794,6 +813,11 @@ llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::Type *elementType,
                                      llvm::IntegerType *IT, unsigned dstalign,
                                      unsigned srcalign);
 
+llvm::Function *getOrInsertDifferentialFloatMemcpyMat(
+    llvm::Module &M, llvm::Type *elementType, llvm::PointerType *PT,
+    llvm::IntegerType *IT, llvm::IntegerType *CT, unsigned dstalign,
+    unsigned srcalign, bool zeroSrc);
+
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemmove(
@@ -1154,6 +1178,14 @@ static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
 #endif
 }
 
+static inline llvm::PointerType *getUnqual(llvm::Type *T) {
+#if LLVM_VERSION_MAJOR >= 17
+  return llvm::PointerType::getUnqual(T->getContext());
+#else
+  return llvm::PointerType::getUnqual(T);
+#endif
+}
+
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
   using namespace llvm;
   auto i64 = Type::getInt64Ty(Context);
@@ -1260,6 +1292,9 @@ static inline bool hasNoCache(llvm::Value *op) {
     if (auto called = getFunctionFromCall(CB)) {
       if (called->hasFnAttribute("enzyme_nocache"))
         return true;
+    }
+    if (EnzymeJuliaAddrLoad && getFuncNameFromCall(CB) == "julia.gc_loaded") {
+      return true;
     }
   }
   if (auto I = dyn_cast<Instruction>(op))
@@ -1385,6 +1420,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
+
+llvm::Function *getFirstFunctionDefinition(llvm::Module &M);
 
 llvm::Value *simplifyLoad(llvm::Value *LI, size_t valSz = 0,
                           size_t preOffset = 0);
@@ -1875,10 +1912,20 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::nvvm_barrier0:
 #else
   case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
+#if LLVM_VERSION_MAJOR < 22
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
+#else
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
   case Intrinsic::nvvm_membar_cta:
   case Intrinsic::nvvm_membar_gl:
   case Intrinsic::nvvm_membar_sys:
@@ -2400,11 +2447,75 @@ static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str) {
   return (llvm::Type *)idx;
 }
 
-static inline bool hasSRetOrUnionSRet(llvm::CallBase *CB) {
-  return CB->hasStructRetAttr() ||
-         CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-             .isValid();
+static inline size_t convertRRootCountFromString(llvm::StringRef str) {
+  size_t idx;
+  bool failed = str.consumeInteger(10, idx);
+  (void)failed;
+  assert(!failed);
+  return idx;
 }
+
+static inline bool hasSRetRRootsOrUnionSRet(llvm::CallBase *CB) {
+  if (CB->hasStructRetAttr())
+    return true;
+  for (size_t i = 0; i < CB->arg_size(); i++) {
+    if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                "enzymejl_sret_union_bytes")
+            .isValid())
+      return true;
+    if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
+                                "enzymejl_returnRoots")
+            .isValid())
+      return true;
+  }
+  return false;
+}
+
+enum class SRetRootMovement {
+  SRetPointerToRootPointer = 0,
+  SRetValueToRootPointer = 1,
+  RootPointerToSRetValue = 2,
+  RootPointerToSRetPointer = 3,
+  NullifySRetValue = 4,
+};
+
+llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
+                                 llvm::Value *sret, llvm::Type *root_ty,
+                                 llvm::Value *rootRet, size_t rootOffset,
+                                 SRetRootMovement direction);
+
+void copyNonJLValueInto(llvm::IRBuilder<> &B, llvm::Type *curType,
+                        llvm::Type *dstType, llvm::Value *dst,
+                        llvm::ArrayRef<unsigned> dstPrefix, llvm::Type *srcType,
+                        llvm::Value *src, llvm::ArrayRef<unsigned> srcPrefix,
+                        bool shouldZero);
+
+static bool anyJuliaObjects(llvm::Type *T) {
+  if (isSpecialPtr(T))
+    return true;
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    for (auto elem : ST->elements()) {
+      if (anyJuliaObjects(elem))
+        return true;
+    }
+    return false;
+  }
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    return anyJuliaObjects(AT->getElementType());
+  }
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T)) {
+    return anyJuliaObjects(VT->getElementType());
+  }
+  return false;
+}
+
+llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
+                                                    llvm::IRBuilder<> &B);
+
+// Find all user instructions of AI, returning tuples of <instruction, value,
+// byte offet from AI> Unlike a simple get users, this will recurse through any
+// constant gep offsets and casts
+llvm::SmallVector<std::tuple<llvm::Instruction *, llvm::Value *, size_t>, 1>
+findAllUsersOf(llvm::Value *AI);
 
 #endif // ENZYME_UTILS_H

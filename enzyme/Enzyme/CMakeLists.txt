@@ -145,7 +145,15 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
-    target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+
+    if (APPLE AND ENZYME_APPLE_DYNAMIC_LOOKUP)
+        target_link_options(Enzyme-${LLVM_VERSION_MAJOR} PRIVATE
+            "-Wl,-flat_namespace"
+            "-Wl,-undefined,dynamic_lookup")
+    else()
+        target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+    endif()
+
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
         LIBRARY DESTINATION lib COMPONENT shlib

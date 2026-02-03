@@ -27,7 +27,7 @@ declare i8** @__enzyme_virtualreverse(...)
 ; CHECK-NEXT:   ret i8** @g_shadow
 ; CHECK-NEXT: }
 
-; CHECK: define internal i8* @augmented_impl(i8*** %i, i8*** %"i'")
+; CHECK: define internal i8* @augmented_impl(i8*** nocapture writeonly %i, i8*** nocapture %"i'")
 ; CHECK-NEXT:   %o = call i32 @offset() 
 ; CHECK-NEXT:   %"g'ipg" = getelementptr inbounds i8**, i8*** %"i'", i32 %o
 ; CHECK-NEXT:   %g = getelementptr inbounds i8**, i8*** %i, i32 %o
@@ -36,7 +36,7 @@ declare i8** @__enzyme_virtualreverse(...)
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffeimpl(i8*** %i, i8*** %"i'", i8* %tapeArg)
+; CHECK: define internal void @diffeimpl(i8*** nocapture writeonly %i, i8*** nocapture %"i'", i8* %tapeArg)
 ; CHECK-NEXT: invert:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   ret void

@@ -1859,7 +1859,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             goto rnextpair;
 
           {
-            auto bi1 = cast<BranchInst>(block->getTerminator());
+            auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+            if (!bi1) {
+              goto endCheck;
+            }
 
             auto cond1 = getOp(bi1->getCondition());
             if (cond1 == nullptr) {
@@ -3357,7 +3360,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                 Type::getInt8Ty(I.getContext()),
                 lookupM(getNewFromOriginal(I.getOperand(0)), NB, available));
             for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                            "enzymejl_allocart", "enzymejl_allocart_name"})
+                            "enzymejl_allocart", "enzymejl_allocart_name",
+                            "enzymejl_gc_alloc_rt"})
               if (auto M = I.getMetadata(MD))
                 replacement->setMetadata(MD, M);
             auto Alignment =
@@ -3423,7 +3427,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
                   FT = fp.isFloat();
-                  llvm::errs() << "assuming type as " << *FT
+                  llvm::errs() << "assuming type as " << fp.str()
                                << " for store: " << I << "\n";
                 } else if (isa<ConstantInt>(orig_val) ||
                            valType->isIntOrIntVectorTy()) {
@@ -4523,8 +4527,13 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
         }
       } else if ((isa<AllocaInst>(at) || isAllocationCall(at, TLI)) &&
                  unnecessaryValuesP) {
-        if (unnecessaryValuesP->count(at))
-          return DIFFE_TYPE::DUP_NONEED;
+        if (unnecessaryValuesP->count(at)) {
+          // Just because we chose to cahce the variable (and thus the value is
+          // unnecessary) for saving, does not mean we are no need.
+          auto found = knownRecomputeHeuristic.find(at);
+          if (found == knownRecomputeHeuristic.end() || found->second)
+            return DIFFE_TYPE::DUP_NONEED;
+        }
       }
     }
     return DIFFE_TYPE::DUP_ARG;
@@ -4939,7 +4948,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
                                 ArrayRef<Metadata *> noAlias,
-                                ArrayRef<Metadata *> scopes) {
+                                ArrayRef<Metadata *> scopes,
+                                bool needs_post_cache) {
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(ptr)) {
     assert(inst->getParent()->getParent() == oldFunc);
@@ -4966,7 +4976,50 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
 
-  auto rule = [&](Value *ptr, Value *newval) {
+  Value *invertedBarrier = nullptr;
+  if (needs_post_cache && EnzymeJuliaAddrLoad &&
+      anyJuliaObjects(newval->getType())) {
+    auto obj = origptr;
+    while (true) {
+      if (auto CI = dyn_cast<CastInst>(obj)) {
+        obj = CI->getOperand(0);
+        continue;
+      }
+      if (auto GO = dyn_cast<GetElementPtrInst>(obj)) {
+        obj = GO->getOperand(0);
+        continue;
+      }
+      if (auto CI = dyn_cast<CallInst>(obj)) {
+        if (getFuncNameFromCall(CI) == "julia.gc_loaded") {
+          obj = CI->getArgOperand(0);
+          continue;
+        }
+      }
+      if (auto PT = dyn_cast<PointerType>(obj->getType())) {
+        if (PT->getAddressSpace() == 13) {
+          if (auto LI = dyn_cast<LoadInst>(obj)) {
+            obj = LI->getOperand(0);
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    auto PT = cast<PointerType>(obj->getType());
+    assert(PT->getAddressSpace() != 11 && PT->getAddressSpace() != 13);
+    if (PT->getAddressSpace() == 10) {
+      obj = invertPointerM(obj, BuilderM);
+
+      if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError)
+        obj = lookupM(obj, BuilderM);
+
+      invertedBarrier = obj;
+    }
+  }
+
+  auto rule = [&](Value *ptr, Value *newval, Value *invertedBarrier) {
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
 
@@ -5020,6 +5073,28 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       if (align)
         ts->setAlignment(*align);
 
+      if (invertedBarrier) {
+        auto T_jlvalue = StructType::get(ptr->getContext(), {});
+        auto T_prjlvalue = PointerType::get(T_jlvalue, 10);
+
+        if (invertedBarrier->getType() != T_prjlvalue) {
+          invertedBarrier =
+              BuilderM.CreateBitCast(invertedBarrier, T_prjlvalue);
+        }
+
+        auto FT = FunctionType::get(Type::getVoidTy(newval->getContext()),
+                                    {T_prjlvalue}, true);
+        auto wb = BuilderM.GetInsertBlock()
+                      ->getParent()
+                      ->getParent()
+                      ->getOrInsertFunction("julia.write_barrier", FT);
+
+        auto subvals = getJuliaObjects(newval, BuilderM);
+
+        subvals.insert(subvals.begin(), invertedBarrier);
+        BuilderM.CreateCall(wb, subvals);
+      }
+
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
@@ -5055,6 +5130,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       auto F = getIntrinsicDeclaration(oldFunc->getParent(),
                                        Intrinsic::masked_store, tys);
       assert(align);
+      assert(!needs_post_cache);
       Value *alignv =
           ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
       Value *args[] = {newval, ptr, alignv, mask};
@@ -5069,7 +5145,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     idx++;
   };
 
-  applyChainRule(BuilderM, rule, ptr, newval);
+  applyChainRule(BuilderM, rule, ptr, newval, invertedBarrier);
 }
 
 Type *GradientUtils::getShadowType(Type *ty, unsigned width) {
@@ -5372,7 +5448,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           auto alloc = bb.CreateAlloca(oval->getType());
           auto AT = ArrayType::get(bb.getInt8Ty(), size);
           bb.CreateStore(getNewFromOriginal(oval), alloc);
-          Value *cur = bb.CreatePointerCast(alloc, PointerType::getUnqual(AT));
+          Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
           size_t i = 0;
           assert(size > 0);
           for (; i < size;) {
@@ -5382,7 +5458,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               continue;
             } else if (auto flt = CT2.isFloat()) {
               auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
-              ptr = bb.CreatePointerCast(ptr, PointerType::getUnqual(flt));
+              ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
               bb.CreateStore(Constant::getNullValue(flt), ptr);
               size_t chunk = dl.getTypeSizeInBits(flt) / 8;
               i += chunk;
@@ -6953,8 +7029,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
                           II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
 #endif
-                        interveningSync =
-                            DT.dominates(SI, II) && DT.dominates(II, origInst);
+                        interveningSync = OrigDT->dominates(SI, II) &&
+                                          OrigDT->dominates(II, origInst);
                         allUnsyncdPredecessorsOf(
                             II,
                             [&](Instruction *mid) {
@@ -7325,9 +7401,14 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 Value *start0;
                 SmallVector<Instruction *, 32> InsertedInstructions;
                 {
+#if LLVM_VERSION_MAJOR >= 22
+                  SCEVExpander OrigExp(*OrigSE, "enzyme",
+                                       /*PreserveLCSSA = */ false);
+#else
                   SCEVExpander OrigExp(
                       *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
                       "enzyme", /*PreserveLCSSA = */ false);
+#endif
 
                   OrigExp.setInsertPoint(
                       isOriginal(l1.header)->getTerminator());
@@ -8350,7 +8431,8 @@ void GradientUtils::computeMinCache() {
       }
     }
 
-    auto minCutMode = (mode == DerivativeMode::ReverseModePrimal)
+    auto minCutMode = (mode == DerivativeMode::ReverseModePrimal ||
+                       mode == DerivativeMode::ReverseModeCombined)
                           ? DerivativeMode::ReverseModeGradient
                           : mode;
 
@@ -8510,7 +8592,20 @@ void GradientUtils::computeMinCache() {
 
       if (NeedGraph.count(V) && MinReq.count(V)) {
         CountTrackedPointers T(V->getType());
-        assert(!T.derived);
+        if (T.derived) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Illegal cached pointer: " << *V << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(str.c_str(), wrap((Value *)V),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               nullptr);
+          } else {
+            EmitFailure(
+                "CachedPointerError", cast<Instruction>(V)->getDebugLoc(),
+                cast<Instruction>(V)->getParent()->getParent(), ss.str());
+          }
+        }
       }
     }
   }
@@ -9131,7 +9226,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           shadowpromotable = false;
           promotable = false;
           EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
-                      *V, " due to unknown capturing call ", *cur);
+                      *V, " due to unknown capturing call ", *cur,
+                      " at idx=", idx, " prev=", *prev);
           idx++;
           continue;
         }
@@ -9156,9 +9252,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           // separately handled in a GC postprocessing pass. Moreover these
           // values are never `needed` in the reverse pass (just we need to mark
           // those values as being GC'd by the function).
-          bool returnRoots =
-              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots") ||
-              CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots_v");
+          bool returnRoots = false;
+          //    CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots") ||
+          //    CI->getAttributes().hasParamAttr(idx, "enzymejl_returnRoots_v");
           if (primalNeededInReverse && !returnRoots) {
             promotable = false;
             EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
@@ -9629,7 +9725,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       allocationfn == "ijl_alloc_array_3d" || allocationfn == "jl_new_array" ||
       allocationfn == "ijl_new_array" ||
       allocationfn == "jl_alloc_genericmemory" ||
-      allocationfn == "ijl_alloc_genericmemory")
+      allocationfn == "ijl_alloc_genericmemory" ||
+      allocationfn == "jl_alloc_genericmemory_unchecked" ||
+      allocationfn == "ijl_alloc_genericmemory_unchecked")
     return nullptr;
 
   if (allocationfn == "enzyme_allocator") {
@@ -9872,6 +9970,10 @@ bool GradientUtils::needsCacheWholeAllocation(
               returnedSameValue = true;
             }
           }
+      } else {
+        // Either this is the called function, or this is a jlrooted, either way
+        // continue.
+        continue;
       }
     }
 
