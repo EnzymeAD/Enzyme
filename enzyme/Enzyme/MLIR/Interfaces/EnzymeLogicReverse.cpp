@@ -1,3 +1,4 @@
+#include "CloneFunction.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -286,4 +287,221 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   }
 
   return nf;
+}
+
+static mlir::enzyme::ActivityAttr activityFromDiffeType(mlir::MLIRContext *ctx,
+                                                        DIFFE_TYPE ty) {
+  mlir::enzyme::Activity activity;
+  switch (ty) {
+  case DIFFE_TYPE::DUP_ARG:
+    activity = mlir::enzyme::Activity::enzyme_dup;
+    break;
+  case DIFFE_TYPE::CONSTANT:
+    activity = mlir::enzyme::Activity::enzyme_const;
+    break;
+  case DIFFE_TYPE::OUT_DIFF:
+    activity = mlir::enzyme::Activity::enzyme_active;
+    break;
+  default:
+    llvm_unreachable("todo");
+  };
+  return mlir::enzyme::ActivityAttr::get(ctx, activity);
+}
+
+FlatSymbolRefAttr MEnzymeLogic::CreateSplitModeDiff(
+    FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+    std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
+    bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
+    bool strongZero) {
+
+  SymbolTable symbolTable(SymbolTable::getNearestSymbolTable(fn));
+
+  IRMapping originalToNew;
+  std::map<Operation *, Operation *> originalToNewOps;
+
+  SmallPtrSet<mlir::Value, 1> returnvals;
+  SmallPtrSet<mlir::Value, 1> constant_values;
+  SmallPtrSet<mlir::Value, 1> nonconstant_values;
+  for (auto &&[arg, act] :
+       llvm::zip(fn.getFunctionBody().getArguments(), constants)) {
+    if (act == DIFFE_TYPE::CONSTANT)
+      constant_values.insert(arg);
+    else
+      nonconstant_values.insert(arg);
+  }
+
+  SmallVector<bool> returnPrimalsP(returnPrimals.begin(), returnPrimals.end());
+  SmallVector<bool> returnShadowsP(returnShadows.begin(), returnShadows.end());
+
+  auto name = fn.getName();
+
+  SmallVector<mlir::Attribute> argAttrs;
+  if (auto prevArgAttrs = fn.getAllArgAttrs())
+    argAttrs.assign(prevArgAttrs.begin(), prevArgAttrs.end());
+
+  SmallVector<Attribute> argActivityAttrs;
+  for (auto [i, act] : llvm::enumerate(constants)) {
+    argActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
+
+    if (!argAttrs.empty() && act == DIFFE_TYPE::DUP_ARG)
+      argAttrs.insert(argAttrs.begin() + i + 1 - (argAttrs.size() - fn.getNumArguments()), nullptr);
+  }
+
+  SmallVector<Attribute> retActivityAttrs;
+  for (auto act : retType)
+    retActivityAttrs.push_back(activityFromDiffeType(fn.getContext(), act));
+
+  auto argActivityAttr = ArrayAttr::get(fn.getContext(), argActivityAttrs);
+  auto retActivityAttr = ArrayAttr::get(fn.getContext(), retActivityAttrs);
+
+  auto customRuleName = name + "_reverse_rule";
+  SmallVector<char> nameBuf;
+
+  auto ruleNameAttr =
+      StringAttr::get(fn.getContext(), customRuleName.toStringRef(nameBuf));
+
+  SmallVector<Type> argTys(
+      cast<FunctionType>(fn.getFunctionType()).getInputs().begin(),
+      cast<FunctionType>(fn.getFunctionType()).getInputs().end());
+
+  OpBuilder builder(fn);
+  auto customRule = enzyme::CustomReverseRuleOp::create(
+      builder, fn.getLoc(), ruleNameAttr, TypeAttr::get(fn.getFunctionType()),
+      argActivityAttr, retActivityAttr);
+
+  Block *ruleBody = new Block();
+  customRule.getBody().push_back(ruleBody);
+
+  OpBuilder ruleBuilder(ruleBody, ruleBody->begin());
+
+  SmallVector<Type> revInputTypes, revOutputTypes, primalInputTypes,
+      primalOutputTypes;
+
+  auto revFuncType =
+      FunctionType::get(fn.getContext(), revInputTypes, revOutputTypes);
+  auto primalFuncType =
+      FunctionType::get(fn.getContext(), primalInputTypes, primalOutputTypes);
+
+  auto reverse = enzyme::CustomReverseRuleReverseOp::create(
+      ruleBuilder, fn.getLoc(), revFuncType, /* argAttrs */ nullptr, /* resAttrs */ nullptr);
+  enzyme::YieldOp::create(ruleBuilder, fn.getLoc(), ValueRange{});
+
+  ruleBuilder.setInsertionPoint(reverse);
+
+  auto newFunc = cast<FunctionOpInterface>(fn->cloneWithoutRegions());
+  cloneInto(&fn.getFunctionBody(), &newFunc.getFunctionBody(), originalToNew,
+            originalToNewOps);
+
+  Block *fnEntry = &newFunc.getFunctionBody().front();
+  IRMapping invertedPointers;
+
+  SmallVector<Type> newArgTys;
+
+  int numDup = 0;
+  for (auto [act, arg] : llvm::zip_equal(
+           constants, fn.getFunctionBody().front().getArguments())) {
+    newArgTys.push_back(arg.getType());
+    if (act == DIFFE_TYPE::DUP_ARG) {
+      numDup++;
+      auto shadowType =
+          cast<AutoDiffTypeInterface>(arg.getType()).getShadowType(width);
+      auto shadow = fnEntry->insertArgument(arg.getArgNumber() + numDup,
+                                            shadowType, arg.getLoc());
+      newArgTys.push_back(shadowType);
+      invertedPointers.map(arg, shadow);
+    }
+  }
+
+  auto newFuncType =
+      FunctionType::get(newFunc.getContext(), newArgTys,
+                        cast<FunctionType>(fn.getFunctionType()).getResults());
+  newFunc.setFunctionTypeAttr(TypeAttr::get(newFuncType));
+
+  MGradientUtilsReverse *gutils = new MGradientUtilsReverse(
+      *this, newFunc, fn, TA, invertedPointers, returnPrimalsP, returnShadowsP,
+      constant_values, nonconstant_values, retType, constants, originalToNew,
+      originalToNewOps, mode, width, omp, postpasses, verifyPostPasses,
+      strongZero);
+
+  gutils->createReverseModeBlocks(fn.getFunctionBody(), reverse.getBody());
+  std::function<std::pair<Value, Value>(Type)> cacheCreatorHook =
+      [&](Type ty) -> std::pair<Value, Value> {
+    Value cache = enzyme::InitOp::create(ruleBuilder, fn.getLoc(), ty);
+    return {cache, cache};
+  };
+  gutils->registerCacheCreatorHook(cacheCreatorHook);
+  std::function<Value(Location, Type)> gradientCreatorHook =
+      [&](Location loc, Type ty) -> Value {
+    auto shadowType =
+        cast<AutoDiffTypeInterface>(ty).getShadowType(gutils->width);
+    auto gradientType = enzyme::GradientType::get(ty.getContext(), shadowType);
+    auto reverseEntry = &reverse.getBody().front();
+    OpBuilder gBuilder(reverseEntry, reverseEntry->begin());
+    return enzyme::InitOp::create(gBuilder, loc, gradientType);
+  };
+  gutils->registerGradientCreatorHook(gradientCreatorHook);
+
+  auto scope = llvm::make_scope_exit([&]() {
+    gutils->deregisterCacheCreatorHook(cacheCreatorHook);
+    gutils->deregisterGradientCreatorHook(gradientCreatorHook);
+  });
+
+  bool valid = true;
+  for (auto &oBB : fn.getFunctionBody()) {
+    Block *reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
+    if (oBB.getNumSuccessors() == 0) {
+      Operation *oTerm = oBB.getTerminator();
+      for (auto [res, act] : llvm::zip_equal(oTerm->getOperands(), retType)) {
+        if (act == DIFFE_TYPE::OUT_DIFF) {
+          OpBuilder diffeBuilder(reverseBB, reverseBB->begin());
+          auto diffe = reverseBB->addArgument(res.getType(), res.getLoc());
+          gutils->setDiffe(res, diffe, diffeBuilder);
+        }
+      }
+    }
+
+    OpBuilder revBuilder(reverseBB, reverseBB->end());
+
+    auto first = oBB.rbegin();
+    first++;
+    auto last = oBB.rend();
+    for (auto it = first; it != last; ++it) {
+      Operation *op = &*it;
+      valid &= visitChild(op, revBuilder, gutils).succeeded();
+    }
+
+    if (oBB.isEntryBlock()) {
+      SmallVector<Value> toYield;
+      OpBuilder rBuilder(reverseBB, reverseBB->end());
+      for (auto [act, arg] : llvm::zip_equal(
+               constants, fn.getFunctionBody().front().getArguments())) {
+        if (act == DIFFE_TYPE::OUT_DIFF) {
+          toYield.push_back(gutils->diffe(arg, rBuilder));
+        }
+      }
+      enzyme::YieldOp::create(rBuilder, fn.getLoc(), toYield);
+    }
+  }
+
+  ruleBuilder.setInsertionPoint(reverse);
+  auto augmentedPrimal = enzyme::CustomReverseRuleAugmentedPrimalOp::create(
+      ruleBuilder, fn.getLoc(), primalFuncType, /*argAttrs*/ nullptr, /*resAttrs*/ nullptr);
+  augmentedPrimal.getBody().takeBody(newFunc.getFunctionBody());
+  for (Block &b : augmentedPrimal.getBody()) {
+    if (b.getNumSuccessors() == 0) {
+      Operation *term = b.getTerminator();
+      OpBuilder builder(term);
+      enzyme::YieldOp::create(builder, term->getLoc(), term->getOperands());
+      term->erase();
+    }
+  }
+
+  delete gutils;
+
+  newFunc->erase();
+
+  return FlatSymbolRefAttr::get(ruleNameAttr);
 }

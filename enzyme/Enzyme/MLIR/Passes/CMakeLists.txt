@@ -14,6 +14,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     InlineEnzymeRegions.cpp
     HoistEnzymeRegions.cpp
     LowerLLVMExtPass.cpp
+    LowerEnzymeCustomRulesToFuncPass.cpp
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp

@@ -147,7 +147,13 @@ public:
     return batchType(self, width);
   }
 
-  bool isMutable(Type self) const { return false; }
+  bool isMutable(Type self) const {
+    auto tenType = cast<TensorType>(self);
+    auto ET = tenType.getElementType();
+    auto iface = cast<AutoDiffTypeInterface>(ET);
+    return iface.isMutable();
+  }
+
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     return failure();

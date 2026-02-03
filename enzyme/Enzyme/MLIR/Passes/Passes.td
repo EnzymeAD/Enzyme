@@ -212,6 +212,14 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   ];
 }
 
+def LowerEnzymeCustomRulesToFuncPass : Pass<"lower-enzyme-custom-rules-to-func"> {
+  let summary = "Lower enzyme custom rules";
+  let dependentDialects = [
+    "func::FuncDialect",
+    "enzyme::EnzymeDialect"
+  ];
+}
+
 def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
   let summary = "Hoist independent primal ops out of autodiff_region.";
   let dependentDialects = [ 

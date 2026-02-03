@@ -13,6 +13,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/FunctionImplementation.h"
 #include "mlir/Interfaces/MemorySlotInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -596,6 +597,137 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModePrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModePrimalOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// AutoDiffSplitModeReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult AutoDiffSplitModeReverseOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+static ParseResult parseAugmentedFn(OpAsmParser &parser,
+                                    OperationState &result) {
+  SmallVector<Type> argTys, resTys;
+  SmallVector<DictionaryAttr> resAttrs;
+
+  bool isVariadic = false;
+  SmallVector<OpAsmParser::Argument> arguments;
+  if (failed(function_interface_impl::parseFunctionSignatureWithArguments(
+          parser, /*allowVariadic*/ false, arguments, isVariadic, resTys,
+          resAttrs)))
+    return failure();
+
+  auto *body = result.addRegion();
+  if (failed(
+          parser.parseRegion(*body, arguments, /*enableNameShadowing*/ false)))
+    return failure();
+
+  result.addAttribute(
+      "function_type",
+      TypeAttr::get(FunctionType::get(result.getContext(), argTys, resTys)));
+
+  return success();
+}
+
+static void printAugmentedFn(OpAsmPrinter &p, FunctionType fnType,
+                             Region &body) {
+  p << ' ';
+
+  call_interface_impl::printFunctionSignature(
+      p, fnType.getInputs(), nullptr, /*isVariadic*/ false, fnType.getResults(),
+      nullptr, &body, /*printEmptyResult*/ false);
+
+  p << ' ';
+  p.printRegion(body, /*printEntryBlockArgs*/ false,
+                /*printBlockTerminators*/ true);
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult
+CustomReverseRuleAugmentedPrimalOp::parse(OpAsmParser &parser,
+                                          OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleAugmentedPrimalOp::print(OpAsmPrinter &p) {
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CustomReverseRuleReverseOp
+//===----------------------------------------------------------------------===//
+
+mlir::ParseResult CustomReverseRuleReverseOp::parse(OpAsmParser &parser,
+                                                    OperationState &result) {
+  return parseAugmentedFn(parser, result);
+}
+
+void CustomReverseRuleReverseOp::print(OpAsmPrinter &p) {
+  auto rule = cast<CustomReverseRuleOp>(this->getParentOp());
+  printAugmentedFn(p, getFunctionType(), getBody());
+}
+
+//===----------------------------------------------------------------------===//
+// CallAugmentedPrimalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CallAugmentedPrimalOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CallCustomReverseOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+CallCustomReverseOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<enzyme::CustomReverseRuleOp>(
+          *this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid custom reverse rule";
 
   return success();
 }
