@@ -652,25 +652,29 @@ def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUser
 def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
-    Perform a Metropolis-Hastings step on a probabilistic function.
-    This operation proposes a new trace by regenerating selected addresses,
-    computes the acceptance probability, and returns the updated trace.
-    By convention, the 0th operand in inputs is the initial RNG state
-    and the 0th operand in results is the updated RNG state.
+    Performs one MH step: regenerates selected addresses and accepts/rejects
+    based on weight ratio.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
+    AnyRankedTensor:$original_trace,
+    AnyRankedTensor:$original_weight,
     Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
     AddressArrayAttr:$selection,
+    AddressArrayAttr:$regenerate_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$new_trace,
+    AnyRankedTensor:$new_weight,
+    AnyRankedTensor:$accepted,
+    AnyType:$output_rng
+  );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight attr-dict `:` functional-type(operands, results)
   }];
 }
 
