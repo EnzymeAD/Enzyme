@@ -2081,10 +2081,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
 void ProbProgPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  patterns
-      .add<LowerUpdatePattern, LowerUntracedCallPattern, LowerSimulatePattern,
-           LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
-          &getContext());
+  patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
+               LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
+      &getContext());
   patterns.add<LowerMCMCPattern>(&getContext(), debugDump);
 
   mlir::GreedyRewriteConfig config;
