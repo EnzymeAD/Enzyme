@@ -53,24 +53,41 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     break;
   case MProbProgMode::Generate:
     suffix = "generate";
-    OperandTypes.push_back(enzyme::ConstraintType::get(toeval.getContext()));
+    if (positionSize <= 0 || constraintSize < 0) {
+      toeval.emitError("ProbProg: Unexpected size parameters");
+      return nullptr;
+    }
+    OperandTypes.push_back(
+        RankedTensorType::get({1, constraintSize}, builder.getF64Type()));
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(
+        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case MProbProgMode::Regenerate:
     suffix = "regenerate";
-    OperandTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    if (positionSize < 0) {
+      toeval.emitError("ProbProg: Unexpected size parameters");
+      return nullptr;
+    }
+    OperandTypes.push_back(
+        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(
+        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
-    ResultTypes.push_back(originalResults[0]);
+    ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   case MProbProgMode::Simulate:
     suffix = "simulate";
+    if (positionSize < 0) {
+      toeval.emitError("ProbProg: Unexpected size parameters");
+      return nullptr;
+    }
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
-    ResultTypes.push_back(enzyme::TraceType::get(toeval.getContext()));
+    ResultTypes.push_back(
+        RankedTensorType::get({1, positionSize}, builder.getF64Type()));
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
@@ -94,22 +111,15 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
 
   if (mode == MProbProgMode::Generate) {
     Block &entry = NewF.getFunctionBody().front();
-    entry.insertArgument(0u, enzyme::ConstraintType::get(toeval.getContext()),
-                         toeval.getLoc());
+    entry.insertArgument(
+        0u, RankedTensorType::get({1, constraintSize}, builder.getF64Type()),
+        toeval.getLoc());
   }
 
   if (mode == MProbProgMode::Regenerate) {
     Block &entry = NewF.getFunctionBody().front();
-    entry.insertArgument(0u, enzyme::TraceType::get(toeval.getContext()),
-                         toeval.getLoc());
-  }
-
-  if (mode == MProbProgMode::Update) {
-    Block &entry = NewF.getFunctionBody().front();
-    entry.insertArgument(0u, enzyme::TraceType::get(toeval.getContext()),
-                         toeval.getLoc());
     entry.insertArgument(
-        1u, RankedTensorType::get({positionSize}, builder.getF64Type()),
+        0u, RankedTensorType::get({1, positionSize}, builder.getF64Type()),
         toeval.getLoc());
   }
 
