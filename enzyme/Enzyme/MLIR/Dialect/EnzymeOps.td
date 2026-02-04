@@ -811,6 +811,70 @@ def SelectOp : Enzyme_Op<"select", [Pure]> {
   }];
 }
 
+def ReshapeOp : Enzyme_Op<"reshape", [Pure]> {
+  let summary = "Reshape a tensor to a new static shape";
+  let arguments = (ins AnyRankedTensor:$input);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type($input, $result)
+  }];
+}
+
+def SliceOp : Enzyme_Op<"slice", [Pure]> {
+  let summary = "Extract a static slice from a tensor";
+  let description = [{
+    Extract a static slice from a tensor.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    DenseI64ArrayAttr:$start_indices,
+    DenseI64ArrayAttr:$limit_indices,
+    DenseI64ArrayAttr:$strides
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type($operand, $result)
+  }];
+}
+
+def DynamicSliceOp : Enzyme_Op<"dynamic_slice", [Pure]> {
+  let summary = "Extract a slice from a tensor at dynamic start indices";
+  let description = [{
+    Extract a slice from a tensor at dynamic start indices.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    Variadic<AnyRankedTensor>:$start_indices,
+    DenseI64ArrayAttr:$slice_sizes
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand `,` $start_indices attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def DynamicUpdateSliceOp : Enzyme_Op<"dynamic_update_slice", [Pure]> {
+  let summary = "Update a slice in a tensor at dynamic start indices";
+  let description = [{
+    Update a slice in a tensor at dynamic start indices.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    AnyRankedTensor:$update,
+    Variadic<AnyRankedTensor>:$start_indices
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand `,` $update `,` $start_indices attr-dict `:` functional-type(operands, results)
+  }];
+}
+
 def DumpOp : Enzyme_Op<"dump"> {
   let summary = "Debug operation to dump a tensor value at runtime";
   let description = [{
