@@ -18,7 +18,6 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -216,6 +215,47 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
   return supports;
 }
 
+static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
+                                   Attribute targetSymbol) {
+  SmallVector<Attribute> subAddresses;
+  for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty())
+      continue;
+    if (address[0] == targetSymbol && address.size() > 1) {
+      SmallVector<Attribute> tail(address.begin() + 1, address.end());
+      subAddresses.push_back(builder.getArrayAttr(tail));
+    }
+  }
+  return builder.getArrayAttr(subAddresses);
+}
+
+static int64_t
+computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
+                             ArrayAttr selection, Attribute targetSymbol,
+                             SymbolTableCollection &symbolTable) {
+  auto sampleMap = buildSampleOpMap(fn);
+  int64_t offset = 0;
+
+  for (auto addr : selection) {
+    auto address = cast<ArrayAttr>(addr);
+    if (address.empty())
+      continue;
+
+    if (address[0] == targetSymbol) {
+      return offset;
+    }
+
+    SmallVector<Attribute> tailAddresses(address.begin(), address.end());
+    if (!computePositionSizeForAddress(op, sampleMap, tailAddresses,
+                                       symbolTable, offset)) {
+      return -1;
+    }
+  }
+
+  return -1;
+}
+
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   using ProbProgPassBase::ProbProgPassBase;
 
@@ -232,7 +272,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
     registry.insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
                     mlir::complex::ComplexDialect, mlir::cf::ControlFlowDialect,
-                    mlir::tensor::TensorDialect, mlir::enzyme::EnzymeDialect>();
+                    mlir::enzyme::EnzymeDialect>();
   }
 
   struct LowerUntracedCallPattern
@@ -306,18 +346,34 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto putils =
-          MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate);
+      ArrayAttr selection = CI.getSelectionAttr();
+      int64_t positionSize =
+          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+      if (positionSize <= 0) {
+        CI.emitError("ProbProg: failed to compute position size for simulate");
+        return failure();
+      }
+
+      auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate,
+                                                    positionSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
-      auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = arith::ConstantOp::create(
-          entryBuilder, putils->initializationBlock->begin()->getLoc(),
-          tensorType, DenseElementsAttr::get(tensorType, 0.0));
+      Location initLoc = putils->initializationBlock->begin()->getLoc();
+      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
+      auto zeroWeight =
+          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
+                                    DenseElementsAttr::get(scalarType, 0.0));
       Value weightAccumulator = zeroWeight;
-      Value currTrace = putils->getTrace();
+
+      auto traceType =
+          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
+      auto zeroTrace =
+          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
+                                    DenseElementsAttr::get(traceType, 0.0));
+      Value currTrace = zeroTrace;
+      int64_t currentOffset = 0;
 
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
@@ -328,8 +384,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {
-          // A1. Distribution function: replace sample op uses with call to the
-          // distribution function.
+          // A1. Distribution function: call the distribution function.
           auto distFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getFnAttr()));
@@ -367,55 +422,123 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           weightAccumulator =
               arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                     weightAccumulator, logpdf.getResult(0));
+
+          // A3. Check if this sample is in the selection and insert into trace
+          bool inSelection = false;
+          for (auto addr : selection) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              inSelection = true;
+              break;
+            }
+          }
+
+          if (inSelection) {
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto sampleValue = sampledValues[i];
+              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "ProbProg: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleType.getElementType());
+              auto flatSample = enzyme::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentOffset)));
+              currTrace = enzyme::DynamicUpdateSliceOp::create(
+                              rewriter, sampleOp.getLoc(), traceType, currTrace,
+                              flatSample, ValueRange{row0, colOff})
+                              .getResult();
+              currentOffset += numElements;
+            }
+          }
         } else {
-          // B1. Generative functions: generate a simulate op that will itself
-          // be lowered in a subsequent rewrite. No direct call to the
-          // generative function should be emitted here.
-          auto simulateOp = enzyme::SimulateOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
-              /*outputs*/ sampleOp.getResultTypes(),
-              /*fn*/ sampleOp.getFnAttr(),
-              /*inputs*/ sampleOp.getInputs(),
-              /*name*/ sampleOp.getNameAttr());
+          // B. Generative function: recursively simulate the nested function
+          auto genFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getFnAttr()));
 
-          // The first two results of simulateOp are the subtrace and weight.
-          // The remaining results correspond 1-to-1 with the original sample
-          // op's results. We will replace uses of the sample op with these
-          // values in the next step.
-          for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampledValues.push_back(simulateOp->getResult(i + 2));
+          if (genFn.getFunctionBody().empty()) {
+            sampleOp.emitError(
+                "ProbProg: generative function body is empty; "
+                "if this is a distribution, add a logpdf attribute");
+            return WalkResult::interrupt();
+          }
 
-          // B2. Add subtrace to trace.
-          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*subtrace*/ simulateOp->getResult(0),
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*trace*/ currTrace);
-          currTrace = addSubtraceOp.getUpdatedTrace();
+          ArrayAttr subSelection =
+              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
+          if (subSelection.empty()) {
+            // No samples from this generative function are in the selection
+            // Just call the function directly
+            auto genCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), genFn.getName(),
+                genFn.getResultTypes(), sampleOp.getInputs());
+            sampledValues.append(genCall.getResults().begin(),
+                                 genCall.getResults().end());
+          } else {
+            int64_t subPositionSize = computePositionSizeForSelection(
+                sampleOp, genFn, subSelection, symbolTable);
+            if (subPositionSize <= 0) {
+              sampleOp.emitError(
+                  "ProbProg: failed to compute sub-position size");
+              return WalkResult::interrupt();
+            }
 
-          // B3. Accumulate weight returned by simulateOp.
-          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                    weightAccumulator,
-                                                    simulateOp->getResult(1));
-        }
+            // Build result types: (trace, weight, original_returns...)
+            auto subTraceType = RankedTensorType::get({1, subPositionSize},
+                                                      rewriter.getF64Type());
+            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
+            SmallVector<Type> simResultTypes;
+            simResultTypes.push_back(subTraceType);
+            simResultTypes.push_back(scalarTy);
+            for (auto t : genFn.getResultTypes())
+              simResultTypes.push_back(t);
 
-        // C. Add non-RNG sampled values to trace (common for both cases).
-        SmallVector<Value> valuesToTrace;
-        for (unsigned i = 1; i < sampledValues.size(); ++i) {
-          valuesToTrace.push_back(sampledValues[i]);
-        }
+            auto nestedSimulate = enzyme::SimulateOp::create(
+                rewriter, sampleOp.getLoc(), simResultTypes,
+                sampleOp.getFnAttr(), sampleOp.getInputs(), subSelection);
+            auto subTrace = nestedSimulate.getTrace();
+            auto subWeight = nestedSimulate.getWeight();
 
-        if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*trace*/ currTrace,
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ valuesToTrace);
-          currTrace = addSampleToTraceOp.getUpdatedTrace();
+            weightAccumulator = arith::AddFOp::create(
+                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+
+            int64_t mergeOffset = computeOffsetForNestedSample(
+                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+            if (mergeOffset < 0) {
+              sampleOp.emitError("ProbProg: failed to compute merge offset");
+              return WalkResult::interrupt();
+            }
+
+            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+            auto row0 = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+            auto colOff = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(
+                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
+            currTrace = enzyme::DynamicUpdateSliceOp::create(
+                            rewriter, sampleOp.getLoc(), traceType, currTrace,
+                            subTrace, ValueRange{row0, colOff})
+                            .getResult();
+            currentOffset =
+                std::max(currentOffset, mergeOffset + subPositionSize);
+
+            for (auto output : nestedSimulate.getOutputs())
+              sampledValues.push_back(output);
+          }
         }
 
         // D. Replace uses of the original sample op with the new values.
@@ -433,37 +556,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      // E. Before returning, record the aggregated weight and the function
-      // return value(s) in the trace, then rewrite the return to return the
-      // updated trace and aggregated weight.
+      // E. Rewrite the return to return (trace, weight, <original returns>...)
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
-
-        // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
-            rewriter, retOp.getLoc(),
-            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-            /*trace*/ currTrace, /*weight*/ weightAccumulator);
-        currTrace = addWeightOp.getUpdatedTrace();
-
-        // E2. Add non-RNG return values to the trace.
-        SmallVector<Value> retvals;
-        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
-          retvals.push_back(retOp.getOperand(i));
-        }
-
-        if (!retvals.empty()) {
-          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
-              rewriter, retOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-              /*trace*/ currTrace,
-              /*retval*/ retvals);
-          currTrace = addRetvalOp.getUpdatedTrace();
-        }
-
-        // E3. Construct new return values: (trace, weight, <original return
-        // values>...)
         SmallVector<Value> newRetVals;
         newRetVals.push_back(currTrace);
         newRetVals.push_back(weightAccumulator);
@@ -1019,17 +1115,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
       }
 
-      // TODO: Remove?
-      if (numSamples == 1) {
-        auto sample =
-            runSampleStepWithStepSize(rewriter, loc, currentQ, currentGrad,
-                                      currentU, currentRng, adaptedStepSize);
-        auto result = runPostProcess(rewriter, loc, sample.q, sample.accepted,
-                                     sample.rng, adaptedStepSize);
-        rewriter.replaceOp(mcmcOp, {result.trace, result.accepted, result.rng});
-        return success();
-      }
-
       int64_t collectionSize = numSamples / thinning;
       int64_t startIdx = numSamples % thinning;
 
@@ -1306,19 +1391,44 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto putils =
-          MProbProgUtils::CreateFromClone(fn, MProbProgMode::Generate);
+      ArrayAttr selection = CI.getSelectionAttr();
+      int64_t positionSize =
+          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+      if (positionSize <= 0) {
+        CI.emitError("ProbProg: failed to compute position size for generate");
+        return failure();
+      }
+
+      int64_t constraintSize = computePositionSizeForSelection(
+          CI, fn, CI.getConstrainedAddressesAttr(), symbolTable);
+      if (constraintSize < 0) {
+        CI.emitError(
+            "ProbProg: failed to compute constraint size for generate");
+        return failure();
+      }
+
+      auto putils = MProbProgUtils::CreateFromClone(
+          fn, MProbProgMode::Generate, positionSize, constraintSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
-      auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = arith::ConstantOp::create(
-          entryBuilder, putils->initializationBlock->begin()->getLoc(),
-          tensorType, DenseElementsAttr::get(tensorType, 0.0));
+      Location initLoc = putils->initializationBlock->begin()->getLoc();
+
+      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
+      auto zeroWeight =
+          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
+                                    DenseElementsAttr::get(scalarType, 0.0));
       Value weightAccumulator = zeroWeight;
-      Value currTrace = putils->getTrace();
+
+      auto traceType =
+          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
+      auto zeroTrace =
+          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
+                                    DenseElementsAttr::get(traceType, 0.0));
+      Value currTrace = zeroTrace;
       Value constraint = NewF.getArgument(0);
+      int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
@@ -1329,9 +1439,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {
-          // A1. Distribution function: replace sample op uses with call to the
-          // distribution function.
+          // A1. Distribution function: call the distribution function.
           bool isConstrained = false;
+          int64_t constrainedOffset = -1;
           for (auto addr : CI.getConstrainedAddressesAttr()) {
             auto address = cast<ArrayAttr>(addr);
             if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
@@ -1342,28 +1452,40 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 return WalkResult::interrupt();
               }
               isConstrained = true;
+              constrainedOffset = computeOffsetForSampleInSelection(
+                  CI, fn, CI.getConstrainedAddressesAttr(),
+                  sampleOp.getSymbolAttr(), symbolTable);
               break;
             }
           }
 
           if (isConstrained) {
-            // Get sampled values from the constraint instead of sampling
-            // from the distribution.
+            // Extract sampled values from constraint tensor
             sampledValues.resize(sampleOp.getNumResults());
+            sampledValues[0] = sampleOp.getOperand(0); // RNG state
 
-            SmallVector<Type> constraintOutputTypes;
             for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              constraintOutputTypes.push_back(sampleOp.getResult(i).getType());
-            }
+              auto resultType =
+                  cast<RankedTensorType>(sampleOp.getResult(i).getType());
+              int64_t numElements = computeTensorElementCount(resultType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "ProbProg: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
 
-            auto gsfcOp = enzyme::GetSampleFromConstraintOp::create(
-                rewriter, sampleOp.getLoc(), constraintOutputTypes, constraint,
-                sampleOp.getSymbolAttr());
-
-            // Pass along the RNG state.
-            sampledValues[0] = sampleOp.getOperand(0);
-            for (unsigned i = 0; i < gsfcOp->getNumResults(); ++i) {
-              sampledValues[i + 1] = gsfcOp->getResult(i);
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = enzyme::SliceOp::create(
+                  rewriter, sampleOp.getLoc(), sliceType, constraint,
+                  rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
+                  rewriter.getDenseI64ArrayAttr(
+                      {1, constrainedOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              auto extracted = enzyme::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), resultType, sliced);
+              sampledValues[i] = extracted.getResult();
+              constrainedOffset += numElements;
             }
 
             // Compute weight via logpdf using constrained values.
@@ -1394,6 +1516,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                       weightAccumulator, logpdf.getResult(0));
           } else {
+            // Unconstrained: call the distribution function
             auto distFn =
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getFnAttr()));
@@ -1409,7 +1532,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getLogpdfAttr()));
 
-            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
             SmallVector<Value> logpdfOperands;
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
               logpdfOperands.push_back(sampledValues[i]);
@@ -1425,7 +1547,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               return WalkResult::interrupt();
             }
 
-            // A2. Compute and accumulate weight.
             auto logpdf = func::CallOp::create(
                 rewriter, sampleOp.getLoc(), logpdfFn.getName(),
                 logpdfFn.getResultTypes(), logpdfOperands);
@@ -1433,110 +1554,150 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                       weightAccumulator, logpdf.getResult(0));
           }
-        } else {
-          // B1. Generative functions: generate a recursive op (simulate when
-          // unconstrained, generate when constrained) that will itself be
-          // lowered in a subsequent rewrite.
-          SmallVector<Attribute> subContrainedAddresses;
-          bool isConstrained = false;
-          for (auto addr : CI.getConstrainedAddressesAttr()) {
+
+          bool inSelection = false;
+          for (auto addr : selection) {
             auto address = cast<ArrayAttr>(addr);
             if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              isConstrained = true;
-              if (address.size() == 1) {
-                sampleOp.emitError(
-                    "ProbProg: generative function cannot be constrained with "
-                    "singleton address - composite addresses are required to "
-                    "ensure proper weight calculation");
-                return WalkResult::interrupt();
-              }
-
-              SmallVector<Attribute> tailAddresses;
-              for (size_t i = 1; i < address.size(); ++i) {
-                tailAddresses.push_back(address[i]);
-              }
-              subContrainedAddresses.push_back(
-                  rewriter.getArrayAttr(tailAddresses));
+              inSelection = true;
               break;
             }
           }
 
-          // B2. Generate a recursive op (simulate when unconstrained, generate
-          // when constrained).
-          Operation *recursiveOp = nullptr;
+          if (inSelection) {
+            for (unsigned i = 1; i < sampledValues.size(); ++i) {
+              auto sampleValue = sampledValues[i];
+              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "ProbProg: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
 
-          if (isConstrained) {
-            auto getSubconstraintOp = enzyme::GetSubconstraintOp::create(
-                rewriter, sampleOp.getLoc(),
-                /*subconstraint*/
-                enzyme::ConstraintType::get(sampleOp.getContext()),
-                /*constraint*/ constraint,
-                /*symbol*/ sampleOp.getSymbolAttr());
-            Value subConstraint = getSubconstraintOp.getSubconstraint();
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleType.getElementType());
+              auto flatSample = enzyme::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+              currTrace = enzyme::DynamicUpdateSliceOp::create(
+                              rewriter, sampleOp.getLoc(), traceType, currTrace,
+                              flatSample, ValueRange{row0, colOff})
+                              .getResult();
+              currentTraceOffset += numElements;
+            }
+          }
+        } else {
+          // B. Generative function: recursively generate the nested function
+          auto genFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getFnAttr()));
 
-            recursiveOp = enzyme::GenerateOp::create(
-                rewriter, sampleOp.getLoc(),
-                /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-                /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
-                /*outputs*/ sampleOp.getResultTypes(),
-                /*fn*/ sampleOp.getFnAttr(),
-                /*inputs*/ sampleOp.getInputs(),
-                /*constrained_addresses*/
-                rewriter.getArrayAttr(subContrainedAddresses),
-                /*constraint*/
-                subConstraint,
-                /*name*/ sampleOp.getNameAttr());
-          } else {
-            recursiveOp = enzyme::SimulateOp::create(
-                rewriter, sampleOp.getLoc(),
-                /*trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-                /*weight*/ RankedTensorType::get({}, rewriter.getF64Type()),
-                /*outputs*/ sampleOp.getResultTypes(),
-                /*fn*/ sampleOp.getFnAttr(),
-                /*inputs*/ sampleOp.getInputs(),
-                /*name*/ sampleOp.getNameAttr());
+          if (genFn.getFunctionBody().empty()) {
+            sampleOp.emitError(
+                "ProbProg: generative function body is empty; "
+                "if this is a distribution, add a logpdf attribute");
+            return WalkResult::interrupt();
           }
 
-          // The first two results of the recursive op are the subtrace and
-          // weight. The remaining results correspond 1-to-1 with the original
-          // sample op's results.
-          for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampledValues.push_back(recursiveOp->getResult(i + 2));
+          ArrayAttr subSelection =
+              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
+          ArrayAttr subConstrainedAddrs =
+              buildSubSelection(rewriter, CI.getConstrainedAddressesAttr(),
+                                sampleOp.getSymbolAttr());
 
-          // B2. Add subtrace to trace.
-          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*subtrace*/ recursiveOp->getResult(0),
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*trace*/ currTrace);
-          currTrace = addSubtraceOp.getUpdatedTrace();
+          if (subSelection.empty()) {
+            // No samples from this generative function are in the selection
+            // Just call the function directly
+            auto genCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), genFn.getName(),
+                genFn.getResultTypes(), sampleOp.getInputs());
+            sampledValues.append(genCall.getResults().begin(),
+                                 genCall.getResults().end());
+          } else {
+            int64_t subPositionSize = computePositionSizeForSelection(
+                sampleOp, genFn, subSelection, symbolTable);
+            int64_t subConstraintSize = computePositionSizeForSelection(
+                sampleOp, genFn, subConstrainedAddrs, symbolTable);
+            if (subPositionSize <= 0 || subConstraintSize < 0) {
+              sampleOp.emitError("ProbProg: failed to compute sub-position or "
+                                 "sub-constraint size");
+              return WalkResult::interrupt();
+            }
 
-          // B3. Accumulate weight returned by recursive op.
-          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                    weightAccumulator,
-                                                    recursiveOp->getResult(1));
+            Value subConstraint;
+            auto subConstraintType = RankedTensorType::get(
+                {1, subConstraintSize}, rewriter.getF64Type());
+
+            if (subConstraintSize > 0) {
+              int64_t subConstraintOffset = computeOffsetForNestedSample(
+                  sampleOp, fn, CI.getConstrainedAddressesAttr(),
+                  sampleOp.getSymbolAttr(), symbolTable);
+
+              subConstraint = enzyme::SliceOp::create(
+                  rewriter, sampleOp.getLoc(), subConstraintType, constraint,
+                  rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
+                  rewriter.getDenseI64ArrayAttr(
+                      {1, subConstraintOffset + subConstraintSize}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+            } else {
+              subConstraint = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), subConstraintType,
+                  DenseElementsAttr::get(subConstraintType, {0.0}));
+            }
+
+            // Build result types: (trace, weight, original_returns...)
+            auto subTraceType = RankedTensorType::get({1, subPositionSize},
+                                                      rewriter.getF64Type());
+            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
+            SmallVector<Type> genResultTypes;
+            genResultTypes.push_back(subTraceType);
+            genResultTypes.push_back(scalarTy);
+            for (auto t : genFn.getResultTypes())
+              genResultTypes.push_back(t);
+
+            auto nestedGenerate = enzyme::GenerateOp::create(
+                rewriter, sampleOp.getLoc(), genResultTypes,
+                sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
+                subSelection, subConstrainedAddrs);
+
+            Value subTrace = nestedGenerate.getTrace();
+            Value subWeight = nestedGenerate.getWeight();
+
+            weightAccumulator = arith::AddFOp::create(
+                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+
+            int64_t mergeOffset = computeOffsetForNestedSample(
+                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+
+            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+            auto row0 = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+            auto colOff = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(
+                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
+            currTrace = enzyme::DynamicUpdateSliceOp::create(
+                            rewriter, sampleOp.getLoc(), traceType, currTrace,
+                            subTrace, ValueRange{row0, colOff})
+                            .getResult();
+            currentTraceOffset =
+                std::max(currentTraceOffset, mergeOffset + subPositionSize);
+
+            for (auto output : nestedGenerate.getOutputs())
+              sampledValues.push_back(output);
+          }
         }
 
-        // C. Add non-RNG sampled values to trace (common for both cases).
-        SmallVector<Value> valuesToTrace;
-        for (unsigned i = 1; i < sampledValues.size(); ++i) {
-          valuesToTrace.push_back(sampledValues[i]);
-        }
-
-        if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*trace*/ currTrace,
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ valuesToTrace);
-          currTrace = addSampleToTraceOp.getUpdatedTrace();
-        }
-
-        // D. Replace uses of the original sample op with the new values.
         sampleOp.replaceAllUsesWith(sampledValues);
-
         toErase.push_back(sampleOp);
         return WalkResult::advance();
       });
@@ -1549,37 +1710,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      // E. Before returning, record the aggregated weight and the function
-      // return value(s) in the trace, then rewrite the return to return the
-      // updated trace and aggregated weight.
+      // Rewrite the return to return (trace, weight, <original returns>...)
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
 
-        // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
-            rewriter, retOp.getLoc(),
-            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-            /*trace*/ currTrace, /*weight*/ weightAccumulator);
-        currTrace = addWeightOp.getUpdatedTrace();
-
-        // E2. Add non-RNG return values to the trace.
-        SmallVector<Value> retvals;
-        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
-          retvals.push_back(retOp.getOperand(i));
-        }
-
-        if (!retvals.empty()) {
-          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
-              rewriter, retOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-              /*trace*/ currTrace,
-              /*retval*/ retvals);
-          currTrace = addRetvalOp.getUpdatedTrace();
-        }
-
-        // E3. Construct new return values: (trace, weight, <original return
-        // values>...)
         SmallVector<Value> newRetVals;
         newRetVals.push_back(currTrace);
         newRetVals.push_back(weightAccumulator);
@@ -1625,21 +1760,38 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto putils =
-          MProbProgUtils::CreateFromClone(fn, MProbProgMode::Regenerate);
+      ArrayAttr selection = CI.getSelectionAttr();
+      int64_t positionSize =
+          computePositionSizeForSelection(CI, fn, selection, symbolTable);
+      if (positionSize <= 0) {
+        CI.emitError(
+            "ProbProg: failed to compute position size for regenerate");
+        return failure();
+      }
+
+      auto putils = MProbProgUtils::CreateFromClone(
+          fn, MProbProgMode::Regenerate, positionSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
                              putils->initializationBlock->begin());
-      auto traceType = enzyme::TraceType::get(CI.getContext());
-      auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = arith::ConstantOp::create(
-          entryBuilder, putils->initializationBlock->begin()->getLoc(),
-          tensorType, DenseElementsAttr::get(tensorType, 0.0));
+      Location initLoc = putils->initializationBlock->begin()->getLoc();
+
+      auto scalarType = RankedTensorType::get({}, entryBuilder.getF64Type());
+      auto zeroWeight =
+          arith::ConstantOp::create(entryBuilder, initLoc, scalarType,
+                                    DenseElementsAttr::get(scalarType, 0.0));
       Value weightAccumulator = zeroWeight;
-      Value currTrace = putils->getTrace();
+
+      auto traceType =
+          RankedTensorType::get({1, positionSize}, entryBuilder.getF64Type());
+      auto zeroTrace =
+          arith::ConstantOp::create(entryBuilder, initLoc, traceType,
+                                    DenseElementsAttr::get(traceType, 0.0));
+      Value currTrace = zeroTrace;
 
       Value prevTrace = NewF.getArgument(0);
+      int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
       auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
@@ -1650,10 +1802,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
 
         if (isDistribution) {
-          // A1. Distribution function: replace sample op uses with call to the
-          // distribution function.
+          // A1. Distribution function: call the distribution function.
           bool isSelected = false;
-          for (auto addr : CI.getSelectionAttr()) {
+          for (auto addr : CI.getRegenerateAddressesAttr()) {
             auto address = cast<ArrayAttr>(addr);
             if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
               if (address.size() != 1) {
@@ -1667,8 +1818,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             }
           }
 
+          int64_t sampleOffset = computeOffsetForSampleInSelection(
+              CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+
           if (isSelected) {
-            // Regenerate selected addresses.
+            // A2. Regenerate: call the distribution function.
             auto distFn =
                 cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                     sampleOp, sampleOp.getFnAttr()));
@@ -1679,408 +1833,188 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
             sampledValues.append(distCall.getResults().begin(),
                                  distCall.getResults().end());
-
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            // A2. Compute and accumulate weight.
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
           } else {
-            // Use sampled values from the original trace.
-            sampledValues.resize(sampleOp.getNumResults());
-
-            SmallVector<Type> sampledValueTypes;
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              sampledValueTypes.push_back(sampleOp->getResultTypes()[i]);
-            }
-
-            auto gsftOp = enzyme::GetSampleFromTraceOp::create(
-                rewriter, sampleOp.getLoc(), sampledValueTypes, prevTrace,
-                sampleOp.getSymbolAttr());
-
-            // Pass along the RNG state.
-            sampledValues[0] = sampleOp.getOperand(0);
-            for (unsigned i = 0; i < gsftOp->getNumResults(); ++i) {
-              sampledValues[i + 1] = gsftOp->getResult(i);
-            }
-
-            // Compute weight via logpdf using originally traced values.
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            // A2. Compute and accumulate weight.
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-          }
-        } else {
-          // B1. Generative functions: Get the subselection (potentially empty).
-          SmallVector<Attribute> subselection;
-          for (auto addr : CI.getSelectionAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() == 1) {
-                sampleOp.emitError(
-                    "ProbProg: generative function cannot be selected with "
-                    "singleton address - composite addresses are required to "
-                    "ensure proper weight calculation");
-                return WalkResult::interrupt();
-              }
-
-              SmallVector<Attribute> tailAddresses;
-              for (size_t i = 1; i < address.size(); ++i) {
-                tailAddresses.push_back(address[i]);
-              }
-              subselection.push_back(rewriter.getArrayAttr(tailAddresses));
-              break;
-            }
-          }
-
-          // B2. Generate a recursive regenerate op.
-          auto getSubtraceOp = enzyme::GetSubtraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*subtrace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*trace*/ prevTrace,
-              /*symbol*/ sampleOp.getSymbolAttr());
-          auto recursiveOp = enzyme::RegenerateOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*trace*/ traceType,
-              /*weight*/ tensorType,
-              /*output_rng_state*/ sampleOp.getOperand(0).getType(),
-              /*fn*/ sampleOp.getFnAttr(),
-              /*inputs*/ sampleOp.getInputs(),
-              /*original_trace*/ getSubtraceOp.getSubtrace(),
-              /*selection*/
-              rewriter.getArrayAttr(subselection),
-              /*name*/ sampleOp.getNameAttr());
-
-          for (unsigned i = 0; i < sampleOp.getNumResults(); ++i)
-            sampledValues.push_back(recursiveOp->getResult(i + 2));
-
-          // B2. Add subtrace to trace.
-          auto addSubtraceOp = enzyme::AddSubtraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(sampleOp.getContext()),
-              /*subtrace*/ recursiveOp->getResult(0),
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*trace*/ currTrace);
-          currTrace = addSubtraceOp.getUpdatedTrace();
-
-          // B3. Accumulate weight returned by recursive op.
-          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                    weightAccumulator,
-                                                    recursiveOp->getResult(1));
-        }
-
-        // C. Add non-RNG sampled values to trace (common for both cases).
-        SmallVector<Value> valuesToTrace;
-        for (unsigned i = 1; i < sampledValues.size(); ++i) {
-          valuesToTrace.push_back(sampledValues[i]);
-        }
-
-        if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              /*updated_trace*/ traceType,
-              /*trace*/ currTrace,
-              /*symbol*/ sampleOp.getSymbolAttr(),
-              /*sample*/ valuesToTrace);
-          currTrace = addSampleToTraceOp.getUpdatedTrace();
-        }
-
-        // D. Replace uses of the original sample op with the new values.
-        sampleOp.replaceAllUsesWith(sampledValues);
-
-        toErase.push_back(sampleOp);
-        return WalkResult::advance();
-      });
-
-      for (Operation *op : toErase)
-        rewriter.eraseOp(op);
-
-      if (result.wasInterrupted()) {
-        CI.emitError("ProbProg: failed to walk sample ops");
-        return failure();
-      }
-
-      // E. Before returning, record the aggregated weight and the function
-      // return value(s) in the trace, then rewrite the return to return the
-      // updated trace and aggregated weight.
-      NewF.walk([&](func::ReturnOp retOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(retOp);
-
-        // E1. Add the accumulated weight to the trace.
-        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
-            rewriter, retOp.getLoc(),
-            /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-            /*trace*/ currTrace, /*weight*/ weightAccumulator);
-        currTrace = addWeightOp.getUpdatedTrace();
-
-        // E2. Add non-RNG return values to the trace.
-        SmallVector<Value> retvals;
-        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
-          retvals.push_back(retOp.getOperand(i));
-        }
-
-        if (!retvals.empty()) {
-          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
-              rewriter, retOp.getLoc(),
-              /*updated_trace*/ enzyme::TraceType::get(retOp.getContext()),
-              /*trace*/ currTrace,
-              /*retval*/ retvals);
-          currTrace = addRetvalOp.getUpdatedTrace();
-        }
-
-        // E3. Construct new return values: (trace, weight, output_rng_state)
-        SmallVector<Value> newRetVals;
-        newRetVals.push_back(currTrace);
-        newRetVals.push_back(weightAccumulator);
-        newRetVals.push_back(retOp.getOperand(0));
-
-        func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
-        rewriter.eraseOp(retOp);
-      });
-
-      rewriter.setInsertionPoint(CI);
-      SmallVector<Value> operands;
-      operands.push_back(CI.getOriginalTrace());
-      operands.append(CI.getInputs().begin(), CI.getInputs().end());
-      auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
-                                        NewF.getResultTypes(), operands);
-
-      rewriter.replaceOp(CI, newCI.getResults());
-
-      delete putils;
-
-      return success();
-    }
-  };
-
-  struct LowerUpdatePattern : public mlir::OpRewritePattern<enzyme::UpdateOp> {
-    using mlir::OpRewritePattern<enzyme::UpdateOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(enzyme::UpdateOp CI,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-
-      auto fn = cast<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
-
-      if (fn.getFunctionBody().empty()) {
-        CI.emitError("ProbProg: calling `update` on an empty function");
-        return failure();
-      }
-
-      int64_t positionSize = computePositionSizeForSelection(
-          CI, fn, CI.getSelectionAttr(), symbolTable);
-      if (positionSize <= 0) {
-        CI.emitError("ProbProg: failed to compute position size for update");
-        return failure();
-      }
-
-      auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Update,
-                                                    positionSize);
-      FunctionOpInterface NewF = putils->newFunc;
-
-      OpBuilder entryBuilder(putils->initializationBlock,
-                             putils->initializationBlock->begin());
-      auto tensorType = RankedTensorType::get({}, entryBuilder.getF64Type());
-      auto zeroWeight = arith::ConstantOp::create(
-          entryBuilder, putils->initializationBlock->begin()->getLoc(),
-          tensorType, DenseElementsAttr::get(tensorType, 0.0));
-      Value weightAccumulator = zeroWeight;
-      Value currTrace = putils->getTrace();
-
-      Value originalTrace = NewF.getArgument(0);
-      Value position = NewF.getArgument(1);
-
-      SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
-
-        SmallVector<Value> sampledValues;
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          bool isSelected = false;
-          for (auto addr : CI.getSelectionAttr()) {
-            auto address = cast<ArrayAttr>(addr);
-            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
-              if (address.size() != 1) {
-                sampleOp.emitError(
-                    "ProbProg: distribution function cannot have composite "
-                    "selected address");
-                return WalkResult::interrupt();
-              }
-              isSelected = true;
-              break;
-            }
-          }
-
-          if (isSelected) {
-            int64_t sampleOffset = computeOffsetForSampleInSelection(
-                CI, fn, CI.getSelectionAttr(), sampleOp.getSymbolAttr(),
-                symbolTable);
-            if (sampleOffset < 0) {
-              sampleOp.emitError(
-                  "ProbProg: could not compute offset for sample in selection");
-              return WalkResult::interrupt();
-            }
-
+            // B. Generative function: extract from original trace.
             sampledValues.resize(sampleOp.getNumResults());
             sampledValues[0] = sampleOp.getOperand(0); // RNG state
 
+            int64_t extractOffset = sampleOffset;
             for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
               auto resultType =
                   cast<RankedTensorType>(sampleOp.getResult(i).getType());
-
               int64_t numElements = computeTensorElementCount(resultType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported in "
-                    "update");
+                    "ProbProg: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
-              // Reconstruct multi-dimensional tensor from position vector
-              auto unflattenOp = enzyme::RecoverSampleOp::create(
-                  rewriter, sampleOp.getLoc(), resultType, position,
-                  rewriter.getI64IntegerAttr(sampleOffset));
-
-              sampledValues[i] = unflattenOp.getResult();
-              sampleOffset += numElements;
+              auto sliceType = RankedTensorType::get(
+                  {1, numElements}, resultType.getElementType());
+              auto sliced = enzyme::SliceOp::create(
+                  rewriter, sampleOp.getLoc(), sliceType, prevTrace,
+                  rewriter.getDenseI64ArrayAttr({0, extractOffset}),
+                  rewriter.getDenseI64ArrayAttr(
+                      {1, extractOffset + numElements}),
+                  rewriter.getDenseI64ArrayAttr({1, 1}));
+              auto extracted = enzyme::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), resultType, sliced);
+              sampledValues[i] = extracted.getResult();
+              extractOffset += numElements;
             }
+          }
 
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
+          auto logpdfFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getLogpdfAttr()));
 
-            SmallVector<Value> logpdfOperands;
+          SmallVector<Value> logpdfOperands;
+          for (unsigned i = 1; i < sampledValues.size(); ++i) {
+            logpdfOperands.push_back(sampledValues[i]);
+          }
+          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
+            logpdfOperands.push_back(sampleOp.getOperand(i));
+          }
+
+          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
+            sampleOp.emitError("ProbProg: failed to construct logpdf call; "
+                               "logpdf function has wrong number of arguments");
+            return WalkResult::interrupt();
+          }
+
+          auto logpdf = func::CallOp::create(
+              rewriter, sampleOp.getLoc(), logpdfFn.getName(),
+              logpdfFn.getResultTypes(), logpdfOperands);
+          weightAccumulator =
+              arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                    weightAccumulator, logpdf.getResult(0));
+
+          bool inSelection = false;
+          for (auto addr : selection) {
+            auto address = cast<ArrayAttr>(addr);
+            if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
+              inSelection = true;
+              break;
+            }
+          }
+
+          if (inSelection) {
             for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
+              auto sampleValue = sampledValues[i];
+              auto sampleType = cast<RankedTensorType>(sampleValue.getType());
+              int64_t numElements = computeTensorElementCount(sampleType);
+              if (numElements < 0) {
+                sampleOp.emitError(
+                    "ProbProg: dynamic tensor dimensions not supported");
+                return WalkResult::interrupt();
+              }
+
+              auto flatSampleType = RankedTensorType::get(
+                  {1, numElements}, sampleType.getElementType());
+              auto flatSample = enzyme::ReshapeOp::create(
+                  rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
+              auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+              auto row0 = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+              auto colOff = arith::ConstantOp::create(
+                  rewriter, sampleOp.getLoc(), i64S,
+                  DenseElementsAttr::get(
+                      i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
+              currTrace = enzyme::DynamicUpdateSliceOp::create(
+                              rewriter, sampleOp.getLoc(), traceType, currTrace,
+                              flatSample, ValueRange{row0, colOff})
+                              .getResult();
+              currentTraceOffset += numElements;
             }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-          } else {
-            sampledValues.resize(sampleOp.getNumResults());
-
-            SmallVector<Type> sampledValueTypes;
-            for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-              sampledValueTypes.push_back(sampleOp->getResultTypes()[i]);
-            }
-
-            auto gsftOp = enzyme::GetSampleFromTraceOp::create(
-                rewriter, sampleOp.getLoc(), sampledValueTypes, originalTrace,
-                sampleOp.getSymbolAttr());
-
-            sampledValues[0] = sampleOp.getOperand(0); // RNG state
-            for (unsigned i = 0; i < gsftOp->getNumResults(); ++i) {
-              sampledValues[i + 1] = gsftOp->getResult(i);
-            }
-
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return WalkResult::interrupt();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
           }
         } else {
-          // TODO
-          sampleOp.emitError(
-              "ProbProg: update on generative functions not implemented");
-          return WalkResult::interrupt();
-        }
+          // B. Generative function: recursively regenerate the nested function
+          auto genFn =
+              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
+                  sampleOp, sampleOp.getFnAttr()));
 
-        SmallVector<Value> valuesToTrace;
-        for (unsigned i = 1; i < sampledValues.size(); ++i) {
-          valuesToTrace.push_back(sampledValues[i]);
-        }
+          if (genFn.getFunctionBody().empty()) {
+            sampleOp.emitError(
+                "ProbProg: generative function body is empty; "
+                "if this is a distribution, add a logpdf attribute");
+            return WalkResult::interrupt();
+          }
 
-        if (!valuesToTrace.empty()) {
-          auto addSampleToTraceOp = enzyme::AddSampleToTraceOp::create(
-              rewriter, sampleOp.getLoc(),
-              enzyme::TraceType::get(sampleOp.getContext()), currTrace,
-              sampleOp.getSymbolAttr(), valuesToTrace);
-          currTrace = addSampleToTraceOp.getUpdatedTrace();
+          ArrayAttr subSelection =
+              buildSubSelection(rewriter, selection, sampleOp.getSymbolAttr());
+          ArrayAttr subRegenerateAddrs =
+              buildSubSelection(rewriter, CI.getRegenerateAddressesAttr(),
+                                sampleOp.getSymbolAttr());
+
+          if (subSelection.empty()) {
+            auto genCall = func::CallOp::create(
+                rewriter, sampleOp.getLoc(), genFn.getName(),
+                genFn.getResultTypes(), sampleOp.getInputs());
+            sampledValues.append(genCall.getResults().begin(),
+                                 genCall.getResults().end());
+          } else {
+            int64_t subPositionSize = computePositionSizeForSelection(
+                sampleOp, genFn, subSelection, symbolTable);
+            if (subPositionSize <= 0) {
+              sampleOp.emitError(
+                  "ProbProg: failed to compute sub-position size");
+              return WalkResult::interrupt();
+            }
+
+            int64_t mergeOffset = computeOffsetForNestedSample(
+                sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
+            if (mergeOffset < 0) {
+              sampleOp.emitError("ProbProg: failed to compute merge offset");
+              return WalkResult::interrupt();
+            }
+
+            auto subTraceType = RankedTensorType::get({1, subPositionSize},
+                                                      rewriter.getF64Type());
+            Value subPrevTrace = enzyme::SliceOp::create(
+                rewriter, sampleOp.getLoc(), subTraceType, prevTrace,
+                rewriter.getDenseI64ArrayAttr({0, mergeOffset}),
+                rewriter.getDenseI64ArrayAttr(
+                    {1, mergeOffset + subPositionSize}),
+                rewriter.getDenseI64ArrayAttr({1, 1}));
+
+            // Build result types: (new_trace, weight, original_returns...)
+            auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
+            SmallVector<Type> regenResultTypes;
+            regenResultTypes.push_back(subTraceType);
+            regenResultTypes.push_back(scalarTy);
+            for (auto t : genFn.getResultTypes())
+              regenResultTypes.push_back(t);
+
+            auto nestedRegenerate = enzyme::RegenerateOp::create(
+                rewriter, sampleOp.getLoc(), regenResultTypes,
+                sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
+                subSelection, subRegenerateAddrs);
+
+            Value subTrace = nestedRegenerate.getNewTrace();
+            Value subWeight = nestedRegenerate.getWeight();
+
+            weightAccumulator = arith::AddFOp::create(
+                rewriter, sampleOp.getLoc(), weightAccumulator, subWeight);
+
+            auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
+            auto row0 = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(i64S, rewriter.getI64IntegerAttr(0)));
+            auto colOff = arith::ConstantOp::create(
+                rewriter, sampleOp.getLoc(), i64S,
+                DenseElementsAttr::get(
+                    i64S, rewriter.getI64IntegerAttr(mergeOffset)));
+            currTrace = enzyme::DynamicUpdateSliceOp::create(
+                            rewriter, sampleOp.getLoc(), traceType, currTrace,
+                            subTrace, ValueRange{row0, colOff})
+                            .getResult();
+            currentTraceOffset =
+                std::max(currentTraceOffset, mergeOffset + subPositionSize);
+
+            for (auto output : nestedRegenerate.getOutputs())
+              sampledValues.push_back(output);
+          }
         }
 
         sampleOp.replaceAllUsesWith(sampledValues);
@@ -2100,28 +2034,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
 
-        auto addWeightOp = enzyme::AddWeightToTraceOp::create(
-            rewriter, retOp.getLoc(),
-            enzyme::TraceType::get(retOp.getContext()), currTrace,
-            weightAccumulator);
-        currTrace = addWeightOp.getUpdatedTrace();
-
-        SmallVector<Value> retvals;
-        for (unsigned i = 1; i < retOp.getNumOperands(); ++i) {
-          retvals.push_back(retOp.getOperand(i));
-        }
-
-        if (!retvals.empty()) {
-          auto addRetvalOp = enzyme::AddRetvalToTraceOp::create(
-              rewriter, retOp.getLoc(),
-              enzyme::TraceType::get(retOp.getContext()), currTrace, retvals);
-          currTrace = addRetvalOp.getUpdatedTrace();
-        }
-
         SmallVector<Value> newRetVals;
         newRetVals.push_back(currTrace);
         newRetVals.push_back(weightAccumulator);
-        newRetVals.push_back(retOp.getOperand(0));
+        newRetVals.append(retOp.getOperands().begin(),
+                          retOp.getOperands().end());
 
         func::ReturnOp::create(rewriter, retOp.getLoc(), newRetVals);
         rewriter.eraseOp(retOp);
@@ -2130,7 +2047,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       rewriter.setInsertionPoint(CI);
       SmallVector<Value> operands;
       operands.push_back(CI.getOriginalTrace());
-      operands.push_back(CI.getPosition());
       operands.append(CI.getInputs().begin(), CI.getInputs().end());
       auto newCI = func::CallOp::create(rewriter, CI.getLoc(), NewF.getName(),
                                         NewF.getResultTypes(), operands);
