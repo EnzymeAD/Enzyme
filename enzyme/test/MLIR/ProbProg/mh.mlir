@@ -10,79 +10,87 @@ module {
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 
-  func.func @mh(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (!enzyme.Trace, tensor<2xui64>) {
-    %cst = arith.constant dense<42> : tensor<ui64>
-    %0 = builtin.unrealized_conversion_cast %cst : tensor<ui64> to !enzyme.Trace
-    %false_t = arith.constant dense<false> : tensor<i1>
+  func.func @mh(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>) {
+    %init_trace = arith.constant dense<[[0.5, 1.0]]> : tensor<1x2xf64>
+    %init_weight = arith.constant dense<-2.0> : tensor<f64>
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c1000 = arith.constant 1000 : index
-    %res:2 = scf.for %i = %c0 to %c1000 step %c1 iter_args(%trace = %0, %rng1 = %rng) -> (!enzyme.Trace, tensor<2xui64>) {
-      %step1:3 = enzyme.mh @test(%rng1, %mean, %stddev) given %trace { name = "mh_1", selection = [[#enzyme.symbol<1>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>, !enzyme.Trace) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
-      %step2:3 = enzyme.mh @test(%step1#2, %mean, %stddev) given %step1#0 { name = "mh_2", selection = [[#enzyme.symbol<2>]] } : (tensor<2xui64>, tensor<f64>, tensor<f64>, !enzyme.Trace) -> (!enzyme.Trace, tensor<i1>, tensor<2xui64>)
-      scf.yield %step2#0, %step2#2 : !enzyme.Trace, tensor<2xui64>
+    %res:3 = scf.for %i = %c0 to %c1000 step %c1 iter_args(%trace = %init_trace, %weight = %init_weight, %rng1 = %rng) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>) {
+      %step1:4 = enzyme.mh @test(%rng1, %mean, %stddev) given %trace weight %weight
+          { name = "mh_1", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], regenerate_addresses = [[#enzyme.symbol<2>]] }
+          : (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
+      %step2:4 = enzyme.mh @test(%step1#3, %mean, %stddev) given %step1#0 weight %step1#1
+          { name = "mh_2", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], regenerate_addresses = [[#enzyme.symbol<1>]] }
+          : (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<i1>, tensor<2xui64>)
+      scf.yield %step2#0, %step2#1, %step2#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
     }
-    return %res#0, %res#1 : !enzyme.Trace, tensor<2xui64>
+    return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
   }
 }
 
-// CHECK:  func.func @mh(%[[arg0:.+]]: tensor<2xui64>, %[[arg1:.+]]: tensor<f64>, %[[arg2:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<2xui64>) {
-// CHECK-NEXT:    %[[cst:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[cst_0:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[c1000:.+]] = arith.constant 1000 : index
-// CHECK-NEXT:    %[[c1:.+]] = arith.constant 1 : index
-// CHECK-NEXT:    %[[c0:.+]] = arith.constant 0 : index
-// CHECK-NEXT:    %[[cst_1:.+]] = arith.constant dense<42> : tensor<ui64>
-// CHECK-NEXT:    %[[v0:.+]] = builtin.unrealized_conversion_cast %[[cst_1]] : tensor<ui64> to !enzyme.Trace
-// CHECK-NEXT:    %[[v1:.+]]:2 = scf.for %[[arg3:.+]] = %[[c0]] to %[[c1000]] step %[[c1]] iter_args(%[[arg4:.+]] = %[[v0]], %[[arg5:.+]] = %[[arg0]]) -> (!enzyme.Trace, tensor<2xui64>) {
-// CHECK-NEXT:      %[[v2:.+]]:3 = func.call @test.regenerate_0(%[[arg4]], %[[arg5]], %[[arg1]], %[[arg2]]) : (!enzyme.Trace, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:      %[[v3:.+]] = enzyme.getWeightFromTrace %[[arg4]] : (!enzyme.Trace) -> tensor<f64>
-// CHECK-NEXT:      %[[v4:.+]] = arith.subf %[[v2]]#1, %[[v3]] : tensor<f64>
-// CHECK-NEXT:      %[[output_rng_state:.+]], %[[result:.+]] = enzyme.random %[[v2]]#2, %[[cst_0]], %[[cst]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT:      %[[v5:.+]] = math.log %[[result]] : tensor<f64>
-// CHECK-NEXT:      %[[v6:.+]] = arith.cmpf olt, %[[v5]], %[[v4]] : tensor<f64>
-// CHECK-NEXT:      %[[v7:.+]] = enzyme.select %[[v6]], %[[v2]]#0, %[[arg4]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
-// CHECK-NEXT:      %[[v8:.+]]:3 = func.call @test.regenerate(%[[v7]], %[[output_rng_state]], %[[arg1]], %[[arg2]]) : (!enzyme.Trace, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>)
-// CHECK-NEXT:      %[[v9:.+]] = enzyme.getWeightFromTrace %[[v7]] : (!enzyme.Trace) -> tensor<f64>
-// CHECK-NEXT:      %[[v10:.+]] = arith.subf %[[v8]]#1, %[[v9]] : tensor<f64>
-// CHECK-NEXT:      %[[output_rng_state_2:.+]], %[[result_3:.+]] = enzyme.random %[[v8]]#2, %[[cst_0]], %[[cst]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT:      %[[v11:.+]] = math.log %[[result_3]] : tensor<f64>
-// CHECK-NEXT:      %[[v12:.+]] = arith.cmpf olt, %[[v11]], %[[v10]] : tensor<f64>
-// CHECK-NEXT:      %[[v13:.+]] = enzyme.select %[[v12]], %[[v8]]#0, %[[v7]] : (tensor<i1>, !enzyme.Trace, !enzyme.Trace) -> !enzyme.Trace
-// CHECK-NEXT:      scf.yield %[[v13]], %[[output_rng_state_2]] : !enzyme.Trace, tensor<2xui64>
-// CHECK-NEXT:    }
-// CHECK-NEXT:    return %[[v1]]#0, %[[v1]]#1 : !enzyme.Trace, tensor<2xui64>
-// CHECK-NEXT:  }
+// CHECK-LABEL: func.func @mh
+// CHECK-SAME: (%[[RNG:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>)
+// CHECK-DAG: %[[ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<{{.*}}> : tensor<1x2xf64>
+// CHECK-DAG: %[[INIT_WEIGHT:.+]] = arith.constant dense<-2.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[C0:.+]] = arith.constant 0 : index
+// CHECK-DAG: %[[C1:.+]] = arith.constant 1 : index
+// CHECK-DAG: %[[C1000:.+]] = arith.constant 1000 : index
+// CHECK: %[[LOOP:.+]]:3 = scf.for %[[IV:.+]] = %[[C0]] to %[[C1000]] step %[[C1]] iter_args(%[[TR:.+]] = %[[INIT_TRACE]], %[[WT:.+]] = %[[INIT_WEIGHT]], %[[RNG0:.+]] = %[[RNG]]) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>)
+// CHECK-NEXT: %[[REGEN1:.+]]:4 = func.call @test.regenerate_0(%[[TR]], %[[RNG0]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[WDIFF1:.+]] = arith.subf %[[REGEN1]]#1, %[[WT]] : tensor<f64>
+// CHECK-NEXT: %[[RNG1:.+]], %[[U1:.+]] = enzyme.random %[[REGEN1]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[LOG1:.+]] = math.log %[[U1]] : tensor<f64>
+// CHECK-NEXT: %[[ACC1:.+]] = arith.cmpf olt, %[[LOG1]], %[[WDIFF1]] : tensor<f64>
+// CHECK-NEXT: %[[SEL_TR1:.+]] = enzyme.select %[[ACC1]], %[[REGEN1]]#0, %[[TR]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[SEL_WT1:.+]] = arith.select %[[ACC1]], %[[REGEN1]]#1, %[[WT]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: %[[REGEN2:.+]]:4 = func.call @test.regenerate(%[[SEL_TR1]], %[[RNG1]], %[[MEAN]], %[[STDDEV]]) : (tensor<1x2xf64>, tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[WDIFF2:.+]] = arith.subf %[[REGEN2]]#1, %[[SEL_WT1]] : tensor<f64>
+// CHECK-NEXT: %[[RNG2:.+]], %[[U2:.+]] = enzyme.random %[[REGEN2]]#2, %[[ZERO_F]], %[[ONE]] {rng_distribution = #enzyme<rng_distribution UNIFORM>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[LOG2:.+]] = math.log %[[U2]] : tensor<f64>
+// CHECK-NEXT: %[[ACC2:.+]] = arith.cmpf olt, %[[LOG2]], %[[WDIFF2]] : tensor<f64>
+// CHECK-NEXT: %[[SEL_TR2:.+]] = enzyme.select %[[ACC2]], %[[REGEN2]]#0, %[[SEL_TR1]] : (tensor<i1>, tensor<1x2xf64>, tensor<1x2xf64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[SEL_WT2:.+]] = arith.select %[[ACC2]], %[[REGEN2]]#1, %[[SEL_WT1]] : tensor<i1>, tensor<f64>
+// CHECK-NEXT: scf.yield %[[SEL_TR2]], %[[SEL_WT2]], %[[RNG2]] : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
+// CHECK-NEXT: }
+// CHECK-NEXT: return %[[LOOP]]#0, %[[LOOP]]#1, %[[LOOP]]#2 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>
 
+// CHECK-LABEL: func.func @test.regenerate
+// CHECK-SAME: (%[[R_ARG0:.+]]: tensor<1x2xf64>, %[[R_ARG1:.+]]: tensor<2xui64>, %[[R_ARG2:.+]]: tensor<f64>, %[[R_ARG3:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+// CHECK-DAG: %[[R_C1:.+]] = arith.constant dense<1> : tensor<i64>
+// CHECK-DAG: %[[R_C0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG: %[[R_ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[R_TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x2xf64>
+// CHECK: %[[R_REGEN:.+]]:2 = call @normal(%[[R_ARG1]], %[[R_ARG2]], %[[R_ARG3]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[R_LP1:.+]] = call @logpdf(%[[R_REGEN]]#1, %[[R_ARG2]], %[[R_ARG3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %[[R_W1:.+]] = arith.addf %[[R_LP1]], %[[R_ZERO]] : tensor<f64>
+// CHECK-NEXT: %[[R_RS1:.+]] = enzyme.reshape %[[R_REGEN]]#1 : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R_TR1:.+]] = enzyme.dynamic_update_slice %[[R_TRACE_INIT]], %[[R_RS1]], %[[R_C0]], %[[R_C0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[R_KEPT_SLICED:.+]] = enzyme.slice %[[R_ARG0]] {limit_indices = array<i64: 1, 2>, start_indices = array<i64: 0, 1>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R_KEPT:.+]] = enzyme.reshape %[[R_KEPT_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[R_LP2:.+]] = call @logpdf(%[[R_KEPT]], %[[R_REGEN]]#1, %[[R_ARG3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %[[R_W2:.+]] = arith.addf %[[R_W1]], %[[R_LP2]] : tensor<f64>
+// CHECK-NEXT: %[[R_RS2:.+]] = enzyme.reshape %[[R_KEPT]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R_TR2:.+]] = enzyme.dynamic_update_slice %[[R_TR1]], %[[R_RS2]], %[[R_C0]], %[[R_C1]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
+// CHECK-NEXT: return %[[R_TR2]], %[[R_W2]], %[[R_REGEN]]#0, %[[R_KEPT]] : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
 
-// CHECK:  func.func @test.regenerate(%[[arg0:.+]]: !enzyme.Trace, %[[arg1:.+]]: tensor<2xui64>, %[[arg2:.+]]: tensor<f64>, %[[arg3:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>) {
-// CHECK-NEXT:    %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:    %[[sample1:.+]] = enzyme.getSampleFromTrace %[[arg0]] {symbol = #enzyme.symbol<1>} : (!enzyme.Trace) -> tensor<f64>
-// CHECK-NEXT:    %[[logpdf1:.+]] = call @logpdf(%[[sample1]], %[[arg2]], %[[arg3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %[[weight1:.+]] = arith.addf %[[logpdf1]], %[[cst]] : tensor<f64>
-// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace %[[sample1]] into %[[trace_init]] {symbol = #enzyme.symbol<1>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[normal_call:.+]]:2 = call @normal(%[[arg1]], %[[sample1]], %[[arg3]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT:    %[[logpdf2:.+]] = call @logpdf(%[[normal_call]]#1, %[[sample1]], %[[arg3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %[[weight2:.+]] = arith.addf %[[weight1]], %[[logpdf2]] : tensor<f64>
-// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addSampleToTrace %[[normal_call]]#1 into %[[trace1]] {symbol = #enzyme.symbol<2>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[trace3:.+]] = enzyme.addWeightToTrace %[[weight2]] into %[[trace2]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace %[[normal_call]]#1 into %[[trace3]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    return %[[final_trace]], %[[weight2]], %[[normal_call]]#0 : !enzyme.Trace, tensor<f64>, tensor<2xui64>
-// CHECK-NEXT:  }
-
-// CHECK:  func.func @test.regenerate_0(%[[arg0:.+]]: !enzyme.Trace, %[[arg1:.+]]: tensor<2xui64>, %[[arg2:.+]]: tensor<f64>, %[[arg3:.+]]: tensor<f64>) -> (!enzyme.Trace, tensor<f64>, tensor<2xui64>) {
-// CHECK-NEXT:    %[[cst:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
-// CHECK-NEXT:    %[[trace_init:.+]] = enzyme.initTrace : !enzyme.Trace
-// CHECK-NEXT:    %[[normal_call:.+]]:2 = call @normal(%[[arg1]], %[[arg2]], %[[arg3]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-// CHECK-NEXT:    %[[logpdf1:.+]] = call @logpdf(%[[normal_call]]#1, %[[arg2]], %[[arg3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %[[weight1:.+]] = arith.addf %[[logpdf1]], %[[cst]] : tensor<f64>
-// CHECK-NEXT:    %[[trace1:.+]] = enzyme.addSampleToTrace %[[normal_call]]#1 into %[[trace_init]] {symbol = #enzyme.symbol<1>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[sample2:.+]] = enzyme.getSampleFromTrace %[[arg0]] {symbol = #enzyme.symbol<2>} : (!enzyme.Trace) -> tensor<f64>
-// CHECK-NEXT:    %[[logpdf2:.+]] = call @logpdf(%[[sample2]], %[[normal_call]]#1, %[[arg3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
-// CHECK-NEXT:    %[[weight2:.+]] = arith.addf %[[weight1]], %[[logpdf2]] : tensor<f64>
-// CHECK-NEXT:    %[[trace2:.+]] = enzyme.addSampleToTrace %[[sample2]] into %[[trace1]] {symbol = #enzyme.symbol<2>} : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[trace3:.+]] = enzyme.addWeightToTrace %[[weight2]] into %[[trace2]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    %[[final_trace:.+]] = enzyme.addRetvalToTrace %[[sample2]] into %[[trace3]] : (!enzyme.Trace, tensor<f64>) -> !enzyme.Trace
-// CHECK-NEXT:    return %[[final_trace]], %[[weight2]], %[[normal_call]]#0 : !enzyme.Trace, tensor<f64>, tensor<2xui64>
-// CHECK-NEXT:  }
+// CHECK-LABEL: func.func @test.regenerate_0
+// CHECK-SAME: (%[[R0_ARG0:.+]]: tensor<1x2xf64>, %[[R0_ARG1:.+]]: tensor<2xui64>, %[[R0_ARG2:.+]]: tensor<f64>, %[[R0_ARG3:.+]]: tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+// CHECK-DAG: %[[R0_C1:.+]] = arith.constant dense<1> : tensor<i64>
+// CHECK-DAG: %[[R0_C0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG: %[[R0_ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK-DAG: %[[R0_TRACE_INIT:.+]] = arith.constant dense<0.000000e+00> : tensor<1x2xf64>
+// CHECK: %[[R0_KEPT_SLICED:.+]] = enzyme.slice %[[R0_ARG0]] {limit_indices = array<i64: 1, 1>, start_indices = array<i64: 0, 0>, strides = array<i64: 1, 1>} : (tensor<1x2xf64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R0_KEPT:.+]] = enzyme.reshape %[[R0_KEPT_SLICED]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT: %[[R0_LP1:.+]] = call @logpdf(%[[R0_KEPT]], %[[R0_ARG2]], %[[R0_ARG3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %[[R0_W1:.+]] = arith.addf %[[R0_LP1]], %[[R0_ZERO]] : tensor<f64>
+// CHECK-NEXT: %[[R0_RS1:.+]] = enzyme.reshape %[[R0_KEPT]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R0_TR1:.+]] = enzyme.dynamic_update_slice %[[R0_TRACE_INIT]], %[[R0_RS1]], %[[R0_C0]], %[[R0_C0]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
+// CHECK-NEXT: %[[R0_REGEN:.+]]:2 = call @normal(%[[R0_ARG1]], %[[R0_KEPT]], %[[R0_ARG3]]) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+// CHECK-NEXT: %[[R0_LP2:.+]] = call @logpdf(%[[R0_REGEN]]#1, %[[R0_KEPT]], %[[R0_ARG3]]) : (tensor<f64>, tensor<f64>, tensor<f64>) -> tensor<f64>
+// CHECK-NEXT: %[[R0_W2:.+]] = arith.addf %[[R0_W1]], %[[R0_LP2]] : tensor<f64>
+// CHECK-NEXT: %[[R0_RS2:.+]] = enzyme.reshape %[[R0_REGEN]]#1 : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT: %[[R0_TR2:.+]] = enzyme.dynamic_update_slice %[[R0_TR1]], %[[R0_RS2]], %[[R0_C0]], %[[R0_C1]] : (tensor<1x2xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x2xf64>
+// CHECK-NEXT: return %[[R0_TR2]], %[[R0_W2]], %[[R0_REGEN]]#0, %[[R0_REGEN]]#1 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>

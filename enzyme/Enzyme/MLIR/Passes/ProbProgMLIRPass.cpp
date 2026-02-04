@@ -1314,59 +1314,76 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         return failure();
       }
 
-      auto tensorType = RankedTensorType::get({}, rewriter.getF64Type());
-      auto traceType = enzyme::TraceType::get(mhOp.getContext());
-      auto rngStateType = mhOp.getInputs()[0].getType();
+      auto loc = mhOp.getLoc();
+
+      Value oldTrace = mhOp.getOperand(0);
+      Value oldWeight = mhOp.getOperand(1);
+      SmallVector<Value> inputs;
+      for (unsigned i = 2; i < mhOp.getNumOperands(); ++i)
+        inputs.push_back(mhOp.getOperand(i));
+      auto selection = mhOp.getSelectionAttr();
+
+      auto traceType = oldTrace.getType();
+      auto weightType = cast<RankedTensorType>(oldWeight.getType());
+      auto rngStateType = inputs[0].getType();
 
       // 1. Create regenerate op with the same function and selection
-      // `enzyme.regenerate` returns the same results as `enzyme.generate`
-      // (trace, weight, outputs...<rng_state, original_outputs...>), but
-      // takes addresses to regenerate instead of to specify constraints.
-      auto regenerateOp = enzyme::RegenerateOp::create(
-          rewriter, mhOp.getLoc(),
-          /*trace*/ traceType,
-          /*weight*/ tensorType,
-          /*output_rng_state*/ rngStateType,
+      auto nameAttr = mhOp.getNameAttr();
+      if (!nameAttr)
+        nameAttr = rewriter.getStringAttr("");
+
+      auto regenerateAddresses = mhOp.getRegenerateAddressesAttr();
+
+      SmallVector<Type> regenResultTypes;
+      regenResultTypes.push_back(traceType);
+      regenResultTypes.push_back(weightType);
+      for (auto t : fn.getResultTypes())
+        regenResultTypes.push_back(t);
+
+      auto regenerateOp = rewriter.create<enzyme::RegenerateOp>(
+          loc,
+          /*resultTypes*/ regenResultTypes,
           /*fn*/ mhOp.getFnAttr(),
-          /*inputs*/ mhOp.getInputs(),
-          /*original_trace*/ mhOp.getOriginalTrace(),
-          /*selection*/ mhOp.getSelectionAttr(),
-          /*name*/ mhOp.getNameAttr());
+          /*inputs*/ inputs,
+          /*original_trace*/ oldTrace,
+          /*selection*/ selection,
+          /*regenerate_addresses*/ regenerateAddresses,
+          /*name*/ nameAttr);
 
-      // 2. Metropolis-Hastings accept/reject step
-      auto getOriginalWeightOp = enzyme::GetWeightFromTraceOp::create(
-          rewriter, mhOp.getLoc(), tensorType, mhOp.getOriginalTrace());
-      auto logAlpha = arith::SubFOp::create(rewriter, mhOp.getLoc(),
-                                            regenerateOp.getWeight(),
-                                            getOriginalWeightOp.getWeight());
+      Value newTrace = regenerateOp.getNewTrace();
+      Value newWeight = regenerateOp.getWeight();
+      Value newRng = regenerateOp.getOutputs()[0];
 
-      auto zeroConst =
-          arith::ConstantOp::create(rewriter, mhOp.getLoc(), tensorType,
-                                    DenseElementsAttr::get(tensorType, 0.0));
-      auto oneConst =
-          arith::ConstantOp::create(rewriter, mhOp.getLoc(), tensorType,
-                                    DenseElementsAttr::get(tensorType, 1.0));
+      // 2. Compute log_alpha = new_weight - old_weight
+      auto logAlpha =
+          arith::SubFOp::create(rewriter, loc, newWeight, oldWeight);
+
+      // 3. Sample uniform random in (0, 1) and compute log
+      auto zeroConst = arith::ConstantOp::create(
+          rewriter, loc, weightType, DenseElementsAttr::get(weightType, 0.0));
+      auto oneConst = arith::ConstantOp::create(
+          rewriter, loc, weightType, DenseElementsAttr::get(weightType, 1.0));
 
       auto randomOp = enzyme::RandomOp::create(
-          rewriter, mhOp.getLoc(), TypeRange{rngStateType, tensorType},
-          regenerateOp.getOutputRngState(), zeroConst, oneConst,
+          rewriter, loc, TypeRange{rngStateType, weightType}, newRng, zeroConst,
+          oneConst,
           enzyme::RngDistributionAttr::get(rewriter.getContext(),
                                            enzyme::RngDistribution::UNIFORM));
-      auto logRand =
-          math::LogOp::create(rewriter, mhOp.getLoc(), randomOp.getResult());
+      auto logRand = math::LogOp::create(rewriter, loc, randomOp.getResult());
+      Value finalRng = randomOp.getOutputRngState();
 
-      // 3. Check if proposal is accepted: log(rand()) < log_alpha
-      auto accepted =
-          arith::CmpFOp::create(rewriter, mhOp.getLoc(),
-                                arith::CmpFPredicate::OLT, logRand, logAlpha);
+      // 4. Check if proposal is accepted: log(rand()) < log_alpha
+      auto accepted = arith::CmpFOp::create(
+          rewriter, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
 
-      // 4. Select between new and original trace based on acceptance
+      // 5. Select trace and weight based on acceptance
       auto selectedTrace = enzyme::SelectOp::create(
-          rewriter, mhOp.getLoc(), traceType, accepted, regenerateOp.getTrace(),
-          mhOp.getOriginalTrace());
+          rewriter, loc, traceType, accepted, newTrace, oldTrace);
+      auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
+                                                    newWeight, oldWeight);
 
-      rewriter.replaceOp(
-          mhOp, {selectedTrace, accepted, randomOp.getOutputRngState()});
+      rewriter.replaceOp(mhOp,
+                         {selectedTrace, selectedWeight, accepted, finalRng});
       return success();
     }
   };
