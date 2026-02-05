@@ -160,7 +160,7 @@ public:
     }
 
     std::vector<bool> volatile_args(narg, true);
-    std::vector<bool> returnShadow(narg, false);
+    std::vector<bool> returnShadow(nret, false);
     std::vector<bool> returnPrimal(nret, false);
 
     auto type_args = gutils->TA.getAnalyzedTypeInfo(fn);
