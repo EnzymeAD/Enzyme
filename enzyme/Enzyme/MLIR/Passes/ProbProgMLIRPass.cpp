@@ -182,11 +182,11 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
 
 static SmallVector<MCMC::SupportInfo>
 collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
-                               ArrayAttr selection,
+                               ArrayAttr selection, ArrayAttr allAddresses,
                                SymbolTableCollection &symbolTable) {
   auto sampleMap = buildSampleOpMap(fn);
   SmallVector<MCMC::SupportInfo> supports;
-  int64_t currentOffset = 0;
+  int64_t currentPositionOffset = 0;
 
   for (auto addr : selection) {
     auto address = cast<ArrayAttr>(addr);
@@ -208,8 +208,17 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
     if (sampleSize < 0)
       continue;
 
-    supports.emplace_back(currentOffset, sampleSize, supportAttr);
-    currentOffset += sampleSize;
+    int64_t traceOffset = computeOffsetForSampleInSelection(
+        op, fn, allAddresses, targetSymbol, symbolTable);
+    if (traceOffset < 0) {
+      op->emitError("Symbol in selection not found in all_addresses - cannot "
+                    "determine trace offset for scattered selection");
+      return {};
+    }
+
+    supports.emplace_back(currentPositionOffset, traceOffset, sampleSize,
+                          supportAttr);
+    currentPositionOffset += sampleSize;
   }
 
   return supports;
@@ -636,13 +645,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       if (positionSize <= 0)
         return failure();
 
-      int64_t tracePositionSize = computePositionSizeForSelection(
-          mcmcOp, fn, allAddresses, symbolTable);
-      if (tracePositionSize <= 0)
-        return failure();
+      auto supports = collectSupportInfoForSelection(mcmcOp, fn, selection,
+                                                     allAddresses, symbolTable);
 
-      auto supports =
-          collectSupportInfoForSelection(mcmcOp, fn, selection, symbolTable);
+      auto fnType = cast<FunctionType>(fn.getFunctionType());
+      SmallVector<Type> fnResultTypes(fnType.getResults().begin(),
+                                      fnType.getResults().end());
 
       int64_t numSamples = mcmcOp.getNumSamples();
       int64_t thinning = mcmcOp.getThinning();
@@ -650,7 +658,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto elemType =
           cast<RankedTensorType>(stepSize.getType()).getElementType();
-      auto positionType = RankedTensorType::get({positionSize}, elemType);
+      auto positionType = RankedTensorType::get({1, positionSize}, elemType);
       auto scalarType = RankedTensorType::get({}, elemType);
       auto i64TensorType = RankedTensorType::get({}, rewriter.getI64Type());
       auto i1TensorType = RankedTensorType::get({}, rewriter.getI1Type());
@@ -696,13 +704,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto adaptedMassMatrixSqrt =
           computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
-      SmallVector<Type> fnResultTypes(fn.getResultTypes().begin(),
-                                      fn.getResultTypes().end());
-
       HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                          originalTrace, selection, allAddresses, adaptedInvMass,
                          adaptedMassMatrixSqrt, stepSize, trajectoryLength,
-                         positionSize, tracePositionSize, supports);
+                         positionSize, supports);
       auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
 
       auto runSampleStepWithStepSize =
@@ -712,15 +717,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                          originalTrace, selection, allAddresses, adaptedInvMass,
                          adaptedMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, tracePositionSize,
-                         supports);
+                         trajectoryLength, positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                               originalTrace, selection, allAddresses,
                               adaptedInvMass, adaptedMassMatrixSqrt,
-                              currentStepSize, positionSize, tracePositionSize,
-                              supports, U, maxDeltaEnergy, maxTreeDepth);
+                              currentStepSize, positionSize, supports, U,
+                              maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -739,15 +743,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                          originalTrace, selection, allAddresses, currentInvMass,
                          currentMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, tracePositionSize,
-                         supports);
+                         trajectoryLength, positionSize, supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
           NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                               originalTrace, selection, allAddresses,
                               currentInvMass, currentMassMatrixSqrt,
-                              currentStepSize, positionSize, tracePositionSize,
-                              supports, U, maxDeltaEnergy, maxTreeDepth);
+                              currentStepSize, positionSize, supports, U,
+                              maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -945,8 +948,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         // Conditionally update Welford
         WelfordState conditionalWelford;
         if (adaptMassMatrix) {
+          auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
+          Value sample1D =
+              enzyme::ReshapeOp::create(rewriter, loc, sampleType1D, sample.q);
           WelfordState updatedWelfordAfterSample = updateWelford(
-              rewriter, loc, welfordStateLoop, sample.q, welfordConfig);
+              rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
 
           conditionalWelford.mean = enzyme::SelectOp::create(
               rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
@@ -1199,14 +1205,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto shouldStore =
           arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
 
-      auto q2D = enzyme::ReshapeOp::create(
-          rewriter, loc, RankedTensorType::get({1, positionSize}, elemType),
-          q_constrained);
       auto zeroCol = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
       auto updatedSamplesBuffer = enzyme::DynamicUpdateSliceOp::create(
-          rewriter, loc, samplesBufferType, samplesBufferLoop, q2D,
+          rewriter, loc, samplesBufferType, samplesBufferLoop, q_constrained,
           ValueRange{storageIdx, zeroCol});
       auto selectedSamplesBuffer = enzyme::SelectOp::create(
           rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,

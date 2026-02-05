@@ -27,11 +27,14 @@ namespace MCMC {
 
 struct SupportInfo {
   int64_t offset;
+  int64_t traceOffset;
   int64_t size;
   enzyme::SupportAttr support;
 
-  SupportInfo(int64_t offset, int64_t size, enzyme::SupportAttr support)
-      : offset(offset), size(size), support(support) {}
+  SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
+              enzyme::SupportAttr support)
+      : offset(offset), traceOffset(traceOffset), size(size), support(support) {
+  }
 };
 
 struct IntegrationResult {
@@ -95,8 +98,10 @@ struct IntegratorState {
 struct HMCContext {
   FlatSymbolRefAttr fn;
   ArrayRef<Value> fnInputs;
+  SmallVector<Type> fnResultTypes;
   Value originalTrace;
   ArrayAttr selection;
+  ArrayAttr allAddresses;
   Value invMass;
   Value massMatrixSqrt;
   Value stepSize;
@@ -105,13 +110,33 @@ struct HMCContext {
   SmallVector<SupportInfo> supports;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-             Value originalTrace, ArrayAttr selection, Value invMass,
+             ArrayRef<Type> fnResultTypes, Value originalTrace,
+             ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
              Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
              int64_t positionSize, ArrayRef<SupportInfo> supports)
-      : fn(fn), fnInputs(fnInputs), originalTrace(originalTrace),
-        selection(selection), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
-        stepSize(stepSize), trajectoryLength(trajectoryLength),
-        positionSize(positionSize), supports(supports.begin(), supports.end()) {
+      : fn(fn), fnInputs(fnInputs),
+        fnResultTypes(fnResultTypes.begin(), fnResultTypes.end()),
+        originalTrace(originalTrace), selection(selection),
+        allAddresses(allAddresses), invMass(invMass),
+        massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
+        trajectoryLength(trajectoryLength), positionSize(positionSize),
+        supports(supports.begin(), supports.end()) {}
+
+  int64_t getFullTraceSize() const {
+    auto traceType = cast<RankedTensorType>(originalTrace.getType());
+    return traceType.getShape()[1];
+  }
+
+  Type getElementType() const {
+    return cast<RankedTensorType>(stepSize.getType()).getElementType();
+  }
+
+  RankedTensorType getPositionType() const {
+    return RankedTensorType::get({1, positionSize}, getElementType());
+  }
+
+  RankedTensorType getScalarType() const {
+    return RankedTensorType::get({}, getElementType());
   }
 
   bool hasConstrainedSupports() const {
@@ -129,12 +154,13 @@ struct NUTSContext : public HMCContext {
   int64_t maxTreeDepth;
 
   NUTSContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
-              Value originalTrace, ArrayAttr selection, Value invMass,
+              ArrayRef<Type> fnResultTypes, Value originalTrace,
+              ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
               Value massMatrixSqrt, Value stepSize, int64_t positionSize,
               ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
               int64_t maxTreeDepth)
-      : HMCContext(fn, fnInputs, originalTrace, selection, invMass,
-                   massMatrixSqrt, stepSize,
+      : HMCContext(fn, fnInputs, fnResultTypes, originalTrace, selection,
+                   allAddresses, invMass, massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize,
                    supports),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
