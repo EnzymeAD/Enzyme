@@ -120,7 +120,7 @@ def NUTSConfigAttr : Enzyme_Attr<"NUTSConfig", "nuts_config"> {
     DefaultValuedParameter<"bool", "true">:$adapt_step_size,
     DefaultValuedParameter<"bool", "true">:$adapt_mass_matrix
   );
-  let assemblyFormat = "`<` `max_tree_depth` `=` $max_tree_depth (`,` `max_delta_energy` `=` $max_delta_energy^)? (`,` `adapt_step_size` `=` $adapt_step_size^)? (`,` `adapt_mass_matrix` `=` $adapt_mass_matrix^)? `>`";
+  let assemblyFormat = "`<` (`max_tree_depth` `=` $max_tree_depth^)? (`,` `max_delta_energy` `=` $max_delta_energy^)? (`,` `adapt_step_size` `=` $adapt_step_size^)? (`,` `adapt_mass_matrix` `=` $adapt_mass_matrix^)? `>`";
 }
 
 #endif // ENZYME_ENUMS

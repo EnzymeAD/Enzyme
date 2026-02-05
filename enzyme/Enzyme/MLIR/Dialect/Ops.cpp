@@ -1024,7 +1024,6 @@ LogicalResult SimulateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-
 //===----------------------------------------------------------------------===//
 // RegenerateOp
 //===----------------------------------------------------------------------===//
