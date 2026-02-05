@@ -681,28 +681,23 @@ def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
 def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "MCMC inference for probabilistic programs";
   let description = [{
-    Performs MCMC inference on a probabilistic function.
+    Runs MCMC inference on selected addresses.
 
-    By default (num_warmup=0, num_samples=1, thinning=1), performs a single MCMC step
-    and returns the resulting trace - backwards compatible with previous behavior.
+    The `selection` attribute determines which addresses to sample via HMC/NUTS.
+    All sample addresses are included in the trace tensor for consistency.
 
-    When num_samples > 1, runs a full MCMC chain and returns a trace where
-    sampled values have an additional batch dimension (first dim = num_samples / thinning).
-
-    Thinning controls the fraction of samples retained: when thinning=k, every k-th
-    sample is kept, resulting in num_samples/k output samples.
-
-    Warmup iterations are discarded and used only for adaptation.
-
-    By convention, the 0th operand in inputs is the initial RNG state
-    and the 0th operand in results is the updated RNG state.
+    Returns: (trace, diagnostics, rng)
+    - trace: tensor<num_samples x position_size x f64>
+    - diagnostics: tensor<num_samples x i1> - placeholder for future expansion
+    - rng: updated RNG state
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
+    AnyRankedTensor:$original_trace,
     AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
 
     DefaultValuedAttr<I64Attr, "0">:$num_warmup,
     DefaultValuedAttr<I64Attr, "1">:$num_samples,
@@ -719,7 +714,11 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$diagnostics,
+    AnyType:$output_rng_state
+  );
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` `given` $original_trace

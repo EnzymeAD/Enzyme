@@ -629,10 +629,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto originalTrace = mcmcOp.getOriginalTrace();
       auto selection = mcmcOp.getSelectionAttr();
+      auto allAddresses = mcmcOp.getAllAddressesAttr();
 
       int64_t positionSize =
           computePositionSizeForSelection(mcmcOp, fn, selection, symbolTable);
       if (positionSize <= 0)
+        return failure();
+
+      int64_t tracePositionSize = computePositionSizeForSelection(
+          mcmcOp, fn, allAddresses, symbolTable);
+      if (tracePositionSize <= 0)
         return failure();
 
       auto supports =
@@ -690,42 +696,32 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto adaptedMassMatrixSqrt =
           computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
-      HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, adaptedMassMatrixSqrt, stepSize,
-                         trajectoryLength, positionSize, supports);
+      SmallVector<Type> fnResultTypes(fn.getResultTypes().begin(),
+                                      fn.getResultTypes().end());
+
+      HMCContext baseCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                         originalTrace, selection, allAddresses, adaptedInvMass,
+                         adaptedMassMatrixSqrt, stepSize, trajectoryLength,
+                         positionSize, tracePositionSize, supports);
       auto initState = InitHMC(rewriter, loc, rngInput, baseCtx, debugDump);
 
       auto runSampleStepWithStepSize =
           [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
               Value rng, Value currentStepSize) -> MCMCKernelResult {
         if (isHMC) {
-          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, supports);
+          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                         originalTrace, selection, allAddresses, adaptedInvMass,
+                         adaptedMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, tracePositionSize,
+                         supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
-          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, adaptedInvMass, adaptedMassMatrixSqrt,
-                              currentStepSize, positionSize, supports, U,
-                              maxDeltaEnergy, maxTreeDepth);
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                              originalTrace, selection, allAddresses,
+                              adaptedInvMass, adaptedMassMatrixSqrt,
+                              currentStepSize, positionSize, tracePositionSize,
+                              supports, U, maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
-        }
-      };
-
-      auto runPostProcess = [&](OpBuilder &builder, Location loc, Value q,
-                                Value accepted, Value rng,
-                                Value currentStepSize) -> HMCResult {
-        if (isHMC) {
-          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         adaptedInvMass, adaptedMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, supports);
-          return PostProcessHMC(builder, loc, q, accepted, rng, ctx);
-        } else {
-          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, adaptedInvMass, adaptedMassMatrixSqrt,
-                              currentStepSize, positionSize, supports,
-                              initState.U0, maxDeltaEnergy, maxTreeDepth);
-          return PostProcessNUTS(builder, loc, q, rng, nutsCtx);
         }
       };
 
@@ -740,15 +736,18 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               Value rng, Value currentStepSize, Value currentInvMass,
               Value currentMassMatrixSqrt) -> MCMCKernelResult {
         if (isHMC) {
-          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, originalTrace, selection,
-                         currentInvMass, currentMassMatrixSqrt, currentStepSize,
-                         trajectoryLength, positionSize, supports);
+          HMCContext ctx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                         originalTrace, selection, allAddresses, currentInvMass,
+                         currentMassMatrixSqrt, currentStepSize,
+                         trajectoryLength, positionSize, tracePositionSize,
+                         supports);
           return SampleHMC(builder, loc, q, grad, U, rng, ctx, debugDump);
         } else {
-          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, originalTrace,
-                              selection, currentInvMass, currentMassMatrixSqrt,
-                              currentStepSize, positionSize, supports, U,
-                              maxDeltaEnergy, maxTreeDepth);
+          NUTSContext nutsCtx(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                              originalTrace, selection, allAddresses,
+                              currentInvMass, currentMassMatrixSqrt,
+                              currentStepSize, positionSize, tracePositionSize,
+                              supports, U, maxDeltaEnergy, maxTreeDepth);
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
@@ -1200,16 +1199,25 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto shouldStore =
           arith::AndIOp::create(rewriter, loc, geStartIdx, modIsZero);
 
-      auto updatedSamplesBuffer = enzyme::DynamicUpdateOp::create(
-          rewriter, loc, samplesBufferType, samplesBufferLoop, storageIdx,
+      auto q2D = enzyme::ReshapeOp::create(
+          rewriter, loc, RankedTensorType::get({1, positionSize}, elemType),
           q_constrained);
+      auto zeroCol = arith::ConstantOp::create(
+          rewriter, loc, i64TensorType,
+          DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
+      auto updatedSamplesBuffer = enzyme::DynamicUpdateSliceOp::create(
+          rewriter, loc, samplesBufferType, samplesBufferLoop, q2D,
+          ValueRange{storageIdx, zeroCol});
       auto selectedSamplesBuffer = enzyme::SelectOp::create(
           rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
           samplesBufferLoop);
 
-      auto updatedAcceptedBuffer = enzyme::DynamicUpdateOp::create(
-          rewriter, loc, acceptedBufferType, acceptedBufferLoop, storageIdx,
+      auto accepted1D = enzyme::ReshapeOp::create(
+          rewriter, loc, RankedTensorType::get({1}, rewriter.getI1Type()),
           sample.accepted);
+      auto updatedAcceptedBuffer = enzyme::DynamicUpdateSliceOp::create(
+          rewriter, loc, acceptedBufferType, acceptedBufferLoop, accepted1D,
+          ValueRange{storageIdx});
       auto selectedAcceptedBuffer = enzyme::SelectOp::create(
           rewriter, loc, acceptedBufferType, shouldStore, updatedAcceptedBuffer,
           acceptedBufferLoop);
@@ -1228,68 +1236,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           conditionalDump(rewriter, loc, finalSamplesBuffer,
                           "MCMC: collected samples", debugDump);
 
-      auto traceType = enzyme::TraceType::get(rewriter.getContext());
-      auto initTraceOp = enzyme::InitTraceOp::create(rewriter, loc, traceType);
-      Value currTrace = initTraceOp.getTrace();
-
-      auto sampleMap = buildSampleOpMap(fn);
-      size_t positionOffset = 0;
-
-      for (auto addr : selection) {
-        auto address = cast<ArrayAttr>(addr);
-        if (address.empty())
-          continue;
-
-        auto targetSymbol = cast<enzyme::SymbolAttr>(address[0]);
-        auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
-        if (!sampleOp) {
-          mcmcOp.emitError("Could not find sample for address in selection");
-          return failure();
-        }
-
-        SmallVector<Value> batchedSamples;
-        for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
-          auto resultType =
-              cast<RankedTensorType>(sampleOp.getResult(i).getType());
-          auto shape = resultType.getShape();
-
-          int64_t numElements = computeTensorElementCount(resultType);
-          if (numElements < 0) {
-            mcmcOp.emitError("Dynamic tensor dimensions not supported");
-            return failure();
-          }
-
-          // Result type: [collectionSize, originalShape...]
-          SmallVector<int64_t> batchedShape;
-          batchedShape.push_back(collectionSize);
-          batchedShape.append(shape.begin(), shape.end());
-          auto batchedResultType =
-              RankedTensorType::get(batchedShape, resultType.getElementType());
-
-          auto unflattenOp = enzyme::RecoverSampleOp::create(
-              rewriter, loc, batchedResultType, finalSamplesBuffer,
-              rewriter.getI64IntegerAttr(positionOffset));
-
-          batchedSamples.push_back(unflattenOp.getResult());
-          positionOffset += numElements;
-        }
-
-        if (!batchedSamples.empty()) {
-          auto addSampleOp = enzyme::AddSampleToTraceOp::create(
-              rewriter, loc, traceType, currTrace, targetSymbol,
-              batchedSamples);
-          currTrace = addSampleOp.getUpdatedTrace();
-        }
-      }
-
-      // TODO
-      auto getWeightOp = enzyme::GetWeightFromTraceOp::create(
-          rewriter, loc, RankedTensorType::get({}, elemType), originalTrace);
-      auto addWeightOp = enzyme::AddWeightToTraceOp::create(
-          rewriter, loc, traceType, currTrace, getWeightOp.getWeight());
-      currTrace = addWeightOp.getUpdatedTrace();
-
-      rewriter.replaceOp(mcmcOp, {currTrace, finalAcceptedBuffer, finalRng});
+      rewriter.replaceOp(mcmcOp,
+                         {finalSamplesBuffer, finalAcceptedBuffer, finalRng});
 
       return success();
     }
