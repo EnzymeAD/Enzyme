@@ -879,69 +879,6 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
           meanAcceptProb,       rngNext};
 }
 
-HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
-                               Value accepted, Value rng,
-                               const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto traceType = enzyme::TraceType::get(builder.getContext());
-  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
-
-  SmallVector<Value> finalUpdateInputs;
-  finalUpdateInputs.push_back(rng);
-  finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-  auto finalUpdateOp = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
-      builder.getStringAttr(""));
-  auto finalTrace = finalUpdateOp.getUpdatedTrace();
-  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
-
-  auto selectedTrace = enzyme::SelectOp::create(
-      builder, loc, traceType, accepted, finalTrace, ctx.originalTrace);
-
-  // TODO: Add diagnostics via addDiagnosticsToTrace op:
-  // - "accepted": accepted tensor (already available)
-  // - "accept_prob": acceptance probability (need to pass from SampleHMC)
-
-  return {selectedTrace, accepted, rngAfterUpdate};
-}
-
-HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
-                                Value rng, const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-  auto traceType = enzyme::TraceType::get(builder.getContext());
-  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
-
-  SmallVector<Value> finalUpdateInputs;
-  finalUpdateInputs.push_back(rng);
-  finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-  auto finalUpdateOp = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
-      builder.getStringAttr(""));
-  auto finalTrace = finalUpdateOp.getUpdatedTrace();
-  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
-
-  // NUTS always accepts (implicit in tree selection)
-  auto acceptedTensor = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-
-  // TODO: Add diagnostics via addDiagnosticsToTrace op:
-  // - "diverging": divergence flags (need to pass from SampleNUTS)
-  // - "tree_depth": tree depths (need to pass from SampleNUTS)
-  // - "mean_accept_prob": mean acceptance probs (need to pass from SampleNUTS)
-
-  return {finalTrace, acceptedTensor, rngAfterUpdate};
-}
-
 NUTSTreeState MCMC::buildBaseTree(OpBuilder &builder, Location loc,
                                   const IntegratorState &leaf, Value rng,
                                   Value direction, const NUTSContext &ctx) {

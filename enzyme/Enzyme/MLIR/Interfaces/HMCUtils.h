@@ -55,12 +55,6 @@ struct InitialHMCState {
   Value rng;   // RNG state for SampleHMC
 };
 
-struct HMCResult {
-  Value trace;
-  Value accepted;
-  Value rng;
-};
-
 /// Result of one MCMC kernel step
 struct MCMCKernelResult {
   Value q;           // New position vector
@@ -271,14 +265,6 @@ MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
 MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
                             Value grad, Value U, Value rng,
                             const NUTSContext &ctx, bool debugDump = false);
-
-/// PostProcess HMC samples
-HMCResult PostProcessHMC(OpBuilder &builder, Location loc, Value q,
-                         Value accepted, Value rng, const HMCContext &ctx);
-
-/// PostProcess NUTS samples
-HMCResult PostProcessNUTS(OpBuilder &builder, Location loc, Value q, Value rng,
-                          const NUTSContext &ctx);
 
 /// Builds a base tree (leaf node) by taking one leapfrog step.
 NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
