@@ -274,7 +274,7 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
     auto p = enzyme::DotOp::create(
         builder, loc, positionType, eps, massMatrixSqrt,
         builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
+        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
     return {p, rngOut};
   }
 }
