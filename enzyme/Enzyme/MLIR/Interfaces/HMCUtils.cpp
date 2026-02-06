@@ -241,9 +241,10 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  auto splitOp = enzyme::RandomSplitOp::create(builder, loc,
-                                               TypeRange{rng.getType()}, rng);
-  auto rngForSampling = splitOp.getResult(0);
+  auto splitOp = enzyme::RandomSplitOp::create(
+      builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
+  Value rngForSampling = splitOp.getResult(0);
+  Value rngOut = splitOp.getResult(1);
 
   rngForSampling =
       conditionalDump(builder, loc, rngForSampling,
