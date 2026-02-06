@@ -244,7 +244,6 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
   auto splitOp = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
   Value rngForSampling = splitOp.getResult(0);
-  Value rngOut = splitOp.getResult(1);
 
   rngForSampling =
       conditionalDump(builder, loc, rngForSampling,
