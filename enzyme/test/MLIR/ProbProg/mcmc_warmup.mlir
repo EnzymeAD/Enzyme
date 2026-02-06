@@ -96,34 +96,36 @@ module {
 // CHECK-NEXT: %[[SPLIT2:.+]]:3 = enzyme.randomSplit %[[SPLIT1]]#0
 //
 // --- Extract initial position ---
-// CHECK-NEXT: %[[Q0_SL:.+]] = enzyme.dynamic_slice %[[INIT_TRACE]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
-// CHECK-NEXT: %[[Q0:.+]] = enzyme.reshape %[[Q0_SL]] : (tensor<1x1xf64>) -> tensor<1xf64>
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_slice %[[INIT_TRACE]], %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice %[[INIT_TRACE]], %{{.+}}, %[[C0]], %[[C0]]
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_slice %{{.+}}, %[[C0]], %[[C0]] {slice_sizes = array<i64: 1, 1>}
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice %[[INIT_TRACE]], %{{.+}}, %[[C0]], %[[C0]]
 //
 // --- Initial potential U0 ---
-// CHECK-NEXT: %[[Q0_2D:.+]] = enzyme.reshape %[[Q0]] : (tensor<1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[GEN0:.+]]:4 = call @test.generate{{.*}}(%[[Q0_2D]], %[[SPLIT2]]#1, %[[MEAN]], %[[STDDEV]])
+// CHECK-NEXT: %[[GEN0:.+]]:4 = call @test.generate{{.*}}(%{{.+}}, %[[SPLIT2]]#1, %[[MEAN]], %[[STDDEV]])
 // CHECK-NEXT: %[[U0:.+]] = arith.negf %[[GEN0]]#1 : tensor<f64>
 //
 // --- Initial gradient via autodiff ---
-// CHECK-NEXT: %[[AD0:.+]]:3 = enzyme.autodiff_region(%[[Q0]], %[[ONE]]) {
-// CHECK-NEXT: ^bb0(%{{.+}}: tensor<1xf64>):
-// CHECK-NEXT: %{{.+}} = enzyme.reshape
+// CHECK-NEXT: %[[AD0:.+]]:3 = enzyme.autodiff_region(%{{.+}}, %[[ONE]]) {
+// CHECK-NEXT: ^bb0(%{{.+}}: tensor<1x1xf64>):
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_slice
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice
 // CHECK-NEXT: %{{.+}} = func.call @test.generate
 // CHECK-NEXT: %{{.+}} = arith.negf
 // CHECK-NEXT: enzyme.yield
 // CHECK-NEXT: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
 //
 // --- Warmup loop: 16 iter_args ---
-// CHECK-NEXT: %[[WARMUP:.+]]:16 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[ONE_1D]], %[[ONE_1D]], %[[ZERO_F]], %[[ZERO_F]], %[[ZERO_F]], %[[C0]], %[[EPS_INIT]], %[[ZERO_1D]], %[[ZERO_1D]], %[[C0]], %[[C0]] : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
-// CHECK-NEXT: ^bb0(%[[WI:.+]]: tensor<i64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[INV_MASS:.+]]: tensor<1xf64>, %[[MASS_SQRT:.+]]: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
+// CHECK-NEXT: %[[WARMUP:.+]]:16 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[ZERO_F]], %[[ZERO_F]], %[[ZERO_F]], %[[C0]], %[[EPS_INIT]], %[[ZERO_1D]], %[[ZERO_1D]], %[[C0]], %[[C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
+// CHECK-NEXT: ^bb0(%[[WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[INV_MASS:.+]]: tensor<1x1xf64>, %[[MASS_SQRT:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling with mass matrix ---
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
-// CHECK-NEXT: %{{.+}}, %[[P_RAW:.+]] = enzyme.random %{{.+}}, %[[ZERO_F]], %[[ONE]] {rng_distribution = #enzyme<rng_distribution NORMAL>}
-// CHECK-NEXT: %[[P_SCALED:.+]] = arith.mulf %[[MASS_SQRT]], %[[P_RAW]]
-// CHECK-NEXT: %[[P_MASS:.+]] = arith.mulf %[[INV_MASS]], %[[P_SCALED]]
-// CHECK-NEXT: %{{.+}} = enzyme.dot %[[P_SCALED]], %[[P_MASS]] {{{.*}}lhs_contracting_dimensions = array<i64: 0>{{.*}}}
+// CHECK-NEXT: %{{.+}}, %{{.+}} = enzyme.random %{{.+}}, %[[ZERO_F]], %[[ONE]] {rng_distribution = #enzyme<rng_distribution NORMAL>}
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[MASS_SQRT]] {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[INV_MASS]] {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 // CHECK-NEXT: %{{.+}} = arith.mulf %{{.+}}, %[[HALF]]
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -176,14 +178,15 @@ module {
 // CHECK-NEXT: %{{.+}} = arith.cmpi slt
 // CHECK-NEXT: %[[IN_WINDOW:.+]] = arith.andi
 //
-// --- Welford update: delta, new_mean, delta2, new_m2 ---
+// --- Welford update ---
+// CHECK-NEXT: %{{.+}} = enzyme.reshape %[[TREE]]#6 : (tensor<1x1xf64>) -> tensor<1xf64>
 // CHECK-NEXT: %{{.+}} = arith.addi
 // CHECK-NEXT: %{{.+}} = arith.sitofp
 // CHECK-NEXT: %{{.+}} = "enzyme.broadcast"
-// CHECK-NEXT: %{{.+}} = arith.subf %[[TREE]]#6, %{{.+}}
+// CHECK-NEXT: %{{.+}} = arith.subf
 // CHECK-NEXT: %{{.+}} = arith.divf
 // CHECK-NEXT: %{{.+}} = arith.addf
-// CHECK-NEXT: %{{.+}} = arith.subf %[[TREE]]#6, %{{.+}}
+// CHECK-NEXT: %{{.+}} = arith.subf
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -224,20 +227,20 @@ module {
 // CHECK-NEXT: })
 //
 // --- Warmup loop yield ---
-// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
+// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
 // CHECK-NEXT: }
 //
 // --- Post-warmup sampling loop: 6 iter_args with adapted params ---
-// CHECK-NEXT: %[[SLOOP:.+]]:6 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[WARMUP]]#0, %[[WARMUP]]#1, %[[WARMUP]]#2, %[[WARMUP]]#3, %{{.+}}, %[[ACC_INIT]] : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
-// CHECK-NEXT: ^bb0(%[[SI:.+]]: tensor<i64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %[[S_SAMP:.+]]: tensor<1x1xf64>, %[[S_ACC:.+]]: tensor<1xi1>):
+// CHECK-NEXT: %[[SLOOP:.+]]:6 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C1]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[WARMUP]]#0, %[[WARMUP]]#1, %[[WARMUP]]#2, %[[WARMUP]]#3, %{{.+}}, %[[ACC_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
+// CHECK-NEXT: ^bb0(%[[SI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %[[S_SAMP:.+]]: tensor<1x1xf64>, %[[S_ACC:.+]]: tensor<1xi1>):
 //
 // --- Momentum with adapted mass matrix from warmup ---
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}}, %{{.+}} = enzyme.random {{.*}} {rng_distribution = #enzyme<rng_distribution NORMAL>}
-// CHECK-NEXT: %{{.+}} = arith.mulf %[[WARMUP]]#6
-// CHECK-NEXT: %{{.+}} = arith.mulf %[[WARMUP]]#5
-// CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[WARMUP]]#6 {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[WARMUP]]#5 {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -246,15 +249,14 @@ module {
 //
 // --- Sample storage ---
 // CHECK: %[[S_STORE:.+]] = arith.cmpi sge, %[[SI]], %[[C0]]
-// CHECK-NEXT: %{{.+}} = enzyme.reshape %[[S_TREE]]#6 : (tensor<1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice %[[S_SAMP]], %{{.+}}, %[[SI]], %[[C0]]
+// CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice %[[S_SAMP]], %[[S_TREE]]#6, %[[SI]], %[[C0]]
 // CHECK-NEXT: %{{.+}} = enzyme.select %[[S_STORE]]
 // CHECK-NEXT: %{{.+}} = enzyme.reshape %[[TRUE]] : (tensor<i1>) -> tensor<1xi1>
 // CHECK-NEXT: %{{.+}} = enzyme.dynamic_update_slice %[[S_ACC]], %{{.+}}, %[[SI]]
 // CHECK-NEXT: %{{.+}} = enzyme.select %[[S_STORE]]
 //
 // --- Sampling yield ---
-// CHECK-NEXT: enzyme.yield %[[S_TREE]]#6, %[[S_TREE]]#7, %[[S_TREE]]#8, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>
+// CHECK-NEXT: enzyme.yield %[[S_TREE]]#6, %[[S_TREE]]#7, %[[S_TREE]]#8, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>
 // CHECK-NEXT: }
 // CHECK-NEXT: return %[[SLOOP]]#4, %[[SLOOP]]#5, %[[SLOOP]]#3 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
 // CHECK-NEXT: }
@@ -279,28 +281,27 @@ module {
 // CHECK-DAG: %[[S_C1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG: %[[S_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[S_ONE:.+]] = arith.constant dense<1.000000e+00> : tensor<f64>
-// CHECK-DAG: %[[S_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1xf64>
+// CHECK-DAG: %[[S_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1x1xf64>
 // CHECK-DAG: %[[S_ZERO_F:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
 //
 // --- Init ---
 // CHECK: enzyme.randomSplit
-// CHECK: enzyme.dynamic_slice
-// CHECK: enzyme.reshape
+// CHECK: enzyme.dynamic_update_slice
 // CHECK: arith.negf
 // CHECK: enzyme.autodiff_region
 // CHECK: }
 //
 // --- Warmup loop: 13 iter_args (no Welford mean/m2/n) ---
-// CHECK-NEXT: %[[S_WARMUP:.+]]:13 = enzyme.for_loop(%[[S_C0]] : tensor<i64>) to(%[[S_C10]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[S_ONE_1D]], %[[S_ONE_1D]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_C0]], %[[S_EPS_INIT]], %[[S_C0]] : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
-// CHECK-NEXT: ^bb0(%[[S_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
+// CHECK: %[[S_WARMUP:.+]]:13 = enzyme.for_loop(%[[S_C0]] : tensor<i64>) to(%[[S_C10]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[S_ONE_1D]], %[[S_ONE_1D]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_ZERO_F]], %[[S_C0]], %[[S_EPS_INIT]], %[[S_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
+// CHECK-NEXT: ^bb0(%[[S_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling ---
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}}, %{{.+}} = enzyme.random {{.*}} {rng_distribution = #enzyme<rng_distribution NORMAL>}
-// CHECK-NEXT: %{{.+}} = arith.mulf
-// CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -360,11 +361,11 @@ module {
 // CHECK-NEXT: })
 //
 // --- Warmup yield: 13 values ---
-// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>
+// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>
 // CHECK-NEXT: }
 //
 // --- Post-warmup sampling loop ---
-// CHECK-NEXT: %[[S_SLOOP:.+]]:6 = enzyme.for_loop(%[[S_C0]] : tensor<i64>) to(%[[S_C1]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%[[S_WARMUP]]#0, %[[S_WARMUP]]#1, %[[S_WARMUP]]#2, %[[S_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
+// CHECK-NEXT: %[[S_SLOOP:.+]]:6 = enzyme.for_loop(%[[S_C0]] : tensor<i64>) to(%[[S_C1]] : tensor<i64>) step(%[[S_C1]] : tensor<i64>) iter_args(%[[S_WARMUP]]#0, %[[S_WARMUP]]#1, %[[S_WARMUP]]#2, %[[S_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
 // CHECK: enzyme.while_loop
 // CHECK: return %[[S_SLOOP]]#4, %[[S_SLOOP]]#5, %[[S_SLOOP]]#3 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
 // CHECK-NEXT: }
@@ -391,19 +392,19 @@ module {
 // CHECK: enzyme.randomSplit
 // CHECK: arith.negf
 // CHECK: enzyme.autodiff_region
-// CHECK: }
+// CHECK: } attributes
 //
 // --- Warmup loop: 16 iter_args (includes Welford state) ---
-// CHECK-NEXT: %[[M_WARMUP:.+]]:16 = enzyme.for_loop(%[[M_C0]] : tensor<i64>) to(%[[M_C10]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[M_ONE_1D]], %[[M_ONE_1D]], %{{.+}}, %{{.+}}, %{{.+}}, %[[M_C0]], %[[M_EPS_INIT]], %[[M_ZERO_1D]], %[[M_ZERO_1D]], %[[M_C0]], %[[M_C0]] : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
-// CHECK-NEXT: ^bb0(%[[M_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[M_INV:.+]]: tensor<1xf64>, %[[M_SQRT:.+]]: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
+// CHECK-NEXT: %[[M_WARMUP:.+]]:16 = enzyme.for_loop(%[[M_C0]] : tensor<i64>) to(%[[M_C10]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[M_C0]], %[[M_EPS_INIT]], %[[M_ZERO_1D]], %[[M_ZERO_1D]], %[[M_C0]], %[[M_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64> {
+// CHECK-NEXT: ^bb0(%[[M_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %[[M_INV:.+]]: tensor<1x1xf64>, %[[M_SQRT:.+]]: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling with mass matrix ---
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}}, %{{.+}} = enzyme.random {{.*}} {rng_distribution = #enzyme<rng_distribution NORMAL>}
-// CHECK-NEXT: %{{.+}} = arith.mulf %[[M_SQRT]]
-// CHECK-NEXT: %{{.+}} = arith.mulf %[[M_INV]]
-// CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[M_SQRT]] {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[M_INV]] {{.*}}
+// CHECK-NEXT: %{{.+}} = enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -422,13 +423,14 @@ module {
 // CHECK-NEXT: %[[M_IN_WIN:.+]] = arith.andi
 //
 // --- Welford update ---
+// CHECK-NEXT: %{{.+}} = enzyme.reshape %[[M_TREE]]#6 : (tensor<1x1xf64>) -> tensor<1xf64>
 // CHECK-NEXT: %{{.+}} = arith.addi
 // CHECK-NEXT: %{{.+}} = arith.sitofp
 // CHECK-NEXT: %{{.+}} = "enzyme.broadcast"
-// CHECK-NEXT: %{{.+}} = arith.subf %[[M_TREE]]#6
+// CHECK-NEXT: %{{.+}} = arith.subf
 // CHECK-NEXT: %{{.+}} = arith.divf
 // CHECK-NEXT: %{{.+}} = arith.addf
-// CHECK-NEXT: %{{.+}} = arith.subf %[[M_TREE]]#6
+// CHECK-NEXT: %{{.+}} = arith.subf
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -455,13 +457,13 @@ module {
 // CHECK-NEXT: })
 //
 // --- Warmup yield: 16 values ---
-// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
+// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
 // CHECK-NEXT: }
 //
 // --- Post-warmup sampling with adapted mass matrix ---
-// CHECK-NEXT: %[[M_SLOOP:.+]]:6 = enzyme.for_loop(%[[M_C0]] : tensor<i64>) to(%[[M_C1]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%[[M_WARMUP]]#0, %[[M_WARMUP]]#1, %[[M_WARMUP]]#2, %[[M_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
-// CHECK: arith.mulf %[[M_WARMUP]]#6
-// CHECK-NEXT: %{{.+}} = arith.mulf %[[M_WARMUP]]#5
+// CHECK-NEXT: %[[M_SLOOP:.+]]:6 = enzyme.for_loop(%[[M_C0]] : tensor<i64>) to(%[[M_C1]] : tensor<i64>) step(%[[M_C1]] : tensor<i64>) iter_args(%[[M_WARMUP]]#0, %[[M_WARMUP]]#1, %[[M_WARMUP]]#2, %[[M_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
+// CHECK: enzyme.dot %{{.+}}, %[[M_WARMUP]]#6
+// CHECK-NEXT: %{{.+}} = enzyme.dot %{{.+}}, %[[M_WARMUP]]#5
 // CHECK: enzyme.while_loop
 // CHECK: return %[[M_SLOOP]]#4, %[[M_SLOOP]]#5, %[[M_SLOOP]]#3 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
 // CHECK-NEXT: }
@@ -480,25 +482,25 @@ module {
 // CHECK-DAG: %[[N_C1:.+]] = arith.constant dense<1> : tensor<i64>
 // CHECK-DAG: %[[N_C0:.+]] = arith.constant dense<0> : tensor<i64>
 // CHECK-DAG: %[[N_EPS_INIT:.+]] = arith.constant dense<4.44{{.+}}> : tensor<f64>
-// CHECK-DAG: %[[N_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1xf64>
+// CHECK-DAG: %[[N_ONE_1D:.+]] = arith.constant dense<1.000000e+00> : tensor<1x1xf64>
 //
 // --- Init ---
 // CHECK: enzyme.randomSplit
 // CHECK: arith.negf
 // CHECK: enzyme.autodiff_region
-// CHECK: }
+// CHECK: } attributes
 //
 // --- Warmup loop: 13 iter_args ---
-// CHECK-NEXT: %[[N_WARMUP:.+]]:13 = enzyme.for_loop(%[[N_C0]] : tensor<i64>) to(%[[N_C10]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[N_ONE_1D]], %[[N_ONE_1D]], %{{.+}}, %{{.+}}, %{{.+}}, %[[N_C0]], %[[N_EPS_INIT]], %[[N_C0]] : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
-// CHECK-NEXT: ^bb0(%[[N_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
+// CHECK-NEXT: %[[N_WARMUP:.+]]:13 = enzyme.for_loop(%[[N_C0]] : tensor<i64>) to(%[[N_C10]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[N_ONE_1D]], %[[N_ONE_1D]], %{{.+}}, %{{.+}}, %{{.+}}, %[[N_C0]], %[[N_EPS_INIT]], %[[N_C0]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64> {
+// CHECK-NEXT: ^bb0(%[[N_WI:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<i64>):
 //
 // --- Momentum sampling ---
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}} = enzyme.randomSplit
 // CHECK-NEXT: %{{.+}}, %{{.+}} = enzyme.random {{.*}} {rng_distribution = #enzyme<rng_distribution NORMAL>}
-// CHECK-NEXT: %{{.+}} = arith.mulf
-// CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot
+// CHECK-NEXT: %{{.+}} = enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 // CHECK-NEXT: %{{.+}} = arith.mulf
 // CHECK-NEXT: %{{.+}} = arith.addf
 //
@@ -530,11 +532,11 @@ module {
 // CHECK-NEXT: })
 //
 // --- Warmup yield: 13 values ---
-// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>
+// CHECK-NEXT: enzyme.yield {{.*}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<i64>
 // CHECK-NEXT: }
 //
 // --- Post-warmup sampling ---
-// CHECK-NEXT: %[[N_SLOOP:.+]]:6 = enzyme.for_loop(%[[N_C0]] : tensor<i64>) to(%[[N_C1]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%[[N_WARMUP]]#0, %[[N_WARMUP]]#1, %[[N_WARMUP]]#2, %[[N_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1xf64>, tensor<1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
+// CHECK-NEXT: %[[N_SLOOP:.+]]:6 = enzyme.for_loop(%[[N_C0]] : tensor<i64>) to(%[[N_C1]] : tensor<i64>) step(%[[N_C1]] : tensor<i64>) iter_args(%[[N_WARMUP]]#0, %[[N_WARMUP]]#1, %[[N_WARMUP]]#2, %[[N_WARMUP]]#3, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1xi1> {
 // CHECK: enzyme.while_loop
 // CHECK: return %[[N_SLOOP]]#4, %[[N_SLOOP]]#5, %[[N_SLOOP]]#3 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
 // CHECK-NEXT: }
