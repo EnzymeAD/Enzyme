@@ -108,6 +108,7 @@ struct HMCContext {
   Value trajectoryLength;
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
+  FlatSymbolRefAttr logpdfFn;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              ArrayRef<Type> fnResultTypes, Value originalTrace,
@@ -121,6 +122,14 @@ struct HMCContext {
         massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
         trajectoryLength(trajectoryLength), positionSize(positionSize),
         supports(supports.begin(), supports.end()) {}
+
+  HMCContext(FlatSymbolRefAttr logpdfFn, Value invMass, Value massMatrixSqrt,
+             Value stepSize, Value trajectoryLength, int64_t positionSize)
+      : invMass(invMass), massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
+        trajectoryLength(trajectoryLength), positionSize(positionSize),
+        logpdfFn(logpdfFn) {}
+
+  bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
 
   int64_t getFullTraceSize() const {
     auto traceType = cast<RankedTensorType>(originalTrace.getType());
@@ -146,6 +155,12 @@ struct HMCContext {
     }
     return false;
   }
+
+  HMCContext withStepSize(Value newStepSize) const {
+    HMCContext copy = *this;
+    copy.stepSize = newStepSize;
+    return copy;
+  }
 };
 
 struct NUTSContext : public HMCContext {
@@ -164,6 +179,19 @@ struct NUTSContext : public HMCContext {
                    /* Unused trajectoryLength */ Value(), positionSize,
                    supports),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
+
+  NUTSContext(FlatSymbolRefAttr logpdfFn, Value invMass, Value massMatrixSqrt,
+              Value stepSize, int64_t positionSize, Value H0,
+              Value maxDeltaEnergy, int64_t maxTreeDepth)
+      : HMCContext(logpdfFn, invMass, massMatrixSqrt, stepSize,
+                   /* Unused trajectoryLength */ Value(), positionSize),
+        H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
+
+  NUTSContext withH0(Value newH0) const {
+    NUTSContext copy = *this;
+    copy.H0 = newH0;
+    return copy;
+  }
 };
 
 struct NUTSTreeState {
@@ -280,7 +308,8 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
 ///   - Computes initial kinetic energy and Hamiltonian
 ///   - Computes initial gradient via AutoDiffRegionOp
 InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
-                        const HMCContext &ctx, bool debugDump = false);
+                        const HMCContext &ctx, Value initialPosition = Value(),
+                        bool debugDump = false);
 
 /// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
 MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
