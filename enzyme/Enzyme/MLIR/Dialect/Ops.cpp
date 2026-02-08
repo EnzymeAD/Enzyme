@@ -1091,9 +1091,17 @@ LogicalResult MCMCOp::verify() {
   }
 
   // TODO(#2695): More verification
+  if (!getFnAttr() && !getLogpdfFnAttr()) {
+    return emitOpError("one of `fn` or `logpdf_fn` must be specified");
+  }
+
+  if (getFnAttr() && getLogpdfFnAttr()) {
+    return emitOpError("specifying both `fn` and `logpdf_fn` is unsupported");
+  }
+
   if (getLogpdfFnAttr() && !getInitialPosition()) {
     return emitOpError(
-        "custom logpdf mode requires initial_position to be provided");
+        "custom logpdf mode requires `initial_position` to be provided");
   }
 
   return success();
