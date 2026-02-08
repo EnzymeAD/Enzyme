@@ -241,18 +241,13 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  auto splitOp = enzyme::RandomSplitOp::create(
-      builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
-  Value rngForSampling = splitOp.getResult(0);
-
-  rngForSampling =
-      conditionalDump(builder, loc, rngForSampling,
-                      "sampleMomentum: rng state for sampling", debugDump);
+  rng = conditionalDump(builder, loc, rng, "sampleMomentum: input rng state",
+                        debugDump);
 
   // Sample eps ~ N(0, I)
   auto randomOp = enzyme::RandomOp::create(
-      builder, loc, TypeRange{rngForSampling.getType(), positionType},
-      rngForSampling, zeroConst, oneConst,
+      builder, loc, TypeRange{rng.getType(), positionType}, rng, zeroConst,
+      oneConst,
       enzyme::RngDistributionAttr::get(builder.getContext(),
                                        enzyme::RngDistribution::NORMAL));
 
@@ -357,7 +352,6 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
-  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
   auto gradSeed = arith::ConstantOp::create(
       builder, loc, scalarType,
@@ -381,32 +375,45 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
 
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
-  Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
 
-  Value fullTrace = scatterPositionToTrace(builder, loc, q_constrained,
-                                           ctx.originalTrace, ctx);
+  if (ctx.hasCustomLogpdf()) {
+    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                       TypeRange{scalarType}, ValueRange{qArg});
+    Value U = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    // TODO(#2695): handle hybrid case
+    enzyme::YieldOp::create(builder, loc, {U, rng});
+  } else {
+    auto traceType =
+        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
-  SmallVector<Value> generateInputs;
-  generateInputs.push_back(rng);
-  generateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
+    Value fullTrace = scatterPositionToTrace(builder, loc, q_constrained,
+                                             ctx.originalTrace, ctx);
 
-  SmallVector<Type> generateResultTypes;
-  generateResultTypes.push_back(traceType);
-  generateResultTypes.push_back(scalarType);
-  generateResultTypes.append(ctx.fnResultTypes.begin(),
-                             ctx.fnResultTypes.end());
+    SmallVector<Value> generateInputs;
+    generateInputs.push_back(rng);
+    generateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-  auto generateOp = enzyme::GenerateOp::create(
-      builder, loc, generateResultTypes, ctx.fn, generateInputs, fullTrace,
-      ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
+    SmallVector<Type> generateResultTypes;
+    generateResultTypes.push_back(traceType);
+    generateResultTypes.push_back(scalarType);
+    generateResultTypes.append(ctx.fnResultTypes.begin(),
+                               ctx.fnResultTypes.end());
 
-  Value negWeight = arith::NegFOp::create(builder, loc, generateOp.getWeight());
-  Value jacobianCorrection =
-      computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
-  Value U = arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
+    auto generateOp = enzyme::GenerateOp::create(
+        builder, loc, generateResultTypes, ctx.fn, generateInputs, fullTrace,
+        ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
 
-  SmallVector<Value> yieldValues{U, generateOp.getResult(2)};
-  enzyme::YieldOp::create(builder, loc, yieldValues);
+    Value negWeight =
+        arith::NegFOp::create(builder, loc, generateOp.getWeight());
+    Value jacobianCorrection =
+        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
+    Value U =
+        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
+
+    SmallVector<Value> yieldValues{U, generateOp.getResult(2)};
+    enzyme::YieldOp::create(builder, loc, yieldValues);
+  }
 
   builder.setInsertionPointAfter(autodiffOp);
 
@@ -657,12 +664,11 @@ NUTSTreeState MCMC::combineTrees(OpBuilder &builder, Location loc,
 }
 
 InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
-                              const HMCContext &ctx, bool debugDump) {
+                              const HMCContext &ctx, Value initialPosition,
+                              bool debugDump) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
-  auto fullTraceType =
-      RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
   auto initSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
@@ -672,37 +678,50 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto rngForSampleKernel = kernelSplit.getResult(0);
   auto rngForAutodiff = kernelSplit.getResult(1);
 
-  // 1. Extract initial position vector (constrained)
-  auto q0_constrained =
-      gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
+  Value q0;
+  Value U0;
 
-  // 2. Unconstrain to get position vector for HMC
-  auto q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
+  if (ctx.hasCustomLogpdf()) {
+    q0 = initialPosition;
+    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                       TypeRange{scalarType}, ValueRange{q0});
+    U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+  } else {
+    auto fullTraceType =
+        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
-  // 3. Compute initial potential energy: U0 = -weight + correction
-  Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
-                                               ctx.originalTrace, ctx);
+    // 1. Extract initial position vector (constrained)
+    auto q0_constrained =
+        gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
 
-  SmallVector<Value> generateInputsInit;
-  generateInputsInit.push_back(rngForAutodiff);
-  generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    // 2. Unconstrain to get position vector for HMC
+    q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
 
-  SmallVector<Type> generateResultTypesInit;
-  generateResultTypesInit.push_back(fullTraceType);
-  generateResultTypesInit.push_back(scalarType);
-  generateResultTypesInit.append(ctx.fnResultTypes.begin(),
-                                 ctx.fnResultTypes.end());
+    // 3. Compute initial potential energy: U0 = -weight + correction
+    Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
+                                                 ctx.originalTrace, ctx);
 
-  auto generateOpInit = enzyme::GenerateOp::create(
-      builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
-      fullTraceInit, ctx.allAddresses, ctx.allAddresses,
-      builder.getStringAttr(""));
+    SmallVector<Value> generateInputsInit;
+    generateInputsInit.push_back(rngForAutodiff);
+    generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-  auto weight0 = generateOpInit.getWeight();
-  auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
-  auto jacobian0 =
-      computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
-  auto U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+    SmallVector<Type> generateResultTypesInit;
+    generateResultTypesInit.push_back(fullTraceType);
+    generateResultTypesInit.push_back(scalarType);
+    generateResultTypesInit.append(ctx.fnResultTypes.begin(),
+                                   ctx.fnResultTypes.end());
+
+    auto generateOpInit = enzyme::GenerateOp::create(
+        builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
+        fullTraceInit, ctx.allAddresses, ctx.allAddresses,
+        builder.getStringAttr(""));
+
+    auto weight0 = generateOpInit.getWeight();
+    auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
+    auto jacobian0 =
+        computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
+    U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+  }
 
   // 4. Compute initial gradient at q0
   auto gradSeedInit = arith::ConstantOp::create(
@@ -726,36 +745,47 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   autodiffInitBlock->addArgument(positionType, loc);
 
   builder.setInsertionPointToStart(autodiffInitBlock);
-  auto q0Arg = autodiffInitBlock->getArgument(0); // unconstrained position
-  // `GenerateOp` expects a constrained position vector.
-  auto q0Arg_constrained = constrainPosition(builder, loc, q0Arg, ctx.supports);
-  Value fullTraceInner = scatterPositionToTrace(builder, loc, q0Arg_constrained,
-                                                ctx.originalTrace, ctx);
+  auto q0Arg = autodiffInitBlock->getArgument(0);
 
-  SmallVector<Value> generateInputsInner;
-  generateInputsInner.push_back(rngForAutodiff);
-  generateInputsInner.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  if (ctx.hasCustomLogpdf()) {
+    auto callOpInner = func::CallOp::create(
+        builder, loc, ctx.logpdfFn, TypeRange{scalarType}, ValueRange{q0Arg});
+    auto U0_init =
+        arith::NegFOp::create(builder, loc, callOpInner.getResult(0));
+    enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
+  } else {
+    auto fullTraceType =
+        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
+    auto q0Arg_constrained =
+        constrainPosition(builder, loc, q0Arg, ctx.supports);
+    Value fullTraceInner = scatterPositionToTrace(
+        builder, loc, q0Arg_constrained, ctx.originalTrace, ctx);
 
-  SmallVector<Type> generateResultTypesInner;
-  generateResultTypesInner.push_back(fullTraceType);
-  generateResultTypesInner.push_back(scalarType);
-  generateResultTypesInner.append(ctx.fnResultTypes.begin(),
-                                  ctx.fnResultTypes.end());
+    SmallVector<Value> generateInputsInner;
+    generateInputsInner.push_back(rngForAutodiff);
+    generateInputsInner.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-  auto generateOpInner = enzyme::GenerateOp::create(
-      builder, loc, generateResultTypesInner, ctx.fn, generateInputsInner,
-      fullTraceInner, ctx.allAddresses, ctx.allAddresses,
-      builder.getStringAttr(""));
+    SmallVector<Type> generateResultTypesInner;
+    generateResultTypesInner.push_back(fullTraceType);
+    generateResultTypesInner.push_back(scalarType);
+    generateResultTypesInner.append(ctx.fnResultTypes.begin(),
+                                    ctx.fnResultTypes.end());
 
-  auto negWeightInit =
-      arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
-  auto jacobianInit =
-      computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
-  auto U0_init =
-      arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
+    auto generateOpInner = enzyme::GenerateOp::create(
+        builder, loc, generateResultTypesInner, ctx.fn, generateInputsInner,
+        fullTraceInner, ctx.allAddresses, ctx.allAddresses,
+        builder.getStringAttr(""));
 
-  SmallVector<Value> yieldValues{U0_init, generateOpInner.getResult(2)};
-  enzyme::YieldOp::create(builder, loc, yieldValues);
+    auto negWeightInit =
+        arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
+    auto jacobianInit =
+        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
+    auto U0_init =
+        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
+
+    SmallVector<Value> yieldValues{U0_init, generateOpInner.getResult(2)};
+    enzyme::YieldOp::create(builder, loc, yieldValues);
+  }
   builder.setInsertionPointAfter(autodiffInit);
 
   // (U, rng, grad)
@@ -784,10 +814,7 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto adjustedStepSize =
       arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
 
-  HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.fnResultTypes,
-                         ctx.originalTrace, ctx.selection, ctx.allAddresses,
-                         ctx.invMass, ctx.massMatrixSqrt, adjustedStepSize,
-                         ctx.trajectoryLength, ctx.positionSize, ctx.supports);
+  auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
   // 1. Split RNG: [rngNext, rngMomentum, rngTransition]
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
@@ -798,9 +825,15 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto rngTransition = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
+  Value rngForMomentum = rngMomentum;
+  if (!ctx.hasCustomLogpdf()) {
+    auto momSplit = enzyme::RandomSplitOp::create(
+        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
+    rngForMomentum = momSplit.getResult(0);
+  }
   auto [p0, rngAfterMomentum] =
-      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt,
-                     positionType, debugDump);
+      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
+                     ctx.massMatrixSqrt, positionType, debugDump);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
   auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
@@ -915,8 +948,15 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto rngTree = sampleKernelSplit.getResult(2);
 
   // 2. Sample fresh momentum p ~ N(0, M)
-  auto [p0, rngAfterMomentum] = sampleMomentum(
-      builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt, positionType);
+  Value rngForMomentum = rngMomentum;
+  if (!ctx.hasCustomLogpdf()) {
+    auto momSplit = enzyme::RandomSplitOp::create(
+        builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
+    rngForMomentum = momSplit.getResult(0);
+  }
+  auto [p0, rngAfterMomentum] =
+      sampleMomentum(builder, loc, rngForMomentum, ctx.invMass,
+                     ctx.massMatrixSqrt, positionType, debugDump);
 
   // 3. Compute K0 = 0.5 * p^T * M^-1 * p
   auto K0 = computeKineticEnergy(builder, loc, p0, ctx.invMass, positionType);
@@ -925,10 +965,7 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto H0 = arith::AddFOp::create(builder, loc, U, K0);
 
   // 5. Initialize NUTS tree state
-  NUTSContext iterCtx(
-      ctx.fn, ctx.fnInputs, ctx.fnResultTypes, ctx.originalTrace, ctx.selection,
-      ctx.allAddresses, ctx.invMass, ctx.massMatrixSqrt, ctx.stepSize,
-      ctx.positionSize, ctx.supports, H0, ctx.maxDeltaEnergy, ctx.maxTreeDepth);
+  auto iterCtx = ctx.withH0(H0);
 
   auto zeroI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,

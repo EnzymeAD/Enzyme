@@ -1062,13 +1062,21 @@ LogicalResult MHOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 //===----------------------------------------------------------------------===//
 
 LogicalResult MCMCOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
+  if (auto fnAttr = getFnAttr()) {
+    auto global =
+        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, fnAttr);
+    if (!global)
+      return emitOpError("'")
+             << getFn().value() << "' does not reference a valid global funcOp";
+  }
+
+  if (auto logpdfAttr = getLogpdfFnAttr()) {
+    auto global =
+        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, logpdfAttr);
+    if (!global)
+      return emitOpError("'") << logpdfAttr.getValue()
+                              << "' does not reference a valid global funcOp";
+  }
 
   return success();
 }
@@ -1082,7 +1090,19 @@ LogicalResult MCMCOp::verify() {
         "Exactly one of hmc_config or nuts_config must be specified");
   }
 
-  // TODO: More verification
+  // TODO(#2695): More verification
+  if (!getFnAttr() && !getLogpdfFnAttr()) {
+    return emitOpError("one of `fn` or `logpdf_fn` must be specified");
+  }
+
+  if (getFnAttr() && getLogpdfFnAttr()) {
+    return emitOpError("specifying both `fn` and `logpdf_fn` is unsupported");
+  }
+
+  if (getLogpdfFnAttr() && !getInitialPosition()) {
+    return emitOpError(
+        "custom logpdf mode requires `initial_position` to be provided");
+  }
 
   return success();
 }

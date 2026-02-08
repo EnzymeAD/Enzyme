@@ -683,6 +683,12 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   let description = [{
     Runs MCMC inference on selected addresses.
 
+    Two modes of operation:
+    1. Trace-based mode: `fn` and `original_trace` are provided. The model
+       function with `enzyme.sample` ops defines the density.
+    2. Custom logpdf mode: `logpdf_fn` and `initial_position` are provided.
+       The logpdf function maps position → scalar log-density directly.
+
     The `selection` attribute determines which addresses to sample via HMC/NUTS.
     All sample addresses are included in the trace tensor for consistency.
 
@@ -693,9 +699,9 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   }];
 
   let arguments = (ins
-    FlatSymbolRefAttr:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
-    AnyRankedTensor:$original_trace,
+    Optional<AnyRankedTensor>:$original_trace,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$all_addresses,
 
@@ -711,6 +717,10 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     OptionalAttr<HMCConfigAttr>:$hmc_config,
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
 
+    // Custom logpdf mode
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    Optional<AnyRankedTensor>:$initial_position,
+
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -721,9 +731,13 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace
+    ($fn^)?
+    `(` $inputs `)`
+    (`given` $original_trace^)?
     (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
     (`step_size` `=` $step_size^)?
+    (`logpdf_fn` `=` $logpdf_fn^)?
+    (`initial_position` `=` $initial_position^)?
     attr-dict `:` functional-type(operands, results)
   }];
 
