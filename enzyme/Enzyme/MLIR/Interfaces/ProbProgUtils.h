@@ -31,7 +31,6 @@ public:
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   Block *initializationBlock;
-  Value trace;
 
   MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
                  IRMapping &originalToNewFn_,
@@ -42,11 +41,10 @@ public:
         originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
-  Value getTrace();
-
   static MProbProgUtils *CreateFromClone(FunctionOpInterface toeval,
                                          MProbProgMode mode,
-                                         int64_t positionSize = -1);
+                                         int64_t positionSize = -1,
+                                         int64_t constraintSize = -1);
 };
 
 } // namespace enzyme

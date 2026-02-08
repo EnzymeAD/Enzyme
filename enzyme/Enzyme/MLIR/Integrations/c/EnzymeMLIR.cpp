@@ -5,14 +5,6 @@
 #include "Enzyme/MLIR/Dialect/Dialect.h"
 #include "Enzyme/MLIR/Dialect/Ops.h"
 
-MlirType enzymeTraceTypeGet(MlirContext ctx) {
-  return wrap(mlir::enzyme::TraceType::get(unwrap(ctx)));
-}
-
-MlirType enzymeConstraintTypeGet(MlirContext ctx) {
-  return wrap(mlir::enzyme::ConstraintType::get(unwrap(ctx)));
-}
-
 MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
                                            EnzymeRngDistribution dist) {
   mlir::enzyme::RngDistribution rngDist;

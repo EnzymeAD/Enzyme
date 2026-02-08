@@ -150,7 +150,7 @@ Value MCMC::applyInverseMassMatrix(OpBuilder &builder, Location loc,
   } else if (invMassType.getRank() == 2) {
     // Dense: v = invMass @ p
     return enzyme::DotOp::create(
-        builder, loc, positionType, invMass, momentum,
+        builder, loc, positionType, momentum, invMass,
         builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
   }
@@ -175,10 +175,11 @@ Value MCMC::computeKineticEnergy(OpBuilder &builder, Location loc,
       applyInverseMassMatrix(builder, loc, invMass, momentum, positionType);
 
   // K = 0.5 * p^T @ v
+  // For 2D tensors [1, N], contract over both dimensions to get scalar
   auto pDotV = enzyme::DotOp::create(
       builder, loc, scalarType, momentum, v, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({0}),
-      builder.getDenseI64ArrayAttr({0}));
+      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({0, 1}),
+      builder.getDenseI64ArrayAttr({0, 1}));
 
   return arith::MulFOp::create(builder, loc, halfConst, pDotV);
 }
@@ -240,9 +241,9 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  auto splitOp = enzyme::RandomSplitOp::create(builder, loc,
-                                               TypeRange{rng.getType()}, rng);
-  auto rngForSampling = splitOp.getResult(0);
+  auto splitOp = enzyme::RandomSplitOp::create(
+      builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
+  Value rngForSampling = splitOp.getResult(0);
 
   rngForSampling =
       conditionalDump(builder, loc, rngForSampling,
@@ -271,30 +272,101 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
   } else {
     // Dense: p = massMatrixSqrt @ eps
     auto p = enzyme::DotOp::create(
-        builder, loc, positionType, massMatrixSqrt, eps,
+        builder, loc, positionType, eps, massMatrixSqrt,
         builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
+        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
     return {p, rngOut};
   }
+}
+
+static Value scatterPositionToTrace(OpBuilder &builder, Location loc,
+                                    Value position2d, Value fullTrace,
+                                    const HMCContext &ctx) {
+  auto elemType =
+      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
+  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto c0 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+
+  Value result = fullTrace;
+  for (const auto &info : ctx.supports) {
+    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
+    auto posOffset = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(info.offset)));
+    SmallVector<Value> extractIndices{c0, posOffset};
+    auto slice = enzyme::DynamicSliceOp::create(
+        builder, loc, sliceType, position2d, extractIndices,
+        builder.getDenseI64ArrayAttr({1, info.size}));
+
+    auto traceOffset = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(info.traceOffset)));
+    SmallVector<Value> updateIndices{c0, traceOffset};
+    result = enzyme::DynamicUpdateSliceOp::create(builder, loc, traceType,
+                                                  result, slice, updateIndices);
+  }
+  return result;
+}
+
+static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
+                                     Value fullTrace, const HMCContext &ctx) {
+  auto elemType =
+      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
+  auto positionType2d = RankedTensorType::get({1, ctx.positionSize}, elemType);
+  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
+  auto c0 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+
+  auto zeroConst = arith::ConstantOp::create(
+      builder, loc, positionType2d,
+      DenseElementsAttr::get(positionType2d,
+                             builder.getFloatAttr(elemType, 0.0)));
+  Value result = zeroConst;
+  for (const auto &info : ctx.supports) {
+    auto sliceType = RankedTensorType::get({1, info.size}, elemType);
+    auto traceOffset = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(info.traceOffset)));
+    SmallVector<Value> extractIndices{c0, traceOffset};
+    auto slice = enzyme::DynamicSliceOp::create(
+        builder, loc, sliceType, fullTrace, extractIndices,
+        builder.getDenseI64ArrayAttr({1, info.size}));
+
+    auto posOffset = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(info.offset)));
+    SmallVector<Value> updateIndices{c0, posOffset};
+    result = enzyme::DynamicUpdateSliceOp::create(builder, loc, positionType2d,
+                                                  result, slice, updateIndices);
+  }
+  return result;
 }
 
 GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
                                                  Location loc, Value position,
                                                  Value rng,
                                                  const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto traceType = enzyme::TraceType::get(builder.getContext());
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
+  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
   auto gradSeed = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
+  SmallVector<Value> autodiffInputs{position, gradSeed};
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{scalarType, rng.getType(), positionType},
-      ValueRange{position, gradSeed},
+      autodiffInputs,
       builder.getArrayAttr({enzyme::ActivityAttr::get(
           builder.getContext(), enzyme::Activity::enzyme_active)}),
       builder.getArrayAttr(
@@ -311,22 +383,30 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
   Value qArg = autodiffBlock->getArgument(0);
   Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
 
-  SmallVector<Value> updateInputs;
-  updateInputs.push_back(rng);
-  updateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  Value fullTrace = scatterPositionToTrace(builder, loc, q_constrained,
+                                           ctx.originalTrace, ctx);
 
-  auto updateOp = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      updateInputs, ctx.originalTrace, q_constrained, ctx.selection,
-      builder.getStringAttr(""));
+  SmallVector<Value> generateInputs;
+  generateInputs.push_back(rng);
+  generateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-  Value negWeight = arith::NegFOp::create(builder, loc, updateOp.getWeight());
+  SmallVector<Type> generateResultTypes;
+  generateResultTypes.push_back(traceType);
+  generateResultTypes.push_back(scalarType);
+  generateResultTypes.append(ctx.fnResultTypes.begin(),
+                             ctx.fnResultTypes.end());
+
+  auto generateOp = enzyme::GenerateOp::create(
+      builder, loc, generateResultTypes, ctx.fn, generateInputs, fullTrace,
+      ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
+
+  Value negWeight = arith::NegFOp::create(builder, loc, generateOp.getWeight());
   Value jacobianCorrection =
       computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
   Value U = arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
 
-  enzyme::YieldOp::create(builder, loc,
-                          ValueRange{U, updateOp.getOutputRngState()});
+  SmallVector<Value> yieldValues{U, generateOp.getResult(2)};
+  enzyme::YieldOp::create(builder, loc, yieldValues);
 
   builder.setInsertionPointAfter(autodiffOp);
 
@@ -341,10 +421,9 @@ IntegrationResult MCMC::computeIntegrationStep(OpBuilder &builder, Location loc,
                                                const IntegratorState &leaf,
                                                Value rng, Value direction,
                                                const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
 
   auto negStepSize = arith::NegFOp::create(builder, loc, ctx.stepSize);
   Value signedStepSize = enzyme::SelectOp::create(
@@ -388,10 +467,9 @@ IntegrationResult MCMC::computeIntegrationStep(OpBuilder &builder, Location loc,
 
 Value MCMC::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
                          Value pRight, Value pSum, const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
 
   auto zeroConst = arith::ConstantOp::create(
       builder, loc, scalarType,
@@ -418,11 +496,13 @@ Value MCMC::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
   auto leftAngle = enzyme::DotOp::create(
       builder, loc, scalarType, vLeft, pSumCentered,
       builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
+      builder.getDenseI64ArrayAttr({0, 1}),
+      builder.getDenseI64ArrayAttr({0, 1}));
   auto rightAngle = enzyme::DotOp::create(
       builder, loc, scalarType, vRight, pSumCentered,
       builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0}), builder.getDenseI64ArrayAttr({0}));
+      builder.getDenseI64ArrayAttr({0, 1}),
+      builder.getDenseI64ArrayAttr({0, 1}));
 
   // turning = (left_angle <= 0) OR (right_angle <= 0)
   auto leftNeg = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
@@ -470,10 +550,9 @@ NUTSTreeState MCMC::combineTrees(OpBuilder &builder, Location loc,
                                  const NUTSTreeState &subTree, Value direction,
                                  Value rng, bool biased,
                                  const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
   auto zeroConst = arith::ConstantOp::create(
@@ -579,11 +658,11 @@ NUTSTreeState MCMC::combineTrees(OpBuilder &builder, Location loc,
 
 InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
                               const HMCContext &ctx, bool debugDump) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto traceType = enzyme::TraceType::get(builder.getContext());
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
+  auto fullTraceType =
+      RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
 
   auto initSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
@@ -594,15 +673,32 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto rngForAutodiff = kernelSplit.getResult(1);
 
   // 1. Extract initial position vector (constrained)
-  auto q0_constrained = enzyme::GetFlattenedSamplesFromTraceOp::create(
-      builder, loc, positionType, ctx.originalTrace, ctx.selection);
+  auto q0_constrained =
+      gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
 
   // 2. Unconstrain to get position vector for HMC
   auto q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
 
   // 3. Compute initial potential energy: U0 = -weight + correction
-  auto weight0 = enzyme::GetWeightFromTraceOp::create(builder, loc, scalarType,
-                                                      ctx.originalTrace);
+  Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
+                                               ctx.originalTrace, ctx);
+
+  SmallVector<Value> generateInputsInit;
+  generateInputsInit.push_back(rngForAutodiff);
+  generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+
+  SmallVector<Type> generateResultTypesInit;
+  generateResultTypesInit.push_back(fullTraceType);
+  generateResultTypesInit.push_back(scalarType);
+  generateResultTypesInit.append(ctx.fnResultTypes.begin(),
+                                 ctx.fnResultTypes.end());
+
+  auto generateOpInit = enzyme::GenerateOp::create(
+      builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
+      fullTraceInit, ctx.allAddresses, ctx.allAddresses,
+      builder.getStringAttr(""));
+
+  auto weight0 = generateOpInit.getWeight();
   auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
   auto jacobian0 =
       computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
@@ -612,10 +708,11 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto gradSeedInit = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  SmallVector<Value> autodiffInputs{q0, gradSeedInit};
   auto autodiffInit = enzyme::AutoDiffRegionOp::create(
       builder, loc,
       TypeRange{scalarType, rngForAutodiff.getType(), positionType},
-      ValueRange{q0, gradSeedInit},
+      autodiffInputs,
       builder.getArrayAttr({enzyme::ActivityAttr::get(
           builder.getContext(), enzyme::Activity::enzyme_active)}),
       builder.getArrayAttr(
@@ -630,27 +727,35 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   builder.setInsertionPointToStart(autodiffInitBlock);
   auto q0Arg = autodiffInitBlock->getArgument(0); // unconstrained position
-  // `UpdateOp` expects a constrained position vector.
+  // `GenerateOp` expects a constrained position vector.
   auto q0Arg_constrained = constrainPosition(builder, loc, q0Arg, ctx.supports);
+  Value fullTraceInner = scatterPositionToTrace(builder, loc, q0Arg_constrained,
+                                                ctx.originalTrace, ctx);
 
-  SmallVector<Value> updateInputsInit;
-  updateInputsInit.push_back(rngForAutodiff);
-  updateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  SmallVector<Value> generateInputsInner;
+  generateInputsInner.push_back(rngForAutodiff);
+  generateInputsInner.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-  auto updateOpInit = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rngForAutodiff.getType()},
-      ctx.fn, updateInputsInit, ctx.originalTrace, q0Arg_constrained,
-      ctx.selection, builder.getStringAttr(""));
+  SmallVector<Type> generateResultTypesInner;
+  generateResultTypesInner.push_back(fullTraceType);
+  generateResultTypesInner.push_back(scalarType);
+  generateResultTypesInner.append(ctx.fnResultTypes.begin(),
+                                  ctx.fnResultTypes.end());
+
+  auto generateOpInner = enzyme::GenerateOp::create(
+      builder, loc, generateResultTypesInner, ctx.fn, generateInputsInner,
+      fullTraceInner, ctx.allAddresses, ctx.allAddresses,
+      builder.getStringAttr(""));
 
   auto negWeightInit =
-      arith::NegFOp::create(builder, loc, updateOpInit.getWeight());
+      arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
   auto jacobianInit =
       computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
   auto U0_init =
       arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
 
-  enzyme::YieldOp::create(
-      builder, loc, ValueRange{U0_init, updateOpInit.getOutputRngState()});
+  SmallVector<Value> yieldValues{U0_init, generateOpInner.getResult(2)};
+  enzyme::YieldOp::create(builder, loc, yieldValues);
   builder.setInsertionPointAfter(autodiffInit);
 
   // (U, rng, grad)
@@ -662,10 +767,9 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                  Value grad, Value U, Value rng,
                                  const HMCContext &ctx, bool debugDump) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
@@ -680,7 +784,8 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto adjustedStepSize =
       arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
 
-  HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
+  HMCContext adjustedCtx(ctx.fn, ctx.fnInputs, ctx.fnResultTypes,
+                         ctx.originalTrace, ctx.selection, ctx.allAddresses,
                          ctx.invMass, ctx.massMatrixSqrt, adjustedStepSize,
                          ctx.trajectoryLength, ctx.positionSize, ctx.supports);
 
@@ -795,10 +900,9 @@ MCMCKernelResult MCMC::SampleHMC(OpBuilder &builder, Location loc, Value q,
 MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                   Value grad, Value U, Value rng,
                                   const NUTSContext &ctx, bool debugDump) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
@@ -821,10 +925,10 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto H0 = arith::AddFOp::create(builder, loc, U, K0);
 
   // 5. Initialize NUTS tree state
-  NUTSContext iterCtx(ctx.fn, ctx.fnInputs, ctx.originalTrace, ctx.selection,
-                      ctx.invMass, ctx.massMatrixSqrt, ctx.stepSize,
-                      ctx.positionSize, ctx.supports, H0, ctx.maxDeltaEnergy,
-                      ctx.maxTreeDepth);
+  NUTSContext iterCtx(
+      ctx.fn, ctx.fnInputs, ctx.fnResultTypes, ctx.originalTrace, ctx.selection,
+      ctx.allAddresses, ctx.invMass, ctx.massMatrixSqrt, ctx.stepSize,
+      ctx.positionSize, ctx.supports, H0, ctx.maxDeltaEnergy, ctx.maxTreeDepth);
 
   auto zeroI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -879,77 +983,12 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
           meanAcceptProb,       rngNext};
 }
 
-HMCResult MCMC::PostProcessHMC(OpBuilder &builder, Location loc, Value q,
-                               Value accepted, Value rng,
-                               const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto traceType = enzyme::TraceType::get(builder.getContext());
-  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
-
-  SmallVector<Value> finalUpdateInputs;
-  finalUpdateInputs.push_back(rng);
-  finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-  auto finalUpdateOp = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
-      builder.getStringAttr(""));
-  auto finalTrace = finalUpdateOp.getUpdatedTrace();
-  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
-
-  auto selectedTrace = enzyme::SelectOp::create(
-      builder, loc, traceType, accepted, finalTrace, ctx.originalTrace);
-
-  // TODO: Add diagnostics via addDiagnosticsToTrace op:
-  // - "accepted": accepted tensor (already available)
-  // - "accept_prob": acceptance probability (need to pass from SampleHMC)
-
-  return {selectedTrace, accepted, rngAfterUpdate};
-}
-
-HMCResult MCMC::PostProcessNUTS(OpBuilder &builder, Location loc, Value q,
-                                Value rng, const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto scalarType = RankedTensorType::get({}, elemType);
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
-  auto traceType = enzyme::TraceType::get(builder.getContext());
-  auto q_constrained = constrainPosition(builder, loc, q, ctx.supports);
-
-  SmallVector<Value> finalUpdateInputs;
-  finalUpdateInputs.push_back(rng);
-  finalUpdateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-  auto finalUpdateOp = enzyme::UpdateOp::create(
-      builder, loc, TypeRange{traceType, scalarType, rng.getType()}, ctx.fn,
-      finalUpdateInputs, ctx.originalTrace, q_constrained, ctx.selection,
-      builder.getStringAttr(""));
-  auto finalTrace = finalUpdateOp.getUpdatedTrace();
-  auto rngAfterUpdate = finalUpdateOp.getOutputRngState();
-
-  // NUTS always accepts (implicit in tree selection)
-  auto acceptedTensor = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-
-  // TODO: Add diagnostics via addDiagnosticsToTrace op:
-  // - "diverging": divergence flags (need to pass from SampleNUTS)
-  // - "tree_depth": tree depths (need to pass from SampleNUTS)
-  // - "mean_accept_prob": mean acceptance probs (need to pass from SampleNUTS)
-
-  return {finalTrace, acceptedTensor, rngAfterUpdate};
-}
-
 NUTSTreeState MCMC::buildBaseTree(OpBuilder &builder, Location loc,
                                   const IntegratorState &leaf, Value rng,
                                   Value direction, const NUTSContext &ctx) {
-
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
-  auto scalarType = RankedTensorType::get({}, elemType);
+  auto positionType = ctx.getPositionType();
+  auto scalarType = ctx.getScalarType();
+  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
@@ -1025,9 +1064,7 @@ NUTSTreeState MCMC::buildBaseTree(OpBuilder &builder, Location loc,
 IntegratorState MCMC::getLeafFromTree(OpBuilder &builder, Location loc,
                                       const NUTSTreeState &tree,
                                       Value direction, const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
+  auto positionType = ctx.getPositionType();
 
   auto leafQ = enzyme::SelectOp::create(builder, loc, positionType, direction,
                                         tree.q_right, tree.q_left);
@@ -1365,9 +1402,7 @@ Value MCMC::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
                                   Value pSum, Value pCkpts, Value pSumCkpts,
                                   Value idxMin, Value idxMax,
                                   const NUTSContext &ctx, bool debugDump) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType = RankedTensorType::get({ctx.positionSize}, elemType);
+  auto positionType = ctx.getPositionType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
@@ -1408,10 +1443,15 @@ Value MCMC::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   builder.setInsertionPointToStart(bodyBlock);
   Value iBody = bodyBlock->getArgument(0);
 
-  Value pLeft = enzyme::DynamicExtractOp::create(builder, loc, positionType,
-                                                 pCkpts, iBody);
-  Value pSumCkptI = enzyme::DynamicExtractOp::create(builder, loc, positionType,
-                                                     pSumCkpts, iBody);
+  auto zeroI64 = arith::ConstantOp::create(
+      builder, loc, i64TensorType,
+      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value pLeft = enzyme::DynamicSliceOp::create(
+      builder, loc, positionType, pCkpts, ValueRange{iBody, zeroI64},
+      builder.getDenseI64ArrayAttr({1, ctx.positionSize}));
+  Value pSumCkptI = enzyme::DynamicSliceOp::create(
+      builder, loc, positionType, pSumCkpts, ValueRange{iBody, zeroI64},
+      builder.getDenseI64ArrayAttr({1, ctx.positionSize}));
 
   // Compute subtree momentum sum: pSum - pSumCkpts[i] + pCkpts[i]
   auto pSumMinusCkpt = arith::SubFOp::create(builder, loc, pSum, pSumCkptI);
@@ -1453,10 +1493,11 @@ MCMC::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
     Block *trueBranch = builder.createBlock(&ifOp.getTrueBranch());
     builder.setInsertionPointToStart(trueBranch);
 
-    auto updatedPCkpts = enzyme::DynamicUpdateOp::create(
-        builder, loc, pCkptsType, pCkpts, ckptIdxMax, p);
-    auto updatedPSumCkpts = enzyme::DynamicUpdateOp::create(
-        builder, loc, pCkptsType, pSumCkpts, ckptIdxMax, pSum);
+    auto updatedPCkpts = enzyme::DynamicUpdateSliceOp::create(
+        builder, loc, pCkptsType, pCkpts, p, ValueRange{ckptIdxMax, zeroI64});
+    auto updatedPSumCkpts = enzyme::DynamicUpdateSliceOp::create(
+        builder, loc, pCkptsType, pSumCkpts, pSum,
+        ValueRange{ckptIdxMax, zeroI64});
 
     enzyme::YieldOp::create(builder, loc,
                             ValueRange{updatedPCkpts, updatedPSumCkpts});
@@ -1820,16 +1861,22 @@ Value MCMC::unconstrainPosition(OpBuilder &builder, Location loc,
   if (!hasConstraints || supports.empty())
     return constrained;
 
-  auto positionType = cast<RankedTensorType>(constrained.getType());
-  auto elemType = positionType.getElementType();
-  int64_t positionSize = positionType.getShape()[0];
+  auto inputType = cast<RankedTensorType>(constrained.getType());
+  auto elemType = inputType.getElementType();
+  int64_t positionSize = inputType.getShape()[1];
+
+  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  Value constrained1D =
+      enzyme::ReshapeOp::create(builder, loc, positionType1D, constrained);
 
   SmallVector<Value> slices;
   for (const auto &info : supports) {
     auto sliceType = RankedTensorType::get({info.size}, elemType);
-    auto slice =
-        enzyme::RecoverSampleOp::create(builder, loc, sliceType, constrained,
-                                        builder.getI64IntegerAttr(info.offset));
+    auto slice = enzyme::SliceOp::create(
+        builder, loc, sliceType, constrained1D,
+        builder.getDenseI64ArrayAttr({info.offset}),
+        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({1}));
     Value unconstrainedSlice;
     if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
       unconstrainedSlice =
@@ -1841,43 +1888,53 @@ Value MCMC::unconstrainPosition(OpBuilder &builder, Location loc,
     slices.push_back(unconstrainedSlice);
   }
 
+  Value result1D;
   if (slices.size() == 1) {
-    return slices[0];
-  }
+    result1D = slices[0];
+  } else {
+    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    result1D = arith::ConstantOp::create(
+        builder, loc, resultType1D,
+        DenseElementsAttr::get(resultType1D,
+                               builder.getFloatAttr(elemType, 0.0)));
 
-  // TODO: Improve
-  auto resultType = RankedTensorType::get({positionSize}, elemType);
-  Value result = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
+    auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
+    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
+    auto elemType0D = RankedTensorType::get({}, elemType);
+    int64_t offset = 0;
+    for (size_t i = 0; i < slices.size(); ++i) {
+      auto sliceType = cast<RankedTensorType>(slices[i].getType());
+      int64_t sliceSize = sliceType.getShape()[0];
 
-  int64_t offset = 0;
-  for (size_t i = 0; i < slices.size(); ++i) {
-    auto sliceType = cast<RankedTensorType>(slices[i].getType());
-    int64_t sliceSize = sliceType.getShape()[0];
+      for (int64_t j = 0; j < sliceSize; ++j) {
+        auto elemIdx = arith::ConstantOp::create(
+            builder, loc, i64ScalarType,
+            DenseElementsAttr::get(i64ScalarType,
+                                   builder.getI64IntegerAttr(j)));
+        auto resultIdx = arith::ConstantOp::create(
+            builder, loc, i64ScalarType,
+            DenseElementsAttr::get(i64ScalarType,
+                                   builder.getI64IntegerAttr(offset + j)));
 
-    for (int64_t j = 0; j < sliceSize; ++j) {
-      auto elemIdxType = RankedTensorType::get({}, builder.getI64Type());
-      auto elemIdx = arith::ConstantOp::create(
-          builder, loc, elemIdxType,
-          DenseElementsAttr::get(elemIdxType, builder.getI64IntegerAttr(j)));
-      auto resultIdx = arith::ConstantOp::create(
-          builder, loc, elemIdxType,
-          DenseElementsAttr::get(elemIdxType,
-                                 builder.getI64IntegerAttr(offset + j)));
+        auto elemSliced = enzyme::DynamicSliceOp::create(
+            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
+            builder.getDenseI64ArrayAttr({1}));
+        auto elem =
+            enzyme::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
 
-      auto elemType0D = RankedTensorType::get({}, elemType);
-      auto elem = enzyme::DynamicExtractOp::create(builder, loc, elemType0D,
-                                                   slices[i], elemIdx);
+        auto resultSliced = enzyme::ReshapeOp::create(
+            builder, loc, RankedTensorType::get({1}, elemType), elem);
+        result1D = enzyme::DynamicUpdateSliceOp::create(
+            builder, loc, resultType1D, result1D, resultSliced,
+            ValueRange{resultIdx});
+      }
 
-      result = enzyme::DynamicUpdateOp::create(builder, loc, resultType, result,
-                                               resultIdx, elem);
+      offset += sliceSize;
     }
-
-    offset += sliceSize;
   }
 
-  return result;
+  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  return enzyme::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
 Value MCMC::constrainPosition(OpBuilder &builder, Location loc,
@@ -1893,17 +1950,22 @@ Value MCMC::constrainPosition(OpBuilder &builder, Location loc,
   if (!hasConstraints || supports.empty())
     return unconstrained;
 
-  auto positionType = cast<RankedTensorType>(unconstrained.getType());
-  auto elemType = positionType.getElementType();
-  int64_t positionSize = positionType.getShape()[0];
+  auto inputType = cast<RankedTensorType>(unconstrained.getType());
+  auto elemType = inputType.getElementType();
+  int64_t positionSize = inputType.getShape()[1];
+
+  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  Value unconstrained1D =
+      enzyme::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
 
   SmallVector<Value> slices;
   for (const auto &info : supports) {
     auto sliceType = RankedTensorType::get({info.size}, elemType);
-
-    auto slice =
-        enzyme::RecoverSampleOp::create(builder, loc, sliceType, unconstrained,
-                                        builder.getI64IntegerAttr(info.offset));
+    auto slice = enzyme::SliceOp::create(
+        builder, loc, sliceType, unconstrained1D,
+        builder.getDenseI64ArrayAttr({info.offset}),
+        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({1}));
 
     Value constrainedSlice;
     if (info.support && info.support.getKind() != enzyme::SupportKind::REAL) {
@@ -1916,50 +1978,60 @@ Value MCMC::constrainPosition(OpBuilder &builder, Location loc,
     slices.push_back(constrainedSlice);
   }
 
+  Value result1D;
   if (slices.size() == 1) {
-    return slices[0];
-  }
+    result1D = slices[0];
+  } else {
+    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    result1D = arith::ConstantOp::create(
+        builder, loc, resultType1D,
+        DenseElementsAttr::get(resultType1D,
+                               builder.getFloatAttr(elemType, 0.0)));
 
-  // TODO: Improve
-  auto resultType = RankedTensorType::get({positionSize}, elemType);
-  Value result = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
+    auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
+    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
+    auto elemType0D = RankedTensorType::get({}, elemType);
+    int64_t offset = 0;
+    for (size_t i = 0; i < slices.size(); ++i) {
+      auto sliceType = cast<RankedTensorType>(slices[i].getType());
+      int64_t sliceSize = sliceType.getShape()[0];
 
-  int64_t offset = 0;
-  for (size_t i = 0; i < slices.size(); ++i) {
-    auto sliceType = cast<RankedTensorType>(slices[i].getType());
-    int64_t sliceSize = sliceType.getShape()[0];
+      for (int64_t j = 0; j < sliceSize; ++j) {
+        auto elemIdx = arith::ConstantOp::create(
+            builder, loc, i64ScalarType,
+            DenseElementsAttr::get(i64ScalarType,
+                                   builder.getI64IntegerAttr(j)));
+        auto resultIdx = arith::ConstantOp::create(
+            builder, loc, i64ScalarType,
+            DenseElementsAttr::get(i64ScalarType,
+                                   builder.getI64IntegerAttr(offset + j)));
 
-    for (int64_t j = 0; j < sliceSize; ++j) {
-      auto elemIdxType = RankedTensorType::get({}, builder.getI64Type());
-      auto elemIdx = arith::ConstantOp::create(
-          builder, loc, elemIdxType,
-          DenseElementsAttr::get(elemIdxType, builder.getI64IntegerAttr(j)));
-      auto resultIdx = arith::ConstantOp::create(
-          builder, loc, elemIdxType,
-          DenseElementsAttr::get(elemIdxType,
-                                 builder.getI64IntegerAttr(offset + j)));
+        auto elemSliced = enzyme::DynamicSliceOp::create(
+            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
+            builder.getDenseI64ArrayAttr({1}));
+        auto elem =
+            enzyme::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
 
-      auto elemType0D = RankedTensorType::get({}, elemType);
-      auto elem = enzyme::DynamicExtractOp::create(builder, loc, elemType0D,
-                                                   slices[i], elemIdx);
+        auto resultSliced =
+            enzyme::ReshapeOp::create(builder, loc, elemType1DSlice, elem);
+        result1D = enzyme::DynamicUpdateSliceOp::create(
+            builder, loc, resultType1D, result1D, resultSliced,
+            ValueRange{resultIdx});
+      }
 
-      result = enzyme::DynamicUpdateOp::create(builder, loc, resultType, result,
-                                               resultIdx, elem);
+      offset += sliceSize;
     }
-
-    offset += sliceSize;
   }
 
-  return result;
+  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  return enzyme::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
 Value MCMC::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
                                            Value unconstrained,
                                            ArrayRef<SupportInfo> supports) {
-  auto positionType = cast<RankedTensorType>(unconstrained.getType());
-  auto elemType = positionType.getElementType();
+  auto inputType = cast<RankedTensorType>(unconstrained.getType());
+  auto elemType = inputType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
   Value total = arith::ConstantOp::create(
@@ -1969,14 +2041,21 @@ Value MCMC::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
   if (supports.empty())
     return total;
 
+  int64_t positionSize = inputType.getShape()[1];
+  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  Value unconstrained1D =
+      enzyme::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
+
   for (const auto &info : supports) {
     if (!info.support || info.support.getKind() == enzyme::SupportKind::REAL)
       continue;
 
     auto sliceType = RankedTensorType::get({info.size}, elemType);
-    auto slice =
-        enzyme::RecoverSampleOp::create(builder, loc, sliceType, unconstrained,
-                                        builder.getI64IntegerAttr(info.offset));
+    auto slice = enzyme::SliceOp::create(
+        builder, loc, sliceType, unconstrained1D,
+        builder.getDenseI64ArrayAttr({info.offset}),
+        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({1}));
     auto jacobian =
         transforms::logAbsDetJacobian(builder, loc, slice, info.support);
 
