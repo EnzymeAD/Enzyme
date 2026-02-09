@@ -377,8 +377,11 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
   Value qArg = autodiffBlock->getArgument(0);
 
   if (ctx.hasCustomLogpdf()) {
+    SmallVector<Value> callArgs;
+    callArgs.push_back(qArg);
+    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, ValueRange{qArg});
+                                       TypeRange{scalarType}, callArgs);
     Value U = arith::NegFOp::create(builder, loc, callOp.getResult(0));
     // TODO(#2695): handle hybrid case
     enzyme::YieldOp::create(builder, loc, {U, rng});
@@ -683,8 +686,11 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   if (ctx.hasCustomLogpdf()) {
     q0 = initialPosition;
+    SmallVector<Value> callArgs;
+    callArgs.push_back(q0);
+    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, ValueRange{q0});
+                                       TypeRange{scalarType}, callArgs);
     U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
   } else {
     auto fullTraceType =
@@ -748,8 +754,11 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
   if (ctx.hasCustomLogpdf()) {
-    auto callOpInner = func::CallOp::create(
-        builder, loc, ctx.logpdfFn, TypeRange{scalarType}, ValueRange{q0Arg});
+    SmallVector<Value> callArgs;
+    callArgs.push_back(q0Arg);
+    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    auto callOpInner = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                            TypeRange{scalarType}, callArgs);
     auto U0_init =
         arith::NegFOp::create(builder, loc, callOpInner.getResult(0));
     enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
