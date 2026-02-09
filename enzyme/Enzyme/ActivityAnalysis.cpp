@@ -631,12 +631,14 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return val != CI->getOperand(0);
   }
   // only the recv buffer and request is active for mpi isend/irecv
-  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "PMPI_Irecv" ||
-      Name == "PMPI_Isend") {
+  if (Name == "MPI_Irecv" || Name == "MPI_Isend" || Name == "MPI_Send_init" || Name == "MPI_Recv_init" ||
+      Name == "PMPI_Irecv" || Name == "PMPI_Isend" || Name == "PMPI_Send_init" || Name == "PMPI_Recv_init") {
     return val != CI->getOperand(0) && val != CI->getOperand(6);
   }
-
   // only request is active
+  if (Name == "MPI_Start" || Name == "PMPI_Start")
+    return val != CI->getOperand(0);
+
   if (Name == "MPI_Wait" || Name == "PMPI_Wait")
     return val != CI->getOperand(0);
 
