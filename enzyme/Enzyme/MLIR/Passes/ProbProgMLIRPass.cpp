@@ -653,6 +653,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       if (hasLogpdfFn) {
         logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
+        fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = mcmcOp.getInitialPosition();
         positionSize =
             cast<RankedTensorType>(initialPos.getType()).getShape()[1];
@@ -735,8 +736,9 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                 Value currentMassMatrixSqrt,
                                 Value currentStepSize) -> HMCContext {
         if (hasLogpdfFn) {
-          return HMCContext(logpdfFnAttr, currentInvMass, currentMassMatrixSqrt,
-                            currentStepSize, trajectoryLength, positionSize);
+          return HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
+                            currentMassMatrixSqrt, currentStepSize,
+                            trajectoryLength, positionSize);
         } else {
           return HMCContext(
               mcmcOp.getFnAttr(), fnInputs, fnResultTypes, originalTrace,
@@ -749,7 +751,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           [&](Value currentInvMass, Value currentMassMatrixSqrt,
               Value currentStepSize, Value U) -> NUTSContext {
         if (hasLogpdfFn) {
-          return NUTSContext(logpdfFnAttr, currentInvMass,
+          return NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
                              currentMassMatrixSqrt, currentStepSize,
                              positionSize, U, maxDeltaEnergy, maxTreeDepth);
         } else {

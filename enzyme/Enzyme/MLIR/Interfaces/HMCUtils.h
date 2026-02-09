@@ -123,11 +123,12 @@ struct HMCContext {
         trajectoryLength(trajectoryLength), positionSize(positionSize),
         supports(supports.begin(), supports.end()) {}
 
-  HMCContext(FlatSymbolRefAttr logpdfFn, Value invMass, Value massMatrixSqrt,
-             Value stepSize, Value trajectoryLength, int64_t positionSize)
-      : invMass(invMass), massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
-        trajectoryLength(trajectoryLength), positionSize(positionSize),
-        logpdfFn(logpdfFn) {}
+  HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
+             Value invMass, Value massMatrixSqrt, Value stepSize,
+             Value trajectoryLength, int64_t positionSize)
+      : fnInputs(fnInputs), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
+        stepSize(stepSize), trajectoryLength(trajectoryLength),
+        positionSize(positionSize), logpdfFn(logpdfFn) {}
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
 
@@ -180,10 +181,11 @@ struct NUTSContext : public HMCContext {
                    supports),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
 
-  NUTSContext(FlatSymbolRefAttr logpdfFn, Value invMass, Value massMatrixSqrt,
-              Value stepSize, int64_t positionSize, Value H0,
-              Value maxDeltaEnergy, int64_t maxTreeDepth)
-      : HMCContext(logpdfFn, invMass, massMatrixSqrt, stepSize,
+  NUTSContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
+              Value invMass, Value massMatrixSqrt, Value stepSize,
+              int64_t positionSize, Value H0, Value maxDeltaEnergy,
+              int64_t maxTreeDepth)
+      : HMCContext(logpdfFn, fnInputs, invMass, massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
 
