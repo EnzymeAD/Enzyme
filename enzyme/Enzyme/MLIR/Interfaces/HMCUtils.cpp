@@ -146,7 +146,9 @@ Value MCMC::applyInverseMassMatrix(OpBuilder &builder, Location loc,
 
   if (invMassType.getRank() == 1) {
     // Diagonal: element-wise
-    return arith::MulFOp::create(builder, loc, invMass, momentum);
+    auto diagMass =
+        enzyme::ReshapeOp::create(builder, loc, positionType, invMass);
+    return arith::MulFOp::create(builder, loc, diagMass, momentum);
   } else if (invMassType.getRank() == 2) {
     // Dense: v = invMass @ p
     return enzyme::DotOp::create(
@@ -262,7 +264,9 @@ std::pair<Value, Value> MCMC::sampleMomentum(OpBuilder &builder, Location loc,
 
   if (massMatrixSqrtType.getRank() == 1) {
     // Diagonal: p = massMatrixSqrt * eps (element-wise)
-    auto p = arith::MulFOp::create(builder, loc, massMatrixSqrt, eps);
+    auto diagSqrt =
+        enzyme::ReshapeOp::create(builder, loc, positionType, massMatrixSqrt);
+    auto p = arith::MulFOp::create(builder, loc, diagSqrt, eps);
     return {p, rngOut};
   } else {
     // Dense: p = massMatrixSqrt @ eps
