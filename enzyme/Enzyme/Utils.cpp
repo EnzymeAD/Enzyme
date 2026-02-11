@@ -2598,9 +2598,10 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
           C = CE->getOperand(0);
         }
         if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_double") {
+          auto name = GV->getName();
+          if (name == "ompi_mpi_double" || name == "RSMPI_DOUBLE") {
             type = ConcreteType(Type::getDoubleTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_float") {
+          } else if (name == "ompi_mpi_float" || name == "RSMPI_FLOAT") {
             type = ConcreteType(Type::getFloatTy(C->getContext()));
           }
         }

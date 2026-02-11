@@ -144,9 +144,10 @@ public:
         C = CE->getOperand(0);
       }
       if (auto GV = dyn_cast<GlobalVariable>(C)) {
-        if (GV->getName() == "ompi_mpi_double") {
+        auto name = GV->getName();
+        if (name == "ompi_mpi_double" || name == "RSMPI_DOUBLE") {
           return ConstantInt::get(intType, 8, false);
-        } else if (GV->getName() == "ompi_mpi_float") {
+        } else if (name == "ompi_mpi_float" || name == "RSMPI_FLOAT") {
           return ConstantInt::get(intType, 4, false);
         }
       }
