@@ -87,6 +87,16 @@ static bool hasLICM(Operation *op) {
   return !op->hasAttr("enzyme.disable_licm");
 }
 
+static Value ensureIndexType(Value value, OpBuilder &builder) {
+  if (isa<IndexType>(value.getType())) {
+    return value;
+  }
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPointAfterValue(value);
+  return arith::IndexCastOp::create(builder, value.getLoc(),
+                                    builder.getIndexType(), value);
+}
+
 template <typename FinalClass, typename OpName>
 struct ForLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
@@ -307,7 +317,9 @@ public:
     Operation *lastFwd = nullptr;
     if (caches.size()) {
       rewriter.setInsertionPointToStart(forOp.getBody());
-      inductionVariable = FinalClass::getCanonicalLoopIVs(rewriter, forOp);
+      inductionVariable = llvm::map_to_vector(
+          FinalClass::getCanonicalLoopIVs(rewriter, forOp),
+          [&](Value iv) { return ensureIndexType(iv, rewriter); });
       if (rewriter.getInsertionPoint() != forOp.getBody()->begin()) {
         lastFwd = rewriter.getInsertionPoint()->getPrevNode();
       }
@@ -403,7 +415,7 @@ public:
       for (const auto &dim : fwdNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
-          dynamicDims.push_back(dim.vval);
+          dynamicDims.push_back(ensureIndexType(dim.vval, rewriter));
         } else {
           newShape.push_back(dim.ival);
         }
@@ -653,13 +665,16 @@ public:
         reversedIndex = FinalClass::computeReversedIndices(
             rewriter, otherForOp, otherInductionVariable, revNumIters);
       }
+      reversedIndex = llvm::map_to_vector(reversedIndex, [&](Value iv) {
+        return ensureIndexType(iv, rewriter);
+      });
 
       SmallVector<int64_t> newShape;
       SmallVector<Value> dynamicDims;
       for (const auto &dim : revNumIters) {
         if (dim.vval) {
           newShape.push_back(mlir::ShapedType::kDynamic);
-          dynamicDims.push_back(dim.vval);
+          dynamicDims.push_back(ensureIndexType(dim.vval, rewriter));
         } else {
           newShape.push_back(dim.ival);
         }
@@ -859,12 +874,12 @@ struct IfLikeEnzymeOpsRemover
     //  get.
 
     // Caches:
+    //   For each push, create a stack allocation for the value before the if
+    //   and replace the push with a store. Then, load and push from the stack
+    //   allocation after the if.
     //
-    // For each push, push after the if instead add a dummy value in the other
-    // branch.
-    //
-    // For each pop in the reverse if, pop before the if instead of inside a
-    // branch.
+    //   For each pop in the reverse if, pop before the if instead of inside a
+    //   branch.
 
     Block *trueBlock = FinalClass::getThenBlock(ifOp, rewriter),
           *falseBlock = FinalClass::getElseBlock(ifOp, rewriter);
@@ -910,20 +925,18 @@ struct IfLikeEnzymeOpsRemover
                                 ValueRange(falseValue));
     }
 
+    SmallVector<memref::AllocaOp> allocas;
     if (removeCaches) {
       for (auto &[pushedValue, info] : pushedCaches) {
-        Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
-                                                pushedValue.getType());
+        auto allocaType = MemRefType::get(/*shape=*/{}, pushedValue.getType());
+        auto alloca = memref::AllocaOp::create(rewriter, pushedValue.getLoc(),
+                                               allocaType);
+        allocas.push_back(alloca);
 
-        Value trueValue =
-            pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
-        Value falseValue =
-            pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
-
-        trueTerm->insertOperands(trueTerm->getNumOperands(),
-                                 ValueRange(trueValue));
-        falseTerm->insertOperands(falseTerm->getNumOperands(),
-                                  ValueRange(falseValue));
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(info.pushOp);
+        memref::StoreOp::create(rewriter, info.pushOp.getLoc(), pushedValue,
+                                alloca);
       }
     }
 
@@ -937,9 +950,12 @@ struct IfLikeEnzymeOpsRemover
     }
 
     if (removeCaches) {
-      for (auto &[pushedValue, info] : pushedCaches) {
+      for (auto &&[pair, alloca] : llvm::zip_equal(pushedCaches, allocas)) {
+        auto &[_, info] = pair;
+        auto newPushedValue = memref::LoadOp::create(
+            rewriter, info.pushOp.getLoc(), alloca, /*indices=*/{});
         enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                               info.initOp.getResult(), ifOp->getResult(idx));
+                               info.initOp.getResult(), newPushedValue);
         rewriter.eraseOp(info.pushOp);
 
         OpBuilder::InsertionGuard guard(rewriter);
