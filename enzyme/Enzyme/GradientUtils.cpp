@@ -8640,7 +8640,8 @@ void GradientUtils::eraseFictiousPHIs() {
     IRBuilder<> B(&*pp->getFunction()->getEntryBlock().getFirstInsertionPt());
 
     Value *sz = byteCount;
-    if (sz->getType()->isIntegerTy() && sz->getType()->getIntegerBitWidth() != 64)
+    if (sz->getType()->isIntegerTy() &&
+        sz->getType()->getIntegerBitWidth() != 64)
       sz = B.CreateZExtOrTrunc(sz, B.getInt64Ty(), "enzyme.sz64");
     else if (!sz->getType()->isIntegerTy())
       sz = B.CreatePtrToInt(sz, B.getInt64Ty(), "enzyme.sz64");
@@ -8666,7 +8667,8 @@ void GradientUtils::eraseFictiousPHIs() {
     return rep;
   };
 
-  // Helper: handle malloc/calloc tagged !enzyme_fromstack by turning into alloca
+  // Helper: handle malloc/calloc tagged !enzyme_fromstack by turning into
+  // alloca
   auto tryRematFromstackMalloc = [&](PHINode *pp, Value *orig) -> bool {
     auto *CI = dyn_cast<CallInst>(orig);
     if (!CI)
@@ -8692,10 +8694,13 @@ void GradientUtils::eraseFictiousPHIs() {
       byteCount = getNewIfOriginal(const_cast<Value *>(CI->getArgOperand(0)));
       if (byteCount->getType()->isIntegerTy() &&
           byteCount->getType()->getIntegerBitWidth() != 64)
-        byteCount = B.CreateZExtOrTrunc(byteCount, B.getInt64Ty(), "malloc.sz64");
+        byteCount =
+            B.CreateZExtOrTrunc(byteCount, B.getInt64Ty(), "malloc.sz64");
     } else { // calloc(nmemb, size)
-      Value *nmemb = getNewIfOriginal(const_cast<Value *>(CI->getArgOperand(0)));
-      Value *esize = getNewIfOriginal(const_cast<Value *>(CI->getArgOperand(1)));
+      Value *nmemb =
+          getNewIfOriginal(const_cast<Value *>(CI->getArgOperand(0)));
+      Value *esize =
+          getNewIfOriginal(const_cast<Value *>(CI->getArgOperand(1)));
       if (nmemb->getType()->getIntegerBitWidth() != 64)
         nmemb = B.CreateZExtOrTrunc(nmemb, B.getInt64Ty(), "calloc.nmemb64");
       if (esize->getType()->getIntegerBitWidth() != 64)
@@ -8709,7 +8714,8 @@ void GradientUtils::eraseFictiousPHIs() {
     if (name == "calloc") {
       // rep might be a casted pointer; memset wants an i8*
       Value *raw = rep;
-      if (raw->getType() != PointerType::getUnqual(i8Ty) && raw->getType()->isPointerTy()) {
+      if (raw->getType() != PointerType::getUnqual(i8Ty) &&
+          raw->getType()->isPointerTy()) {
         raw = B.CreateBitCast(raw, PointerType::getUnqual(i8Ty), "calloc.i8p");
       }
       B.CreateMemSet(raw, B.getInt8(0), byteCount, MaybeAlign(16));
@@ -8732,7 +8738,8 @@ void GradientUtils::eraseFictiousPHIs() {
         isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I))
       return false;
 
-    if (!I->mayReadFromMemory() && !I->mayWriteToMemory() && !I->mayHaveSideEffects()) {
+    if (!I->mayReadFromMemory() && !I->mayWriteToMemory() &&
+        !I->mayHaveSideEffects()) {
       Instruction *cl = I->clone();
       cl->setName(I->getName() + ".remat");
 
@@ -8796,7 +8803,8 @@ void GradientUtils::eraseFictiousPHIs() {
       }
     }
 
-    // Last resort: replace with undef (keeps compilation going, but derivative may be wrong)
+    // Last resort: replace with undef (keeps compilation going, but derivative
+    // may be wrong)
     if (!pp->use_empty())
       pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
