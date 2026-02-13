@@ -461,6 +461,8 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // Rust
     "std::io::stdio::_eprint",
 
+    // RAJA
+    "RAJA::util::Registry<RAJA::util::PluginStrategy>",
 };
   // clang-format on
 
