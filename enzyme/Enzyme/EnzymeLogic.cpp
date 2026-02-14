@@ -4905,14 +4905,29 @@ Function *EnzymeLogic::CreateForwardDiff(
                                                  gutils->newFunc);
 
   if (todiff->empty()) {
+
+    std::string demangledCall = todiff->getName().str();
+
+    demangledCall = llvm::demangle(demangledCall);
+    // replace all '> >' with '>>'
+    size_t start = 0;
+    while ((start = demangledCall.find("> >", start)) != std::string::npos) {
+      demangledCall.replace(start, 3, ">>");
+    }
+
     std::string s;
     llvm::raw_string_ostream ss(s);
     if (mode == DerivativeMode::ForwardModeError) {
-      ss << "No forward mode error function found for " + todiff->getName()
-         << "\n";
+      ss << "No forward mode error function found for ";
     } else {
-      ss << "No forward mode derivative found for " + todiff->getName() << "\n";
+      ss << "No forward mode derivative found for ";
     }
+    ss << demangledCall;
+    if (demangledCall != todiff->getName()) {
+      ss << "(mangled from " << todiff->getName() << ")";
+    }
+
+    ss << "\n";
     if (context.req) {
       ss << " at context: " << *context.req;
     } else {
