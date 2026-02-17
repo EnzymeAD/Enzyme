@@ -51,3 +51,16 @@ jobs:
     - name: make check-enzyme-integration
       working-directory: build
       run: make -j `nproc` check-enzyme-integration
+      
+    - name: Update Nightly Release
+      uses: ncipollo/release-action@v1
+      if: ${{ !cancelled() && github.ref == 'refs/heads/main' }} 
+      with:
+        tag: nightly
+        name: Nightly Release
+        body: "Latest nightly build of Enzyme."
+        artifacts: "build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}*,build/Enzyme/ClangEnzyme-${{ matrix.llvm }},build/Enzyme/LLDEnzyme-${{ matrix.llvm }}"
+        allowUpdates: true
+        removeArtifacts: false
+        replacesArtifacts: true
+        token: ${{ secrets.GITHUB_TOKEN }}
