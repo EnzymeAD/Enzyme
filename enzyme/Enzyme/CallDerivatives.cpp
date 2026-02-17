@@ -4292,3 +4292,74 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   return false;
 }
+
+void AdjointGenerator::handleNVSincos(llvm::CallInst &call) {
+  if (gutils->isConstantInstruction(&call))
+    return;
+
+  if (Mode == DerivativeMode::ForwardMode ||
+      Mode == DerivativeMode::ForwardModeSplit) {
+    IRBuilder<> Builder2(&call);
+    getForwardBuilder(Builder2);
+
+    Value *op = call.getArgOperand(0);
+    Value *s_ptr = call.getArgOperand(1);
+    Value *c_ptr = call.getArgOperand(2);
+
+    Value *d_x = diffe(op, Builder2);
+    Value *X = lookup(op, Builder2);
+
+    Value *SinX = Builder2.CreateUnaryIntrinsic(Intrinsic::sin, X);
+    Value *CosX = Builder2.CreateUnaryIntrinsic(Intrinsic::cos, X);
+
+    Value *d_s = Builder2.CreateFMul(d_x, CosX);
+    Value *d_c = Builder2.CreateFMul(d_x, Builder2.CreateFNeg(SinX));
+
+    Value *s_shadow = gutils->invertPointerM(s_ptr, Builder2);
+    Value *c_shadow = gutils->invertPointerM(c_ptr, Builder2);
+
+    if (s_shadow)
+      Builder2.CreateStore(d_s, s_shadow);
+    if (c_shadow)
+      Builder2.CreateStore(d_c, c_shadow);
+    return;
+  }
+
+  if (Mode != DerivativeMode::ReverseModeGradient &&
+      Mode != DerivativeMode::ReverseModeCombined)
+    return;
+
+  IRBuilder<> Builder2(&call);
+  getReverseBuilder(Builder2);
+
+  Value *op = call.getArgOperand(0);
+  Value *s_ptr = call.getArgOperand(1);
+  Value *c_ptr = call.getArgOperand(2);
+
+  Value *X = lookup(op, Builder2);
+
+  Value *s_shadow = gutils->invertPointerM(s_ptr, Builder2);
+  Value *c_shadow = gutils->invertPointerM(c_ptr, Builder2);
+
+  if (!s_shadow || !c_shadow)
+    return;
+
+  Type *ElTy = op->getType();
+
+  Value *d_s = Builder2.CreateLoad(ElTy, s_shadow);
+  Value *d_c = Builder2.CreateLoad(ElTy, c_shadow);
+
+  Builder2.CreateStore(Constant::getNullValue(ElTy), s_shadow);
+  Builder2.CreateStore(Constant::getNullValue(ElTy), c_shadow);
+
+  Value *SinX = Builder2.CreateUnaryIntrinsic(Intrinsic::sin, X);
+  Value *CosX = Builder2.CreateUnaryIntrinsic(Intrinsic::cos, X);
+
+  Value *Term1 = Builder2.CreateFMul(d_s, CosX);
+  Value *Term2 = Builder2.CreateFMul(d_c, SinX);
+  Value *Diff = Builder2.CreateFSub(Term1, Term2);
+
+  if (!gutils->isConstantValue(op)) {
+    gutils->addToDiffe(op, Diff, Builder2, ElTy);
+  }
+}
