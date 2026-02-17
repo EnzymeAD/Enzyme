@@ -207,6 +207,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeFrontendSupport",
+        ":bundled-includes",
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
         "@llvm-project//clang:driver",
