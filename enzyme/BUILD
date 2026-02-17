@@ -141,8 +141,8 @@ cc_library(
         ],
         exclude = [
             "Enzyme/eopt.cpp",
-            "Enzyme/Enzyme.cpp",              # keep local Reactant variant
-            "Enzyme/Clang/EnzymeClang.cpp",   # local plugin entrypoint
+            "Enzyme/Enzyme.cpp",
+            "Enzyme/Clang/EnzymeClang.cpp",
         ],
     ),
     hdrs = glob([
