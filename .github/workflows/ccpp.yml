@@ -59,7 +59,7 @@ jobs:
         tag: nightly
         name: Nightly Release
         body: "Latest nightly build of Enzyme."
-        artifacts: "build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}*,build/Enzyme/ClangEnzyme-${{ matrix.llvm }},build/Enzyme/LLDEnzyme-${{ matrix.llvm }}"
+        artifacts: "build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}*,build/Enzyme/ClangEnzyme-${{ matrix.llvm }}*,build/Enzyme/LLDEnzyme-${{ matrix.llvm }}*"
         allowUpdates: true
         removeArtifacts: false
         replacesArtifacts: true
