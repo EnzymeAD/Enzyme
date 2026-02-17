@@ -51,6 +51,26 @@
 
 using namespace llvm;
 
+namespace {
+bool noAtomicsForContext(const Instruction *orig, const Value *origptr) {
+  if (orig) {
+    if (const Function *F = orig->getFunction()) {
+      if (F->hasFnAttribute("enzyme_noatomic")) {
+        return true;
+      }
+    }
+  }
+  const Value *base = getBaseObject(origptr);
+  if (auto *arg = dyn_cast<Argument>(base)) {
+    if (const Function *F = arg->getParent()) {
+      return F->getAttributes().hasParamAttr(arg->getArgNo(),
+                                             "enzyme_noatomic");
+    }
+  }
+  return false;
+}
+} // namespace
+
 DiffeGradientUtils::DiffeGradientUtils(
     EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, TypeResults TR,
@@ -923,6 +943,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   // not captured/escaping and created in this function. This assumes that
   // all additional parallelism in this function is outlined.
   if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
+    Atomic = false;
+  if (Atomic && noAtomicsForContext(orig, origptr))
     Atomic = false;
 
   if (Atomic) {
