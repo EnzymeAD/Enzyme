@@ -162,6 +162,16 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult JacobianOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // ForwardDiffOp
 //===----------------------------------------------------------------------===//
