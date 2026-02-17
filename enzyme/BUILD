@@ -131,16 +131,63 @@ gentbl_cc_library(
     deps = [":BlasDerivativesTdFiles"],
 )
 
+
 cc_library(
-    name = "EnzymeStatic",
+    name = "EnzymeFrontendSupport",
     srcs = glob(
         [
             "Enzyme/*.cpp",
             "Enzyme/TypeAnalysis/*.cpp",
-            "Enzyme/Clang/EnzymeClang.cpp",
         ],
-        exclude = ["Enzyme/eopt.cpp"],
+        exclude = [
+            "Enzyme/eopt.cpp",
+            "Enzyme/Enzyme.cpp",              # keep local Reactant variant
+            "Enzyme/Clang/EnzymeClang.cpp",   # local plugin entrypoint
+        ],
     ),
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":binop-derivatives",
+        ":blas-attributor",
+        ":blas-derivatives",
+        ":blas-diffuseanalysis",
+        ":blas-typeanalysis",
+        ":call-derivatives",
+        ":inst-derivatives",
+        ":intr-derivatives",
+        "@llvm-project//llvm:AggressiveInstCombine",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:InstCombine",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "EnzymeStatic",
+    srcs = [
+        "Enzyme/Enzyme.cpp",
+        "Enzyme/Clang/EnzymeClang.cpp",
+    ],
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
@@ -159,15 +206,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":binop-derivatives",
-        ":blas-attributor",
-        ":blas-derivatives",
-        ":blas-diffuseanalysis",
-        ":blas-typeanalysis",
-        ":bundled-includes",
-        ":call-derivatives",
-        ":inst-derivatives",
-        ":intr-derivatives",
+        ":EnzymeFrontendSupport",
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
         "@llvm-project//clang:driver",
@@ -176,21 +215,6 @@ cc_library(
         "@llvm-project//clang:lex",
         "@llvm-project//clang:sema",
         "@llvm-project//clang:serialization",
-        "@llvm-project//llvm:AggressiveInstCombine",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Demangle",
-        "@llvm-project//llvm:IPO",
-        "@llvm-project//llvm:IRReader",
-        "@llvm-project//llvm:InstCombine",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Scalar",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TargetParser",
-        "@llvm-project//llvm:TransformUtils",
-        "@llvm-project//llvm:config",
     ],
     alwayslink = 1,
 )
