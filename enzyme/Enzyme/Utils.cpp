@@ -53,8 +53,8 @@
 
 #include "llvm-c/Core.h"
 
-#include "LibraryFuncs.h"
 #include "BlasAttributor.inc"
+#include "LibraryFuncs.h"
 
 using namespace llvm;
 
