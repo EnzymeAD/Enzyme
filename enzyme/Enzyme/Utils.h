@@ -2405,9 +2405,6 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::LoopInfo &LI, llvm::Value *op0,
                              llvm::Value *op1, bool offsetAllowed = false);
 
-// Return true if the module has a triple indicating an nvptx target, false
-// otherwise.
-bool isTargetNVPTX(llvm::Module &M);
 
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
