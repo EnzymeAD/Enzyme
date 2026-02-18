@@ -77,6 +77,17 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   return false;
 }
 
+// Return true if the module has a triple indicating an nvptx target, false
+// otherwise.
+bool isTargetNVPTX(llvm::Module &M) {
+#if LLVM_VERSION_MAJOR > 20
+  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
+         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
+#else
+  return M.getTargetTriple().find("nvptx") != std::string::npos;
+#endif
+}
+
 template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,

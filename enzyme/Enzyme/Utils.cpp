@@ -4216,15 +4216,6 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   return {};
 }
 
-bool isTargetNVPTX(llvm::Module &M) {
-#if LLVM_VERSION_MAJOR > 20
-  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
-         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
-#else
-  return M.getTargetTriple().find("nvptx") != std::string::npos;
-#endif
-}
-
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
                                         llvm::Value *value,
                                         ArrayRef<unsigned> path) {

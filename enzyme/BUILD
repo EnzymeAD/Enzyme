@@ -131,27 +131,31 @@ gentbl_cc_library(
     deps = [":BlasDerivativesTdFiles"],
 )
 
-
 cc_library(
-    name = "EnzymeFrontendSupport",
+    name = "EnzymeStatic",
     srcs = glob(
         [
             "Enzyme/*.cpp",
             "Enzyme/TypeAnalysis/*.cpp",
-        ],
-        exclude = [
-            "Enzyme/eopt.cpp",
-            "Enzyme/Enzyme.cpp",
             "Enzyme/Clang/EnzymeClang.cpp",
         ],
+        exclude = ["Enzyme/eopt.cpp"],
     ),
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
-    ]),
+    ]) + ["Enzyme/Clang/bundled_includes.h"],
     copts = [
+        "-DENZYME_RUNPASS=1",
+        "-DENZYME_VERSION_MAJOR=0",
+        "-DENZYME_VERSION_MINOR=0",
+        "-DENZYME_VERSION_PATCH=79",
         "-Wno-unused-variable",
         "-Wno-return-type",
+    ],
+    data = ["@llvm-project//clang:builtin_headers_gen"],
+    includes = [
+        "Enzyme/Clang",  # for bundled_includes.h
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -160,9 +164,18 @@ cc_library(
         ":blas-derivatives",
         ":blas-diffuseanalysis",
         ":blas-typeanalysis",
+        ":bundled-includes",
         ":call-derivatives",
         ":inst-derivatives",
         ":intr-derivatives",
+        "@llvm-project//clang:ast",
+        "@llvm-project//clang:basic",
+        "@llvm-project//clang:driver",
+        "@llvm-project//clang:frontend",
+        "@llvm-project//clang:frontend_tool",
+        "@llvm-project//clang:lex",
+        "@llvm-project//clang:sema",
+        "@llvm-project//clang:serialization",
         "@llvm-project//llvm:AggressiveInstCombine",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
@@ -183,39 +196,33 @@ cc_library(
 )
 
 cc_library(
-    name = "EnzymeStatic",
-    srcs = [
-        "Enzyme/Enzyme.cpp",
-        "Enzyme/Clang/EnzymeClang.cpp",
-    ],
+    name = "EnzymeFrontendSupport",
+    srcs = ["Enzyme/PreserveNVVM.cpp"],
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
-    ]) + ["Enzyme/Clang/bundled_includes.h"],
+    ]),
     copts = [
-        "-DENZYME_RUNPASS=1",
-        "-DENZYME_VERSION_MAJOR=0",
-        "-DENZYME_VERSION_MINOR=0",
-        "-DENZYME_VERSION_PATCH=79",
         "-Wno-unused-variable",
         "-Wno-return-type",
     ],
-    data = ["@llvm-project//clang:builtin_headers_gen"],
-    includes = [
-        "Enzyme/Clang",  # for bundled_includes.h
-    ],
     visibility = ["//visibility:public"],
     deps = [
-        ":EnzymeFrontendSupport",
-        ":bundled-includes",
-        "@llvm-project//clang:ast",
-        "@llvm-project//clang:basic",
-        "@llvm-project//clang:driver",
-        "@llvm-project//clang:frontend",
-        "@llvm-project//clang:frontend_tool",
-        "@llvm-project//clang:lex",
-        "@llvm-project//clang:sema",
-        "@llvm-project//clang:serialization",
+        "@llvm-project//llvm:AggressiveInstCombine",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:IRReader",
+        "@llvm-project//llvm:InstCombine",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
     alwayslink = 1,
 )
