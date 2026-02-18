@@ -210,7 +210,12 @@ cc_library(
         "-Wno-return-type",
     ],
     visibility = ["//visibility:public"],
-    deps = [":EnzymeStatic"],
+    deps = [
+        ":blas-attributor",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
 )
 
 # Modified from llvm_driver_cc_binary since that can't be used
