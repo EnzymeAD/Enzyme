@@ -53,6 +53,7 @@
 
 #include "llvm-c/Core.h"
 
+#include "BlasAttributor.inc"
 #include "LibraryFuncs.h"
 
 using namespace llvm;
@@ -102,6 +103,308 @@ llvm::cl::opt<bool> EnzymeRuntimeError(
 llvm::cl::opt<bool> EnzymeNonPower2Cache(
     "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
     cl::desc("Disable caching of integers which are not a power of 2"));
+}
+
+#define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+bool attributeKnownFunctions(llvm::Function &F) {
+  bool changed = false;
+  if (F.getName() == "fprintf") {
+    for (auto &arg : F.args()) {
+      if (arg.getType()->isPointerTy()) {
+        addFunctionNoCapture(&F, arg.getArgNo());
+        changed = true;
+      }
+    }
+  }
+  if (F.getName().contains("__enzyme_float") ||
+      F.getName().contains("__enzyme_double") ||
+      F.getName().contains("__enzyme_integer") ||
+      F.getName().contains("__enzyme_pointer") ||
+      F.getName().contains("__enzyme_todense") ||
+      F.getName().contains("__enzyme_ignore_derivatives") ||
+      F.getName().contains("__enzyme_iter") ||
+      F.getName().contains("__enzyme_virtualreverse")) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ReadNone);
+#endif
+    if (!(F.getName().contains("__enzyme_todense") ||
+          F.getName().contains("__enzyme_ignore_derivatives"))) {
+      for (auto &arg : F.args()) {
+        if (arg.getType()->isPointerTy()) {
+          arg.addAttr(Attribute::ReadNone);
+          addFunctionNoCapture(&F, arg.getArgNo());
+        }
+      }
+    }
+  }
+  if (F.getName() == "memcmp") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    for (int i = 0; i < 2; i++)
+      if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
+        addFunctionNoCapture(&F, i);
+        F.addParamAttr(i, Attribute::ReadOnly);
+      }
+  }
+
+  if (F.getName() ==
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+  }
+  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
+      addFunctionNoCapture(&F, 2);
+      F.addParamAttr(2, Attribute::WriteOnly);
+    }
+    if (FT->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  auto name = getFuncName(&F);
+  if (name == "MPI_Isend" || name == "PMPI_Isend") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (FT->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else {
+      PointerABI = false;
+    }
+    // OpenMPI vs MPICH
+    if (FT->getParamType(2)->isPointerTy()) {
+      addFunctionNoCapture(&F, 2);
+      F.addParamAttr(2, Attribute::ReadOnly);
+    }
+    if (FT->getParamType(6)->isPointerTy()) {
+      F.addParamAttr(6, Attribute::WriteOnly);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  if (name == "MPI_Comm_rank" || name == "PMPI_Comm_rank" ||
+      name == "MPI_Comm_size" || name == "PMPI_Comm_size") {
+    auto FT = F.getFunctionType();
+    bool PointerABI = true;
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+
+    // OpenMPI vs MPICH
+    if (FT->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+      F.addParamAttr(0, Attribute::ReadOnly);
+    }
+    if (FT->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 1);
+    } else {
+      PointerABI = false;
+    }
+    if (PointerABI) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+      F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    }
+  }
+  if (name == "MPI_Wait" || name == "PMPI_Wait") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (F.getFunctionType()->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+    }
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 1);
+    }
+  }
+  if (name == "MPI_Waitall" || name == "PMPI_Waitall") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      addFunctionNoCapture(&F, 1);
+    }
+    if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(2, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 2);
+    }
+  }
+  // Map of MPI function name to the arg index of its type argument
+  std::map<std::string, int> MPI_TYPE_ARGS = {
+      {"MPI_Send", 2},      {"MPI_Ssend", 2},     {"MPI_Bsend", 2},
+      {"MPI_Recv", 2},      {"MPI_Brecv", 2},     {"PMPI_Send", 2},
+      {"PMPI_Ssend", 2},    {"PMPI_Bsend", 2},    {"PMPI_Recv", 2},
+      {"PMPI_Brecv", 2},
+
+      {"MPI_Isend", 2},     {"MPI_Irecv", 2},     {"PMPI_Isend", 2},
+      {"PMPI_Irecv", 2},
+
+      {"MPI_Reduce", 3},    {"PMPI_Reduce", 3},
+
+      {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
+  {
+    auto found = MPI_TYPE_ARGS.find(name.str());
+    if (found != MPI_TYPE_ARGS.end()) {
+      for (auto user : F.users()) {
+        if (auto CI = dyn_cast<CallBase>(user))
+          if (CI->getCalledFunction() == &F) {
+            if (Constant *C =
+                    dyn_cast<Constant>(CI->getArgOperand(found->second))) {
+              while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+                C = CE->getOperand(0);
+              }
+              if (auto GV = dyn_cast<GlobalVariable>(C)) {
+                if (GV->getName() == "ompi_mpi_cxx_bool") {
+                  changed = true;
+                  CI->addAttribute(
+                      AttributeList::FunctionIndex,
+                      Attribute::get(CI->getContext(), "enzyme_inactive"));
+                }
+              }
+            }
+          }
+      }
+    }
+  }
+
+  if (F.getName() == "omp_get_max_threads" ||
+      F.getName() == "omp_get_thread_num") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+  }
+  if (F.getName() == "frexp" || F.getName() == "frexpf" ||
+      F.getName() == "frexpl") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+#endif
+    F.addParamAttr(1, Attribute::WriteOnly);
+  }
+  if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
+      F.getName() == "__mth_i_ipowi") {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ReadNone);
+#endif
+  }
+
+  const char *NonEscapingFns[] = {
+      "julia.ptls_states",
+      "julia.get_pgcstack",
+      "lgamma_r",
+      "memcmp",
+      "_ZNSt6chrono3_V212steady_clock3nowEv",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
+      "createERmm",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "fprintf",
+      "fwrite",
+      "fputc",
+      "strtol",
+      "getenv",
+      "memchr",
+      "cublasSetMathMode",
+      "cublasSetStream_v2",
+      "cuMemPoolTrimTo",
+      "cuDeviceGetMemPool",
+      "cuStreamSynchronize",
+      "cuStreamDestroy",
+      "cuStreamQuery",
+      "cuCtxGetCurrent",
+      "cuDeviceGet",
+      "cuDeviceGetName",
+      "cuDriverGetVersion",
+      "cudaRuntimeGetVersion",
+      "cuDeviceGetCount",
+      "cuMemPoolGetAttribute",
+      "cuMemGetInfo_v2",
+      "cuDeviceGetAttribute",
+      "cuDevicePrimaryCtxRetain",
+  };
+  for (auto fname : NonEscapingFns)
+    if (name == fname) {
+      changed = true;
+      F.addAttribute(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    }
+  changed |= attributeTablegen(F);
+  return changed;
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -4214,15 +4517,6 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   }
 
   return {};
-}
-
-bool isTargetNVPTX(llvm::Module &M) {
-#if LLVM_VERSION_MAJOR > 20
-  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
-         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
-#else
-  return M.getTargetTriple().find("nvptx") != std::string::npos;
-#endif
 }
 
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
