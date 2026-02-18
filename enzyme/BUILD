@@ -132,6 +132,29 @@ gentbl_cc_library(
 )
 
 cc_library(
+    name = "EnzymePreserveNVVM",
+    srcs = [
+        "Enzyme/Utils.cpp",
+        "Enzyme/PreserveNVVM.cpp"
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":blas-attributor",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
+)
+
+cc_library(
     name = "EnzymeStatic",
     srcs = glob(
         [
@@ -139,7 +162,11 @@ cc_library(
             "Enzyme/TypeAnalysis/*.cpp",
             "Enzyme/Clang/EnzymeClang.cpp",
         ],
-        exclude = ["Enzyme/eopt.cpp"],
+        exclude = [
+            "Enzyme/eopt.cpp",
+            "Enzyme/Utils.cpp",
+            "Enzyme/PreserveNVVM.cpp"
+        ],
     ),
     hdrs = glob([
         "Enzyme/*.h",
@@ -159,6 +186,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":EnzymePreserveNVVM",
         ":binop-derivatives",
         ":blas-attributor",
         ":blas-derivatives",
@@ -195,28 +223,6 @@ cc_library(
     alwayslink = 1,
 )
 
-cc_library(
-    name = "EnzymePreserveNVVM",
-    srcs = [
-        "Enzyme/Utils.cpp",
-        "Enzyme/PreserveNVVM.cpp"
-    ],
-    hdrs = glob([
-        "Enzyme/*.h",
-        "Enzyme/TypeAnalysis/*.h",
-    ]),
-    copts = [
-        "-Wno-unused-variable",
-        "-Wno-return-type",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":blas-attributor",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
-    ],
-)
 
 # Modified from llvm_driver_cc_binary since that can't be used
 # outside of llvm tree
