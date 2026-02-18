@@ -196,8 +196,11 @@ cc_library(
 )
 
 cc_library(
-    name = "EnzymeFrontendSupport",
-    srcs = ["Enzyme/PreserveNVVM.cpp"],
+    name = "EnzymePreserveNVVM",
+    srcs = [
+        "Enzyme/Utils.cpp",
+        "Enzyme/PreserveNVVM.cpp"
+    ],
     hdrs = glob([
         "Enzyme/*.h",
         "Enzyme/TypeAnalysis/*.h",
@@ -207,24 +210,7 @@ cc_library(
         "-Wno-return-type",
     ],
     visibility = ["//visibility:public"],
-    deps = [
-        "@llvm-project//llvm:AggressiveInstCombine",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Demangle",
-        "@llvm-project//llvm:IPO",
-        "@llvm-project//llvm:IRReader",
-        "@llvm-project//llvm:InstCombine",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Scalar",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TargetParser",
-        "@llvm-project//llvm:TransformUtils",
-        "@llvm-project//llvm:config",
-    ],
-    alwayslink = 1,
+    deps = [":EnzymeStatic"],
 )
 
 # Modified from llvm_driver_cc_binary since that can't be used
