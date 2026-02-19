@@ -1,3 +1,9 @@
+# Public read-only cache
+common:public_cache --remote_cache="https://storage.googleapis.com/enzyme-presubmit-bazel-cache/" --remote_upload_local_results=false
+
+# Cache pushes are limited to Enzyme's CI system.
+common:public_cache_push --config=public_cache --remote_upload_local_results=true --google_default_credentials
+
 build --announce_rc
 
 build --experimental_repo_remote_exec
