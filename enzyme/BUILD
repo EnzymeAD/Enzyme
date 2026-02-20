@@ -132,10 +132,13 @@ gentbl_cc_library(
 )
 
 cc_library(
-    name = "EnzymePreserveNVVM",
+    name = "EnzymeUtils",
     srcs = [
         "Enzyme/Utils.cpp",
-        "Enzyme/PreserveNVVM.cpp"
+        "Enzyme/FunctionUtils.cpp",
+        "Enzyme/GradientUtils.cpp",
+        "Enzyme/DiffeGradientUtils.cpp",
+        "Enzyme/DifferentialUseAnalysis.cpp"
     ],
     hdrs = glob([
         "Enzyme/*.h",
@@ -148,6 +151,77 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":blas-attributor",
+        ":blas-diffuseanalysis",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
+)
+
+cc_library(
+    name = "EnzymeCacheUtility",
+    srcs = [
+        "Enzyme/CacheUtility.cpp",
+        "Enzyme/MustExitScalarEvolution.cpp"
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
+)
+
+cc_library(
+    name = "EnzymeTypeAnalysis",
+    srcs = [
+        "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
+        "Enzyme/TypeAnalysis/TypeTree.cpp",
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":blas-typeanalysis",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
+)
+
+cc_library(
+    name = "EnzymePreserveNVVM",
+    srcs = [
+        "Enzyme/PreserveNVVM.cpp"
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core"
@@ -164,8 +238,16 @@ cc_library(
         ],
         exclude = [
             "Enzyme/eopt.cpp",
+            "Enzyme/PreserveNVVM.cpp",
+            "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
+            "Enzyme/TypeAnalysis/TypeTree.cpp",
+            "Enzyme/CacheUtility.cpp",
+            "Enzyme/MustExitScalarEvolution.cpp",
             "Enzyme/Utils.cpp",
-            "Enzyme/PreserveNVVM.cpp"
+            "Enzyme/FunctionUtils.cpp",
+            "Enzyme/GradientUtils.cpp",
+            "Enzyme/DiffeGradientUtils.cpp",
+            "Enzyme/DifferentialUseAnalysis.cpp"
         ],
     ),
     hdrs = glob([
@@ -187,11 +269,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymePreserveNVVM",
+        ":EnzymeTypeAnalysis",
+        ":EnzymeCacheUtility",
+        ":EnzymeUtils",
         ":binop-derivatives",
-        ":blas-attributor",
         ":blas-derivatives",
-        ":blas-diffuseanalysis",
-        ":blas-typeanalysis",
         ":bundled-includes",
         ":call-derivatives",
         ":inst-derivatives",
