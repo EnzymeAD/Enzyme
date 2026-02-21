@@ -44,6 +44,7 @@ option(ENZYME_APPLE_DYNAMIC_LOOKUP
   OFF)
 option(ENZYME_STATIC_LIB "Build static library" OFF)
 option(ENZYME_WARN_COMPILER "Warn if enzyme detects potentially incompatible compiler" ON)
+option(ENZYME_ENABLE_REACTANT "Build support library for Reactant C++ frontend" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
@@ -83,10 +84,11 @@ if (NOT LLVM_ENABLE_PLUGINS)
   set(ENZYME_ENABLE_PLUGINS OFF)
 endif()
 
-if ((NOT ENZYME_EXTERNAL_SHARED_LIB) AND (NOT ENZYME_ENABLE_PLUGINS))
+if ((NOT ENZYME_EXTERNAL_SHARED_LIB) AND (NOT ENZYME_ENABLE_PLUGINS) AND (NOT ENZYME_ENABLE_REACTANT))
   message("ENZYME_EXTERNAL_SHARED_LIB OFF")
   message("ENZYME_ENABLE_PLUGINS OFF")
-  message(SEND_ERROR "You have selected a build without creating the Enzyme plugin, nor Enzyme as a shared library -- and nothing will be built.")
+  message("ENZYME_ENABLE_REACTANT OFF")
+  message(SEND_ERROR "You have selected a build without creating the Enzyme plugin, nor Enzyme as a shared library, nor the support library for Reactant C++ -- and nothing will be built.")
 endif()
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
@@ -374,6 +376,11 @@ export(TARGETS LLDEnzymePrintFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 export(TARGETS LLDEnzymeNoStrictAliasingFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+
+if (ENZYME_ENABLE_REACTANT)
+  export(TARGETS EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 
 export(PACKAGE Enzyme)
 
