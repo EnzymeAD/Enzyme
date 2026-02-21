@@ -132,34 +132,6 @@ gentbl_cc_library(
 )
 
 cc_library(
-    name = "EnzymeUtils",
-    srcs = [
-        "Enzyme/Utils.cpp",
-        "Enzyme/FunctionUtils.cpp",
-        "Enzyme/GradientUtils.cpp",
-        "Enzyme/DiffeGradientUtils.cpp",
-        "Enzyme/DifferentialUseAnalysis.cpp"
-    ],
-    hdrs = glob([
-        "Enzyme/*.h",
-        "Enzyme/TypeAnalysis/*.h",
-    ]),
-    copts = [
-        "-Wno-unused-variable",
-        "-Wno-return-type",
-    ],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":blas-attributor",
-        ":blas-diffuseanalysis",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
-    ],
-)
-
-cc_library(
     name = "EnzymeCacheUtility",
     srcs = [
         "Enzyme/CacheUtility.cpp",
@@ -187,6 +159,7 @@ cc_library(
     srcs = [
         "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
         "Enzyme/TypeAnalysis/TypeTree.cpp",
+        "Enzyme/TypeAnalysis/RustDebugInfo.cpp"
     ],
     hdrs = glob([
         "Enzyme/*.h",
@@ -229,6 +202,46 @@ cc_library(
 )
 
 cc_library(
+    name = "EnzymeDiffCore",
+    srcs = [
+        "Enzyme/ActivityAnalysis.cpp",
+        "Enzyme/EnzymeLogic.cpp",
+        "Enzyme/Utils.cpp",
+        "Enzyme/FunctionUtils.cpp",
+        "Enzyme/GradientUtils.cpp",
+        "Enzyme/DiffeGradientUtils.cpp",
+        "Enzyme/DifferentialUseAnalysis.cpp",
+        "Enzyme/InstructionBatcher.cpp",
+        "Enzyme/TraceGenerator.cpp",
+        "Enzyme/TraceUtils.cpp",
+        "Enzyme/TraceInterface.cpp",
+        "Enzyme/CallDerivatives.cpp",
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":inst-derivatives",
+        ":binop-derivatives",
+        ":intr-derivatives",
+        ":blas-attributor",
+        ":blas-diffuseanalysis",
+        ":blas-derivatives",
+        ":call-derivatives",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core"
+    ],
+)
+
+cc_library(
     name = "EnzymeStatic",
     srcs = glob(
         [
@@ -241,13 +254,21 @@ cc_library(
             "Enzyme/PreserveNVVM.cpp",
             "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
             "Enzyme/TypeAnalysis/TypeTree.cpp",
+            "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
             "Enzyme/CacheUtility.cpp",
             "Enzyme/MustExitScalarEvolution.cpp",
+            "Enzyme/ActivityAnalysis.cpp",
+            "Enzyme/EnzymeLogic.cpp",
             "Enzyme/Utils.cpp",
             "Enzyme/FunctionUtils.cpp",
             "Enzyme/GradientUtils.cpp",
             "Enzyme/DiffeGradientUtils.cpp",
-            "Enzyme/DifferentialUseAnalysis.cpp"
+            "Enzyme/DifferentialUseAnalysis.cpp",
+            "Enzyme/InstructionBatcher.cpp",
+            "Enzyme/TraceGenerator.cpp",
+            "Enzyme/TraceUtils.cpp",
+            "Enzyme/TraceInterface.cpp",
+            "Enzyme/CallDerivatives.cpp",
         ],
     ),
     hdrs = glob([
@@ -271,13 +292,8 @@ cc_library(
         ":EnzymePreserveNVVM",
         ":EnzymeTypeAnalysis",
         ":EnzymeCacheUtility",
-        ":EnzymeUtils",
-        ":binop-derivatives",
-        ":blas-derivatives",
+        ":EnzymeDiffCore",
         ":bundled-includes",
-        ":call-derivatives",
-        ":inst-derivatives",
-        ":intr-derivatives",
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
         "@llvm-project//clang:driver",
