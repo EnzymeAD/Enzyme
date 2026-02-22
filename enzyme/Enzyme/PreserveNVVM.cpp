@@ -58,6 +58,10 @@ using namespace llvm;
 #define addAttribute addAttributeAtIndex
 #endif
 
+#ifndef ENZYME_ENABLE_NVVM_ATTRIBUTION
+#define ENZYME_ENABLE_NVVM_ATTRIBUTION 1
+#endif
+
 //! Returns whether changed.
 bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   if (Begin && !F.hasFnAttribute("prev_fixup")) {
@@ -863,11 +867,13 @@ bool preserveNVVM(bool Begin, Module &M) {
       Implements[nvname] = std::make_pair(mathname, llname);
     }
   }
+#if ENZYME_ENABLE_NVVM_ATTRIBUTION
   for (auto &F : llvm::make_early_inc_range(M)) {
     if (Begin) {
       changed |= attributeKnownFunctions(F);
     }
   }
+#endif
   for (auto &F : M) {
     auto found = Implements.find(F.getName());
     if (found != Implements.end()) {

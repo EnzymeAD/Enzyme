@@ -165,40 +165,16 @@ endif()
 if (${ENZYME_ENABLE_REACTANT})
   set(ENZYME_REACTANT_SUPPORT_SRC
     PreserveNVVM.cpp
-    Utils.cpp
-    TypeAnalysis/TypeAnalysis.cpp
-    TypeAnalysis/TypeTree.cpp
-    TypeAnalysis/RustDebugInfo.cpp
-    CacheUtility.cpp
-    MustExitScalarEvolution.cpp
-    ActivityAnalysis.cpp
-    EnzymeLogic.cpp
-    Utils.cpp
-    FunctionUtils.cpp
-    GradientUtils.cpp
-    DiffeGradientUtils.cpp
-    DifferentialUseAnalysis.cpp
-    InstructionBatcher.cpp
-    TraceGenerator.cpp
-    TraceUtils.cpp
-    TraceInterface.cpp
-    CallDerivatives.cpp
   )
 
   add_llvm_library(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
     ${ENZYME_REACTANT_SUPPORT_SRC}
     PARTIAL_SOURCES_INTENDED
     STATIC
-    DEPENDS
-      intrinsics_gen
-      BinopDerivativesIncGen
-      IntrinsicDerivativesIncGen
-      CallDerivativesIncGen
-      InstructionDerivativesIncGen
-      BlasDerivativesIncGen
-      BlasDeclarationsIncGen
-      BlasTAIncGen
-      BlasDiffUseIncGen
+  )
+
+  target_compile_definitions(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
+    PRIVATE ENZYME_ENABLE_NVVM_ATTRIBUTION=0
   )
 
   target_include_directories(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}

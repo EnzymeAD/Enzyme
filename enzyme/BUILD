@@ -191,6 +191,7 @@ cc_library(
     copts = [
         "-Wno-unused-variable",
         "-Wno-return-type",
+        "-DENZYME_ENABLE_NVVM_ATTRIBUTION=0"
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -251,7 +252,6 @@ cc_library(
         ],
         exclude = [
             "Enzyme/eopt.cpp",
-            "Enzyme/PreserveNVVM.cpp",
             "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
             "Enzyme/TypeAnalysis/TypeTree.cpp",
             "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
@@ -289,7 +289,6 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":EnzymePreserveNVVM",
         ":EnzymeTypeAnalysis",
         ":EnzymeCacheUtility",
         ":EnzymeDiffCore",
