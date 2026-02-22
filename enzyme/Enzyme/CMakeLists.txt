@@ -200,8 +200,6 @@ if (${ENZYME_ENABLE_REACTANT})
       BlasDiffUseIncGen
   )
 
-  target_link_libraries(EnzymeReactantSupport-${LLVM_VERSION_MAJOR} PUBLIC LLVM)
-
   target_include_directories(EnzymeReactantSupport-${LLVM_VERSION_MAJOR}
     PUBLIC
       $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
