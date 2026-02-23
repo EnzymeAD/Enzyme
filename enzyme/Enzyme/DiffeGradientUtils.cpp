@@ -344,6 +344,65 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
     return res;
   }
 
+  if (auto VecT = dyn_cast<VectorType>(VT)) {
+    if (!VecT->getElementCount().isScalable()) {
+      Type *elemTy = VecT->getElementType();
+      auto elemBytes = (DL.getTypeSizeInBits(elemTy) + 7) / 8;
+
+      // Only handle element-aligned windows (your case: float => 4 bytes)
+      if (elemBytes != 0 && start % elemBytes == 0 && size % elemBytes == 0) {
+        unsigned left_idx = start / elemBytes;
+        unsigned right_idx = (start + size) / elemBytes; // exclusive
+
+        unsigned numElts = VecT->getElementCount().getFixedValue();
+        if (left_idx > numElts)
+          left_idx = numElts;
+        if (right_idx > numElts)
+          right_idx = numElts;
+
+        auto maskVec = [&](Value *dsub) -> Value * {
+          Value *masked = Constant::getNullValue(VT);
+          for (unsigned i = left_idx; i < right_idx; i++) {
+            Value *vidx =
+                ConstantInt::get(Type::getInt32Ty(val->getContext()), i);
+            Value *el = BuilderM.CreateExtractElement(dsub, vidx);
+            masked = BuilderM.CreateInsertElement(masked, el, vidx);
+          }
+          return masked;
+        };
+
+        if (getWidth() == 1) {
+          SmallVector<unsigned, 1> eidxs;
+          for (auto idx : idxs.slice(ignoreFirstSlicesOfDif))
+            eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+
+          Value *subdif = extractMeta(BuilderM, dif, eidxs);
+          return addToDiffe(val, maskVec(subdif), BuilderM, addingType, idxs,
+                            mask);
+        } else {
+          SmallVector<SelectInst *, 4> res;
+          for (unsigned j = 0; j < getWidth(); j++) {
+            SmallVector<Value *, 1> lidxs;
+            SmallVector<unsigned, 1> eidxs = {(unsigned)j};
+
+            lidxs.push_back(
+                ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
+            for (auto idx : idxs.slice(ignoreFirstSlicesOfDif))
+              eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+            for (auto idx : idxs)
+              lidxs.push_back(idx);
+
+            Value *subdif = extractMeta(BuilderM, dif, eidxs);
+            for (auto v : addToDiffe(val, maskVec(subdif), BuilderM, addingType,
+                                     lidxs, mask))
+              res.push_back(v);
+          }
+          return res;
+        }
+      }
+    }
+  }
+
   llvm::errs() << " VT: " << *VT << " idxs:{";
   for (auto idx : idxs)
     llvm::errs() << *idx << ",";
