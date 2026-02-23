@@ -9131,6 +9131,25 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       auto TT = TR.query(load)[{-1}];
       if (!TT.isFloat()) {
         shadowPointerLoads.push_back(cur);
+        if (auto CI = dyn_cast<CallInst>(V)) {
+          auto funcName = getFuncNameFromCall(CI);
+          if (funcName == "jl_alloc_array_1d" ||
+              funcName == "jl_alloc_array_2d" ||
+              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
+              funcName == "ijl_alloc_array_1d" ||
+              funcName == "ijl_alloc_array_2d" ||
+              funcName == "ijl_alloc_array_3d" ||
+              funcName == "ijl_array_copy") {
+            Value *pval = prev;
+            while (auto C = dyn_cast<CastInst>(pval))
+              pval = C->getOperand(0);
+            if (prev == V) {
+              for (auto U : load->users())
+                if (auto I = dyn_cast<Instruction>(U))
+                  todo.push_back(std::make_pair(I, load));
+            }
+          }
+        }
       }
       loads.push_back(load);
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
