@@ -254,6 +254,8 @@ bool EmitNoDerivativeError(const std::string &message, llvm::Value *todiff,
 void EmitNoTypeError(const std::string &, llvm::Instruction &inst,
                      GradientUtils *gutils, llvm::IRBuilder<> &B);
 
+void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss);
+
 /// Get LLVM fast math flags
 llvm::FastMathFlags getFast();
 
