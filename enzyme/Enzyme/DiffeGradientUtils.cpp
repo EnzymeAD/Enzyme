@@ -52,10 +52,10 @@
 using namespace llvm;
 
 namespace {
-bool noAtomicsForContext(const Instruction *orig, const Value *origptr) {
+bool elementwiseReadForContext(const Instruction *orig, const Value *origptr) {
   if (orig) {
     if (const Function *F = orig->getFunction()) {
-      if (F->hasFnAttribute("enzyme_noatomic")) {
+      if (F->hasFnAttribute("enzyme_elementwise_read")) {
         return true;
       }
     }
@@ -64,7 +64,7 @@ bool noAtomicsForContext(const Instruction *orig, const Value *origptr) {
   if (auto *arg = dyn_cast<Argument>(base)) {
     if (const Function *F = arg->getParent()) {
       return F->getAttributes().hasParamAttr(arg->getArgNo(),
-                                             "enzyme_noatomic");
+                                             "enzyme_elementwise_read");
     }
   }
   return false;
@@ -938,7 +938,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   // all additional parallelism in this function is outlined.
   if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
     Atomic = false;
-  if (Atomic && noAtomicsForContext(orig, origptr))
+  if (Atomic && elementwiseReadForContext(orig, origptr))
     Atomic = false;
 
   if (Atomic) {
