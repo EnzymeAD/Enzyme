@@ -228,7 +228,7 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp"]>]> {
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp", "MCMCRegionOp", "SampleRegionOp"]>]> {
   let summary = "Yield values at the end of an autodiff_region, loop, or if ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
@@ -477,6 +477,35 @@ def SampleOp : Enzyme_Op<"sample",
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def SampleRegionOp : Enzyme_Op<"sample_region", [AutomaticAllocationScope]> {
+  let summary = "Sample from distribution with inlined sampler and logpdf";
+  let description = [{
+    A region-based sample operation where both the sampler function and
+    logpdf function bodies are inlined as nested regions.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<StrAttr>:$fn,
+    OptionalAttr<StrAttr>:$logpdf_fn,
+    OptionalAttr<SymbolAttr>:$symbol,
+    OptionalAttr<SupportAttr>:$support,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let regions = (region
+    AnyRegion:$sampler,
+    AnyRegion:$logpdf
+  );
+
+  let assemblyFormat = [{
+    `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf attr-dict
+    `:` functional-type($inputs, $outputs)
   }];
 }
 
@@ -758,6 +787,50 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   }];
 
   let hasVerifier = 1;
+}
+
+def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSizedOperandSegments]> {
+  let summary = "MCMC inference with inlined model body";
+  let description = [{
+    A region-based MCMC operation where the model function body is inlined
+    into a region. This is an internal construct for optimization passes to see the full
+    computation before expansion to HMC/NUTS loops.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    Optional<AnyRankedTensor>:$original_trace,
+    AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    Optional<AnyRankedTensor>:$initial_position,
+
+    OptionalAttr<StrAttr>:$fn,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let regions = (region AnyRegion:$body);
+
+  let results = (outs AnyRankedTensor:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` (`given` $original_trace^)?
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    (`initial_position` `=` $initial_position^)?
+    $body attr-dict-with-keyword `:` functional-type(operands, results)
+  }];
 }
 
 def DotOp : Enzyme_Op<"dot", [Pure]> {
