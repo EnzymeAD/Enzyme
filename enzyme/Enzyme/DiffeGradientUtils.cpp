@@ -353,6 +353,13 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
   return {};
 }
 
+static bool isZero(llvm::Constant *cst) {
+#if LLVM_VERSION_MAJOR >= 22
+  return cst->isNullValue() || cst->getZeroValueForNegation();
+#else
+  return cst->isZeroValue();
+#endif
+}
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, ArrayRef<Value *> idxs,
@@ -390,7 +397,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     //! optimize fadd of select to select of fadd
     if (SelectInst *select = dyn_cast<SelectInst>(dif)) {
       if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
@@ -399,7 +406,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
@@ -413,7 +420,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (BitCastInst *bc = dyn_cast<BitCastInst>(dif)) {
       if (SelectInst *select = dyn_cast<SelectInst>(bc->getOperand(0))) {
         if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(), old,
                 faddForNeg(old,
@@ -426,7 +433,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(),
                 faddForNeg(old,
