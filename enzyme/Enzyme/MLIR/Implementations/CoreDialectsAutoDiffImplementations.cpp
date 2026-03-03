@@ -268,10 +268,8 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
   auto parentOp = origTerminator->getParentOp();
   llvm::SmallDenseSet<unsigned> operandsToShadow;
   auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  auto regionBranchOp =
-      dyn_cast<RegionBranchOpInterface>(parentOp);
-  if (termIface && regionBranchOp &&
-      !isa<scf::ParallelOp>(parentOp)) {
+  auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(parentOp);
+  if (termIface && regionBranchOp && !isa<scf::ParallelOp>(parentOp)) {
 
     SmallVector<RegionSuccessor> successors;
     termIface.getSuccessorRegions(
@@ -290,13 +288,16 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
       }
     }
   } else if (isa<scf::ReduceOp>(parentOp)) {
-    // ReduceOp has no direct results, instead the result of the ith reducer block within the ReduceOp
-    // matches up with the ith result of the parent ParallelOp of the ReduceOp.  Therefore the terminator
-    // must have exactly 1 operand and we will shadow it
-    auto reducer_index = origTerminator->getBlock()->getParent()->getRegionNumber();
+    // ReduceOp has no direct results, instead the result of the ith reducer
+    // block within the ReduceOp matches up with the ith result of the parent
+    // ParallelOp of the ReduceOp.  Therefore the terminator must have exactly 1
+    // operand and we will shadow it
+    auto reducer_index =
+        origTerminator->getBlock()->getParent()->getRegionNumber();
     assert(reducer_index < parentOp->getParentOp()->getNumResults());
     assert(origTerminator->getNumOperands() == 1);
-    if (!gutils->isConstantValue(parentOp->getParentOp()->getResult(reducer_index)))
+    if (!gutils->isConstantValue(
+            parentOp->getParentOp()->getResult(reducer_index)))
       operandsToShadow.insert(0);
   } else {
     // Note, this works for scf::ReduceOp because it has the same number of
@@ -309,8 +310,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
   }
 
   SmallVector<Value> newOperands;
-  // For scf::ReduceReturnOp (whose parent is scf::ReduceOp) only add the shadows as operands
-  // since the primal reducer will be in a different region with its own scf::ReduceReturnOp
+  // For scf::ReduceReturnOp (whose parent is scf::ReduceOp) only add the
+  // shadows as operands since the primal reducer will be in a different region
+  // with its own scf::ReduceReturnOp
   if (isa<scf::ReduceOp>(parentOp)) {
     newOperands.reserve(operandsToShadow.size());
     for (OpOperand &operand : origTerminator->getOpOperands()) {
@@ -332,11 +334,12 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
   Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
   replTerminator->setOperands(newOperands);
 
-  // Special handling for scf::ReduceOp where the assumption that shadows follow originals is violated.
-  // Here the shadow operations need to be put in a shadow region.  It isn't clear how to do that directly,
-  // so instead we will create the shadows as normal and then create a new scf::ReduceOp terminator that
-  // combines the regions from the original and differentiated.  We then erase the primal operations from
-  // the derivative reducer region(s).
+  // Special handling for scf::ReduceOp where the assumption that shadows follow
+  // originals is violated. Here the shadow operations need to be put in a
+  // shadow region.  It isn't clear how to do that directly, so instead we will
+  // create the shadows as normal and then create a new scf::ReduceOp terminator
+  // that combines the regions from the original and differentiated.  We then
+  // erase the primal operations from the derivative reducer region(s).
   if (isa<scf::ReduceOp>(origTerminator)) {
 
     // Differentiate the body of the reducer
@@ -344,20 +347,22 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
       for (auto &origBlock : origRegion) {
         for (Operation &o : origBlock) {
           if (failed(gutils->visitChild(&o))) {
-            replTerminator->emitError() << " Differentiating reducer block " << *replTerminator << " failed!\n";
+            replTerminator->emitError() << " Differentiating reducer block "
+                                        << *replTerminator << " failed!\n";
           }
         }
       }
     }
 
-    // Delete the primal operations in each differentiated reducer block by building a map of the operations
-    // that are ultimately used by starting from the shadow operands of the terminator (scf::ReduceReturnOp).  
-    // Then erase all of the operations that aren't used.  Note that from above, all operands for the terminator
-    // are shadow operands.
+    // Delete the primal operations in each differentiated reducer block by
+    // building a map of the operations that are ultimately used by starting
+    // from the shadow operands of the terminator (scf::ReduceReturnOp). Then
+    // erase all of the operations that aren't used.  Note that from above, all
+    // operands for the terminator are shadow operands.
     for (auto &region : replTerminator->getRegions()) {
       for (auto &block : region) {
-        std::map<Operation*,bool> used;
-        std::vector<Operation*> op_list;
+        std::map<Operation *, bool> used;
+        std::vector<Operation *> op_list;
 
         // Initialize all operations as not used
         for (Operation &o : block) {
@@ -365,8 +370,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
           op_list.push_back(&o);
         }
 
-        // Recursively mark operations that are used starting from the terminator
-        auto mark_used = [&used](const auto& self, Operation *op) -> void {
+        // Recursively mark operations that are used starting from the
+        // terminator
+        auto mark_used = [&used](const auto &self, Operation *op) -> void {
           if (op != nullptr) {
             assert(used.find(op) != used.end());
             used[op] = true;
@@ -374,33 +380,36 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
               self(self, v.getDefiningOp());
           }
         };
-        mark_used(mark_used,block.getTerminator());
+        mark_used(mark_used, block.getTerminator());
 
-        // Delete the unused operations squentially, starting from the last so that all users
-        // of an operation are erased before the operation itself
-        for (auto it=op_list.rbegin(); it!=op_list.rend(); ++it) {
+        // Delete the unused operations squentially, starting from the last so
+        // that all users of an operation are erased before the operation itself
+        for (auto it = op_list.rbegin(); it != op_list.rend(); ++it) {
           if (!used[*it]) {
             (*it)->erase();
           }
         }
 
         // Delete the primal arguments from the block.  We have to go backwards
-        // starting from the second-to-last as the args will shift forward after erasing.
-        for (int i=block.getNumArguments()-2; i>=0; i-=2) {
+        // starting from the second-to-last as the args will shift forward after
+        // erasing.
+        for (int i = block.getNumArguments() - 2; i >= 0; i -= 2) {
           block.eraseArgument(i);
         }
       }
     }
 
-    // Create a new terminator combining the regions of differentiated and original terminators.
-    // We clone the original region so that it still exists for the undifferentiated reducer
-    // but we can take the region from the originally differentiated one because we delete it later
+    // Create a new terminator combining the regions of differentiated and
+    // original terminators. We clone the original region so that it still
+    // exists for the undifferentiated reducer but we can take the region from
+    // the originally differentiated one because we delete it later
     mlir::OpBuilder builder(replTerminator);
     mlir::IRMapping mapper;
-    OperationState state(replTerminator->getLoc(), scf::ReduceOp::getOperationName());
+    OperationState state(replTerminator->getLoc(),
+                         scf::ReduceOp::getOperationName());
     state.addOperands(newOperands);
     size_t num_regions = origTerminator->getNumRegions();
-    for (size_t i=0; i<num_regions; ++i) {
+    for (size_t i = 0; i < num_regions; ++i) {
       Region *new_orig_region = state.addRegion();
       Region *new_diff_region = state.addRegion();
       origTerminator->getRegion(i).cloneInto(new_orig_region, mapper);
@@ -437,9 +446,10 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (const RegionSuccessor &successor : entrySuccessors) {
 
     auto parOp = dyn_cast<scf::ParallelOp>(op);
-    OperandRange operandRange = successor.isParent() && parOp 
-                                  ? parOp.getInitVals() 
-                                  : regionBranchOp.getEntrySuccessorOperands(successor);
+    OperandRange operandRange =
+        successor.isParent() && parOp
+            ? parOp.getInitVals()
+            : regionBranchOp.getEntrySuccessorOperands(successor);
 
     ValueRange targetValues =
         successor.isParent() ? op->getResults()

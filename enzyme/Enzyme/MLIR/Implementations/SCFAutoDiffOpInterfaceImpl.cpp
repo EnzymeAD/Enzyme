@@ -1009,7 +1009,8 @@ struct ForOpADDataFlow
 };
 
 struct ParallelOpADDataFlow
-    : public ADDataFlowOpInterface::ExternalModel<ParallelOpADDataFlow, scf::ParallelOp> {
+    : public ADDataFlowOpInterface::ExternalModel<ParallelOpADDataFlow,
+                                                  scf::ParallelOp> {
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
                                                    OpResult res) const {
     auto parOp = cast<scf::ParallelOp>(op);
@@ -1018,7 +1019,7 @@ struct ParallelOpADDataFlow
     const size_t num_step = parOp.getStep().size();
     const size_t init_vals_offset = num_lower + num_upper + num_step;
     return {
-        parOp->getOperand(res.getResultNumber() + init_vals_offset), 
+        parOp->getOperand(res.getResultNumber() + init_vals_offset),
         parOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
   }
   SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
@@ -1032,9 +1033,8 @@ struct ParallelOpADDataFlow
     auto parOp = cast<scf::ParallelOp>(op);
     SmallVector<Value> sv;
 
-    for (auto &&[res, arg, barg] :
-         llvm::zip_equal(parOp->getResults(), term->getOperands(),
-                         parOp.getInitVals())) {
+    for (auto &&[res, arg, barg] : llvm::zip_equal(
+             parOp->getResults(), term->getOperands(), parOp.getInitVals())) {
       if (arg == val) {
         sv.push_back(res);
         sv.push_back(barg);
@@ -1046,7 +1046,8 @@ struct ParallelOpADDataFlow
 };
 
 struct ReduceOpADDataFlow
-    : public ADDataFlowOpInterface::ExternalModel<ReduceOpADDataFlow, scf::ReduceOp> {
+    : public ADDataFlowOpInterface::ExternalModel<ReduceOpADDataFlow,
+                                                  scf::ReduceOp> {
   SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
                                                    OpResult res) const {
     // ReduceOp's have no results
@@ -1069,11 +1070,10 @@ struct ReduceOpADDataFlow
       auto num_lb = parOp.getLowerBound().size();
       auto num_ub = parOp.getUpperBound().size();
       auto num_st = parOp.getStep().size();
-      return { parOp->getOperand(num_lb+num_ub+num_st+region_idx),
-               ownerBlock->getTerminator()->getOperand(0) };
-    }
-    else {
-      return { redOp->getOperand(region_idx) };
+      return {parOp->getOperand(num_lb + num_ub + num_st + region_idx),
+              ownerBlock->getTerminator()->getOperand(0)};
+    } else {
+      return {redOp->getOperand(region_idx)};
     }
   }
   SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
@@ -1083,7 +1083,7 @@ struct ReduceOpADDataFlow
     mlir::Block *ownerBlock = term->getBlock();
     auto region_idx = ownerBlock->getParent()->getRegionNumber();
 
-    return { parOp->getResult(region_idx), ownerBlock->getArgument(1) };
+    return {parOp->getResult(region_idx), ownerBlock->getArgument(1)};
   }
 };
 
