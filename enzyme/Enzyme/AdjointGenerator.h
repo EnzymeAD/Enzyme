@@ -4408,16 +4408,17 @@ public:
                 if (F->getName() == "malloc") {
                   const_cast<AugmentedReturn *>(subdata)
                       ->tapeIndiciesToFree.emplace(pair.first);
-                  Value *Idxs[] = {
-                      ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()),
-                                       0),
-                      ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
-                                       pair.first)};
-                  op->replaceAllUsesWith(ph.CreateLoad(
-                      op->getType(),
-                      pair.first == -1
-                          ? tapeArg
-                          : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
+                  Value *toload = tapeArg;
+                  if (pair.first != -1) {
+                    Value *Idxs[] = {
+                        ConstantInt::get(
+                            Type::getInt64Ty(tapeArg->getContext()), 0),
+                        ConstantInt::get(
+                            Type::getInt32Ty(tapeArg->getContext()),
+                            pair.first)};
+                    toload = ph.CreateInBoundsGEP(tapeElemType, toload, Idxs);
+                  }
+                  op->replaceAllUsesWith(ph.CreateLoad(op->getType(), toload));
                   cast<Instruction>(op)->eraseFromParent();
                   if (op != alloc)
                     ci->eraseFromParent();
