@@ -1091,12 +1091,14 @@ class SCFReduceAutoDiffOpInterface
     : public AutoDiffOpInterface::ExternalModel<SCFReduceAutoDiffOpInterface,
                                                 scf::ReduceOp> {
 public:
-  LogicalResult createForwardModeTangent(Operation *origTerminator, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *origTerminator,
+                                         OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     auto parentOp = origTerminator->getParentOp();
     if (!isa<scf::ParallelOp>(parentOp)) {
-      origTerminator->emitError() << " createForwardModeTangent called with invalid parent" << *parentOp
-                      << "\n";
+      origTerminator->emitError()
+          << " createForwardModeTangent called with invalid parent" << *parentOp
+          << "\n";
       return failure();
     }
 
@@ -1187,7 +1189,7 @@ public:
     mlir::OpBuilder term_builder(replTerminator);
     mlir::IRMapping mapper;
     OperationState state(replTerminator->getLoc(),
-                          scf::ReduceOp::getOperationName());
+                         scf::ReduceOp::getOperationName());
     state.addOperands(newOperands);
     size_t num_regions = origTerminator->getNumRegions();
     for (size_t i = 0; i < num_regions; ++i) {
@@ -1205,15 +1207,17 @@ public:
 };
 
 class SCFReduceReturnAutoDiffOpInterface
-    : public AutoDiffOpInterface::ExternalModel<SCFReduceReturnAutoDiffOpInterface,
-                                                scf::ReduceReturnOp> {
+    : public AutoDiffOpInterface::ExternalModel<
+          SCFReduceReturnAutoDiffOpInterface, scf::ReduceReturnOp> {
 public:
-  LogicalResult createForwardModeTangent(Operation *origTerminator, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *origTerminator,
+                                         OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     auto parentOp = origTerminator->getParentOp();
     if (!isa<scf::ReduceOp>(parentOp)) {
-      origTerminator->emitError() << " createForwardModeTangent called with invalid parent" << *parentOp
-                      << "\n";
+      origTerminator->emitError()
+          << " createForwardModeTangent called with invalid parent" << *parentOp
+          << "\n";
       return failure();
     }
 
@@ -1231,8 +1235,8 @@ public:
       operandsToShadow.insert(0);
 
     // For scf::ReduceReturnOp only add the
-    // shadows as operands since the primal reducer will be in a different region
-    // with its own scf::ReduceReturnOp
+    // shadows as operands since the primal reducer will be in a different
+    // region with its own scf::ReduceReturnOp
     SmallVector<Value> newOperands;
     newOperands.reserve(operandsToShadow.size());
     for (OpOperand &operand : origTerminator->getOpOperands()) {
@@ -1240,12 +1244,13 @@ public:
         newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
     }
 
-    // Special handling for scf::ReduceOp where the assumption that shadows follow
-    // originals is violated. Here the shadow operations need to be put in a
-    // shadow region.  It isn't clear how to do that directly, so instead we will
-    // create the shadows as normal and then create a new scf::ReduceOp terminator
-    // that combines the regions from the original and differentiated.  We then
-    // erase the primal operations from the derivative reducer region(s).
+    // Special handling for scf::ReduceOp where the assumption that shadows
+    // follow originals is violated. Here the shadow operations need to be put
+    // in a shadow region.  It isn't clear how to do that directly, so instead
+    // we will create the shadows as normal and then create a new scf::ReduceOp
+    // terminator that combines the regions from the original and
+    // differentiated.  We then erase the primal operations from the derivative
+    // reducer region(s).
     Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
     replTerminator->setOperands(newOperands);
 
@@ -1266,7 +1271,8 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::ParallelOp::attachInterface<ParallelOpADDataFlow>(*context);
     scf::ReduceOp::attachInterface<ReduceOpADDataFlow>(*context);
     scf::ReduceOp::attachInterface<SCFReduceAutoDiffOpInterface>(*context);
-    scf::ReduceReturnOp::attachInterface<SCFReduceReturnAutoDiffOpInterface>(*context);
+    scf::ReduceReturnOp::attachInterface<SCFReduceReturnAutoDiffOpInterface>(
+        *context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
