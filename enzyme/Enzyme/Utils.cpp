@@ -656,9 +656,17 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateRetVoid();
   }
 
+  std::string Message2 = Message;
+  if (!CustomRuntimeInactiveError) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << Message << "\n";
+    emit_backtrace(orig, ss);
+    Message2 = ss.str();
+  }
   Value *args[] = {B.CreatePointerCast(primal, getInt8PtrTy(M.getContext())),
                    B.CreatePointerCast(shadow, getInt8PtrTy(M.getContext())),
-                   getString(M, Message)};
+                   getString(M, Message2)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
 }
@@ -897,11 +905,6 @@ void copy_lower_to_upper(llvm::IRBuilder<> &B, llvm::Type *fpType,
   auto F = getFunctionFromCall(C);
   assert(F);
   if (!F->empty()) {
-    if (EnzymePrintPerf) {
-      llvm::errs() << "Enzyme: copy_lower_to_upper already built, called "
-                      "from:\n";
-      emit_backtrace(C, llvm::errs());
-    }
     return;
   }
 
@@ -3907,7 +3910,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
+    ;
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
@@ -3942,7 +3950,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    if (auto inst = dyn_cast<Instruction>(todiff))
+      emit_backtrace(inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     context.ip->CreateCall(PutsF, msg);
 
@@ -3975,7 +3988,11 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
