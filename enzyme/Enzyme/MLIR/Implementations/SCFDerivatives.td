@@ -83,5 +83,3 @@ def : ControlFlowOp<"scf", "ExecuteRegionOp", [{
 
 def : RegionTerminatorOp<"scf", "YieldOp">;
 def : RegionTerminatorOp<"scf", "ConditionOp">;
-def : RegionTerminatorOp<"scf", "ReduceOp">;
-def : RegionTerminatorOp<"scf", "ReduceReturnOp">;
