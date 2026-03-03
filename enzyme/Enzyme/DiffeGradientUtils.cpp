@@ -355,7 +355,7 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
 
 static bool isZero(llvm::Constant *cst) {
 #if LLVM_VERSION_MAJOR >= 22
-  return cst->isNullValue() || cst->getZeroValueForNegation();
+  return cst->isNullValue() || cst->isNegativeZeroValue();
 #else
   return cst->isZeroValue();
 #endif
