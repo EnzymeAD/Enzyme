@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme %s | FileCheck -v %s
+// RUN: %eopt --enzyme %s | FileCheck %s
 
 module {
   func.func @nrm2(%arg0: memref<?xf64>) -> f64 {

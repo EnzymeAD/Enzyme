@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme %s | FileCheck -v %s
+// RUN: %eopt --enzyme %s | FileCheck %s
 
 module {
   func.func @matvec(%arg0: memref<?x?xf64>, %arg1: memref<?xf64>, %arg2: memref<?xf64>) {
@@ -51,8 +51,8 @@ module {
 // CHECK:       %[[x10:.+]] = arith.addf %[[arg8]], %[[x8]] : f64
 // CHECK:       scf.yield %[[x10]], %[[x9]] : f64, f64
 // CHECK:     }
-// CHECK:     memref.store %[[0]]#1, %[[arg5]][%[[arg6]]] : memref<?xf64>
-// CHECK:     memref.store %[[0]]#0, %[[arg4]][%[[arg6]]] : memref<?xf64>
+// CHECK:     memref.store %[[x0]]#1, %[[arg5]][%[[arg6]]] : memref<?xf64>
+// CHECK:     memref.store %[[x0]]#0, %[[arg4]][%[[arg6]]] : memref<?xf64>
 // CHECK:     scf.reduce 
 // CHECK:   }
 // CHECK:   return
