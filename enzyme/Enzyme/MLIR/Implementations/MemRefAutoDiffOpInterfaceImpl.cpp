@@ -247,7 +247,7 @@ public:
     MemRefType MT = cast<MemRefType>(self);
     unsigned numDynamicDims = MT.getNumDynamicDims();
     SmallVector<mlir::Value> dynamicSizes(numDynamicDims);
-    for (unsigned i=0; i<numDynamicDims; ++i) {
+    for (unsigned i = 0; i < numDynamicDims; ++i) {
       dynamicSizes[i] = builder.create<mlir::arith::ConstantIndexOp>(loc, 0);
     }
     return mlir::memref::AllocOp::create(builder, loc, MT, dynamicSizes);
