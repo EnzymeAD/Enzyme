@@ -199,6 +199,13 @@ def PrintAliasAnalysisPass : Pass<"test-print-alias-analysis"> {
   let summary = "Print the results of alias analysis";
 }
 
+def PrintSampleDependencePass : Pass<"test-print-sample-dependence"> {
+  let summary = "Print the results of sample dependence analysis";
+  let description = [{
+    Used for testing the SampleDependenceAnalysis.
+  }];
+}
+
 def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
   let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
 }
@@ -212,8 +219,40 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
 
 def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
   let summary = "Hoist independent primal ops out of autodiff_region.";
-  let dependentDialects = [ 
+  let dependentDialects = [
   "enzyme::EnzymeDialect",
+  ];
+}
+
+def InlineMCMCIntoRegionPass : Pass<"inline-mcmc-regions"> {
+  let summary = "Inline enzyme.mcmc ops into enzyme.mcmc_region ops.";
+  let description = [{
+    Converts enzyme.mcmc @fn(...) to enzyme.mcmc_region { inlined body }.
+    Also converts enzyme.sample to enzyme.sample_region with inlined
+    sampler and logpdf function bodies.
+  }];
+}
+
+def OutlineMCMCFromRegionPass : Pass<"outline-mcmc-regions"> {
+  let summary = "Outline enzyme.mcmc_region ops into enzyme.mcmc ops.";
+  let description = [{
+    Converts enzyme.mcmc_region { body } back to enzyme.mcmc @fn(...).
+    Creates new functions from the region bodies.
+  }];
+  let dependentDialects = [
+    "func::FuncDialect"
+  ];
+}
+
+
+def SampleInvariantCodeMotionPass : Pass<"sample-invariant-code-motion"> {
+  let summary = "Hoist sample-invariant operations out of mcmc_region";
+  let description = [{
+    Identifies operations inside enzyme.mcmc_region that do not depend on
+    any sample_region results and hoists them before the region.
+  }];
+  let dependentDialects = [
+    "enzyme::EnzymeDialect"
   ];
 }
 
