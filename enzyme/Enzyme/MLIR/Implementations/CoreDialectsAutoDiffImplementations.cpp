@@ -266,9 +266,11 @@ void mlir::enzyme::detail::returnReverseHandler(Operation *op,
 void mlir::enzyme::detail::regionTerminatorForwardHandler(
     Operation *origTerminator, OpBuilder &builder, MGradientUtils *gutils) {
   auto parentOp = origTerminator->getParentOp();
+
   llvm::SmallDenseSet<unsigned> operandsToShadow;
   auto termIface = dyn_cast<RegionBranchTerminatorOpInterface>(origTerminator);
-  auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(parentOp);
+  auto regionBranchOp =
+      dyn_cast<RegionBranchOpInterface>(origTerminator->getParentOp());
   if (termIface && regionBranchOp) {
 
     SmallVector<RegionSuccessor> successors;
@@ -286,6 +288,12 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
         if (!gutils->isConstantValue(target))
           operandsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       }
+    }
+  } else {
+    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
+    for (auto res : parentOp->getResults()) {
+      if (!gutils->isConstantValue(res))
+        operandsToShadow.insert(res.getResultNumber());
     }
   }
 
