@@ -349,7 +349,7 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
       Type *elemTy = VecT->getElementType();
       auto elemBytes = (DL.getTypeSizeInBits(elemTy) + 7) / 8;
 
-      // Only handle element-aligned windows (your case: float => 4 bytes)
+      // Only handle element-aligned windows
       if (elemBytes != 0 && start % elemBytes == 0 && size % elemBytes == 0) {
         unsigned left_idx = start / elemBytes;
         unsigned right_idx = (start + size) / elemBytes; // exclusive
