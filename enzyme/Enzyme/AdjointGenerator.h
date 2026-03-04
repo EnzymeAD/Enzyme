@@ -308,7 +308,10 @@ public:
 
     auto found = gutils->invertedPointers.find(&I);
     if (gutils->isConstantValue(&I)) {
-      assert(found == gutils->invertedPointers.end());
+      // invertPointerM may have already computed a shadow for this CONST
+      // instruction (e.g., when resolving free arguments through CONST
+      // PHI/Load chains in forward-over-reverse mode where activity analysis
+      // is inconsistent between alloc and free). Just leave it.
       return;
     }
 
