@@ -72,6 +72,20 @@ def ControlFlowAutoDiffOpInterface
                     "::mlir::Operation *":$original, 
                     "::mlir::ValueRange":$remappedOperands,
                     "::mlir::TypeRange":$returnTypes)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Return entry successor operands for the given RegionBranchOpInterface and RegionSuccessor.
+      The default implementation here should work for most implementations of RegionBranchOpInterface,
+      but there are some that don't implement this method.
+    }],
+    /*retTy=*/"::mlir::OperandRange",
+    /*methodName=*/"getSuccessorOperands",
+    /*args=*/(ins "::mlir::RegionBranchOpInterface &":$regionBranchOp,
+                  "::mlir::RegionSuccessor const&":$successor),
+    /*methodBody=*/[{}],
+    /*defaultImplementation*/[{return regionBranchOp.getEntrySuccessorOperands(successor);}]
     >
   ];
 }
