@@ -2939,7 +2939,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     bool constval = gutils->isConstantValue(&call);
 
-
     if (!constval) {
       auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
       auto found = gutils->invertedPointers.find(&call);
