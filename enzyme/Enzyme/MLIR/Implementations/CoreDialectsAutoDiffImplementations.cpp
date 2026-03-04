@@ -341,7 +341,8 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
   for (const RegionSuccessor &successor : entrySuccessors) {
 
-    OperandRange operandRange = iface.getSuccessorOperands(regionBranchOp, successor);
+    OperandRange operandRange =
+        iface.getSuccessorOperands(regionBranchOp, successor);
 
     ValueRange targetValues =
         successor.isParent() ? op->getResults()
