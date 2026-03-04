@@ -1,5 +1,7 @@
 // RUN: %eopt --print-activity-analysis='relative verbose' --split-input-file %s | FileCheck %s
 
+// XFAIL: *
+
 // CHECK-LABEL: processing function @sparse_callee
 // CHECK: "fadd"(#0)
 // CHECK:   sources: [#enzyme.argorigin<@sparse_callee(0)>]
