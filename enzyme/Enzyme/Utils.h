@@ -1155,6 +1155,8 @@ allInstructionsBetween(llvm::LoopInfo &LI, llvm::Instruction *inst1,
 enum class MPI_CallType {
   ISEND = 1,
   IRECV = 2,
+  SEND_INIT = 3,
+  RECV_INIT = 4
 };
 
 enum class MPI_Elem {
