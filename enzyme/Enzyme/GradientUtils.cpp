@@ -58,6 +58,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TimeProfiler.h"
 
+#include "llvm/Demangle/Demangle.h"
+
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
@@ -125,6 +127,10 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool>
     EnzymePrintDiffUse("enzyme-print-diffuse", cl::init(false), cl::Hidden,
                        cl::desc("Print differential use analysis"));
+
+llvm::cl::opt<std::string>
+    EnzymeRustDeallocName("rust-dealloc-name", cl::init(""), cl::Hidden,
+                            cl::desc("Name of Rust deallocation function"));
 }
 
 SmallVector<unsigned int, 9> MD_ToCopy = {
@@ -9680,17 +9686,35 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     GradientUtils *gutils) {
   assert(isAllocationFunction(allocationfn, TLI));
 
-  if (allocationfn == "__rust_alloc" || allocationfn == "__rust_alloc_zeroed") {
+#if LLVM_VERSION_MAJOR >= 17
+  std::string demangledName = llvm::demangle(allocationfn);
+  if (demangledName == "__rustc::__rust_alloc" || demangledName == "__rustc::__rust_alloc_zeroed" ) {
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
     Type *IntPtrTy = orig->getType();
     Type *RustSz = orig->getArgOperand(0)->getType();
     Type *inTys[3] = {IntPtrTy, RustSz, RustSz};
 
     auto FT = FunctionType::get(VoidTy, inTys, false);
+    if (EnzymeRustDeallocName == "") {
+      // Rust's (de)alloc names aren't stable. We expect rustc to set them 
+      // for us, but if it fails to do so we instead search for it here.
+      for (auto &F : *builder.GetInsertBlock()->getParent()->getParent()) {
+        auto demangledName = llvm::demangle(F.getName());
+        if (demangledName == "__rustc::__rust_dealloc") {
+          EnzymeRustDeallocName = F.getName();
+          break;
+        }
+      }
+      if (EnzymeRustDeallocName == "") {
+        // If we can't find it, use the raw __rust_dealloc as a fallback.
+        // FIXME: Make this a hard error once we pass the right name from rustc.
+        EnzymeRustDeallocName = "__rust_dealloc";
+      }
+    }
     Value *freevalue = builder.GetInsertBlock()
                            ->getParent()
                            ->getParent()
-                           ->getOrInsertFunction("__rust_dealloc", FT)
+                           ->getOrInsertFunction(EnzymeRustDeallocName, FT)
                            .getCallee();
     Value *vals[3];
     vals[0] = builder.CreatePointerCast(tofree, IntPtrTy);
@@ -9714,6 +9738,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
       builder.Insert(freecall);
     return freecall;
   }
+#endif
   if (allocationfn == "julia.gc_alloc_obj" ||
       allocationfn == "jl_gc_alloc_typed" ||
       allocationfn == "ijl_gc_alloc_typed" ||
