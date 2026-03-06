@@ -53,7 +53,7 @@ module {
       -> (tensor<1x5xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @multishape_model(%rng, %input) given %trace
+    %result:8 = enzyme.mcmc @multishape_model(%rng, %input) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]],
       all_addresses = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]],
@@ -62,7 +62,7 @@ module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<4xf64>, tensor<1x5xf64>, tensor<f64>)
-        -> (tensor<1x5xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x5xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x5xf64>, tensor<1x5xf64>, tensor<f64>, tensor<f64>, tensor<1x5xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x5xf64>, tensor<1xi1>, tensor<2xui64>
   }

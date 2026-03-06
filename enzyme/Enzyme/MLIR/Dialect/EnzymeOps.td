@@ -822,7 +822,16 @@ def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSized
 
   let regions = (region AnyRegion:$body);
 
-  let results = (outs AnyRankedTensor:$new_trace, AnyRankedTensor:$accepted, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$new_trace,
+    AnyRankedTensor:$accepted,
+    AnyType:$output_rng_state,
+    AnyRankedTensor:$final_position,
+    AnyRankedTensor:$final_gradient,
+    AnyRankedTensor:$final_potential_energy,
+    AnyRankedTensor:$final_step_size,
+    AnyRankedTensor:$final_inverse_mass_matrix
+  );
 
   let assemblyFormat = [{
     `(` $inputs `)` (`given` $original_trace^)?

@@ -27,7 +27,7 @@ module {
       -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @model_simple_hoist(%rng, %prior_mean) given %trace
+    %result:8 = enzyme.mcmc @model_simple_hoist(%rng, %prior_mean) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>]],
       all_addresses = [[#enzyme.symbol<1>]],
@@ -36,7 +36,7 @@ module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>)
-        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
   }
@@ -87,7 +87,7 @@ module @no_hoist_module {
       -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @model_sample_dep(%rng, %prior_mean) given %trace
+    %result:8 = enzyme.mcmc @model_sample_dep(%rng, %prior_mean) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>]],
       all_addresses = [[#enzyme.symbol<1>]],
@@ -96,7 +96,7 @@ module @no_hoist_module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>)
-        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
   }
@@ -149,7 +149,7 @@ module @mixed_module {
       -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @model_mixed(%rng, %prior_mean) given %trace
+    %result:8 = enzyme.mcmc @model_mixed(%rng, %prior_mean) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>]],
       all_addresses = [[#enzyme.symbol<1>]],
@@ -158,7 +158,7 @@ module @mixed_module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>)
-        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
   }
@@ -214,7 +214,7 @@ module @cholesky_module {
       -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @model_cholesky(%rng, %base_cov) given %trace
+    %result:8 = enzyme.mcmc @model_cholesky(%rng, %base_cov) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>]],
       all_addresses = [[#enzyme.symbol<1>]],
@@ -223,7 +223,7 @@ module @cholesky_module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<2x2xf64>, tensor<1x1xf64>, tensor<f64>)
-        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
   }
@@ -310,7 +310,7 @@ module @hierarchical_module {
       -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
 
-    %result:3 = enzyme.mcmc @model_hierarchical(%rng, %prior_mean, %base_std) given %trace
+    %result:8 = enzyme.mcmc @model_hierarchical(%rng, %prior_mean, %base_std) given %trace
         step_size = %step_size {
       selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]],
       all_addresses = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]],
@@ -319,7 +319,7 @@ module @hierarchical_module {
       thinning = 1 : i64,
       num_warmup = 0 : i64
     } : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<f64>)
-        -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
+        -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
 
     return %result#0, %result#1, %result#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
