@@ -78,6 +78,14 @@ def BatchDiffPass : Pass<"enzyme-diff-batch">{
   ];
 }
 
+def LowerJacobianApplyPass : Pass<"lower-jacobian-apply"> {
+  let summary = "Lower enzyme.jvp_apply and enzyme.vjp_apply into enzyme.fwddiff and enzyme.autodiff";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect",
+    "func::FuncDialect",
+  ];
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [

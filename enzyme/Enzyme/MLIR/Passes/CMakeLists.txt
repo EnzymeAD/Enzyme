@@ -9,6 +9,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     ProbProgMLIRPass.cpp
     EnzymeBatchPass.cpp
     EnzymeBatchDiffPass.cpp
+    LowerJacobianApplyPass.cpp
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
     InlineEnzymeRegions.cpp
