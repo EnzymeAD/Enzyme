@@ -135,8 +135,9 @@ struct InlineMCMCOp : public OpRewritePattern<enzyme::MCMCOp> {
         mcmcOp.getNumSamplesAttr(), mcmcOp.getThinningAttr(),
         mcmcOp.getInverseMassMatrix(), mcmcOp.getStepSize(),
         mcmcOp.getHmcConfigAttr(), mcmcOp.getNutsConfigAttr(),
-        mcmcOp.getLogpdfFnAttr(), mcmcOp.getInitialPosition(), fnStrAttr,
-        mcmcOp.getNameAttr());
+        mcmcOp.getLogpdfFnAttr(), mcmcOp.getInitialPosition(),
+        mcmcOp.getInitialGradient(), mcmcOp.getInitialPotentialEnergy(),
+        fnStrAttr, mcmcOp.getNameAttr());
 
     Block *bodyBlock = rewriter.createBlock(&mcmcRegionOp.getBody());
 
@@ -328,7 +329,8 @@ LogicalResult outlineMCMCRegion(enzyme::MCMCRegionOp regionOp,
       regionOp.getNumSamplesAttr(), regionOp.getThinningAttr(),
       regionOp.getInverseMassMatrix(), regionOp.getStepSize(),
       regionOp.getHmcConfigAttr(), regionOp.getNutsConfigAttr(), logpdfAttr,
-      regionOp.getInitialPosition(), regionOp.getNameAttr());
+      regionOp.getInitialPosition(), regionOp.getInitialGradient(),
+      regionOp.getInitialPotentialEnergy(), regionOp.getNameAttr());
 
   regionOp.replaceAllUsesWith(newOp.getResults());
   regionOp.erase();

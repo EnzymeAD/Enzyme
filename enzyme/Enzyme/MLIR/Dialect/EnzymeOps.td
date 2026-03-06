@@ -816,6 +816,10 @@ def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSized
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
     Optional<AnyRankedTensor>:$initial_position,
 
+    // Continuation from saved state
+    Optional<AnyRankedTensor>:$initial_gradient,
+    Optional<AnyRankedTensor>:$initial_potential_energy,
+
     OptionalAttr<StrAttr>:$fn,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -838,6 +842,8 @@ def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSized
     (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
     (`step_size` `=` $step_size^)?
     (`initial_position` `=` $initial_position^)?
+    (`initial_gradient` `=` $initial_gradient^)?
+    (`initial_potential_energy` `=` $initial_potential_energy^)?
     $body attr-dict-with-keyword `:` functional-type(operands, results)
   }];
 }
