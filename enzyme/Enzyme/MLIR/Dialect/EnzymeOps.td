@@ -126,14 +126,13 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   }];
 }
 
-def JVPOp : Enzyme_Op<"jvp",
-    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Apply Jacobian-vector product for a function";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
-  let results = (outs Variadic<AnyType>:$outputs);
+def JVPApplyOp : Enzyme_Op<"jvp_apply"> {
+  let summary = "Apply Jacobian-vector product";
+  let arguments = (ins AnyTensor:$jacobian, AnyTensor:$vector);
+  let results = (outs AnyTensor:$output);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    `(` $jacobian `,` $vector `)` attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -172,14 +171,13 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
-def VJPOp : Enzyme_Op<"vjp",
-    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Apply vector-Jacobian product for a function";
-  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
-  let results = (outs Variadic<AnyType>:$outputs);
+def VJPApplyOp : Enzyme_Op<"vjp_apply"> {
+  let summary = "Apply vector-Jacobian product";
+  let arguments = (ins AnyTensor:$jacobian, AnyTensor:$vector);
+  let results = (outs AnyTensor:$output);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+    `(` $jacobian `,` $vector `)` attr-dict `:` functional-type(operands, results)
   }];
 }
 
