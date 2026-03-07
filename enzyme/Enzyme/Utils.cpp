@@ -828,6 +828,73 @@ Constant *getString(Module &M, StringRef Str) {
   return ConstantExpr::getInBoundsGetElementPtr(s->getType(), gv, Idxs);
 }
 
+void emit_backtrace(llvm::Instruction *inst, llvm::raw_ostream &ss) {
+  SmallPtrSet<llvm::Instruction *, 8> visited;
+  while (true) {
+    if (visited.contains(inst))
+      break;
+    visited.insert(inst);
+
+    // Print debug info for this instruction
+    if (auto dbgLoc = inst->getDebugLoc()) {
+      auto *loc = dbgLoc.get();
+      while (loc) {
+        if (auto *scope = loc->getScope()) {
+          StringRef name = scope->getName();
+          // Remove trailing semicolons (Julia-style function name decoration)
+          while (!name.empty() && name.back() == ';')
+            name = name.drop_back();
+          if (auto *file = scope->getFile()) {
+            StringRef dir = file->getDirectory();
+            StringRef fn = file->getFilename();
+            ss << " in '" << name << "' at ";
+            if (!dir.empty())
+              ss << dir << "/";
+            ss << fn << ":" << loc->getLine() << "\n";
+          } else {
+            ss << " in '" << name << "' at unknown:" << loc->getLine() << "\n";
+          }
+        }
+        loc = loc->getInlinedAt();
+      }
+    }
+
+    // Move up the call chain
+    Function *f = inst->getParent()->getParent();
+
+    // Collect callers with debug info
+    SmallVector<CallInst *, 4> callersWithDbg;
+    for (auto *U : f->users()) {
+      auto *CI = dyn_cast<CallInst>(U);
+      if (!CI)
+        continue;
+      if (!CI->getDebugLoc())
+        continue;
+      callersWithDbg.push_back(CI);
+    }
+
+    if (callersWithDbg.empty())
+      break;
+
+    // Deduplicate by debug location MDNode
+    SmallVector<CallInst *, 4> uniqueCallSites;
+    SmallPtrSet<const MDNode *, 4> seenMD;
+    for (auto *CI : callersWithDbg) {
+      if (seenMD.insert(CI->getDebugLoc().getAsMDNode()).second)
+        uniqueCallSites.push_back(CI);
+    }
+
+    if (uniqueCallSites.size() > 1) {
+      ss << " (multiple call sites)\n";
+      break;
+    } else if (uniqueCallSites.size() == 1) {
+      inst = uniqueCallSites[0];
+      continue;
+    }
+    break;
+  }
+}
+
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig) {
@@ -892,9 +959,17 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateRetVoid();
   }
 
+  std::string Message2 = Message;
+  if (!CustomRuntimeInactiveError) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << Message << "\n";
+    emit_backtrace(orig, ss);
+    Message2 = ss.str();
+  }
   Value *args[] = {B.CreatePointerCast(primal, getInt8PtrTy(M.getContext())),
                    B.CreatePointerCast(shadow, getInt8PtrTy(M.getContext())),
-                   getString(M, Message)};
+                   getString(M, Message2)};
   auto call = B.CreateCall(F, args);
   call->setDebugLoc(loc);
 }
@@ -4138,7 +4213,12 @@ llvm::Value *EmitNoDerivativeError(const std::string &message,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
+    ;
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
@@ -4173,7 +4253,12 @@ bool EmitNoDerivativeError(const std::string &message, Value *todiff,
     auto &M = *context.ip->GetInsertBlock()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    if (auto inst = dyn_cast<Instruction>(todiff))
+      emit_backtrace(inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     context.ip->CreateCall(PutsF, msg);
 
@@ -4206,7 +4291,11 @@ void EmitNoTypeError(const std::string &message, llvm::Instruction &inst,
     auto &M = *inst.getParent()->getParent()->getParent();
     FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
                                          {getInt8PtrTy(M.getContext())}, false);
-    auto msg = getString(M, message);
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << message << "\n";
+    emit_backtrace(&inst, ss);
+    auto msg = getString(M, ss.str());
     auto PutsF = M.getOrInsertFunction("puts", FT);
     Builder2.CreateCall(PutsF, msg);
 
