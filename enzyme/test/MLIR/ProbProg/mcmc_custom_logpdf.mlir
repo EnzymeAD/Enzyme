@@ -23,13 +23,13 @@ module {
   func.func @nuts_logpdf(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[1.0, -1.0]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng)
+    %res:3 = enzyme.mcmc (%rng)
       step_size = %step_size
       logpdf_fn = @logpdf
       initial_position = %init_pos
       { nuts_config = #enzyme.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -48,13 +48,13 @@ module {
   func.func @hmc_logpdf(%rng : tensor<2xui64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng)
+    %res:3 = enzyme.mcmc (%rng)
       step_size = %step_size
       logpdf_fn = @logpdf
       initial_position = %init_pos
       { hmc_config = #enzyme.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "hmc_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -81,13 +81,13 @@ module {
   func.func @nuts_shifted_logpdf(%rng : tensor<2xui64>, %mu : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng, %mu)
+    %res:3 = enzyme.mcmc (%rng, %mu)
       step_size = %step_size
       logpdf_fn = @shifted_logpdf
       initial_position = %init_pos
       { nuts_config = #enzyme.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_shifted_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -106,13 +106,13 @@ module {
   func.func @hmc_shifted_logpdf(%rng : tensor<2xui64>, %mu : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng, %mu)
+    %res:3 = enzyme.mcmc (%rng, %mu)
       step_size = %step_size
       logpdf_fn = @shifted_logpdf
       initial_position = %init_pos
       { hmc_config = #enzyme.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "hmc_shifted_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -142,13 +142,13 @@ module {
   func.func @nuts_anisotropic_logpdf(%rng : tensor<2xui64>, %mu : tensor<1x2xf64>, %precision : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng, %mu, %precision)
+    %res:3 = enzyme.mcmc (%rng, %mu, %precision)
       step_size = %step_size
       logpdf_fn = @anisotropic_logpdf
       initial_position = %init_pos
       { nuts_config = #enzyme.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_anisotropic_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -167,13 +167,13 @@ module {
   func.func @hmc_anisotropic_logpdf(%rng : tensor<2xui64>, %mu : tensor<1x2xf64>, %precision : tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>) {
     %init_pos = arith.constant dense<[[0.5, -0.5]]> : tensor<1x2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc (%rng, %mu, %precision)
+    %res:3 = enzyme.mcmc (%rng, %mu, %precision)
       step_size = %step_size
       logpdf_fn = @anisotropic_logpdf
       initial_position = %init_pos
       { hmc_config = #enzyme.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "hmc_anisotropic_logpdf", selection = [], all_addresses = [], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 }

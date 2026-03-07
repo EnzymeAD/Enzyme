@@ -14,12 +14,12 @@ module {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:3 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inv_mass
       step_size = %step_size
       { hmc_config = #enzyme.hmc_config<trajectory_length = 1.0>,
         name = "hmc_diag", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], all_addresses = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 
@@ -27,12 +27,12 @@ module {
     %init_trace = arith.constant dense<[[0.0, 0.0]]> : tensor<1x2xf64>
     %inv_mass = arith.constant dense<[2.0, 3.0]> : tensor<2xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:3 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
       inverse_mass_matrix = %inv_mass
       step_size = %step_size
       { nuts_config = #enzyme.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts_diag", selection = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], all_addresses = [[#enzyme.symbol<1>], [#enzyme.symbol<2>]], num_warmup = 0, num_samples = 1 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>, tensor<2xf64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<1x2xf64>, tensor<1xi1>, tensor<2xui64>
   }
 }

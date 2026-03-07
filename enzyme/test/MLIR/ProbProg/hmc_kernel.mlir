@@ -12,11 +12,11 @@ module {
   func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:3 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
       { hmc_config = #enzyme.hmc_config<trajectory_length = 1.0>,
         name = "hmc", selection = [[#enzyme.symbol<1>]], all_addresses = [[#enzyme.symbol<1>]], num_warmup = 0, num_samples = 10 }
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>)
     return %res#0, %res#1, %res#2 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
   }
 }
@@ -69,19 +69,15 @@ module {
 // CHECK-NEXT: %[[RNG_M:.+]]:2 = enzyme.randomSplit %[[RNG_S]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = enzyme.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] {rng_distribution = #enzyme<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
-// --- Transform momentum by mass matrix sqrt: p_transformed = massMatrixSqrt @ p ---
-// CHECK-NEXT: %[[P_XFORM:.+]] = enzyme.dot %[[P]], {{.+}} {{{.*}}lhs_contracting_dimensions = array<i64: 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-//
-// --- Initial kinetic energy K0 = 0.5 * p_transformed^T * M^-1 * p_transformed ---
-// CHECK-NEXT: %[[P_V:.+]] = enzyme.dot %[[P_XFORM]], {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[KE0_DOT:.+]] = enzyme.dot %[[P_XFORM]], %[[P_V]] {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
+// --- Initial kinetic energy K0 = 0.5 * p^T * p (contract over both dims for 2D) ---
+// CHECK-NEXT: %[[KE0_DOT:.+]] = enzyme.dot %[[P]], %[[P]] {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[KE0:.+]] = arith.mulf %[[KE0_DOT]], %[[HALF]] : tensor<f64>
 //
 // --- Initial Hamiltonian H0 = U + K ---
 // CHECK-NEXT: %[[H0:.+]] = arith.addf %[[U]], %[[KE0]] : tensor<f64>
 //
 // --- Leapfrog integration loop ---
-// CHECK-NEXT: %[[LF:.+]]:5 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q]], %[[P_XFORM]], %[[GRAD]], %[[U]], %[[RNG_S]]#2 : tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64> {
+// CHECK-NEXT: %[[LF:.+]]:5 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>) step(%[[C1]] : tensor<i64>) iter_args(%[[Q]], %[[P]], %[[GRAD]], %[[U]], %[[RNG_S]]#2 : tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>) -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64> {
 // CHECK-NEXT: ^bb0(%[[LF_I:.+]]: tensor<i64>, %[[LF_Q:.+]]: tensor<1x1xf64>, %[[LF_P:.+]]: tensor<1x1xf64>, %[[LF_G:.+]]: tensor<1x1xf64>, %[[LF_U:.+]]: tensor<f64>, %[[LF_RNG:.+]]: tensor<2xui64>):
 //
 // --- Leapfrog: direction selection ---
@@ -95,8 +91,7 @@ module {
 // CHECK-NEXT: %[[P_HALF:.+]] = arith.subf %[[LF_P]], %[[GRAD_SCALED]] : tensor<1x1xf64>
 //
 // --- Leapfrog: full step position q_new = q + eps * M^-1 * p_half ---
-// CHECK-NEXT: %[[P_VINV:.+]] = enzyme.dot %[[P_HALF]], {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[P_STEP:.+]] = arith.mulf %[[DIR_BC]], %[[P_VINV]] : tensor<1x1xf64>
+// CHECK-NEXT: %[[P_STEP:.+]] = arith.mulf %[[DIR_BC]], %[[P_HALF]] : tensor<1x1xf64>
 // CHECK-NEXT: %[[Q_NEW:.+]] = arith.addf %[[LF_Q]], %[[P_STEP]] : tensor<1x1xf64>
 //
 // --- Leapfrog: gradient at new position ---
@@ -117,9 +112,8 @@ module {
 // CHECK-NEXT: enzyme.yield %[[Q_NEW]], %[[P_NEW]], %[[AD_LF]]#2, %[[AD_LF]]#0, %[[AD_LF]]#1 : tensor<1x1xf64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>
 // CHECK-NEXT: }
 //
-// --- Final kinetic energy K_new = 0.5 * p_new^T * M^-1 * p_new ---
-// CHECK-NEXT: %[[LF_P_V:.+]] = enzyme.dot %[[LF]]#1, {{.+}} {{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK-NEXT: %[[KE_DOT:.+]] = enzyme.dot %[[LF]]#1, %[[LF_P_V]] {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
+// --- Final kinetic energy K_new = 0.5 * p_new^T * p_new ---
+// CHECK-NEXT: %[[KE_DOT:.+]] = enzyme.dot %[[LF]]#1, %[[LF]]#1 {{{.*}}lhs_contracting_dimensions = array<i64: 0, 1>{{.*}}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<f64>
 // CHECK-NEXT: %[[KE:.+]] = arith.mulf %[[KE_DOT]], %[[HALF]] : tensor<f64>
 //
 // --- Final Hamiltonian H_new = U_new + K_new ---

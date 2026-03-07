@@ -763,27 +763,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
       };
 
-      Value currentQ, currentGrad, currentU, currentRng;
-
-      auto initialGrad = mcmcOp.getInitialGradient();
-      auto initialPE = mcmcOp.getInitialPotentialEnergy();
-
-      if (hasLogpdfFn && initialGrad && initialPE) {
-        currentQ = mcmcOp.getInitialPosition();
-        currentGrad = initialGrad;
-        currentU = initialPE;
-        currentRng = rngInput;
-      } else {
-        auto baseCtx =
-            makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
-        auto initState = InitHMC(
-            rewriter, loc, rngInput, baseCtx,
-            hasLogpdfFn ? mcmcOp.getInitialPosition() : Value(), debugDump);
-        currentQ = initState.q0;
-        currentGrad = initState.grad0;
-        currentU = initState.U0;
-        currentRng = initState.rng;
-      }
+      auto baseCtx =
+          makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
+      auto initState = InitHMC(
+          rewriter, loc, rngInput, baseCtx,
+          hasLogpdfFn ? mcmcOp.getInitialPosition() : Value(), debugDump);
 
       auto runSampleStepWithStepSize =
           [&](OpBuilder &builder, Location loc, Value q, Value grad, Value U,
@@ -799,6 +783,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
       };
 
+      Value currentQ = initState.q0;
+      Value currentGrad = initState.grad0;
+      Value currentU = initState.U0;
+      Value currentRng = initState.rng;
       Value adaptedStepSize = stepSize;
 
       auto runSampleStepWithInvMass =
@@ -815,17 +803,6 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           return SampleNUTS(builder, loc, q, grad, U, rng, nutsCtx, debugDump);
         }
       };
-
-      if (!adaptedInvMass) {
-        adaptedInvMass = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-        adaptedMassMatrixSqrt = arith::ConstantOp::create(
-            rewriter, loc, positionType,
-            DenseElementsAttr::get(positionType,
-                                   rewriter.getFloatAttr(elemType, 1.0)));
-      }
 
       if (numWarmup > 0) {
         auto c0 = arith::ConstantOp::create(
@@ -1303,20 +1280,16 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                                          selectedAcceptedBuffer});
 
       rewriter.setInsertionPointAfter(forLoopOp);
-      Value finalQ = forLoopOp.getResult(0);
-      Value finalGrad = forLoopOp.getResult(1);
-      Value finalU = forLoopOp.getResult(2);
-      Value finalRng = forLoopOp.getResult(3);
       Value finalSamplesBuffer = forLoopOp.getResult(4);
       Value finalAcceptedBuffer = forLoopOp.getResult(5);
+      Value finalRng = forLoopOp.getResult(3);
 
       finalSamplesBuffer =
           conditionalDump(rewriter, loc, finalSamplesBuffer,
                           "MCMC: collected samples", debugDump);
 
-      rewriter.replaceOp(mcmcOp, {finalSamplesBuffer, finalAcceptedBuffer,
-                                  finalRng, finalQ, finalGrad, finalU,
-                                  adaptedStepSize, adaptedInvMass});
+      rewriter.replaceOp(mcmcOp,
+                         {finalSamplesBuffer, finalAcceptedBuffer, finalRng});
 
       return success();
     }
