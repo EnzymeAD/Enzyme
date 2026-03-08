@@ -675,7 +675,7 @@ struct ParallelOpEnzymeOpsRemover
                          parOp.getStep())) {
       Value val = iv;
       if (!matchPattern(lb, m_Zero())) {
-        val = arith::SubIOp::create(builder, parOp.getLoc(), val, step);
+        val = arith::SubIOp::create(builder, parOp.getLoc(), val, lb);
       }
 
       if (!matchPattern(step, m_One())) {
