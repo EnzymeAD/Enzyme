@@ -349,13 +349,31 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
                              : regionBranchOp.getSuccessorInputs(successor);
 
     // Need to know which of the arguments are being forwarded to from
-    // operands.
+    // operands. An operand needs a shadow — and the ForOp needs a matching
+    // shadow result — whenever EITHER its iter arg OR its corresponding op
+    // result is active. Using only iter arg activity misses the
+    // constant-accumulator case (constant init arg that produces an active
+    // result because the loop body accumulates active values into it).
+    // Using only result activity misses the case where an iter arg is active
+    // but its result is not (e.g. pointer-typed iter args used for address
+    // arithmetic whose final values are unused downstream).
+    // forceAugmentedReturns uses only iter arg activity, so for positions
+    // where the result is active but the iter arg is constant, the second
+    // overload inserts the missing shadow block arg after takeBody.
     for (auto &&[i, regionValue, operand] :
          llvm::enumerate(targetValues, operandRange)) {
-      if (gutils->isConstantValue(regionValue))
+      bool iterArgActive = !gutils->isConstantValue(regionValue);
+      bool resultActive = i < op->getNumResults() &&
+                          !gutils->isConstantValue(op->getResult(i));
+      if (!iterArgActive && !resultActive)
         continue;
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-      if (successor.isParent())
+      // Add the corresponding result to resultPositionsToShadow if the iter
+      // arg is active: forceAugmentedReturns will have inserted a shadow
+      // block arg for it, so the ForOp needs a matching shadow result.
+      // Active results (regardless of iter arg activity) are covered by the
+      // loop below.
+      if (successor.isParent() || (iterArgActive && i < op->getNumResults()))
         resultPositionsToShadow.insert(i);
     }
   }
@@ -421,6 +439,47 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (auto &&[region, replacementRegion] :
        llvm::zip(newOp->getRegions(), replacement->getRegions())) {
     replacementRegion.takeBody(region);
+  }
+
+  // forceAugmentedReturns inserts shadow block args only for iter args that
+  // are themselves active. When an iter arg is constant but its corresponding
+  // op result is active (e.g. a zero accumulator that accumulates active
+  // values across iterations), the first overload still adds that position to
+  // both operandPositionsToShadow and resultPositionsToShadow (union
+  // criterion), so replacement has the right number of results. However, the
+  // body block is missing the shadow block arg that the replacement's
+  // iter_arg slot expects. Insert it here, after takeBody has placed the
+  // cloned body into replacement.
+  //
+  // We also register the mapping in invertedPointers so that invertPointerM,
+  // which checks invertedPointers before isConstantValue, returns the shadow
+  // block arg instead of zero when body ops reference this iter arg.
+  if (auto rbIface = dyn_cast<RegionBranchOpInterface>(op)) {
+    SmallVector<RegionSuccessor> entrySuccessors;
+    rbIface.getEntrySuccessorRegions(
+        SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+        entrySuccessors);
+    for (const RegionSuccessor &successor : entrySuccessors) {
+      if (successor.isParent())
+        continue;
+      ValueRange successorInputs = rbIface.getSuccessorInputs(successor);
+      for (auto [i, iterArg] : llvm::enumerate(successorInputs)) {
+        if (!resultPositionsToShadow.count(i))
+          continue;
+        if (!gutils->isConstantValue(iterArg))
+          continue;
+        // iterArg is constant but position i needs a shadow result.
+        // Insert the missing shadow block arg right after iterArg's clone.
+        auto clonedIterArg =
+            cast<BlockArgument>(gutils->getNewFromOriginal(iterArg));
+        Block *block = clonedIterArg.getParentBlock();
+        Value shadowArg = block->insertArgument(
+            clonedIterArg.getArgNumber() + 1,
+            gutils->getShadowType(clonedIterArg.getType()),
+            clonedIterArg.getLoc());
+        gutils->invertedPointers.map(iterArg, shadowArg);
+      }
+    }
   }
 
   // Inject the mapping for the new results into GradientUtil's shadow
