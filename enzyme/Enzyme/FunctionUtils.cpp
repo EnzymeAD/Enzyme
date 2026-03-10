@@ -130,6 +130,10 @@ cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                            cl::desc("Force inlining of autodiff"));
 
+cl::opt<bool> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(1),
+                                  cl::Hidden,
+                                  cl::desc("Force inlining of autodiff"));
+
 cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
                             cl::desc("Force noalias of autodiff"));
 #if LLVM_VERSION_MAJOR < 16
@@ -2297,12 +2301,30 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       PreservedAnalyses PA;
       FAM.invalidate(*NewF, PA);
 
-      auto Level = OptimizationLevel::O1;
-      PassBuilder PB;
-      FunctionPassManager FPM =
-          PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
-      PA = FPM.run(*F, FAM);
-      FAM.invalidate(*F, PA);
+      OptimizationLevel Level = OptimizationLevel::O0;
+
+      switch (EnzymePostInlineOpt) {
+      default:
+      case 0:
+        Level = OptimizationLevel::O0;
+        break;
+      case 1:
+        Level = OptimizationLevel::O1;
+        break;
+      case 2:
+        Level = OptimizationLevel::O2;
+        break;
+      case 3:
+        Level = OptimizationLevel::O3;
+        break;
+      }
+      if (Level != OptimizationLevel::O0) {
+        PassBuilder PB;
+        FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+            Level, ThinOrFullLTOPhase::None);
+        PA = FPM.run(*NewF, FAM);
+        FAM.invalidate(*NewF, PA);
+      }
     }
   }
 
