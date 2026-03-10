@@ -2296,6 +2296,13 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
       FAM.invalidate(*NewF, PA);
+
+      auto Level = OptimizationLevel::O1;
+      PassBuilder PB;
+      FunctionPassManager FPM =
+          PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+      PA = FPM.run(*F, FAM);
+      FAM.invalidate(*F, PA);
     }
   }
 
