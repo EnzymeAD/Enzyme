@@ -165,6 +165,9 @@ private:
     InsertConstValueRecursionHandler = nullptr;
   }
 
+  bool hasActiveArgumentOtherThan(llvm::Instruction *I, llvm::Value *Val,
+                                  TypeResults const &TR);
+
   /// Import known constants from an existing analyzer
   void insertConstantsFrom(TypeResults const &TR,
                            ActivityAnalyzer &Hypothesis) {
@@ -221,7 +224,7 @@ private:
   }
 
   /// Is the use of value val as an argument of call CI known to be inactive
-  bool isFunctionArgumentConstant(llvm::CallInst *CI, llvm::Value *val);
+  bool isFunctionArgumentConstant(llvm::CallBase *CI, llvm::Value *val);
 
   /// Is the instruction guaranteed to be inactive because of its operands.
   /// \p considerValue specifies that we ask whether the returned value, rather

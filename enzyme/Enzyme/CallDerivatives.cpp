@@ -2344,6 +2344,34 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    if (funcName == "__kmpc_reduce_nowait") {
+      if (gutils->isConstantInstruction(&call)) {
+        return true;
+      }
+    }
+
+    if (funcName == "__kmpc_end_reduce_nowait") {
+      assert(gutils->isConstantInstruction(&call));
+      auto GV = cast<GlobalVariable>(call.getArgOperand(2));
+      bool active = false;
+      for (auto u : GV->users()) {
+        if (u == &call)
+          continue;
+        auto CB = cast<CallBase>(u);
+        if (CB->getParent()->getParent() != gutils->oldFunc) {
+          continue;
+        }
+        auto F = CB->getCalledFunction();
+        assert(F);
+        assert(F->getName() == "__kmpc_reduce_nowait");
+        if (!gutils->isConstantInstruction(CB)) {
+          active = true;
+        }
+      }
+      if (!active)
+        return true;
+    }
+
     if (startsWith(funcName, "__kmpc") &&
         funcName != "__kmpc_global_thread_num") {
       std::string s;
