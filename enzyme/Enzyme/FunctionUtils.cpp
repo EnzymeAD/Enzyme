@@ -2251,20 +2251,29 @@ bool DetectReadonlyOrThrow(Module &M) {
           if (!isNoCapture(CB, 4) && isNoCapture(ReduceF, 0) &&
               isNoCapture(ReduceF, 1)) {
             addCallSiteNoCapture(CB, 4);
+            changed = true;
+          }
+          if (!CB->hasFnAttr(Attribute::NoFree) &&
+              ReduceF->hasFnAttribute(Attribute::NoFree)) {
+            CB->addFnAttr(Attribute::NoFree);
+            changed = true;
           }
           if (isReadNone(ReduceF, 0) && isReadNone(ReduceF, 1) &&
               !isReadNone(CB, 4)) {
             CB->removeParamAttr(4, Attribute::ReadOnly);
             CB->removeParamAttr(4, Attribute::WriteOnly);
             CB->addParamAttr(4, Attribute::ReadNone);
+            changed = true;
           }
           if (isReadOnly(ReduceF, 0) && isReadOnly(ReduceF, 1) &&
               !isReadOnly(CB, 4) && !isWriteOnly(CB, 4)) {
             CB->addParamAttr(4, Attribute::ReadOnly);
+            changed = true;
           }
           if (isWriteOnly(ReduceF, 0) && isWriteOnly(ReduceF, 1) &&
               !isReadOnly(CB, 4) && !isWriteOnly(CB, 4)) {
             CB->addParamAttr(4, Attribute::WriteOnly);
+            changed = true;
           }
         }
       }

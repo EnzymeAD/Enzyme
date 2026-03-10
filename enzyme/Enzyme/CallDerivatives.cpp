@@ -2346,7 +2346,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     if (funcName == "__kmpc_reduce_nowait") {
       if (gutils->isConstantInstruction(&call)) {
-        return true;
+        return false;
       }
     }
 
@@ -2369,7 +2369,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
       if (!active)
-        return true;
+        return false;
     }
 
     if (startsWith(funcName, "__kmpc") &&
