@@ -16,6 +16,9 @@
 #include <cassert>
 #include <deque>
 
+#include "Analysis/DataFlowAliasAnalysis.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
+
 #include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
@@ -263,11 +266,76 @@ static inline void bfs(const Graph &G, const llvm::SetVector<Value> &Sources,
   }
 }
 
+struct OverwriteAnalyzer {
+  static OverwriteAnalyzer analyzeFunc(FunctionOpInterface funcOp) {
+    return OverwriteAnalyzer(funcOp);
+  }
+
+  bool isPtrPotentiallyModified(Value ptr) const {
+    // If the alias analysis failed, conservatively assume all pointers may
+    // be modified
+    if (!valid)
+      return true;
+
+    // Check if the pointer's alias classes intersect the modified alias classes
+    auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
+    return !ptrClass->alias(modified).isNo();
+  }
+
+private:
+  DataFlowSolver solver;
+  // The set of all alias classes that are potentially modified in the function
+  AliasClassLattice modified;
+  bool valid = true;
+
+  OverwriteAnalyzer(FunctionOpInterface funcOp)
+      : solver(DataFlowConfig().setInterprocedural(false)), modified(nullptr) {
+    dataflow::loadBaselineAnalyses(solver);
+    solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
+    solver.load<enzyme::PointsToPointerAnalysis>();
+    if (failed(solver.initializeAndRun(funcOp))) {
+      assert(false && "dataflow analysis failed");
+      valid = false;
+    } else {
+      funcOp.walk([&](MemoryEffectOpInterface memory) {
+        SmallVector<MemoryEffects::EffectInstance> effects;
+        memory.getEffects(effects);
+        for (const auto &effect : effects) {
+          if (isa<MemoryEffects::Write>(effect.getEffect())) {
+            Value val = effect.getValue();
+            if (val) {
+              (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+            } else {
+              (void)modified.markUnknown();
+            }
+          }
+        }
+      });
+    }
+  }
+};
+
+bool isLoadMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
+  if (!hasSingleEffect<MemoryEffects::Read>(op)) {
+    return false;
+  }
+  auto memory = cast<MemoryEffectOpInterface>(op);
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memory.getEffects(effects);
+  assert(effects.size() == 1 &&
+         isa<MemoryEffects::Read>(effects.front().getEffect()));
+  Value ptr = effects.front().getValue();
+
+  // The load can be re-done if the pointer's contents are never modified
+  // by the function.
+  return !analyzer.isPtrPotentiallyModified(ptr);
+}
+
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
-static inline bool isMovable(Operation *op) {
+static inline bool isMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
-         mlir::isPure(op);
+         (mlir::isPure(op) || isLoadMovable(analyzer, op));
 }
 
 // Given a graph `G`, construct a new graph `G2`, where all paths must terminate
@@ -487,6 +555,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   }
 
   Graph G;
+  auto overwriteAnalyzer = OverwriteAnalyzer::analyzeFunc(
+      forward->getParent()->getParentOfType<FunctionOpInterface>());
 
   LLVM_DEBUG(llvm::dbgs() << "trying min/cut\n");
   LLVM_DEBUG(
@@ -518,7 +588,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
 
     Operation *owner = todo.getDefiningOp();
-    if (!owner || !isMovable(owner)) {
+    if (!owner || !isMovable(overwriteAnalyzer, owner)) {
       roots.insert(todo);
       continue;
     }
@@ -544,7 +614,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       bool isRequired = false;
       for (auto user : poped.getUsers()) {
-        if (user->getBlock() != reverse || !isMovable(user)) {
+        if (user->getBlock() != reverse ||
+            !isMovable(overwriteAnalyzer, user)) {
           G[info.pushedValue()].insert(Node(user));
           Required.insert(user);
           isRequired = true;
@@ -567,7 +638,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
 
       bool isRequired = false;
       for (auto user : todo.getUsers()) {
-        if (user->getBlock() != reverse || !isMovable(user)) {
+        if (user->getBlock() != reverse ||
+            !isMovable(overwriteAnalyzer, user)) {
           G[todo].insert(Node(user));
           Required.insert(user);
           isRequired = true;
