@@ -279,7 +279,7 @@ def PushOp : Enzyme_Op<"push", [
                    "cache", "value",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Push value to cache";
-  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let arguments = (ins Arg<AnyType, "the cache to push to", [MemWrite]>:$cache, AnyType:$value);
 }
 
 def PopOp : Enzyme_Op<"pop", [
@@ -287,7 +287,7 @@ def PopOp : Enzyme_Op<"pop", [
                    "cache", "output",
                    "::llvm::cast<enzyme::CacheType>($_self).getType()">]> {
   let summary = "Retrieve information for the reverse mode pass.";
-  let arguments = (ins AnyType : $cache);
+  let arguments = (ins Arg<AnyType, "the cache to pop from", [MemRead, MemWrite]>:$cache);
   let results = (outs AnyType:$output);
 }
 
@@ -295,7 +295,7 @@ def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "Create enzyme.gradient and enzyme.cache";
   let arguments = (ins );
-  let results = (outs AnyType);
+  let results = (outs Res<AnyType, "", [MemAlloc<DefaultResource, 0, FullEffect>]>);
 }
 
 def Cache : Enzyme_Type<"Cache"> {
