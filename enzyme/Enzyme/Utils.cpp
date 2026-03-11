@@ -3667,8 +3667,13 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
 
       llvm::Value *cmp = B.CreateFCmpUNO(inp, inp);
       if (auto VT = llvm::dyn_cast<llvm::VectorType>(inp->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
+        unsigned len = VT->getElementCount().getKnownMinValue();
+#else
+        unsigned len = VT->getNumElements();
+#endif
         llvm::Value *res = B.CreateExtractElement(cmp, (uint64_t)0);
-        for (unsigned i = 1, len = VT->getNumElements(); i < len; ++i) {
+        for (unsigned i = 1; i < len; ++i) {
           res = B.CreateOr(res, B.CreateExtractElement(cmp, (uint64_t)i));
         }
         cmp = res;
