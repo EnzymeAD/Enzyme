@@ -87,6 +87,7 @@ enum class ErrorType {
   GetIndexError = 9,
   NoTruncate = 10,
   GCRewrite = 11,
+  NaNError = 12,
 };
 
 extern "C" {

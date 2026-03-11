@@ -3643,10 +3643,6 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
     std::string type_str;
     llvm::raw_string_ostream type_ss(type_str);
     toset->getType()->print(type_ss);
-    for (char &c : type_str) {
-      if (!isalnum(c))
-        c = '_';
-    }
     std::string fn_name = "__enzyme_sanitize_nan_" + type_str;
 
     llvm::FunctionType *SanitizeFT = llvm::FunctionType::get(
@@ -3683,17 +3679,22 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
       B.CreateRetVoid();
 
       B.SetInsertPoint(bad);
-      llvm::FunctionType *PutsFT = llvm::FunctionType::get(
-          llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
-      auto PutsF = mod->getOrInsertFunction("puts", PutsFT);
-      B.CreateCall(PutsF, msg_ptr);
+      if (CustomErrorHandler) {
+        CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
+                           wrap(msg_ptr), wrap(&B));
+      } else {
+        llvm::FunctionType *PutsFT = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
+        auto PutsF = mod->getOrInsertFunction("puts", PutsFT);
+        B.CreateCall(PutsF, msg_ptr);
 
-      llvm::FunctionType *ExitFT =
-          llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                                  {llvm::Type::getInt32Ty(Context)}, false);
-      auto ExitF = mod->getOrInsertFunction("exit", ExitFT);
-      B.CreateCall(ExitF,
-                   llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 1));
+        llvm::FunctionType *ExitFT =
+            llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                    {llvm::Type::getInt32Ty(Context)}, false);
+        auto ExitF = mod->getOrInsertFunction("exit", ExitFT);
+        B.CreateCall(
+            ExitF, llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 1));
+      }
       B.CreateUnreachable();
     }
 
