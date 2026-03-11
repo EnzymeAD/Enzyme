@@ -3654,6 +3654,7 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
         llvm::cast<llvm::Function>(SanitizeFCallee.getCallee());
 
     if (SanitizeF->empty()) {
+      SanitizeF->setLinkage(Function::LinkageTypes::InternalLinkage);
       llvm::BasicBlock *entry =
           llvm::BasicBlock::Create(Context, "entry", SanitizeF);
       llvm::BasicBlock *good =
