@@ -1,4 +1,3 @@
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-check-nan -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-check-nan -S | FileCheck %s
 
 define double @f(double %x) {
