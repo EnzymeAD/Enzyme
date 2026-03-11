@@ -15,14 +15,15 @@ entry:
 
 declare double @__enzyme_autodiff(double (double)*, ...)
 
-; CHECK: define internal {{(dso_local )?}}void @diffef(double %x, double %differeturn)
+; CHECK: define internal {{(dso_local )?}}{ double } @diffef(double %x, double %differeturn)
 ; CHECK: entry:
 ; CHECK:   %m = fmul double %x, %x
 ; CHECK:   %0 = fmul fast double %differeturn, %x
 ; CHECK:   %1 = fmul fast double %differeturn, %x
 ; CHECK:   %2 = fadd fast double %0, %1
 ; CHECK-NEXT:   call void @__enzyme_sanitize_nan_double(double %2, i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
-; CHECK-NEXT:   ret void
+; CHECK-NEXT:   %3 = insertvalue { double } {{(undef|poison)}}, double %2, 0
+; CHECK-NEXT:   ret { double } %3
 
 ; CHECK: define internal void @__enzyme_sanitize_nan_double(double %0, i8* %1)
 ; CHECK-NEXT: entry:
