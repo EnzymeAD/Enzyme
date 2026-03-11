@@ -1018,9 +1018,13 @@ struct ParallelOpADDataFlow
     const size_t num_upper = parOp.getUpperBound().size();
     const size_t num_step = parOp.getStep().size();
     const size_t init_vals_offset = num_lower + num_upper + num_step;
-    return {
-        parOp->getOperand(res.getResultNumber() + init_vals_offset),
-        parOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+    return {parOp->getOperand(res.getResultNumber() + init_vals_offset),
+            parOp.getBody()
+                ->getTerminator()
+                ->getRegion(res.getResultNumber())
+                .front()
+                .getTerminator()
+                ->getOperand(0)};
   }
   SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
                                                    BlockArgument arg) const {
@@ -1030,14 +1034,11 @@ struct ParallelOpADDataFlow
   }
   SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
                                                  Value val) const {
-    auto parOp = cast<scf::ParallelOp>(op);
     SmallVector<Value> sv;
 
-    for (auto &&[res, arg, barg] : llvm::zip_equal(
-             parOp->getResults(), term->getOperands(), parOp.getInitVals())) {
+    for (auto [idx, arg] : llvm::enumerate(term->getOperands())) {
       if (arg == val) {
-        sv.push_back(res);
-        sv.push_back(barg);
+        sv.push_back(term->getRegion(idx).front().getArgument(0));
       }
     }
 
