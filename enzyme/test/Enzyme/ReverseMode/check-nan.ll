@@ -16,14 +16,20 @@ entry:
 declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}{ double } @diffef(double %x, double %differeturn)
-; CHECK: entry:
-; CHECK:   %m = fmul double %x, %x
-; CHECK:   %0 = fmul fast double %differeturn, %x
-; CHECK:   %1 = fmul fast double %differeturn, %x
-; CHECK:   %2 = fadd fast double %0, %1
-; CHECK-NEXT:   call void @__enzyme_sanitize_nan_double(double %2, i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
-; CHECK-NEXT:   %3 = insertvalue { double } {{(undef|poison)}}, double %2, 0
-; CHECK-NEXT:   ret { double } %3
+; CHECK: invert
+; CHECK:   call void @__enzyme_sanitize_nan_double(double %differeturn, i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
+; CHECK:   %[[a0:.+]] = load double, double* %"m'de"
+; CHECK:   call void @__enzyme_sanitize_nan_double(double 0.000000e+00, i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
+; CHECK:   %[[a1:.+]] = fmul fast double %[[a0]], %x
+; CHECK:   %[[a2:.+]] = load double, double* %"x'de"
+; CHECK:   %[[add1:.+]] = fadd fast double %[[a2]], %[[a1]]
+; CHECK-NEXT:   call void @__enzyme_sanitize_nan_double(double %[[add1]], i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
+; CHECK:   %[[a3:.+]] = fmul fast double %[[a0]], %x
+; CHECK:   %[[a4:.+]] = load double, double* %"x'de"
+; CHECK:   %[[add2:.+]] = fadd fast double %[[a4]], %[[a3]]
+; CHECK-NEXT:   call void @__enzyme_sanitize_nan_double(double %[[add2]], i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
+; CHECK:   %[[res:.+]] = insertvalue { double } {{(undef|poison)}}, double %[[add2]], 0
+; CHECK-NEXT:   ret { double } %[[res]]
 
 ; CHECK: define internal void @__enzyme_sanitize_nan_double(double %0, i8* %1)
 ; CHECK-NEXT: entry:
