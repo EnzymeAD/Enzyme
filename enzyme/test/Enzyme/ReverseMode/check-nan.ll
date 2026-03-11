@@ -28,7 +28,9 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK:   %[[a4:.+]] = load double, double* %"x'de"
 ; CHECK:   %[[add2:.+]] = fadd fast double %[[a4]], %[[a3]]
 ; CHECK-NEXT:   call void @__enzyme_sanitize_nan_double(double %[[add2]], i8* getelementptr inbounds ([{{[0-9]+}} x i8], [{{[0-9]+}} x i8]* @{{.*}}, i32 0, i32 0))
-; CHECK:   %[[res:.+]] = insertvalue { double } {{(undef|poison)}}, double %[[add2]], 0
+; CHECK:   store double %[[add2]], double* %"x'de"
+; CHECK:   %[[res_load:.+]] = load double, double* %"x'de"
+; CHECK:   %[[res:.+]] = insertvalue { double } {{(undef|poison)}}, double %[[res_load]], 0
 ; CHECK-NEXT:   ret { double } %[[res]]
 
 ; CHECK: define internal void @__enzyme_sanitize_nan_double(double %0, i8* %1)
