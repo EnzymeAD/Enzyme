@@ -100,6 +100,10 @@ llvm::cl::opt<bool> EnzymeRuntimeError(
     "enzyme-runtime-error", cl::init(false), cl::Hidden,
     cl::desc("Emit Runtime errors instead of compile time ones"));
 
+llvm::cl::opt<bool> EnzymeCheckDerivativeNaN(
+    "enzyme-check-nan", cl::init(false), cl::Hidden,
+    cl::desc("Add NaN checks to all derivative intermediate values"));
+
 llvm::cl::opt<bool> EnzymeNonPower2Cache(
     "enzyme-non-power2-cache", cl::init(false), cl::Hidden,
     cl::desc("Disable caching of integers which are not a power of 2"));
@@ -3630,6 +3634,94 @@ llvm::Constant *getUndefinedValueForType(llvm::Module &M, llvm::Type *T,
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask) {
+  if (EnzymeCheckDerivativeNaN && toset->getType()->isFPOrFPVectorTy()) {
+    auto current_bb = BuilderM.GetInsertBlock();
+    auto fn = current_bb->getParent();
+    auto mod = fn->getParent();
+    auto &Context = mod->getContext();
+
+    std::string type_str;
+    llvm::raw_string_ostream type_ss(type_str);
+    toset->getType()->print(type_ss);
+    std::string fn_name = "__enzyme_sanitize_nan_" + type_str;
+
+    llvm::FunctionType *SanitizeFT = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(Context),
+        {toset->getType(), getInt8PtrTy(Context)}, false);
+
+    auto SanitizeFCallee = mod->getOrInsertFunction(fn_name, SanitizeFT);
+    llvm::Function *SanitizeF =
+        llvm::cast<llvm::Function>(SanitizeFCallee.getCallee());
+
+    if (SanitizeF->empty()) {
+      SanitizeF->setLinkage(Function::LinkageTypes::InternalLinkage);
+      llvm::BasicBlock *entry =
+          llvm::BasicBlock::Create(Context, "entry", SanitizeF);
+      llvm::BasicBlock *good =
+          llvm::BasicBlock::Create(Context, "good", SanitizeF);
+      llvm::BasicBlock *bad =
+          llvm::BasicBlock::Create(Context, "bad", SanitizeF);
+
+      llvm::IRBuilder<> B(entry);
+      llvm::Value *inp = SanitizeF->getArg(0);
+      llvm::Value *msg_ptr = SanitizeF->getArg(1);
+
+      llvm::Value *cmp = B.CreateFCmpUNO(inp, inp);
+      if (auto VT = llvm::dyn_cast<llvm::VectorType>(inp->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
+        unsigned len = VT->getElementCount().getKnownMinValue();
+#else
+        unsigned len = VT->getNumElements();
+#endif
+        llvm::Value *res = B.CreateExtractElement(cmp, (uint64_t)0);
+        for (unsigned i = 1; i < len; ++i) {
+          res = B.CreateOr(res, B.CreateExtractElement(cmp, (uint64_t)i));
+        }
+        cmp = res;
+      }
+      B.CreateCondBr(cmp, bad, good);
+
+      B.SetInsertPoint(good);
+      B.CreateRetVoid();
+
+      B.SetInsertPoint(bad);
+      if (CustomErrorHandler) {
+        CustomErrorHandler("NaN Error", wrap(inp), ErrorType::NaNError, nullptr,
+                           wrap(msg_ptr), wrap(&B));
+      } else {
+        llvm::FunctionType *PutsFT = llvm::FunctionType::get(
+            llvm::Type::getInt32Ty(Context), {getInt8PtrTy(Context)}, false);
+        auto PutsF = mod->getOrInsertFunction("puts", PutsFT);
+        B.CreateCall(PutsF, msg_ptr);
+
+        llvm::FunctionType *ExitFT =
+            llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                    {llvm::Type::getInt32Ty(Context)}, false);
+        auto ExitF = mod->getOrInsertFunction("exit", ExitFT);
+        B.CreateCall(
+            ExitF, llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 1));
+      }
+      B.CreateUnreachable();
+    }
+
+    std::string stringv = "Enzyme: Found nan while computing derivative of ";
+    if (val) {
+      std::string str;
+      llvm::raw_string_ostream ss(str);
+      if (auto inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+        ss << *inst << "\n";
+        emit_backtrace(inst, ss);
+      } else {
+        ss << *val << "\n";
+      }
+      stringv += ss.str();
+    } else {
+      stringv += "\n";
+    }
+
+    BuilderM.CreateCall(SanitizeFCallee, {toset, getString(*mod, stringv)});
+  }
+
   if (EnzymeSanitizeDerivatives)
     return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
                                             wrap(&BuilderM), wrap(mask)));
