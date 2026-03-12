@@ -28,7 +28,7 @@ struct PrintSampleDependencePass
 
       os << "Sample regions: " << analysis.getSampleOps().size() << "\n";
 
-      regionOp.getBody().walk([&](Operation *op) {
+      regionOp.getSampler().walk([&](Operation *op) {
         bool dependent = analysis.isSampleDependent(op);
         bool hoistable = analysis.canHoist(op);
 

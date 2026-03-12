@@ -447,10 +447,12 @@ def ExtractOp : Enzyme_Op<"extract"> {
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
   let summary = "Symbol associated with a Sample op";
   let description = [{
-  Symbol associated with a Sample op.
+  Symbol associated with a Sample op. Holds one or more uint64_t values.
+  A single value is a leaf symbol; multiple values encode a composite path
+  created by SICM submodel inlining.
   }];
-  let parameters = (ins "uint64_t":$ptr);
-  let assemblyFormat = "`<` $ptr `>`";
+  let parameters = (ins ArrayRefParameter<"uint64_t", "symbol path">:$path);
+  let hasCustomAssemblyFormat = 1;
 }
 
 def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
@@ -790,11 +792,25 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
 }
 
 def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference with inlined model body";
+  let summary = "Inference region with sampler and unified logpdf";
   let description = [{
-    A region-based MCMC operation where the model function body is inlined
-    into a region. This is an internal construct for optimization passes to see the full
-    computation before expansion to HMC/NUTS loops.
+    A region-based inference operation with two regions:
+
+    - `sampler`: The model computation containing sample_region ops with sampler
+      regions (logpdf regions cleared after merging). Used by proposal-based
+      algorithms (MH, Gibbs) and preserved for outline compatibility.
+
+    - `logpdf`: Unified logpdf computation for ALL position-dependent terms.
+      Block arguments follow a calling convention:
+        args[0..num_position_args-1] = position values (sample-dependent,
+          ordered by `selection` attribute)
+        Captured values from enclosing scope = parameters (sample-invariant)
+
+      SICM operates on this region. The outline pass converts it to a
+      standalone function referenced by `logpdf_fn` on the resulting MCMCOp.
+
+    If the `logpdf` region is empty, the operation falls back to the sampler-only
+    mode (pre-logpdf-merging state or custom logpdf_fn).
   }];
 
   let arguments = (ins
@@ -821,10 +837,14 @@ def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSized
     Optional<AnyRankedTensor>:$initial_potential_energy,
 
     OptionalAttr<StrAttr>:$fn,
-    DefaultValuedStrAttr<StrAttr, "">:$name
+    DefaultValuedStrAttr<StrAttr, "">:$name,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_position_args,
+    DefaultValuedAttr<I64Attr, "0">:$position_size,
+    OptionalAttr<SupportArrayAttr>:$supports
   );
 
-  let regions = (region AnyRegion:$body);
+  let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
 
   let results = (outs
     AnyRankedTensor:$new_trace,
@@ -844,7 +864,8 @@ def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSized
     (`initial_position` `=` $initial_position^)?
     (`initial_gradient` `=` $initial_gradient^)?
     (`initial_potential_energy` `=` $initial_potential_energy^)?
-    $body attr-dict-with-keyword `:` functional-type(operands, results)
+    $sampler (`logpdf` $logpdf^)?
+    attr-dict-with-keyword `:` functional-type(operands, results)
   }];
 }
 
@@ -1013,6 +1034,7 @@ def DumpOp : Enzyme_Op<"dump"> {
     $value attr-dict `:` functional-type($value, results)
   }];
 }
+
 
 def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
   let summary = "affine atomic rmw operation";

@@ -9,34 +9,34 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 SampleDependenceAnalysis::SampleDependenceAnalysis(MCMCRegionOp regionOp)
-    : regionOp(regionOp) {
-  runAnalysis();
+    : regionOp(regionOp), target(AnalysisTarget::Sampler) {
+  runSamplerAnalysis();
+}
+
+SampleDependenceAnalysis::SampleDependenceAnalysis(MCMCRegionOp regionOp,
+                                                   AnalysisTarget target)
+    : regionOp(regionOp), target(target) {
+  if (target == AnalysisTarget::Logpdf)
+    runLogpdfAnalysis();
+  else
+    runSamplerAnalysis();
+}
+
+Region &SampleDependenceAnalysis::getTargetRegion() {
+  if (target == AnalysisTarget::Logpdf)
+    return regionOp.getLogpdf();
+  return regionOp.getSampler();
 }
 
 void SampleDependenceAnalysis::markSampleDependent(Value value) {
   sampleDependentValues.insert(value);
 }
 
-void SampleDependenceAnalysis::runAnalysis() {
-  // TODO: Handle recursive regions.
-  if (regionOp.getLogpdfFnAttr()) {
-    Block &entry = regionOp.getBody().front();
-    if (!entry.getArguments().empty()) {
-      markSampleDependent(entry.getArgument(0));
-    }
-  }
-
-  regionOp.getBody().walk([&](SampleRegionOp sampleOp) {
-    sampleOps.push_back(sampleOp);
-    for (Value result : sampleOp.getResults()) {
-      markSampleDependent(result);
-    }
-  });
-
+void SampleDependenceAnalysis::propagateDependence(Region &region) {
   bool changed = true;
   while (changed) {
     changed = false;
-    regionOp.getBody().walk([&](Operation *op) {
+    region.walk([&](Operation *op) {
       if (isa<SampleRegionOp>(op))
         return;
 
@@ -60,6 +60,56 @@ void SampleDependenceAnalysis::runAnalysis() {
   }
 }
 
+void SampleDependenceAnalysis::runSamplerAnalysis() {
+  // TODO: Handle recursive regions.
+  if (regionOp.getLogpdfFnAttr()) {
+    Block &entry = regionOp.getSampler().front();
+    if (!entry.getArguments().empty()) {
+      markSampleDependent(entry.getArgument(0));
+    }
+  }
+
+  DenseSet<Attribute> selectedSymbols;
+  bool hasSelection = false;
+  if (auto selection = regionOp.getSelectionAttr()) {
+    hasSelection = true;
+    for (auto addr : selection) {
+      auto address = cast<ArrayAttr>(addr);
+      if (!address.empty())
+        selectedSymbols.insert(address[0]);
+    }
+  }
+
+  regionOp.getSampler().walk([&](SampleRegionOp sampleOp) {
+    sampleOps.push_back(sampleOp);
+    auto symbol = sampleOp.getSymbolAttr();
+    bool isSelected =
+        !hasSelection || !symbol || selectedSymbols.contains(symbol);
+    if (isSelected) {
+      for (Value result : sampleOp.getResults()) {
+        markSampleDependent(result);
+      }
+    }
+  });
+
+  propagateDependence(regionOp.getSampler());
+}
+
+void SampleDependenceAnalysis::runLogpdfAnalysis() {
+  Region &logpdf = regionOp.getLogpdf();
+  if (logpdf.empty())
+    return;
+
+  Block &entry = logpdf.front();
+  int64_t numPositionArgs = regionOp.getNumPositionArgs();
+
+  for (int64_t i = 0;
+       i < numPositionArgs && i < (int64_t)entry.getNumArguments(); ++i)
+    markSampleDependent(entry.getArgument(i));
+
+  propagateDependence(logpdf);
+}
+
 bool SampleDependenceAnalysis::isSampleDependent(Value value) const {
   return sampleDependentValues.contains(value);
 }
@@ -70,6 +120,15 @@ bool SampleDependenceAnalysis::isSampleDependent(Operation *op) const {
       return true;
   }
   return false;
+}
+
+bool SampleDependenceAnalysis::isInTargetRegion(Operation *op) {
+  Region *targetRegion;
+  if (target == AnalysisTarget::Logpdf)
+    targetRegion = &regionOp.getLogpdf();
+  else
+    targetRegion = &regionOp.getSampler();
+  return targetRegion->isAncestor(op->getParentRegion());
 }
 
 bool SampleDependenceAnalysis::canHoist(Operation *op) const {
@@ -134,26 +193,26 @@ hasMemoryConflict(ArrayRef<MemoryEffects::EffectInstance> opEffects,
   return false;
 }
 
-bool enzyme::hoistSampleInvariantOps(MCMCRegionOp regionOp) {
-  DominanceInfo dom(regionOp);
-  PostDominanceInfo pdom(regionOp);
-  SampleDependenceAnalysis sampleAnalysis(regionOp);
-
-  Region &region = regionOp.getBody();
+static bool hoistFromRegion(MCMCRegionOp regionOp,
+                            SampleDependenceAnalysis &sampleAnalysis,
+                            Region &region) {
   if (region.empty())
     return false;
 
+  DominanceInfo dom(regionOp);
+  PostDominanceInfo pdom(regionOp);
+
   IRMapping regionToOuter;
   Block &entryBlock = region.front();
-  auto inputs = regionOp.getInputs();
 
-  bool isLogpdfMode = static_cast<bool>(regionOp.getLogpdfFnAttr());
-
-  for (auto [idx, blockArg] : llvm::enumerate(entryBlock.getArguments())) {
-    if (isLogpdfMode && idx == 0)
-      continue;
-    if (idx < inputs.size()) {
-      regionToOuter.map(blockArg, inputs[idx]);
+  if (sampleAnalysis.getTarget() == AnalysisTarget::Sampler) {
+    auto inputs = regionOp.getInputs();
+    bool isLogpdfMode = static_cast<bool>(regionOp.getLogpdfFnAttr());
+    for (auto [idx, blockArg] : llvm::enumerate(entryBlock.getArguments())) {
+      if (isLogpdfMode && idx == 0)
+        continue;
+      if (idx < inputs.size())
+        regionToOuter.map(blockArg, inputs[idx]);
     }
   }
 
@@ -224,4 +283,14 @@ bool enzyme::hoistSampleInvariantOps(MCMCRegionOp regionOp) {
   }
 
   return !sortedToHoist.empty();
+}
+
+bool enzyme::hoistSampleInvariantOps(MCMCRegionOp regionOp) {
+  return hoistSampleInvariantOps(regionOp, AnalysisTarget::Sampler);
+}
+
+bool enzyme::hoistSampleInvariantOps(MCMCRegionOp regionOp,
+                                     AnalysisTarget target) {
+  SampleDependenceAnalysis analysis(regionOp, target);
+  return hoistFromRegion(regionOp, analysis, analysis.getTargetRegion());
 }

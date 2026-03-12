@@ -776,6 +776,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       } else {
         auto baseCtx =
             makeHMCContext(adaptedInvMass, adaptedMassMatrixSqrt, stepSize);
+        rngInput = conditionalDump(rewriter, loc, rngInput,
+                                   "MCMC: initial rng state", debugDump);
         auto initState = InitHMC(
             rewriter, loc, rngInput, baseCtx,
             hasLogpdfFn ? mcmcOp.getInitialPosition() : Value(), debugDump);
@@ -1093,10 +1095,29 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           SmallVector<Value> trueYieldValues;
 
           if (adaptMassMatrix) {
+            conditionalDump(rewriter, loc, iterT, "WINDOW_END: iteration",
+                            debugDump);
+            conditionalDump(rewriter, loc, windowIdxLoop,
+                            "WINDOW_END: window_idx", debugDump);
+            conditionalDump(rewriter, loc, conditionalWelford.mean,
+                            "WINDOW_END: welford_mean", debugDump);
+            conditionalDump(rewriter, loc, conditionalWelford.m2,
+                            "WINDOW_END: welford_m2", debugDump);
+            conditionalDump(rewriter, loc, conditionalWelford.n,
+                            "WINDOW_END: welford_n", debugDump);
+
             auto newInvMass = finalizeWelford(rewriter, loc, conditionalWelford,
                                               welfordConfig);
             auto newMassMatrixSqrt =
                 computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
+
+            conditionalDump(rewriter, loc, newInvMass,
+                            "WINDOW_END: new_inv_mass", debugDump);
+            conditionalDump(rewriter, loc, newMassMatrixSqrt,
+                            "WINDOW_END: new_mass_sqrt", debugDump);
+            conditionalDump(rewriter, loc, adaptedStepSizeInLoop,
+                            "WINDOW_END: step_size", debugDump);
+
             auto reinitWelford =
                 initWelford(rewriter, loc, positionSize, diagonal);
 
@@ -1313,6 +1334,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       finalSamplesBuffer =
           conditionalDump(rewriter, loc, finalSamplesBuffer,
                           "MCMC: collected samples", debugDump);
+
+      auto expectedAcceptedType =
+          cast<RankedTensorType>(mcmcOp.getResult(1).getType());
+      if (finalAcceptedBuffer.getType() != expectedAcceptedType) {
+        finalAcceptedBuffer = enzyme::ReshapeOp::create(
+            rewriter, loc, expectedAcceptedType, finalAcceptedBuffer);
+      }
 
       rewriter.replaceOp(mcmcOp, {finalSamplesBuffer, finalAcceptedBuffer,
                                   finalRng, finalQ, finalGrad, finalU,

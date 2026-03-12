@@ -14,9 +14,8 @@
 // CHECK: [INV] [HOIST] arith.addf -> tensor<f64>
 // CHECK: [INV] [KEEP]  enzyme.yield
 
-// Operations inside logpdf region (nested in sample_region)
-// CHECK: [INV] [HOIST] arith.negf -> tensor<f64>
-// CHECK: [INV] [KEEP]  enzyme.yield
+// Per-site logpdf bodies are merged into MCMCRegionOp's unified logpdf
+// region by inline-mcmc-regions Phase 2, so arith.negf no longer appears here.
 
 // The sample_region itself - sample-dependent
 // CHECK: [DEP] [KEEP]  enzyme.sample_region -> tensor<2xui64>, tensor<f64>

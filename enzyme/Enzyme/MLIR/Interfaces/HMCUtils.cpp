@@ -679,11 +679,22 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   auto initSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
+  conditionalDump(builder, loc, initSplit.getResult(0),
+                  "InitHMC: 2-way split[0] (rng_mcmc)", debugDump);
+  conditionalDump(builder, loc, initSplit.getResult(1),
+                  "InitHMC: 2-way split[1]", debugDump);
   auto kernelSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
       initSplit.getResult(0));
   auto rngForSampleKernel = kernelSplit.getResult(0);
   auto rngForAutodiff = kernelSplit.getResult(1);
+  conditionalDump(builder, loc, rngForSampleKernel,
+                  "InitHMC: 3-way split[0] (rngForSampleKernel)", debugDump);
+  conditionalDump(builder, loc, rngForAutodiff,
+                  "InitHMC: 3-way split[1] (rngForAutodiff)", debugDump);
+  if (kernelSplit.getNumResults() > 2)
+    conditionalDump(builder, loc, kernelSplit.getResult(2),
+                    "InitHMC: 3-way split[2] (unused)", debugDump);
 
   Value q0;
   Value U0;
@@ -803,6 +814,11 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   // (U, rng, grad)
   auto grad0 = autodiffInit.getResult(2);
+
+  conditionalDump(builder, loc, q0, "InitHMC: q0 (unconstrained)", debugDump);
+  conditionalDump(builder, loc, U0, "InitHMC: U0 (potential energy)",
+                  debugDump);
+  conditionalDump(builder, loc, grad0, "InitHMC: grad0 (gradient)", debugDump);
 
   return {q0, U0, grad0, rngForSampleKernel};
 }
@@ -953,18 +969,30 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
   // 1. Split RNG: [rngNext, rngMomentum, rngTree]
+  conditionalDump(builder, loc, rng,
+                  "SampleNUTS: input rng (before 3-way split)", debugDump);
   auto sampleKernelSplit = enzyme::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
       rng);
   auto rngNext = sampleKernelSplit.getResult(0);
   auto rngMomentum = sampleKernelSplit.getResult(1);
   auto rngTree = sampleKernelSplit.getResult(2);
+  conditionalDump(builder, loc, rngNext, "SampleNUTS: 3-way split[0] (rngNext)",
+                  debugDump);
+  conditionalDump(builder, loc, rngMomentum,
+                  "SampleNUTS: 3-way split[1] (rngMomentum)", debugDump);
+  conditionalDump(builder, loc, rngTree, "SampleNUTS: 3-way split[2] (rngTree)",
+                  debugDump);
 
   // 2. Sample fresh momentum p ~ N(0, M)
   Value rngForMomentum = rngMomentum;
   if (!ctx.hasCustomLogpdf()) {
     auto momSplit = enzyme::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
+    conditionalDump(builder, loc, momSplit.getResult(0),
+                    "SampleNUTS: momSplit[0] (rngForMomentum)", debugDump);
+    conditionalDump(builder, loc, momSplit.getResult(1),
+                    "SampleNUTS: momSplit[1]", debugDump);
     rngForMomentum = momSplit.getResult(0);
   }
   auto [p0, rngAfterMomentum] =
@@ -976,6 +1004,11 @@ MCMCKernelResult MCMC::SampleNUTS(OpBuilder &builder, Location loc, Value q,
 
   // 4. Compute H0 = U + K0
   auto H0 = arith::AddFOp::create(builder, loc, U, K0);
+
+  conditionalDump(builder, loc, p0, "SampleNUTS: p0 (momentum)", debugDump);
+  conditionalDump(builder, loc, K0, "SampleNUTS: K0 (kinetic energy)",
+                  debugDump);
+  conditionalDump(builder, loc, H0, "SampleNUTS: H0 (hamiltonian)", debugDump);
 
   // 5. Initialize NUTS tree state
   auto iterCtx = ctx.withH0(H0);
