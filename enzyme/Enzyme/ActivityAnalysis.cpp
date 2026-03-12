@@ -1140,16 +1140,16 @@ bool ActivityAnalyzer::hasActiveArgumentOtherThan(Instruction *I, Value *Val,
         continue;
       if (isFunctionArgumentConstant(CB, arg))
         continue;
-      if (!DeducingPointers.count(arg) && isConstantValue(TR, I)) {
+      if (!DeducingPointers.count(arg) && isConstantValue(TR, arg)) {
         continue;
       }
       has_other_active_operand = true;
     }
   } else {
-    for (auto &arg : CB->operands()) {
+    for (auto &arg : I->operands()) {
       if (arg == Val)
         continue;
-      if (!DeducingPointers.count(arg) && isConstantValue(TR, I)) {
+      if (!DeducingPointers.count(arg) && isConstantValue(TR, arg)) {
         continue;
       }
       has_other_active_operand = true;
