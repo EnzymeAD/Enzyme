@@ -15,6 +15,7 @@
 #define ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H
 
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 namespace mlir {
 
