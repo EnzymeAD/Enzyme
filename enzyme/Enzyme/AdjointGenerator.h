@@ -4661,7 +4661,7 @@ public:
 
               ptr = B.CreateBitCast(
                   ptr,
-                  PointerType::get(
+                  getPointerType(
                       IntToFloatTy(dif->getType()),
                       cast<PointerType>(ptr->getType())->getAddressSpace()));
               dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
@@ -4808,7 +4808,7 @@ public:
               Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
-        auto secretpt = PointerType::get(secretty, dstaddr);
+        auto secretpt = getPointerType(secretty, dstaddr);
         if (offset != 0) {
           dsto = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
@@ -4818,7 +4818,7 @@ public:
               Builder2.CreateIntToPtr(srco, getInt8PtrTy(dsto->getContext()));
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
-        secretpt = PointerType::get(secretty, srcaddr);
+        secretpt = getPointerType(secretty, srcaddr);
 
         if (offset != 0) {
           srco = Builder2.CreateConstInBoundsGEP1_64(
@@ -5833,7 +5833,7 @@ public:
           shouldFree()) {
         assert(tape);
         auto tapep = BuilderZ.CreatePointerCast(
-            tape, PointerType::get(
+            tape, getPointerType(
                       fnandtapetype->tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
         auto truetape =

@@ -21,6 +21,7 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
   MLIRAutoDiffTypeInterfaceIncGen
+  MLIREnzymeEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR

@@ -82,6 +82,7 @@ add_mlir_library(MLIREnzymeImplementations
   MemRefDerivativesIncGen
   MathDerivativesIncGen
   EnzymeDerivativesIncGen
+  MLIREnzymeEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRArithDialect
