@@ -2419,6 +2419,15 @@ public:
       }
       goto def;
     }
+    case Instruction::AShr: {
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
@@ -2587,6 +2596,9 @@ public:
       }
       goto def;
     }
+    case Instruction::UDiv:
+    case Instruction::URem:
+    case Instruction::SRem:
     case Instruction::SDiv:
     case Instruction::Shl:
     case Instruction::Mul:
@@ -2816,6 +2828,48 @@ public:
       }
       goto def;
     }
+    case Instruction::LShr: {
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateLShr(idiff, ci);
+              };
+              auto dif = applyChainRule(orig_op0->getType(), Builder2, rule,
+                                        diffe(orig_op0, Builder2));
+              setDiffe(&BO, dif, Builder2);
+              return;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer or is constant
+        return;
+      }
+      goto def;
+    }
+    case Instruction::AShr:
+    case Instruction::SDiv:
+    case Instruction::UDiv:
+    case Instruction::SRem:
+    case Instruction::URem:
     case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
