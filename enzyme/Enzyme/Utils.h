@@ -1169,21 +1169,22 @@ enum class MPI_Elem {
   Old = 7
 };
 
-static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
-                                              unsigned AddressSpace = 0) {
-#if LLVM_VERSION_MAJOR >= 21
-  return llvm::PointerType::get(Context, AddressSpace);
+static inline llvm::PointerType *getPointerType(llvm::Type *T,
+                                                unsigned AddressSpace = 0) {
+#if LLVM_VERSION_MAJOR >= 17
+  return llvm::PointerType::get(T->getContext(), AddressSpace);
 #else
-  return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+  return llvm::PointerType::get(T, AddressSpace);
 #endif
 }
 
+static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
+                                              unsigned AddressSpace = 0) {
+  return getPointerType(llvm::Type::getInt8Ty(Context), AddressSpace);
+}
+
 static inline llvm::PointerType *getUnqual(llvm::Type *T) {
-#if LLVM_VERSION_MAJOR >= 17
-  return llvm::PointerType::getUnqual(T->getContext());
-#else
-  return llvm::PointerType::getUnqual(T);
-#endif
+  return getPointerType(T);
 }
 
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {

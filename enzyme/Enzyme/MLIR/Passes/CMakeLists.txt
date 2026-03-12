@@ -31,6 +31,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
 
   DEPENDS
   MLIREnzymePassIncGen
+  MLIREnzymeEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
