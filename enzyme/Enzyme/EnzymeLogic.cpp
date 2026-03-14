@@ -4792,13 +4792,22 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
     if (legal) {
       Type *RT = foundcalled->getReturnType();
+      if (!returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+          if (RT->isStructTy()) {
+              RT = RT->getStructElementType(1);
+          }
+      } else if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
+          if (RT->isStructTy()) {
+              RT = RT->getStructElementType(0);
+          }
+      }
 
       FunctionType *FTy = FunctionType::get(
           RT, curTypes, todiff->getFunctionType()->isVarArg());
 
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
-          "fwddiffe" + todiff->getName(), todiff->getParent());
+          "fixderivative_" + todiff->getName(), todiff->getParent());
 
       auto foundArg = NewF->arg_begin();
       SmallVector<Value *, 2> nextArgs;
