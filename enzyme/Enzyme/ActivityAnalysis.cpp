@@ -2784,6 +2784,10 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                      << "\n";
       return true;
     }
+    // GEPs may be returning a pointer to an active constant (like a vtable),
+    // but we can still prove they are inactive if their USERS are inactive.
+    // However, since this is UP search, finding non-constant args means we
+    // cannot inductively prove it's inactive purely from origin.
     return false;
   } else if (auto ci = dyn_cast<CallInst>(inst)) {
     bool seenuse = false;

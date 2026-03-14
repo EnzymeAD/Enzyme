@@ -1,5 +1,6 @@
-; RUN: if [ %llvmver -eq 15 ]; then %opt < %s %loadEnzyme -enzyme -opaque-pointers=1 -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -opaque-pointers=1 -S | FileCheck %s; fi
+; RUN: if [ %llvmver -eq 15 ]; then %opt < %s %loadEnzyme -enzyme -opaque-pointers=1 -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -opaque-pointers=1 -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
+; RUN: if [ %llvmver -eq 15 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -opaque-pointers=1 -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
 
 %"class.std::ios_base::Init" = type { i8 }
 %class.Test = type { ptr }
@@ -52,7 +53,7 @@ entry:
   %this.addr = alloca ptr, align 8
   store ptr %this, ptr %this.addr, align 8
   %this1 = load ptr, ptr %this.addr, align 8
-  store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this1, align 8
+  store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, i32 0, i32 2), ptr %this1, align 8
   ret void
 }
 
@@ -103,6 +104,7 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 ; CHECK-NEXT:   %"sys'ipa" = alloca %class.Test, align 8
 ; CHECK-NEXT:   store %class.Test zeroinitializer, ptr %"sys'ipa", align 8
 ; CHECK-NEXT:   %sys = alloca %class.Test, align 8
+; CHECK-NEXT:   call void @nofree__ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %sys)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
@@ -112,8 +114,8 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 
 ; CHECK: define internal void @diffe_ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, inrange i32 0, i32 2), ptr %"this'", align 8, !alias.scope !7, !noalias !10
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this, align 8, !alias.scope !10, !noalias !7
+; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, i32 0, i32 2), ptr %"this'", align 8, !alias.scope !7, !noalias !10
+; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, i32 0, i32 2), ptr %this, align 8, !alias.scope !10, !noalias !7
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry

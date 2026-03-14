@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-detect-readthrow=false -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-detect-readthrow=false -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-detect-readthrow=false -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %newLoadEnzyme -enzyme-detect-readthrow=false -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefixes=CHECK,CHECK; else %opt < %s %newLoadEnzyme -enzyme-detect-readthrow=false -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
 
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -52,5 +52,6 @@ declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64)
 ; THE CRITICAL PART OF THIS TEST IS ENSURING THIS STORE EXISTS
 ; CHECK-NEXT:   store i64 %i14, i64 addrspace(10)* %i13, align 8
 ; CHECK-NEXT:   call void @diffejl_invoke({} addrspace(10)* %i11, {} addrspace(10)* %"i11'mi")
+; CHECK-NEXT:   ret void
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

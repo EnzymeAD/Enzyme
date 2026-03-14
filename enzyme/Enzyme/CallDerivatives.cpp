@@ -2352,20 +2352,46 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     if (funcName == "__kmpc_end_reduce_nowait") {
       assert(gutils->isConstantInstruction(&call));
-      auto GV = cast<GlobalVariable>(call.getArgOperand(2));
+      auto GV = call.getArgOperand(2);
       bool active = false;
-      for (auto u : GV->users()) {
-        if (u == &call)
+
+      SmallVector<Value *, 4> worklist;
+      worklist.push_back(GV);
+      SmallPtrSet<Value *, 4> seen;
+      while (!worklist.empty()) {
+        auto V = worklist.pop_back_val();
+        if (!seen.insert(V).second)
           continue;
-        auto CB = cast<CallBase>(u);
-        if (CB->getParent()->getParent() != gutils->oldFunc) {
-          continue;
-        }
-        auto F = CB->getCalledFunction();
-        assert(F);
-        assert(F->getName() == "__kmpc_reduce_nowait");
-        if (!gutils->isConstantInstruction(CB)) {
-          active = true;
+        for (auto u : V->users()) {
+          if (u == &call)
+            continue;
+          if (auto *CE = dyn_cast<ConstantExpr>(u)) {
+            if (CE->isCast()) {
+              worklist.push_back(CE);
+              continue;
+            }
+          } else if (auto *BC = dyn_cast<CastInst>(u)) {
+            worklist.push_back(BC);
+            continue;
+          }
+          auto CB = dyn_cast<CallBase>(u);
+          if (!CB) {
+            EmitFailure("UnknownKmpcUser", call.getDebugLoc(), &call,
+                        "Unknown user ", *u, " of kmpc global\n");
+            return false;
+          }
+          if (CB->getParent()->getParent() != gutils->oldFunc) {
+            continue;
+          }
+          auto F = CB->getCalledFunction();
+          if (!F || F->getName() != "__kmpc_reduce_nowait") {
+            EmitFailure("UnknownKmpcUser", call.getDebugLoc(), &call,
+                        "Unknown CallBase user ", *CB, " of kmpc global\n");
+            return false;
+          }
+          if (!gutils->isConstantInstruction(CB)) {
+            active = true;
+          }
         }
       }
       if (!active)

@@ -258,150 +258,210 @@ attributes #15 = { nounwind allocsize(0) }
 !21 = !{!22}
 !22 = !{i64 2, i64 -1, i64 -1, i1 true}
 
-;CHECK: define internal void @diffebody(ptr noalias nocapture readonly %arg, ptr noalias nocapture readnone %arg1, i64 %arg2, ptr nocapture align 8 dereferenceable(8) %arg3, ptr nocapture align 8 %"arg3'", ptr nocapture readonly align 8 dereferenceable(8) %arg4, ptr %tapeArg)
-;CHECK-NEXT: bb:
-;CHECK-NEXT:   %truetape = load { ptr, ptr, ptr }, ptr %tapeArg, align 8i
-;CHECK-NEXT:   %0 = call i64 @omp_get_thread_num()
-;CHECK-NEXT:   %i_smpl = alloca i32, align 4
-;CHECK-NEXT:   %i5_smpl = alloca i32, align 4
-;CHECK-NEXT:   %i6_smpl = alloca i32, align 4
-;CHECK-NEXT:   %i7 = alloca i32, align 4
-;CHECK-NEXT:   %malloccall_fromtape = extractvalue { ptr, ptr, ptr } %truetape, 0
-;CHECK-NEXT:   %1 = getelementptr inbounds ptr, ptr %malloccall_fromtape, i64 %0
-;CHECK-NEXT:   %malloccall = load ptr, ptr %1, align 8
-;CHECK-NEXT:   %i10 = trunc i64 %arg2 to i32
-;CHECK-NEXT:   %i11 = icmp sgt i32 %i10, 0
-;CHECK-NEXT:   br i1 %i11, label %bb12, label %invertbb73
-
-;CHECK: bb12:                                             ; preds = %bb
-;CHECK-NEXT:   %i13 = add nsw i32 %i10, -1
-;CHECK-NEXT:   store i32 0, ptr %i7, align 4
-;CHECK-NEXT:   %i14 = load i32, ptr %arg, align 4
-;CHECK-NEXT:   store i32 0, ptr %i_smpl, align 4
-;CHECK-NEXT:   store i32 %i13, ptr %i5_smpl, align 4
-;CHECK-NEXT:   store i32 1, ptr %i6_smpl, align 4
-;CHECK-NEXT:   call void @__kmpc_for_static_init_4(ptr nonnull @1, i32 %i14, i32 34, ptr nonnull %i7, ptr nocapture nonnull %i_smpl, ptr nocapture nonnull %i5_smpl, ptr nocapture nonnull %i6_smpl, i32 1, i32 1) #14, !noalias !14
-;CHECK-NEXT:   %2 = load i32, ptr %i5_smpl, align 4, !invariant.group !61
-;CHECK-NEXT:   %3 = load i32, ptr %i_smpl, align 4, !invariant.group !62
-;CHECK-NEXT:   %i16 = call i32 @llvm.smin.i32(i32 %2, i32 %i13) #14
-;CHECK-NEXT:   %i18 = icmp slt i32 %i16, %3
-;CHECK-NEXT:   br i1 %i18, label %bb63, label %bb19
-
-;CHECK: bb19:                                             ; preds = %bb12
-;CHECK-NEXT:   %i22 = add i32 %i16, 1
-;CHECK-NEXT:   %i24 = sub i32 %i22, %3
-;CHECK-NEXT:   %i25 = sub i32 %i16, %3
-;CHECK-NEXT:   %i26 = and i32 %i24, 3
-;CHECK-NEXT:   %i27 = icmp eq i32 %i26, 0
-;CHECK-NEXT:   br i1 %i27, label %bb38, label %bb28
-
-;CHECK: bb28:                                             ; preds = %bb19, %bb28
-;CHECK-NEXT:   %iv = phi i64 [ %iv.next, %bb28 ], [ 0, %bb19 ]
-;CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-;CHECK-NEXT:   %4 = trunc i64 %iv to i32
-;CHECK-NEXT:   %i36 = add i32 %4, 1
-;CHECK-NEXT:   %i37 = icmp eq i32 %i36, %i26
-;CHECK-NEXT:   br i1 %i37, label %bb38, label %bb28, !llvm.loop !19
-
-;CHECK: bb38:                                             ; preds = %bb28, %bb19
-;CHECK-NEXT:   %i40_fromtape = extractvalue { ptr, ptr, ptr } %truetape, 2
-;CHECK-NEXT:   %5 = getelementptr inbounds i64, ptr %i40_fromtape, i64 %0
-;CHECK-NEXT:   %i40 = load i64, ptr %5, align 8, !invariant.group !63
-;CHECK-NEXT:   %i41 = icmp ult i32 %i25, 3
-;CHECK-NEXT:   br i1 %i41, label %bb63, label %bb42
-
-;CHECK: bb42:                                             ; preds = %bb38, %bb42
-;CHECK-NEXT:   %iv2 = phi i64 [ %iv.next3, %bb42 ], [ 0, %bb38 ]
-;CHECK-NEXT:   %iv.next3 = add nuw nsw i64 %iv2, 1
-;CHECK-NEXT:   %6 = shl i64 %iv2, 2
-;CHECK-NEXT:   %7 = add nsw i64 %i40, %6
-;CHECK-NEXT:   %i60 = add nsw i64 %7, 4
-;CHECK-NEXT:   %i61 = trunc i64 %i60 to i32
-;CHECK-NEXT:   %i62 = icmp eq i32 %i22, %i61
-;CHECK-NEXT:   br i1 %i62, label %bb63, label %bb42
-
-;CHECK: bb63:                                             ; preds = %bb42, %bb38, %bb12
-;CHECK-NEXT:   %_cache.0 = phi i8 [ 0, %bb12 ], [ 1, %bb38 ], [ 2, %bb42 ]
-;CHECK-NEXT:   %i64_fromtape = extractvalue { ptr, ptr, ptr } %truetape, 1
-;CHECK-NEXT:   %8 = getelementptr inbounds i32, ptr %i64_fromtape, i64 %0
-;CHECK-NEXT:   %i64 = load i32, ptr %8, align 4
-;CHECK-NEXT:   br label %invertbb73
-
-;CHECK: invertbb:                                         ; preds = %invertbb73, %invertbb12
-;CHECK-NEXT:   call void @free(ptr %malloccall)
-;CHECK-NEXT:   ret void
-
-;CHECK: invertbb12:                                       ; preds = %invertbb28, %invertbb38, %invertbb63
-;CHECK-NEXT:   %i14_unwrap = load i32, ptr %arg, align 4, !tbaa !17, !alias.scope !55, !noalias !58, !invariant.group !60
-;CHECK-NEXT:   call void @__kmpc_for_static_fini(ptr @1, i32 %i14_unwrap)
-;CHECK-NEXT:   br label %invertbb
-
-;CHECK: invertbb28:                                       ; preds = %invertbb38.loopexit, %incinvertbb28
-;CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %_unwrap4, %invertbb38.loopexit ], [ %10, %incinvertbb28 ]
-;CHECK-NEXT:   %9 = icmp eq i64 %"iv'ac.0", 0
-;CHECK-NEXT:   br i1 %9, label %invertbb12, label %incinvertbb28
-;CHECK-NEXT: 
-;CHECK-NEXT: incinvertbb28:                                    ; preds = %invertbb28
-;CHECK-NEXT:   %10 = add nsw i64 %"iv'ac.0", -1
-;CHECK-NEXT:   br label %invertbb28
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb38.loopexit:                              ; preds = %invertbb38
-;CHECK-NEXT:   %_unwrap3 = add nsw i32 %i26_unwrap10, -1
-;CHECK-NEXT:   %_unwrap4 = zext i32 %_unwrap3 to i64
-;CHECK-NEXT:   br label %invertbb28
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb38:                                       ; preds = %invertbb42, %invertbb63
-;CHECK-NEXT:   %_unwrap5 = load i32, ptr %i5_smpl, align 4, !alias.scope !64, !noalias !67, !invariant.group !61
-;CHECK-NEXT:   %i13_unwrap6 = add nsw i32 %i10, -1
-;CHECK-NEXT:   %11 = call i32 @llvm.smin.i32(i32 %_unwrap5, i32 %i13_unwrap6) #14
-;CHECK-NEXT:   %i23_unwrap7 = add i32 %11, 1
-;CHECK-NEXT:   %_unwrap8 = load i32, ptr %i_smpl, align 4, !alias.scope !69, !noalias !72, !invariant.group !62
-;CHECK-NEXT:   %i24_unwrap9 = sub i32 %i23_unwrap7, %_unwrap8
-;CHECK-NEXT:   %i26_unwrap10 = and i32 %i24_unwrap9, 3
-;CHECK-NEXT:   %i27_unwrap = icmp eq i32 %i26_unwrap10, 0
-;CHECK-NEXT:   br i1 %i27_unwrap, label %invertbb12, label %invertbb38.loopexit
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb42:                                       ; preds = %invertbb63.loopexit, %incinvertbb42
-;CHECK-NEXT:   %"iv2'ac.0" = phi i64 [ %_unwrap17, %invertbb63.loopexit ], [ %13, %incinvertbb42 ]
-;CHECK-NEXT:   %12 = icmp eq i64 %"iv2'ac.0", 0
-;CHECK-NEXT:   br i1 %12, label %invertbb38, label %incinvertbb42
-;CHECK-NEXT: 
-;CHECK-NEXT: incinvertbb42:                                    ; preds = %invertbb42
-;CHECK-NEXT:   %13 = add nsw i64 %"iv2'ac.0", -1
-;CHECK-NEXT:   br label %invertbb42
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb63.loopexit:                              ; preds = %invertbb63
-;CHECK-NEXT:   %_unwrap11 = load i32, ptr %i5_smpl, align 4, !alias.scope !64, !noalias !67, !invariant.group !61
-;CHECK-NEXT:   %i13_unwrap12 = add nsw i32 %i10, -1
-;CHECK-NEXT:   %14 = call i32 @llvm.smin.i32(i32 %_unwrap11, i32 %i13_unwrap12) #14
-;CHECK-NEXT:   %_unwrap13 = add i32 %14, -3
-;CHECK-NEXT:   %i40_fromtape_unwrap = extractvalue { ptr, ptr, ptr } %truetape, 2
-;CHECK-NEXT:   %_unwrap18 = getelementptr inbounds i64, ptr %i40_fromtape_unwrap, i64 %0
-;CHECK-NEXT:   %i40_unwrap = load i64, ptr %_unwrap18, align 8, !alias.scope !74, !noalias !77, !invariant.group !63
-;CHECK-NEXT:   %_unwrap14 = trunc i64 %i40_unwrap to i32
-;CHECK-NEXT:   %_unwrap15 = sub i32 %_unwrap13, %_unwrap14
-;CHECK-NEXT:   %_unwrap16 = zext i32 %_unwrap15 to i64
-;CHECK-NEXT:   %_unwrap17 = lshr i64 %_unwrap16, 2
-;CHECK-NEXT:   br label %invertbb42
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb63:                                       ; preds = %invertbb72, %invertbb65
-;CHECK-NEXT:   switch i8 %_cache.1, label %invertbb63.loopexit [
-;CHECK-NEXT:     i8 0, label %invertbb12
-;CHECK-NEXT:     i8 1, label %invertbb38
-;CHECK-NEXT:   ]
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb65:                                       ; preds = %invertbb72
-;CHECK-NEXT:   %15 = load double, ptr %"arg3'", align 8, !tbaa !12, !alias.scope !79, !noalias !82
-;CHECK-NEXT:   store double 0.000000e+00, ptr %"arg3'", align 8, !tbaa !12, !alias.scope !79, !noalias !82
-;CHECK-NEXT:   %16 = atomicrmw fadd ptr %"arg3'", double %15 monotonic, align 8
-;CHECK-NEXT:   br label %invertbb63
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb72:                                       ; preds = %invertbb73
-;CHECK-NEXT:   %cond = icmp eq i32 %i64_cache.0, 1
-;CHECK-NEXT:   br i1 %cond, label %invertbb65, label %invertbb63
-;CHECK-NEXT: 
-;CHECK-NEXT: invertbb73:                                       ; preds = %bb, %bb63
-;CHECK-NEXT:   %i64_cache.0 = phi i32 [ %i64, %bb63 ], [ undef, %bb ]
-;CHECK-NEXT:   %_cache.1 = phi i8 [ %_cache.0, %bb63 ], [ undef, %bb ]
-;CHECK-NEXT:   br i1 %i11, label %invertbb72, label %invertbb
-;CHECK-NEXT: }
+; CHECK: define internal void @diffebody(ptr noalias nocapture readonly %arg, ptr noalias nocapture readnone %arg1, i64 %arg2, ptr nocapture align 8 dereferenceable(8) %arg3, ptr nocapture align 8 %"arg3'", ptr nocapture readonly align 8 dereferenceable(8) %arg4, ptr nocapture align 8 %"arg4'", ptr %tapeArg) #13 {
+; CHECK: bb:
+; CHECK:   %truetape = load { ptr, ptr, ptr, ptr, ptr }, ptr %tapeArg, align 8, !enzyme_mustcache !61
+; CHECK:   %0 = call i64 @omp_get_thread_num() #12
+; CHECK:   %i_smpl = alloca i32, align 4
+; CHECK:   %i5_smpl = alloca i32, align 4
+; CHECK:   %i6_smpl = alloca i32, align 4
+; CHECK:   %i7 = alloca i32, align 4
+; CHECK:   %"{{.*}}'mi_fromtape" = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 0
+; CHECK:   %1 = getelementptr inbounds ptr, ptr %"{{.*}}'mi_fromtape", i64 %0
+; CHECK:   %"{{.*}}'mi" = load ptr, ptr %1, align 8
+; CHECK:   %[[GEP2_BASE:.+]] = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 1
+; CHECK:   %[[GEP2:.+]] = getelementptr inbounds ptr, ptr %[[GEP2_BASE]], i64 %0
+; CHECK:   %{{.+}} = load ptr, ptr %[[GEP2]], align 8
+; CHECK:   %i10 = trunc i64 %arg2 to i32
+; CHECK:   %i11 = icmp sgt i32 %i10, 0
+; CHECK:   br i1 %i11, label %bb12, label %invertbb73
+;
+; CHECK: bb12:                                             ; preds = %bb
+; CHECK:   %i13 = add nsw i32 %i10, -1
+; CHECK:   store i32 0, ptr %i7, align 4, !tbaa !17, !noalias !14
+; CHECK:   %i14 = load i32, ptr %arg, align 4, !tbaa !17, !alias.scope !62, !noalias !65, !invariant.group !67
+; CHECK:   store i32 0, ptr %i_smpl, align 4
+; CHECK:   store i32 %i13, ptr %i5_smpl, align 4
+; CHECK:   store i32 1, ptr %i6_smpl, align 4
+; CHECK:   call void @__kmpc_for_static_init_4(ptr nonnull @1, i32 %i14, i32 34, ptr nonnull %i7, ptr nocapture nonnull %i_smpl, ptr nocapture nonnull %i5_smpl, ptr nocapture nonnull %i6_smpl, i32 1, i32 1) #15, !noalias !14
+; CHECK:   %3 = load i32, ptr %i5_smpl, align 4, !invariant.group !68
+; CHECK:   %4 = load i32, ptr %i_smpl, align 4, !invariant.group !69
+; CHECK:   %i16 = call i32 @llvm.smin.i32(i32 %3, i32 %i13) #15
+; CHECK:   %i18 = icmp slt i32 %i16, %4
+; CHECK:   br i1 %i18, label %bb63, label %bb19
+;
+; CHECK: bb19:                                             ; preds = %bb12
+; CHECK:   %"i20'il_phi_fromtape" = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 2
+; CHECK:   %5 = getelementptr inbounds ptr, ptr %"i20'il_phi_fromtape", i64 %0
+; CHECK:   %"i20'il_phi" = load ptr, ptr %5, align 8
+; CHECK:   %i22 = add i32 %i16, 1
+; CHECK:   %i24 = sub i32 %i22, %4
+; CHECK:   %i25 = sub i32 %i16, %4
+; CHECK:   %i26 = and i32 %i24, 3
+; CHECK:   %i27 = icmp eq i32 %i26, 0
+; CHECK:   br i1 %i27, label %bb38, label %bb28
+;
+; CHECK: bb28:                                             ; preds = %bb19, %bb28
+; CHECK:   %iv = phi i64 [ %iv.next, %bb28 ], [ 0, %bb19 ]
+; CHECK:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK:   %6 = trunc i64 %iv to i32
+; CHECK:   %i36 = add i32 %6, 1
+; CHECK:   %i37 = icmp eq i32 %i36, %i26
+; CHECK:   br i1 %i37, label %bb38, label %bb28, !llvm.loop !19
+;
+; CHECK: bb38:                                             ; preds = %bb28, %bb19
+; CHECK:   %i40_fromtape = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 4
+; CHECK:   %7 = getelementptr inbounds i64, ptr %i40_fromtape, i64 %0
+; CHECK:   %i40 = load i64, ptr %7, align 8, !invariant.group !70
+; CHECK:   %i41 = icmp ult i32 %i25, 3
+; CHECK:   br i1 %i41, label %bb63, label %bb42
+;
+; CHECK: bb42:                                             ; preds = %bb38, %bb42
+; CHECK:   %[[IV1:iv[0-9]*]] = phi i64 [ %[[IV_NEXT:iv.next[0-9]*]], %bb42 ], [ 0, %bb38 ]
+; CHECK:   %[[IV_NEXT]] = add {{(nuw )?}}{{(nsw )?}}i64 %[[IV1]], 1
+; CHECK:   %{{[0-9]+}} = shl {{(nuw )?}}{{(nsw )?}}i64 %[[IV1]], 2
+; CHECK:   %9 = add nsw i64 %i40, %8
+; CHECK:   %i60 = add nsw i64 %9, 4
+; CHECK:   %i61 = trunc i64 %i60 to i32
+; CHECK:   %i62 = icmp eq i32 %i22, %i61
+; CHECK:   br i1 %i62, label %bb63, label %bb42
+;
+; CHECK: bb63:                                             ; preds = %bb42, %bb38, %bb12
+; CHECK:   %_cache.0 = phi i8 [ {{[0-9]}}, %bb{{.*}} ], [ {{[0-9]}}, %bb{{.*}} ], [ {{[0-9]}}, %bb{{.*}} ]
+; CHECK:   %"i20'il_phi_cache.0" = phi ptr [ undef, %bb12 ], [ %"i20'il_phi", %bb38 ], [ %"i20'il_phi", %bb42 ]
+; CHECK:   %i64_fromtape = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 3
+; CHECK:   %10 = getelementptr inbounds i32, ptr %i64_fromtape, i64 %0
+; CHECK:   %i64 = load i32, ptr %10, align 4
+; CHECK:   br label %invertbb73
+;
+; CHECK: invertbb:                                         ; preds = %invertbb73, %invertbb12
+; CHECK:   call void @free(ptr nonnull %"{{.*}}'mi")
+; CHECK:   call void @free(ptr %{{.*}})
+; CHECK:   ret void
+;
+; CHECK: invertbb12:                                       ; preds = %invertbb28, %invertbb38, %invertbb63
+; CHECK:   %i14_unwrap = load i32, ptr %arg, align 4, !tbaa !17, !alias.scope !62, !noalias !65, !invariant.group !67
+; CHECK:   call void @__kmpc_for_static_fini(ptr @1, i32 %i14_unwrap)
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   br label %invertbb
+;
+; CHECK: invertbb28:                                       ; preds = %invertbb38.loopexit, %incinvertbb28
+; CHECK:   %"i34'de.0" = phi double [ %18, %invertbb38.loopexit ], [ %15, %incinvertbb28 ]
+; CHECK:   %"iv'ac.0" = phi i64 [ %_unwrap5, %invertbb38.loopexit ], [ %16, %incinvertbb28 ]
+; CHECK:   %11 = load double, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   %12 = fadd fast double %"i34'de.0", %11
+; CHECK:   %_unwrap = load i32, ptr %i_smpl, align 4, !alias.scope !76, !noalias !79, !invariant.group !69
+; CHECK:   %i21_unwrap = sext i32 %_unwrap to i64
+; CHECK:   %_unwrap1 = add nsw i64 %i21_unwrap, %"iv'ac.0"
+; CHECK:   %"i32'ipg_unwrap" = getelementptr inbounds double, ptr %"i20'il_phi_cache.1", i64 %_unwrap1
+; CHECK:   %13 = atomicrmw fadd ptr %"i32'ipg_unwrap", double %12 monotonic, align 8
+; CHECK:   %14 = icmp eq i64 %"iv'ac.0", 0
+; CHECK:   %15 = select fast i1 %14, double 0.000000e+00, double %12
+; CHECK:   br i1 %14, label %invertbb12, label %incinvertbb28
+;
+; CHECK: incinvertbb28:                                    ; preds = %invertbb28
+; CHECK:   %16 = add nsw i64 %"iv'ac.0", -1
+; CHECK:   br label %invertbb28
+;
+; CHECK: invertbb38.loopexit:                              ; preds = %invertbb38
+; CHECK:   %_unwrap4 = add nsw i32 %i26_unwrap11, -1
+; CHECK:   %_unwrap5 = zext i32 %_unwrap4 to i64
+; CHECK:   br label %invertbb28
+;
+; CHECK: invertbb38:                                       ; preds = %invertbb42, %invertbb63
+; CHECK:   %"i39'de.0" = phi double [ 0.000000e+00, %invertbb63 ], [ %33, %invertbb42 ]
+; CHECK:   %_unwrap6 = load i32, ptr %i5_smpl, align 4, !alias.scope !81, !noalias !84, !invariant.group !68
+; CHECK:   %i13_unwrap7 = add nsw i32 %i10, -1
+; CHECK:   %17 = call i32 @llvm.smin.i32(i32 %_unwrap6, i32 %i13_unwrap7) #15
+; CHECK:   %i23_unwrap8 = add i32 %17, 1
+; CHECK:   %_unwrap9 = load i32, ptr %i_smpl, align 4, !alias.scope !76, !noalias !79, !invariant.group !69
+; CHECK:   %i24_unwrap10 = sub i32 %i23_unwrap8, %_unwrap9
+; CHECK:   %i26_unwrap11 = and i32 %i24_unwrap10, 3
+; CHECK:   %i27_unwrap = icmp eq i32 %i26_unwrap11, 0
+; CHECK:   %18 = select fast i1 %i27_unwrap, double 0.000000e+00, double %"i39'de.0"
+; CHECK:   br i1 %i27_unwrap, label %invertbb12, label %invertbb38.loopexit
+;
+; CHECK: invertbb42:                                       ; preds = %invertbb63.loopexit, %incinvertbb42
+; CHECK:   %"i59'de.0" = phi double [ 0.000000e+00, %invertbb63.loopexit ], [ %34, %incinvertbb42 ]
+; CHECK:   %"i39'de.1" = phi double [ 0.000000e+00, %invertbb63.loopexit ], [ %33, %incinvertbb42 ]
+; CHECK:   %"[[IV1]]'ac.0" = phi i64 [ %_unwrap21, %invertbb63.loopexit ], [ %35, %incinvertbb42 ]
+; CHECK:   %19 = load double, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   %20 = fadd fast double %"i59'de.0", %19
+; CHECK:   %{{[0-9a-zA-Z_]+}} = load i64, ptr %{{[0-9a-zA-Z_]+}}, align 8, !alias.scope !86, !noalias !89, !invariant.group !70
+; CHECK:   %_unwrap12 = shl {{(nuw )?}}{{(nsw )?}}i64 %"[[IV1]]'ac.0", 2
+; CHECK:   %_unwrap13 = add nsw i64 %{{[0-9a-zA-Z_]+}}, %_unwrap12
+; CHECK:   %i56_unwrap = add nsw i64 %_unwrap13, 3
+; CHECK:   %"i57'ipg_unwrap" = getelementptr inbounds double, ptr %"i20'il_phi_cache.1", i64 %i56_unwrap
+; CHECK:   %21 = atomicrmw fadd ptr %"i57'ipg_unwrap", double %20 monotonic, align 8
+; CHECK:   %22 = load double, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   %23 = fadd fast double %20, %22
+; CHECK:   %i52_unwrap = add nsw i64 %_unwrap13, 2
+; CHECK:   %"i53'ipg_unwrap" = getelementptr inbounds double, ptr %"i20'il_phi_cache.1", i64 %i52_unwrap
+; CHECK:   %24 = atomicrmw fadd ptr %"i53'ipg_unwrap", double %23 monotonic, align 8
+; CHECK:   %25 = load double, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   %26 = fadd fast double %23, %25
+; CHECK:   %i48_unwrap = add nsw i64 %_unwrap13, 1
+; CHECK:   %"i49'ipg_unwrap" = getelementptr inbounds double, ptr %"i20'il_phi_cache.1", i64 %i48_unwrap
+; CHECK:   %27 = atomicrmw fadd ptr %"i49'ipg_unwrap", double %26 monotonic, align 8
+; CHECK:   %28 = load double, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   store double 0.000000e+00, ptr %"{{.*}}'mi", align 8, !tbaa !12, !alias.scope !71, !noalias !74
+; CHECK:   %29 = fadd fast double %26, %28
+; CHECK:   %"i45'ipg_unwrap" = getelementptr inbounds double, ptr %"i20'il_phi_cache.1", i64 %_unwrap13
+; CHECK:   %30 = atomicrmw fadd ptr %"i45'ipg_unwrap", double %29 monotonic, align 8
+; CHECK:   %31 = icmp eq i64 %"[[IV1]]'ac.0", 0
+; CHECK:   %32 = fadd fast double %"i39'de.1", %29
+; CHECK:   %33 = select fast i1 %31, double %32, double %"i39'de.1"
+; CHECK:   %34 = select fast i1 %31, double 0.000000e+00, double %29
+; CHECK:   br i1 %31, label %invertbb38, label %incinvertbb42
+;
+; CHECK: incinvertbb42:                                    ; preds = %invertbb42
+; CHECK:   %35 = add nsw i64 %"[[IV1]]'ac.0", -1
+; CHECK:   br label %invertbb42
+;
+; CHECK: invertbb63.loopexit:                              ; preds = %invertbb63
+; CHECK:   %_unwrap15 = load i32, ptr %i5_smpl, align 4, !alias.scope !81, !noalias !84, !invariant.group !68
+; CHECK:   %i13_unwrap16 = add nsw i32 %i10, -1
+; CHECK:   %36 = call i32 @llvm.smin.i32(i32 %_unwrap15, i32 %i13_unwrap16) #15
+; CHECK:   %_unwrap17 = add i32 %36, -3
+; CHECK:   %{{[a-zA-Z0-9_]+}} = extractvalue { ptr, ptr, ptr, ptr, ptr } %truetape, 4
+; CHECK:   %{{[a-zA-Z0-9_]+}} = getelementptr inbounds i64, ptr %{{[a-zA-Z0-9_]+}}, i64 %0
+; CHECK:   %{{[a-zA-Z0-9_]+}} = load i64, ptr %{{[a-zA-Z0-9_]+}}, align 8, !alias.scope !86, !noalias !89, !invariant.group !70
+; CHECK:   %{{[a-zA-Z0-9_]+}} = trunc i64 %{{[a-zA-Z0-9_]+}} to i32
+; CHECK:   %{{[a-zA-Z0-9_]+}} = sub i32 %_unwrap17, %{{[a-zA-Z0-9_]+}}
+; CHECK:   %{{[a-zA-Z0-9_]+}} = zext i32 %{{[a-zA-Z0-9_]+}} to i64
+; CHECK:   %_unwrap21 = lshr i64 %{{[a-zA-Z0-9_]+}}, 2
+; CHECK:   br label %invertbb42
+;
+; CHECK:   switch i8 %_cache.1, label %invertbb{{.*}} [
+; CHECK-DAG:     i8 {{[0-9]}}, label %invertbb{{.*}}
+; CHECK-DAG:     i8 {{[0-9]}}, label %invertbb{{.*}}
+; CHECK:   ]
+;
+; CHECK: invertbb65:                                       ; preds = %invertbb72
+; CHECK:   %37 = load double, ptr %"arg3'", align 8, !tbaa !12, !alias.scope !91, !noalias !94
+; CHECK:   store double 0.000000e+00, ptr %"arg3'", align 8, !tbaa !12, !alias.scope !91, !noalias !94
+; CHECK:   %38 = atomicrmw fadd ptr %"{{.*}}'mi", double %37 monotonic, align 8
+; CHECK:   %39 = atomicrmw fadd ptr %"arg3'", double %37 monotonic, align 8
+; CHECK:   br label %invertbb63
+;
+; CHECK: invertbb69:                                       ; preds = %invertbb72
+; CHECK:   %40 = load atomic double, ptr %"arg3'" monotonic, align 8
+; CHECK:   %41 = atomicrmw fadd ptr %"{{.*}}'mi", double %40 monotonic, align 8
+; CHECK:   br label %invertbb63
+;
+; CHECK: invertbb72:                                       ; preds = %invertbb73
+; CHECK:   switch i32 %i64_cache.0, label %invertbb63 [
+; CHECK:     i32 1, label %invertbb65
+; CHECK:     i32 2, label %invertbb69
+; CHECK:   ]
+;
+; CHECK: invertbb73:                                       ; preds = %bb, %bb63
+; CHECK:   %i64_cache.0 = phi i32 [ %i64, %bb63 ], [ undef, %bb ]
+; CHECK:   %_cache.1 = phi i8 [ %_cache.0, %bb63 ], [ undef, %bb ]
+; CHECK:   %"i20'il_phi_cache.1" = phi ptr [ %"i20'il_phi_cache.0", %bb63 ], [ undef, %bb ]
+; CHECK:   br i1 %i11, label %invertbb72, label %invertbb
+; CHECK: }
