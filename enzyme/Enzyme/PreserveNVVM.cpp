@@ -886,6 +886,22 @@ bool preserveNVVM(bool Begin, Module &M) {
         F.addFnAttr("enzyme_math", found->second.first);
         changed |= preserveLinkage(Begin, F);
       }
+    } else if (F.getName() == "_ZL12__float2halff" ||
+               F.getName() == "_ZL4hlog6__half" ||
+               F.getName() == "_ZL6__hdiv6__halfS_" ||
+               F.getName() == "_ZL12__half2float6__half" ||
+               F.getName() == "_ZL6__habs6__half" ||
+               F.getName() == "_ZL5__hlt6__halfS_" ||
+               F.getName() == "_ZL6__hmul6__halfS_" ||
+               F.getName() == "_ZL6__hadd6__halfS_" ||
+               F.getName() == "_ZL5hsqrt6__half" ||
+               F.getName() == "_ZL6__hsub6__halfS_" ||
+               F.getName() == "_ZL4hexp6__half" ||
+               F.getName() == "_ZL6__hneg6__half") {
+      changed = true;
+      if (Begin) {
+        changed |= preserveLinkage(Begin, F);
+      }
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
       changed = true;
