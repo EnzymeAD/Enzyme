@@ -15,21 +15,21 @@ entry:
   ret void
 }
 
-define void @dsquare(ptr %x, ptr %dx) {
+define void @dsquare(double* %x, double* %dx) {
 entry:
-  call void (...) @__enzyme_autodiff(void (ptr)* @square, metadata !"enzyme_dupnoneed", ptr %x, ptr %dx)
+  call void (...) @__enzyme_autodiff(void (double*)* @square, metadata !"enzyme_dupnoneed", double* %x, double* %dx)
   ret void
 }
 
-; CHECK: define internal void @diffesquare(ptr %x, ptr %"x'")
+; CHECK: define internal void @diffesquare(double* %x, double* %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   call void @diffesub(ptr {{(undef|poison)}}, ptr %"x'")
+; CHECK-NEXT:   call void @diffesub(double* {{(undef|poison)}}, double* %"x'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesub(ptr nocapture writeonly %x, ptr nocapture dereferenceable(8) %"x'")
+; CHECK: define internal void @diffesub(double* nocapture writeonly %x, double* nocapture dereferenceable(8) %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK: invertentry:                                      ; preds = %entry
