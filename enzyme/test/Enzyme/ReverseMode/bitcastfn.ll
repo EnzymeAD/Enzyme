@@ -328,7 +328,7 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK-NEXT:   ret i8* null
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffeindir(%"class.boost::array.1"* dereferenceable(8) %x, %"class.boost::array.1"* %"x'", i8* %tapeArg)
+; CHECK: define internal void @diffeindir(%"class.boost::array.1"* %x, %"class.boost::array.1"* %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   ret void

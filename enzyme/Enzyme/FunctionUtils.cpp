@@ -2067,10 +2067,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
   }
 
   if (calls_todo.size() == 0) {
-    if (local)
+    if (local) {
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
-    else
+    } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
+    }
   }
   return true;
 }
@@ -2228,10 +2229,11 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2))
+        if (LocalReadOnlyFunctions.contains(F2)) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        else
+        } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        }
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -3128,6 +3130,12 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
+      if (F->hasParamAttribute(ii, Attribute::Dereferenceable)) {
+        NewF->removeParamAttr(jj, Attribute::Dereferenceable);
+      }
+      if (F->hasParamAttribute(ii, Attribute::DereferenceableOrNull)) {
+        NewF->removeParamAttr(jj, Attribute::DereferenceableOrNull);
+      }
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
@@ -3135,27 +3143,30 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       hasPtrInput = true;
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
-      if (width == 1)
-        for (auto ty : ShadowParamAttrsToPreserve)
+      if (width == 1) {
+        for (auto ty : ShadowParamAttrsToPreserve) {
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
           }
+        }
+      }
 
       for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
                         "enzyme_type", "enzymejl_rooted_typ",
                         "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
-          if (width == 1)
+          if (width == 1) {
             NewF->addParamAttr(jj + 1,
                                F->getAttributes().getParamAttr(ii, attr));
-          else
+          } else {
             NewF->addParamAttr(jj + 1,
                                Attribute::get(F->getContext(),
                                               attr + std::string("_v"),
                                               F->getAttributes()
                                                   .getParamAttr(ii, attr)
                                                   .getValueAsString()));
+          }
         }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {

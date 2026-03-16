@@ -17,7 +17,7 @@ entry:
 ; Function Attrs: nounwind
 declare void @__enzyme_augmentfwd(...)
 
-; CHECK: define internal i8* @augmented_f(double** nonnull dereferenceable(8) %_M_current, double** %"_M_current'", double** align 8 dereferenceable(8) %__i, double** align 8 %"__i'") 
+; CHECK: define internal i8* @augmented_f(double** nonnull dereferenceable(8) %_M_current, double** %"_M_current'", double** align 8 %__i, double** align 8 %"__i'") 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"'ipl" = load double*, double** %"__i'"
 ; CHECK-NEXT:   %[[i0:.+]] = load double*, double** %__i
