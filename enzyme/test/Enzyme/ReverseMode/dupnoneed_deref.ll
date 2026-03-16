@@ -25,7 +25,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   call void @diffesub(ptr undef, ptr %"x'")
+; CHECK-NEXT:   call void @diffesub(ptr {{(undef|poison)}}, ptr %"x'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

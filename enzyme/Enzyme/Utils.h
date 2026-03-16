@@ -2261,8 +2261,6 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
   llvm::Attribute::AttrKind::NoCapture,
 #endif
   llvm::Attribute::AttrKind::ReadNone,
-  llvm::Attribute::AttrKind::Dereferenceable,
-  llvm::Attribute::AttrKind::DereferenceableOrNull
 };
 #ifdef __clang__
 #pragma clang diagnostic pop
