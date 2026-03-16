@@ -351,7 +351,7 @@ attributes #8 = { noreturn nounwind "correctly-rounded-divide-sqrt-fp-math"="fal
 ; CHECK: __enzyme_runtimeinactiveerr.exit:                 ; preds = %entry
 ; CHECK-NEXT:   %4 = bitcast void (%"class.boost::array.1"*)* %"fn'ipc" to { i8* } (%"class.boost::array.1"*, %"class.boost::array.1"*)**
 ; CHECK-NEXT:   %5 = load { i8* } (%"class.boost::array.1"*, %"class.boost::array.1"*)*, { i8* } (%"class.boost::array.1"*, %"class.boost::array.1"*)** %4
-; CHECK-NEXT:   %_augmented = call { i8* } %5(%"class.boost::array.1"* dereferenceable(8) %Arg, %"class.boost::array.1"* %"Arg'")
+; CHECK-NEXT:   %_augmented = call { i8* } %5(%"class.boost::array.1"* %Arg, %"class.boost::array.1"* %"Arg'")
 ; CHECK-NEXT:   %subcache = extractvalue { i8* } %_augmented, 0
 ; CHECK-NEXT:   ret i8* %subcache
 ; CHECK-NEXT: }

@@ -29,7 +29,7 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesub(double* nocapture writeonly %x, double* nocapture dereferenceable(8) %"x'")
+; CHECK: define internal void @diffesub(double* nocapture writeonly %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK: invertentry:                                      ; preds = %entry
