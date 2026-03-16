@@ -33,6 +33,6 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %invertentry
 ; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   store double 0.000000e+00, ptr %"x'", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
