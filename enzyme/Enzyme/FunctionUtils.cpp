@@ -3144,12 +3144,13 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
       if (width == 1) {
-        for (auto ty : ShadowParamAttrsToPreserve)
+        for (auto ty : ShadowParamAttrsToPreserve) {
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
-            }
+          }
         }
+      }
 
       for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
                         "enzyme_type", "enzymejl_rooted_typ",
