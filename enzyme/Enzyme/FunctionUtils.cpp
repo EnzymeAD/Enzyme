@@ -1901,15 +1901,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
+          bool has_sret = arg->hasStructRetAttr();
+          bool has_rroots = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid();
+          bool has_sret_union = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_sret_union_bytes").isValid();
+          if (has_sret || has_rroots || has_sret_union) {
+            if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> arg " << arg->getArgNo() << " local=true in MemTransferInst! sret=" << has_sret << " rroots=" << has_rroots << " union=" << has_sret_union << "\n";
             local = true;
             continue;
           }
@@ -1932,15 +1928,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
+          bool has_sret = arg->hasStructRetAttr();
+          bool has_rroots = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid();
+          bool has_sret_union = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_sret_union_bytes").isValid();
+          if (has_sret || has_rroots || has_sret_union) {
+            if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> arg " << arg->getArgNo() << " local=true in MemSetInst! sret=" << has_sret << " rroots=" << has_rroots << " union=" << has_sret_union << "\n";
             local = true;
             continue;
           }
@@ -1971,17 +1963,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
             continue;
           }
           if (auto arg = dyn_cast<Argument>(Obj)) {
-            if (arg->hasStructRetAttr() ||
-                arg->getParent()
-                    ->getAttribute(arg->getArgNo() +
-                                       AttributeList::FirstArgIndex,
-                                   "enzymejl_returnRoots")
-                    .isValid() ||
-                arg->getParent()
-                    ->getAttribute(arg->getArgNo() +
-                                       AttributeList::FirstArgIndex,
-                                   "enzymejl_sret_union_bytes")
-                    .isValid()) {
+            bool has_sret = arg->hasStructRetAttr();
+            bool has_rroots = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid();
+            bool has_sret_union = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_sret_union_bytes").isValid();
+            if (has_sret || has_rroots || has_sret_union) {
+              if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> arg " << arg->getArgNo() << " local=true in zeroType! sret=" << has_sret << " rroots=" << has_rroots << " union=" << has_sret_union << "\n";
               local = true;
               continue;
             }
@@ -2028,15 +2014,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
+          bool has_sret = arg->hasStructRetAttr();
+          bool has_rroots = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_returnRoots").isValid();
+          bool has_sret_union = arg->getParent()->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex, "enzymejl_sret_union_bytes").isValid();
+          if (has_sret || has_rroots || has_sret_union) {
+            if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> arg " << arg->getArgNo() << " local=true! sret=" << has_sret << " rroots=" << has_rroots << " union=" << has_sret_union << "\n";
             local = true;
             continue;
           }
@@ -2067,10 +2049,13 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
   }
 
   if (calls_todo.size() == 0) {
-    if (local)
+    if (local) {
+      if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> DetectReadonlyOrThrowFn added LocalReadOnlyOrThrow to " << F.getName() << "\n";
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
-    else
+    } else {
+      if (F.getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> DetectReadonlyOrThrowFn added ReadOnlyOrThrow to " << F.getName() << "\n";
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
+    }
   }
   return true;
 }
@@ -2228,10 +2213,13 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2))
+        if (LocalReadOnlyFunctions.contains(F2)) {
+          if (F2->getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> DetectReadonlyOrThrowFn added LocalReadOnlyOrThrow delayed to " << F2->getName() << "\n";
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        else
+        } else {
+          if (F2->getName().startswith("julia_wlj")) llvm::errs() << "wlj debug -> DetectReadonlyOrThrowFn added ReadOnlyOrThrow delayed to " << F2->getName() << "\n";
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        }
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -3128,6 +3116,12 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
+      if (F->hasParamAttribute(ii, Attribute::Dereferenceable)) {
+        NewF->removeParamAttr(jj, Attribute::Dereferenceable);
+      }
+      if (F->hasParamAttribute(ii, Attribute::DereferenceableOrNull)) {
+        NewF->removeParamAttr(jj, Attribute::DereferenceableOrNull);
+      }
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
@@ -3135,27 +3129,29 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       hasPtrInput = true;
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
-      if (width == 1)
+      if (width == 1) {
         for (auto ty : ShadowParamAttrsToPreserve)
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
-          }
+            }
+        }
 
       for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
                         "enzyme_type", "enzymejl_rooted_typ",
                         "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
-          if (width == 1)
+          if (width == 1) {
             NewF->addParamAttr(jj + 1,
                                F->getAttributes().getParamAttr(ii, attr));
-          else
+          } else {
             NewF->addParamAttr(jj + 1,
                                Attribute::get(F->getContext(),
                                               attr + std::string("_v"),
                                               F->getAttributes()
                                                   .getParamAttr(ii, attr)
                                                   .getValueAsString()));
+          }
         }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {

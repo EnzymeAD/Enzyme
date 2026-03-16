@@ -2238,7 +2238,9 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #else
   llvm::Attribute::AttrKind::NoCapture,
 #endif
-  llvm::Attribute::AttrKind::ReadNone
+  llvm::Attribute::AttrKind::ReadNone,
+  llvm::Attribute::AttrKind::Dereferenceable,
+  llvm::Attribute::AttrKind::DereferenceableOrNull
 };
 
 // Parameter attributes from the original function/call that
@@ -2259,6 +2261,8 @@ static inline llvm::Attribute::AttrKind ShadowParamAttrsToPreserve[] = {
   llvm::Attribute::AttrKind::NoCapture,
 #endif
   llvm::Attribute::AttrKind::ReadNone,
+  llvm::Attribute::AttrKind::Dereferenceable,
+  llvm::Attribute::AttrKind::DereferenceableOrNull
 };
 #ifdef __clang__
 #pragma clang diagnostic pop
