@@ -2238,9 +2238,7 @@ static inline llvm::Attribute::AttrKind PrimalParamAttrsToPreserve[] = {
 #else
   llvm::Attribute::AttrKind::NoCapture,
 #endif
-  llvm::Attribute::AttrKind::ReadNone,
-  llvm::Attribute::AttrKind::Dereferenceable,
-  llvm::Attribute::AttrKind::DereferenceableOrNull
+  llvm::Attribute::AttrKind::ReadNone
 };
 
 // Parameter attributes from the original function/call that
