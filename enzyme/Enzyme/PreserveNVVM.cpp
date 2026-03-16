@@ -897,7 +897,14 @@ bool preserveNVVM(bool Begin, Module &M) {
                F.getName() == "_ZL5hsqrt6__half" ||
                F.getName() == "_ZL6__hsub6__halfS_" ||
                F.getName() == "_ZL4hexp6__half" ||
-               F.getName() == "_ZL6__hneg6__half") {
+               F.getName() == "_ZL6__hneg6__half" ||
+               F.getName() == "_ZL22__internal_device_hdiv13__nv_bfloat16S_" ||
+               F.getName() ==
+                   "_ZL27__internal_sm80_device_hmul13__nv_bfloat16S_" ||
+               F.getName() == "_ZL6__hadd13__nv_bfloat16S_" ||
+               F.getName() ==
+                   "_ZL27__internal_sm80_device_hsub13__nv_bfloat16S_" ||
+               F.getName() == "_ZL22__internal_device_hneg13__nv_bfloat16") {
       changed = true;
       if (Begin) {
         changed |= preserveLinkage(Begin, F);
