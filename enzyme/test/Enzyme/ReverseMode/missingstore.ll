@@ -33,7 +33,7 @@ bb:
 ; Function Attrs: inaccessiblememonly allocsize(1)
 declare noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8*, i64)
 
-; CHECK: define internal fastcc void @diffejulia__foldl_impl_3869({ [1 x {} addrspace(10)*] } addrspace(11)* nocapture readonly align 8 dereferenceable(8) %arg, { [1 x {} addrspace(10)*] } addrspace(11)* nocapture align 8 %"arg'", i8* %tapeArg)
+; CHECK: define internal fastcc void @diffejulia__foldl_impl_3869({ [1 x {} addrspace(10)*] } addrspace(11)* nocapture readonly align 8 %arg, { [1 x {} addrspace(10)*] } addrspace(11)* nocapture align 8 %"arg'", i8* %tapeArg)
 ; CHECK-NEXT: top:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"i11'mi" = call noalias nonnull {} addrspace(10)* @julia.gc_alloc_obj(i8* null, i64 8) 

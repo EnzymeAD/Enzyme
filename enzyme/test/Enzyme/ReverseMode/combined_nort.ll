@@ -685,7 +685,7 @@ attributes #21 = { willreturn }
 !74 = distinct !{!74, !"addr13"}
 !75 = !{!73, !13, !14, !16, !10}
 
-; CHECK: define internal fastcc { double } @diffea2([2 x [1 x double]]* noalias nocapture nofree writeonly align 8 dereferenceable(16) "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %arg, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %"arg'", double "enzyme_type"="{[-1]:Float@double}" "enzymejl_parmtype"="5072643312" "enzymejl_parmtype_ref"="0" %arg1, [1 x [1 x [2 x [1 x double]]]] addrspace(11)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(16) "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" "enzymejl_parmtype"="4507524432" "enzymejl_parmtype_ref"="1" %arg2) 
+; CHECK: define internal fastcc { double } @diffea2([2 x [1 x double]]* noalias nocapture nofree writeonly align 8 "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %arg, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %"arg'", double "enzyme_type"="{[-1]:Float@double}" "enzymejl_parmtype"="5072643312" "enzymejl_parmtype_ref"="0" %arg1, [1 x [1 x [2 x [1 x double]]]] addrspace(11)* nocapture nofree noundef nonnull readonly align 8 dereferenceable(16) "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" "enzymejl_parmtype"="4507524432" "enzymejl_parmtype_ref"="1" %arg2) 
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %"arg1'de" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arg1'de", align 8
