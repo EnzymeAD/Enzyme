@@ -330,44 +330,51 @@ FunctionOpInterface CloneFunctionWithReturns(
       if (activity == DIFFE_TYPE::OUT_DIFF)
         resultAttrs.push_back(nullptr);
     }
+
+    bool packedResults = resultAttrs.size() != NewF.getNumResults();
+    if (packedResults)
+      resultAttrs.assign(NewF.getNumResults(), nullptr);
+
     NewF.setAllResultAttrs(resultAttrs);
 
-    size_t oldi = 0;
-    size_t newi = 0;
-    while (oldi < F.getNumResults()) {
-      if (returnPrimals[oldi]) {
-        for (auto attrName : ToClone) {
-          auto attrNameS = StringAttr::get(F->getContext(), attrName);
-          if (auto attr = F.getResultAttr(oldi, attrName)) {
-            if (attrName == "xla_framework.result_mapping") {
-              auto iattr = cast<IntegerAttr>(attr);
-              APSInt nc(iattr.getValue());
-              nc = newxlacnt;
-              attr = IntegerAttr::get(F->getContext(), nc);
-              newxlacnt++;
+    if (!packedResults) {
+      size_t oldi = 0;
+      size_t newi = 0;
+      while (oldi < F.getNumResults()) {
+        if (returnPrimals[oldi]) {
+          for (auto attrName : ToClone) {
+            auto attrNameS = StringAttr::get(F->getContext(), attrName);
+            if (auto attr = F.getResultAttr(oldi, attrName)) {
+              if (attrName == "xla_framework.result_mapping") {
+                auto iattr = cast<IntegerAttr>(attr);
+                APSInt nc(iattr.getValue());
+                nc = newxlacnt;
+                attr = IntegerAttr::get(F->getContext(), nc);
+                newxlacnt++;
+              }
+              NewF.setResultAttr(newi, attrNameS, attr);
             }
-            NewF.setResultAttr(newi, attrNameS, attr);
           }
+          newi++;
         }
-        newi++;
-      }
-      if (returnShadows[oldi]) {
-        for (auto attrName : ToClone) {
-          auto attrNameS = StringAttr::get(F->getContext(), attrName);
-          if (auto attr = F.getResultAttr(oldi, attrName)) {
-            if (attrName == "xla_framework.result_mapping") {
-              auto iattr = cast<IntegerAttr>(attr);
-              APSInt nc(iattr.getValue());
-              nc = newxlacnt;
-              attr = IntegerAttr::get(F->getContext(), nc);
-              newxlacnt++;
+        if (returnShadows[oldi]) {
+          for (auto attrName : ToClone) {
+            auto attrNameS = StringAttr::get(F->getContext(), attrName);
+            if (auto attr = F.getResultAttr(oldi, attrName)) {
+              if (attrName == "xla_framework.result_mapping") {
+                auto iattr = cast<IntegerAttr>(attr);
+                APSInt nc(iattr.getValue());
+                nc = newxlacnt;
+                attr = IntegerAttr::get(F->getContext(), nc);
+                newxlacnt++;
+              }
+              NewF.setResultAttr(newi, attrNameS, attr);
             }
-            NewF.setResultAttr(newi, attrNameS, attr);
           }
+          newi++;
         }
-        newi++;
+        oldi++;
       }
-      oldi++;
     }
   }
   {
