@@ -1,3 +1,4 @@
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,sroa,instsimplify,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 ; Regression test: partial-window accumulation into a fixed vector (<2 x float>).
 ; Previously asserted: "unhandled accumulate with partial sizes".
 
