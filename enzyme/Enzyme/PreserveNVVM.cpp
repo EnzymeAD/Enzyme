@@ -886,7 +886,7 @@ bool preserveNVVM(bool Begin, Module &M) {
         F.addFnAttr("enzyme_math", found->second.first);
         changed |= preserveLinkage(Begin, F);
       }
-    } else if (F.getName() == "_ZL12__float2halff" ||
+    } else if (F.getName() == "_ZL21__internal_float2halffRjS_" ||
                F.getName() == "_ZL4hlog6__half" ||
                F.getName() == "_ZL6__hdiv6__halfS_" ||
                F.getName() == "_ZL12__half2float6__half" ||
@@ -901,10 +901,13 @@ bool preserveNVVM(bool Begin, Module &M) {
                F.getName() == "_ZL22__internal_device_hdiv13__nv_bfloat16S_" ||
                F.getName() ==
                    "_ZL27__internal_sm80_device_hmul13__nv_bfloat16S_" ||
-               F.getName() == "_ZL6__hadd13__nv_bfloat16S_" ||
+               F.getName() == "_ZL22__internal_device_hadd13__nv_bfloat16S_" ||
                F.getName() ==
                    "_ZL27__internal_sm80_device_hsub13__nv_bfloat16S_" ||
-               F.getName() == "_ZL22__internal_device_hneg13__nv_bfloat16") {
+               F.getName() == "_ZL22__internal_device_hneg13__nv_bfloat16" ||
+               F.getName() == "_ZL16__float2bfloat16f" ||
+               F.getName() == "_ZL25__internal_bfloat162floatt" ||
+               F.getName() == "_ZL32__internal_device_bfloat162floatt") {
       changed = true;
       if (Begin) {
         changed |= preserveLinkage(Begin, F);
