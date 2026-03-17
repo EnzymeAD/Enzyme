@@ -276,6 +276,13 @@ public:
       break;
     }
 
+    if (gutils->isConstantInstruction(&inst)) {
+      if (Mode == DerivativeMode::ReverseModePrimal)
+        return;
+      eraseIfUnused(inst);
+      return;
+    }
+
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "in Mode: " << to_string(Mode) << "\n";
