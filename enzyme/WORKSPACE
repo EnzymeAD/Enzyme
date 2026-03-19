@@ -78,7 +78,7 @@ new_local_repository(
     path = "../llvm-project",
 )
 load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
-llvm_configure(name = "llvm-project", targets = ["AArch64", "NVPTX", "X86"])
+llvm_configure(name = "llvm-project", targets = ["AArch64", "NVPTX", "X86", "AMDGPU"])
 
 maybe(
     http_archive,
