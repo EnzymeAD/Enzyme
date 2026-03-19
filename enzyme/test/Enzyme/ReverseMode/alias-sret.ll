@@ -31,8 +31,21 @@ define void @test_diff(double %x, double* %p, double* %dp) {
 
 declare void @__enzyme_autodiff(...)
 
-; CHECK: define internal { double } @diffecaller
-; CHECK: %[[gep:.+]] = getelementptr inbounds { double, double }, { double, double }* %"call'de", i32 0, i32 1
-; CHECK: %[[load:.+]] = load double, double* %[[gep]], align 8
-; CHECK: %[[add:.+]] = fadd fast double %[[load]], %{{.+}}
-; CHECK-NEXT: store double %[[add]], double* %[[gep]], align 8{{$}}
+; CHECK: define internal { double } @diffecaller(double %x, double* nocapture readonly %p, double* nocapture %"p'", double %differeturn)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %"call'de" = alloca { double, double }, align 8
+; CHECK-NEXT:   store { double, double } zeroinitializer, { double, double }* %"call'de", align 8
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK: invertentry:
+; CHECK-NEXT:   %[[add0:.+]] = fadd fast double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %[[add1:.+]] = fadd fast double 0.000000e+00, %differeturn
+; CHECK-NEXT:   %[[add2:.+]] = fadd fast double 0.000000e+00, %[[add0]]
+; CHECK-NEXT:   %[[add3:.+]] = fadd fast double 0.000000e+00, %[[add0]]
+; CHECK-NEXT:   %[[loadP:.+]] = load double, double* %"p'", align 8, !alias.scope ![[scopeP:[0-9]+]], !noalias ![[noaliasP:[0-9]+]]
+; CHECK-NEXT:   %[[addP:.+]] = fadd fast double %[[loadP]], %[[add1]]
+; CHECK-NEXT:   store double %[[addP]], double* %"p'", align 8, !alias.scope ![[scopeP]], !noalias ![[noaliasP]]
+; CHECK-NEXT:   %[[gepS:.+]] = getelementptr inbounds { double, double }, { double, double }* %"call'de", i32 0, i32 1
+; CHECK-NEXT:   %[[loadS:.+]] = load double, double* %[[gepS]], align 8
+; CHECK-NEXT:   %[[addS:.+]] = fadd fast double %[[loadS]], %[[add3]]
+; CHECK-NEXT:   store double %[[addS]], double* %[[gepS]], align 8{{$}}
