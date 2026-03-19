@@ -1032,12 +1032,6 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
-      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
-        if (auto MD = origValI->getMetadata(LLVMContext::MD_alias_scope)) {
-          auto MDN = cast<MDNode>(MD);
-          for (auto &o : MDN->operands())
-            scopeMD.push_back(o);
-        }
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
