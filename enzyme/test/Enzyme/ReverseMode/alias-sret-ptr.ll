@@ -48,6 +48,6 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   store double %[[addP]], double* %"p'", align 8, !alias.scope ![[scopeP]], !noalias ![[noaliasP]]
 ; CHECK-NEXT:   store double %differeturn, double* %"gep'ipg", align 8, !alias.scope ![[scopeS:[0-9]+]], !noalias ![[noaliasS:[0-9]+]]
 ; CHECK-NEXT:   store double %differeturn, double* %"call_out'ipa", align 8, !alias.scope ![[scopeS]], !noalias ![[noaliasS]]
-; CHECK-NEXT:   %[[resSubcall:.+]] = call { double } @diffesubcall(double* undef, double* %"call_out'ipa", double %x)
-; CHECK-NEXT:   %{{.+}} = extractvalue { double } %[[resSubcall]], 0
-; CHECK-NEXT:   ret { double } %[[resSubcall]]
+
+; CHECK: ![[scopeS]] = !{![[shadow_node:[0-9]+]]}
+; CHECK: ![[shadow_node]] = distinct !{![[shadow_node]], !{{[0-9]+}}, !"shadow_0"}

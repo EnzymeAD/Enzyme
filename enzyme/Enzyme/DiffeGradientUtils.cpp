@@ -1032,19 +1032,25 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
+      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
+        if (auto MD = origValI->getMetadata(LLVMContext::MD_alias_scope)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            scopeMD.push_back(o);
+        }
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
 
       SmallVector<Metadata *, 1> MDs;
-      for (ssize_t j = -1; j < getWidth(); j++) {
+      for (ssize_t j = -1; j < (ssize_t)getWidth(); j++) {
         if (j != (ssize_t)idx)
           MDs.push_back(getDerivativeAliasScope(origptr, j));
       }
-      idx++;
-      auto noscope = MDNode::get(ptr->getContext(), MDs);
+      auto noscope = MDNode::get(LI->getContext(), MDs);
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
+      idx++;
 
       if (origVal && isa<Instruction>(origVal) && start == 0 &&
           size == (DL.getTypeSizeInBits(origVal->getType()) + 7) / 8) {
