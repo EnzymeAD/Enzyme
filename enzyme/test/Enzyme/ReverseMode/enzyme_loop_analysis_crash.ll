@@ -24,7 +24,7 @@ declare void @__enzyme_autodiff(...)
 
 define void @test_derivative(i8* %out_0, i8* %out_0_d, i8* %out_1, i8* %out_1_d, i8* %in_0, i8* %in_0_d) {
 entry:
-  call void (...) @__enzyme_autodiff(i8* bitcast (void (i8*, i8*, i8*, i8*, i8*, i8*)* @_Z10entry_wrapRN6enzyme6tensorIfJLm2ELm3EEEES2_RKS1_ to i8*), i8* %out_0, i8* %out_0_d, i8* %out_1, i8* %out_1_d, i8* %in_0, i8* %in_0_d)
+  call void (...) @__enzyme_autodiff(i8* bitcast (void (i8*, i8*, i8*)* @_Z10entry_wrapRN6enzyme6tensorIfJLm2ELm3EEEES2_RKS1_ to i8*), i8* %out_0, i8* %out_0_d, i8* %out_1, i8* %out_1_d, i8* %in_0, i8* %in_0_d)
   ret void
 }
 

@@ -64,8 +64,6 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %a17_malloccache = bitcast i8* %malloccall to float**
-; CHECK-NEXT:   %malloccall16 = tail call noalias nonnull dereferenceable(560) dereferenceable_or_null(560) i8* @malloc(i64 560)
-; CHECK-NEXT:   %a14_malloccache = bitcast i8* %malloccall16 to i64*
 ; CHECK-NEXT:   %[[malloccall9:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %cond.lcssa_malloccache = bitcast i8* %[[malloccall9]] to i64*
 ; CHECK-NEXT:   br label %for.body

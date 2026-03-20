@@ -1619,46 +1619,46 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
-      auto L = OrigLI->getLoopFor(origParent);
+      auto OrigL = OrigLI->getLoopFor(origParent);
       for (auto PH : predecessors(parent)) {
         BasicBlock *origPH = isOriginal(PH);
         assert(origPH);
-        if (L->contains(origPH))
+        if (OrigL->contains(origPH))
           prevIteration.insert(PH);
       }
       if (prevIteration.size() && !legalRecompute(phi, available, &BuilderM)) {
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
-      for (auto &val : phi->incoming_values()) {
-        auto inst = dyn_cast<Instruction>(val);
-        if (!inst)
-          continue;
-        auto origInstParent = isOriginal(inst->getParent());
-        assert(origInstParent);
-        const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
-        if (!InstLoop) {
-          continue;
-        }
-        bool isParentLoop = false;
-        for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
-             L = L->getParentLoop()) {
-          if (L == InstLoop) {
-            isParentLoop = true;
-            break;
-          }
-        }
-        if (isParentLoop)
-          continue;
-        if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
-          llvm::errs() << " module: " << *newFunc->getParent() << "\n";
-          llvm::errs() << " newFunc: " << *newFunc << "\n";
-          llvm::errs() << " parent: " << *parent << "\n";
-          llvm::errs() << " val: " << *val << "\n";
-        }
-        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-        goto endCheck;
+    }
+    for (auto &val : phi->incoming_values()) {
+      auto inst = dyn_cast<Instruction>(val);
+      if (!inst)
+        continue;
+      auto origInstParent = isOriginal(inst->getParent());
+      assert(origInstParent);
+      const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
+      if (!InstLoop) {
+        continue;
       }
+      bool isParentLoop = false;
+      for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
+            L = L->getParentLoop()) {
+        if (L == InstLoop) {
+          isParentLoop = true;
+          break;
+        }
+      }
+      if (isParentLoop)
+        continue;
+      if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
+        llvm::errs() << " module: " << *newFunc->getParent() << "\n";
+        llvm::errs() << " newFunc: " << *newFunc << "\n";
+        llvm::errs() << " parent: " << *parent << "\n";
+        llvm::errs() << " val: " << *val << "\n";
+      }
+      assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+      goto endCheck;
     }
 
     if (phi->getNumIncomingValues() == 1) {
