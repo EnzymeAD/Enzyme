@@ -3864,7 +3864,7 @@ public:
           forwardModeInvertedPointerFallback(II);
           return;
         }
-        if (isReadNone(II) && looseTypeAnalysis) {
+        if (isReadNone(&II) && looseTypeAnalysis) {
           EmitWarning("CannotDeduceType", II,
                       "failed to deduce type of intrinsic ", II);
           return;
