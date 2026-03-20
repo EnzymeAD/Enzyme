@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mlir/Analysis/DataFlowFramework.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
@@ -214,6 +215,9 @@ public:
 
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
   std::map<MReverseCacheKey, FunctionOpInterface> ReverseCachedFunctions;
+
+  DataFlowSolver &solver;
+  MEnzymeLogic(DataFlowSolver &solver) : solver(solver) {}
 
   FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,

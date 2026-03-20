@@ -272,7 +272,7 @@ reverseToposortCallgraph(CallableOpInterface callee,
     if (permanent.contains(node))
       return success();
     if (temporary.contains(node))
-      // Cycle on call graph, toposort not possible
+      // Cycle in call graph, toposort not possible
       return failure();
 
     temporary.insert(node);
@@ -297,10 +297,10 @@ reverseToposortCallgraph(CallableOpInterface callee,
 }
 
 enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
-    FunctionOpInterface funcOp, ArrayRef<DIFFE_TYPE> argActivity,
-    ArrayRef<DIFFE_TYPE> returnActivity)
-    : funcOp(funcOp), solver(DataFlowConfig().setInterprocedural(false)),
-      p2sets(nullptr), forwardOriginsMap(nullptr), backwardOriginsMap(nullptr),
+    DataFlowSolver &solver, FunctionOpInterface funcOp,
+    ArrayRef<DIFFE_TYPE> argActivity, ArrayRef<DIFFE_TYPE> returnActivity)
+    : funcOp(funcOp), solver(solver), p2sets(nullptr),
+      forwardOriginsMap(nullptr), backwardOriginsMap(nullptr),
       argActivity(argActivity), returnActivity(returnActivity) {
 
   // Do things naively for now, computing the dataflow states multiple times
@@ -314,45 +314,30 @@ enzyme::DataFlowActivityAnalyzer::DataFlowActivityAnalyzer(
   for (CallableOpInterface node : sorted) {
     if (!node.getCallableRegion() || node->hasAttr(pointerSummaryName))
       continue;
-    // Will be processed last
-    if (node.getOperation() == funcOp)
-      continue;
 
     auto childFunc = cast<FunctionOpInterface>(node.getOperation());
-    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
     if (failed(runActivityAnnotationsForFunction(childFunc, solver))) {
       assert(false && "dataflow solver failed\n");
     }
 
-    enzyme::PointsToSets p2sets(nullptr);
-    enzyme::ForwardOriginsMap forwardOriginsMap(nullptr);
-    enzyme::BackwardOriginsMap backwardOriginsMap(nullptr);
+    enzyme::PointsToSets childP2Sets(nullptr);
+    enzyme::ForwardOriginsMap childFwdOrigins(nullptr);
+    enzyme::BackwardOriginsMap childBwdOrigins(nullptr);
     size_t numResults = childFunc.getResultTypes().size();
     SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
         numResults, ForwardOriginsLattice(nullptr));
     SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
         numResults, AliasClassLattice(nullptr));
-    computeSummaries(childFunc, solver, p2sets, forwardOriginsMap,
-                     backwardOriginsMap, returnOperandOrigins,
-                     returnAliasClasses);
-    serializeSummaries(childFunc, p2sets, forwardOriginsMap,
+    computeSummaries(childFunc, solver, childP2Sets, childFwdOrigins,
+                     childBwdOrigins, returnOperandOrigins, returnAliasClasses);
+    serializeSummaries(childFunc, childP2Sets, childFwdOrigins,
                        returnOperandOrigins, returnAliasClasses);
+    if (node.getOperation() == funcOp) {
+      (void)p2sets.join(childP2Sets);
+      (void)forwardOriginsMap.join(childFwdOrigins);
+      (void)backwardOriginsMap.meet(childBwdOrigins);
+    }
   }
-
-  if (failed(runActivityAnnotationsForFunction(funcOp, solver))) {
-    assert(false && "dataflow solver failed\n");
-  }
-
-  SmallVector<enzyme::ForwardOriginsLattice> returnOperandOrigins(
-      funcOp.getNumResults(), ForwardOriginsLattice(nullptr));
-  SmallVector<enzyme::AliasClassLattice> returnAliasClasses(
-      funcOp.getNumResults(), AliasClassLattice(nullptr));
-  computeSummaries(funcOp, solver, p2sets, forwardOriginsMap,
-                   backwardOriginsMap, returnOperandOrigins,
-                   returnAliasClasses);
-
-  for (CallableOpInterface node : sorted)
-    removeSummaries(node.getOperation());
 }
 
 bool enzyme::DataFlowActivityAnalyzer::isActiveData(Value value) {
@@ -534,12 +519,6 @@ bool enzyme::DataFlowActivityAnalyzer::isInactiveValue(Value value) {
   BackwardOriginsLattice sinks(nullptr);
   joinActiveValueState(value, sources, sinks);
 
-  // Would it make sense to turn isOriginActive into a lambda?
-  // auto isLatticeActive = [&](SetLattice<OriginAttr> lattice) {
-  //   if (lattice.isUnknown()) return true;
-  //   if (lattice.isUndefined()) return false;
-  //   return llvm::any_of(lattice.getElements())
-  // };
   bool activeSource = false;
   if (sources.isUnknown()) {
     activeSource = true;
@@ -595,7 +574,7 @@ static bool isReadOnly(Operation *op) {
     // memory.
     SmallVector<MemoryEffects::EffectInstance, 1> effects;
     effectInterface.getEffects(effects);
-    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+    if (!llvm::all_of(effects, [](const MemoryEffects::EffectInstance &it) {
           return isa<MemoryEffects::Read>(it.getEffect());
         })) {
       return false;
