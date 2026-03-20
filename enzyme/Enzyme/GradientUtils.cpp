@@ -1612,16 +1612,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     // Don't attempt to unroll a loop induction variable in other
     // circumstances
     std::set<BasicBlock *> prevIteration;
-    if (parent->getParent() != newFunc) {
-      auto &LLI = Logic.PPC.FAM.getResult<LoopAnalysis>(*parent->getParent());
-      if (LLI.isLoopHeader(parent)) {
+    BasicBlock *origParent = isOriginal(parent);
+
+    if (origParent) {
+      auto &LLI = *OrigLI;
+      if (LLI.isLoopHeader(origParent)) {
         if (phi->getNumIncomingValues() != 2) {
           assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
           goto endCheck;
         }
-        auto L = LLI.getLoopFor(parent);
+        auto L = LLI.getLoopFor(origParent);
         for (auto PH : predecessors(parent)) {
-          if (L->contains(PH))
+          BasicBlock *origPH = isOriginal(PH);
+          if (origPH && L->contains(origPH))
             prevIteration.insert(PH);
         }
         if (prevIteration.size() && !legalRecompute(phi, available, &BuilderM)) {
@@ -1630,7 +1633,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         }
       }
       for (auto &val : phi->incoming_values()) {
-        if (isPotentialLastLoopValue(val, parent, LLI)) {
+        Value *origVal = isOriginal(val);
+        if (origVal && isPotentialLastLoopValue(origVal, origParent, LLI)) {
           if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
             llvm::errs() << " module: " << *newFunc->getParent() << "\n";
             llvm::errs() << " newFunc: " << *newFunc << "\n";
