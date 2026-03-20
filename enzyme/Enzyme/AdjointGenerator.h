@@ -3856,6 +3856,24 @@ public:
       }
       if (handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops))
         return;
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        if (gutils->isConstantInstruction(&II) &&
+            gutils->isConstantValue(&II)) {
+          forwardModeInvertedPointerFallback(II);
+          return;
+        }
+        if (isReadNone(II) && looseTypeAnalysis) {
+          EmitWarning("CannotDeduceType", II,
+                      "failed to deduce type of intrinsic ", II);
+          return;
+        }
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "cannot handle unknown intrinsic: " << II << "\n";
+        EmitNoDerivativeError(ss.str(), II, gutils, Builder2);
+      }
     }
     if (gutils->knownRecomputeHeuristic.find(&II) !=
         gutils->knownRecomputeHeuristic.end()) {
