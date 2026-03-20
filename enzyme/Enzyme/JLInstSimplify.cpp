@@ -22,7 +22,9 @@
 // results of a given function.
 //
 //===----------------------------------------------------------------------===//
+#include <cstdint>
 #include <llvm/Config/llvm-config.h>
+
 
 #include "llvm/ADT/SmallVector.h"
 

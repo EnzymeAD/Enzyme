@@ -3856,27 +3856,6 @@ public:
       }
       if (handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops))
         return;
-      if (Mode == DerivativeMode::ForwardMode ||
-          Mode == DerivativeMode::ForwardModeError ||
-          Mode == DerivativeMode::ForwardModeSplit) {
-        if (gutils->isConstantInstruction(&II) &&
-            gutils->isConstantValue(&II)) {
-          forwardModeInvertedPointerFallback(II);
-          return;
-        }
-        if (isReadNone(&II) && looseTypeAnalysis) {
-          EmitWarning("CannotDeduceType", II,
-                      "failed to deduce type of intrinsic ", II);
-          return;
-        }
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << "cannot handle unknown intrinsic: " << II << "\n";
-        IRBuilder<> Builder2(&II);
-        getForwardBuilder(Builder2);
-        EmitNoDerivativeError(ss.str(), II, gutils, Builder2);
-
-      }
     }
     if (gutils->knownRecomputeHeuristic.find(&II) !=
         gutils->knownRecomputeHeuristic.end()) {
@@ -4200,6 +4179,15 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
+        if (!gutils->isConstantValue(&I)) {
+          auto found = gutils->invertedPointers.find(&I);
+          assert(found != gutils->invertedPointers.end());
+          auto placeholder = cast<PHINode>(&*found->second);
+          gutils->invertedPointers.erase(found);
+          auto toset = Constant::getNullValue(gutils->getShadowType(I.getType()));
+          placeholder->replaceAllUsesWith(toset);
+          setDiffe(&I, toset, Builder2);
+        }
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
             ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
