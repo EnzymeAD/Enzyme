@@ -3872,7 +3872,10 @@ public:
         std::string s;
         llvm::raw_string_ostream ss(s);
         ss << "cannot handle unknown intrinsic: " << II << "\n";
+        IRBuilder<> Builder2(&II);
+        getForwardBuilder(Builder2);
         EmitNoDerivativeError(ss.str(), II, gutils, Builder2);
+
       }
     }
     if (gutils->knownRecomputeHeuristic.find(&II) !=
