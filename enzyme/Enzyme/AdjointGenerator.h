@@ -4177,17 +4177,13 @@ public:
         return false;
       }
       default:
-        if (gutils->isConstantInstruction(&I))
-          return false;
         if (!gutils->isConstantValue(&I)) {
-          auto found = gutils->invertedPointers.find(&I);
-          assert(found != gutils->invertedPointers.end());
-          auto placeholder = cast<PHINode>(&*found->second);
-          gutils->invertedPointers.erase(found);
-          auto toset = Constant::getNullValue(gutils->getShadowType(I.getType()));
-          placeholder->replaceAllUsesWith(toset);
+          auto toset =
+              Constant::getNullValue(gutils->getShadowType(I.getType()));
           setDiffe(&I, toset, Builder2);
         }
+        if (gutils->isConstantInstruction(&I))
+          return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
             ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
             ID == Intrinsic::uadd_with_overflow ||
@@ -4213,10 +4209,6 @@ public:
              << Intrinsic::getName(ID) << "\n"
              << I;
         EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
-        if (!gutils->isConstantValue(&I))
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
         return false;
       }
       return false;
