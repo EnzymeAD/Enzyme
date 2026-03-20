@@ -475,6 +475,8 @@ public:
 std::optional<Value> getStored(Operation *op) {
   if (auto storeOp = dyn_cast<LLVM::StoreOp>(op)) {
     return storeOp.getValue();
+  } else if (auto memsetOp = dyn_cast<LLVM::MemsetOp>(op)) {
+    return memsetOp.getVal();
   } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return storeOp.getValue();
   } else if (auto pushOp = dyn_cast<enzyme::PushOp>(op)) {

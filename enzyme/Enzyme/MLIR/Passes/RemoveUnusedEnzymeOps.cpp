@@ -515,7 +515,8 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
     // llvm::errs() << "[debug] removing enzyme ops for " << op->getName()
     //              << " at " << op->getLoc() << " inside function "
     //              << parent.getName() << "\n";
-    // llvm::errs() << "* * * before removal * * *\n" << parent << "\n* * * * * *\n\n";
+    // llvm::errs() << "* * * before removal * * *\n" << parent << "\n* * * * *
+    // *\n\n";
     current = op;
     rewriter.setInsertionPoint(current);
     result &= iface.removeEnzymeOps(rewriter).succeeded();
