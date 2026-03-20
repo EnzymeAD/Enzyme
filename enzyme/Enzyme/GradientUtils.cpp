@@ -1611,33 +1611,35 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
     // Don't attempt to unroll a loop induction variable in other
     // circumstances
-    auto &LLI = Logic.PPC.FAM.getResult<LoopAnalysis>(*parent->getParent());
     std::set<BasicBlock *> prevIteration;
-    if (LLI.isLoopHeader(parent)) {
-      if (phi->getNumIncomingValues() != 2) {
-        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-        goto endCheck;
-      }
-      auto L = LLI.getLoopFor(parent);
-      for (auto PH : predecessors(parent)) {
-        if (L->contains(PH))
-          prevIteration.insert(PH);
-      }
-      if (prevIteration.size() && !legalRecompute(phi, available, &BuilderM)) {
-        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-        goto endCheck;
-      }
-    }
-    for (auto &val : phi->incoming_values()) {
-      if (isPotentialLastLoopValue(val, parent, LLI)) {
-        if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
-          llvm::errs() << " module: " << *newFunc->getParent() << "\n";
-          llvm::errs() << " newFunc: " << *newFunc << "\n";
-          llvm::errs() << " parent: " << *parent << "\n";
-          llvm::errs() << " val: " << *val << "\n";
+    if (parent->getParent() != newFunc) {
+      auto &LLI = Logic.PPC.FAM.getResult<LoopAnalysis>(*parent->getParent());
+      if (LLI.isLoopHeader(parent)) {
+        if (phi->getNumIncomingValues() != 2) {
+          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+          goto endCheck;
         }
-        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-        goto endCheck;
+        auto L = LLI.getLoopFor(parent);
+        for (auto PH : predecessors(parent)) {
+          if (L->contains(PH))
+            prevIteration.insert(PH);
+        }
+        if (prevIteration.size() && !legalRecompute(phi, available, &BuilderM)) {
+          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+          goto endCheck;
+        }
+      }
+      for (auto &val : phi->incoming_values()) {
+        if (isPotentialLastLoopValue(val, parent, LLI)) {
+          if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
+            llvm::errs() << " module: " << *newFunc->getParent() << "\n";
+            llvm::errs() << " newFunc: " << *newFunc << "\n";
+            llvm::errs() << " parent: " << *parent << "\n";
+            llvm::errs() << " val: " << *val << "\n";
+          }
+          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+          goto endCheck;
+        }
       }
     }
 
