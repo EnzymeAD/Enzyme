@@ -473,7 +473,7 @@ static bool isReadOnly(Operation *op) {
     // memory.
     SmallVector<MemoryEffects::EffectInstance, 1> effects;
     effectInterface.getEffects(effects);
-    if (!llvm::all_of(effects, [op](const MemoryEffects::EffectInstance &it) {
+    if (!llvm::all_of(effects, [](const MemoryEffects::EffectInstance &it) {
           return isa<MemoryEffects::Read>(it.getEffect());
         })) {
       return false;
