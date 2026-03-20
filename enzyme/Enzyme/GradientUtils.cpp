@@ -1631,16 +1631,25 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         goto endCheck;
       }
       for (auto &val : phi->incoming_values()) {
+<<<<<<< HEAD
         auto inst = dyn_cast<Instruction>(val);
         if (!inst)
           continue;
         auto origInstParent = isOriginal(inst->getParent());
         const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
+=======
+        const llvm::Loop *InstLoop = nullptr;
+        if (auto inst = dyn_cast<Instruction>(val)) {
+          auto origInstParent = isOriginal(inst->getParent());
+          if (origInstParent)
+            InstLoop = OrigLI->getLoopFor(origInstParent);
+        }
+>>>>>>> 792b9ba7 (Fix LoopAnalysis crash and include non-instructions in manual induction check)
 
         bool isParentLoop = false;
         for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
              L = L->getParentLoop()) {
-          if (L == InstLoop) {
+          if (InstLoop && L == InstLoop) {
             isParentLoop = true;
             break;
           }
