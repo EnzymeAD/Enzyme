@@ -21,7 +21,7 @@ class MTypeResults;
 
 class DataFlowActivityAnalyzer {
 public:
-  DataFlowActivityAnalyzer(FunctionOpInterface funcOp,
+  DataFlowActivityAnalyzer(DataFlowSolver &solver, FunctionOpInterface funcOp,
                            ArrayRef<DIFFE_TYPE> argActivity,
                            ArrayRef<DIFFE_TYPE> returnActivity);
 
@@ -30,7 +30,7 @@ public:
 
 private:
   FunctionOpInterface funcOp;
-  DataFlowSolver solver;
+  DataFlowSolver &solver;
   enzyme::PointsToSets p2sets;
   enzyme::ForwardOriginsMap forwardOriginsMap;
   enzyme::BackwardOriginsMap backwardOriginsMap;

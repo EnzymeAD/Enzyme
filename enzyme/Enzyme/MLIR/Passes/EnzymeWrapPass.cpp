@@ -66,7 +66,8 @@ struct DifferentiateWrapperPass
   using DifferentiateWrapperPassBase::DifferentiateWrapperPassBase;
 
   void runOnOperation() override {
-    MEnzymeLogic Logic;
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    MEnzymeLogic Logic(solver);
     SymbolTableCollection symbolTable;
     symbolTable.getSymbolTable(getOperation());
 
@@ -161,6 +162,8 @@ struct DifferentiateWrapperPass
       SymbolTable::setSymbolName(cast<FunctionOpInterface>(newFunc),
                                  (std::string)outfn);
     }
+
+    getOperation()->walk([&](FunctionOpInterface op) { removeSummaries(op); });
   }
 };
 

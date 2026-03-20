@@ -268,8 +268,6 @@ computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
 struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   using ProbProgPassBase::ProbProgPassBase;
 
-  MEnzymeLogic Logic;
-
   void runOnOperation() override;
 
   void getDependentDialects(DialectRegistry &registry) const override {
