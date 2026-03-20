@@ -1636,9 +1636,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           continue;
         auto origInstParent = isOriginal(inst->getParent());
         const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
-        if (InstLoop == nullptr) {
-          continue;
-        }
+
         bool isParentLoop = false;
         for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
              L = L->getParentLoop()) {
