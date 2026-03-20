@@ -1635,13 +1635,26 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (!inst)
           continue;
         auto origInstParent = isOriginal(inst->getParent());
-        const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
+        const llvm::Loop *InstLoop = nullptr;
         bool isParentLoop = false;
-        for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
-             L = L->getParentLoop()) {
-          if (InstLoop && L == InstLoop) {
-            isParentLoop = true;
-            break;
+
+        if (origInstParent) {
+          InstLoop = OrigLI->getLoopFor(origInstParent);
+          for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
+               L = L->getParentLoop()) {
+            if (InstLoop && L == InstLoop) {
+              isParentLoop = true;
+              break;
+            }
+          }
+        } else {
+          InstLoop = LI.getLoopFor(inst->getParent());
+          for (const llvm::Loop *L = LI.getLoopFor(parent); L;
+               L = L->getParentLoop()) {
+            if (InstLoop && L == InstLoop) {
+              isParentLoop = true;
+              break;
+            }
           }
         }
         if (isParentLoop)
