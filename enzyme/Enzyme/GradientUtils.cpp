@@ -1647,7 +1647,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             break;
           }
         }
-        if (!isParentLoop)
+        if (isParentLoop)
           continue;
         if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
           llvm::errs() << " module: " << *newFunc->getParent() << "\n";
