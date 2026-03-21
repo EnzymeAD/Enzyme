@@ -363,8 +363,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     }
 #endif
 
-  const SCEV *LHS = getSCEV(ExitCond->getOperand(0));
-  const SCEV *RHS = getSCEV(ExitCond->getOperand(1));
+  SCEVUse LHS = getSCEV(ExitCond->getOperand(0));
+  SCEVUse RHS = getSCEV(ExitCond->getOperand(1));
 
 #define PROP_PHI(LHS)                                                          \
   if (auto un = dyn_cast<SCEVUnknown>(LHS)) {                                  \
