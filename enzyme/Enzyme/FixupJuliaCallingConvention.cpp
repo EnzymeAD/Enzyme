@@ -1141,7 +1141,6 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 }
 
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Passes/PassPlugin.h"
 
 #include <string>
 
