@@ -16,13 +16,13 @@
 ; CHECK-NEXT:   store {{.*}} [[LOAD2]], ptr [[GEP3]], align 8
 ; CHECK-NEXT:   ret void
 
-%inner_struct = type { ptr addrspace(10), ptr addrspace(10) }
+%inner_struct = type { i8 addrspace(10)*, i8 addrspace(10)* }
 %outer_struct = type { %inner_struct, i8 }
 
-define void @test_multi_index(ptr sret(%outer_struct) %sret, ptr %arg) {
+define void @test_multi_index(%outer_struct* sret(%outer_struct) %sret, %outer_struct* %arg) {
 entry:
-  %val = load %outer_struct, ptr %arg, align 8
-  store %outer_struct %val, ptr %sret, align 8
+  %val = load %outer_struct, %outer_struct* %arg, align 8
+  store %outer_struct %val, %outer_struct* %sret, align 8
 
   ; Extract both pointers from inner struct to achieve full path coverage.
   %p1 = extractvalue %outer_struct %val, 0, 0

@@ -8,9 +8,9 @@
 
 %jl_value = type opaque
 
-define void @test_sret(ptr sret({ %jl_value addrspace(10)* }) %sret, ptr %arg) {
+define void @test_sret({ %jl_value addrspace(10)* }* sret({ %jl_value addrspace(10)* }) %sret, %jl_value addrspace(10)** %arg) {
 entry:
-  %val = load %jl_value addrspace(10)*, ptr %arg, align 8
-  store %jl_value addrspace(10)* %val, ptr %sret, align 8
+  %val = load %jl_value addrspace(10)*, %jl_value addrspace(10)** %arg, align 8
+  store %jl_value addrspace(10)* %val, { %jl_value addrspace(10)* }* %sret, align 8
   ret void
 }
