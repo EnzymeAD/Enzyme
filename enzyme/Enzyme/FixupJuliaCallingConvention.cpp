@@ -1,13 +1,15 @@
 #include "CApi.h"
 #include "Utils.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/Pass.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Pass.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "GradientUtils.h"
+#include "llvm/ADT/SmallSet.h"
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
@@ -19,8 +21,6 @@
 #endif
 
 using namespace llvm;
-
-
 
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr) {
@@ -235,8 +235,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
             }
             std::map<std::vector<unsigned>, bool> paths_to_cover;
             {
-              std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo = {
-                  {ST->getElementType(i), {}}};
+              std::deque<std::pair<llvm::Type *, std::vector<unsigned>>> todo =
+                  {{ST->getElementType(i), {}}};
               while (!todo.empty()) {
                 auto cur = std::move(todo[0]);
                 todo.pop_front();
@@ -260,7 +260,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                 }
 
                 if (auto VT = dyn_cast<VectorType>(ty)) {
-                  for (size_t k = 0; k < VT->getElementCount().getKnownMinValue(); k++) {
+                  for (size_t k = 0;
+                       k < VT->getElementCount().getKnownMinValue(); k++) {
                     std::vector<unsigned> path2(path);
                     path2.push_back(k);
                     todo.emplace_back(VT->getElementType(), path2);
@@ -428,7 +429,6 @@ static bool isOpaque(llvm::Type *T) {
 void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   if (F->empty())
     return;
-
 
   auto RT = F->getReturnType();
   std::set<size_t> srets;
@@ -1140,24 +1140,289 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   F->eraseFromParent();
 }
 
-#include "llvm/Passes/PassPlugin.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
 
-class FixupJuliaCallingConventionNewPM : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
+#include <string>
+
+using namespace llvm;
+
+void EnzymeFixupBatchedJuliaCallingConvention(Function *F) {
+  if (F->empty())
+    return;
+  auto RT = F->getReturnType();
+  auto FT = F->getFunctionType();
+  auto Attrs = F->getAttributes();
+
+  AttributeList NewAttrs;
+  SmallVector<Type *, 1> types;
+  SmallSet<size_t, 1> changed;
+  for (auto pair : llvm::enumerate(FT->params())) {
+    auto T = pair.value();
+    auto i = pair.index();
+    bool sretv = false;
+    StringRef kind;
+    StringRef value;
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i)) {
+      if (attr.isStringAttribute() &&
+          attr.getKindAsString() == "enzyme_sret_v") {
+        sretv = true;
+        kind = "enzyme_sret";
+        value = attr.getValueAsString();
+      } else if (attr.isStringAttribute() &&
+                 attr.getKindAsString() == "enzymejl_rooted_typ_v") {
+        sretv = true;
+        kind = "enzymejl_rooted_typ";
+        value = attr.getValueAsString();
+      } else if (attr.isStringAttribute() &&
+                 attr.getKindAsString() == "enzymejl_returnRoots_v") {
+        sretv = true;
+        kind = "enzymejl_returnRoots";
+        value = attr.getValueAsString();
+      } else {
+        NewAttrs = NewAttrs.addAttribute(
+            F->getContext(), AttributeList::FirstArgIndex + types.size(), attr);
+      }
+    }
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      if (auto PT = dyn_cast<PointerType>(AT->getElementType())) {
+        auto AS = PT->getAddressSpace();
+        if (AS == 11 || AS == 12 || AS == 13 || sretv) {
+          for (unsigned i = 0; i < AT->getNumElements(); i++) {
+            if (sretv) {
+              NewAttrs = NewAttrs.addAttribute(
+                  F->getContext(), AttributeList::FirstArgIndex + types.size(),
+                  Attribute::get(F->getContext(), kind, value));
+            }
+            types.push_back(PT);
+          }
+          changed.insert(i);
+          continue;
+        }
+      }
+    }
+    assert(!sretv);
+    types.push_back(T);
+  }
+  if (changed.size() == 0)
+    return;
+
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::ReturnIndex, attr);
+
+  FunctionType *FTy =
+      FunctionType::get(FT->getReturnType(), types, FT->isVarArg());
+
+  // Create the new function
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  Function::arg_iterator DestI = NewF->arg_begin();
+
+  // To handle the deleted args, it needs to be replaced by a non-arg operand.
+  // This map contains the temporary phi nodes corresponding
+  SmallVector<Instruction *, 1> toInsert;
+  for (Argument &I : F->args()) {
+    auto T = I.getType();
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      if (changed.count(I.getArgNo())) {
+        Value *V = UndefValue::get(T);
+        for (unsigned i = 0; i < AT->getNumElements(); i++) {
+          DestI->setName(I.getName() + "." +
+                         std::to_string(i)); // Copy the name over...
+          unsigned idx[1] = {i};
+          auto IV = InsertValueInst::Create(V, (llvm::Value *)&*DestI++, idx);
+          toInsert.push_back(IV);
+          V = IV;
+        }
+        VMap[&I] = V;
+        continue;
+      }
+    }
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+
+  {
+    IRBuilder<> EB(&*NewF->getEntryBlock().begin());
+    for (auto I : toInsert)
+      EB.Insert(I);
+  }
+
+  SmallVector<CallInst *, 1> callers;
+  for (auto U : F->users()) {
+    auto CI = dyn_cast<CallInst>(U);
+    assert(CI);
+    assert(CI->getCalledFunction() == F);
+    callers.push_back(CI);
+  }
+
+  for (auto CI : callers) {
+    auto Attrs = CI->getAttributes();
+    AttributeList NewAttrs;
+    IRBuilder<> B(CI);
+
+    for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::FunctionIndex, attr);
+
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+
+    SmallVector<Value *, 1> vals;
+    for (size_t j = 0, end = CI->arg_size(); j < end; j++) {
+
+      auto T = CI->getArgOperand(j)->getType();
+      if (auto AT = dyn_cast<ArrayType>(T)) {
+        if (isa<PointerType>(AT->getElementType())) {
+          if (changed.count(j)) {
+            bool sretv = false;
+            std::string kind;
+            StringRef value;
+            for (auto attr :
+                 Attrs.getAttributes(AttributeList::FirstArgIndex + j)) {
+              if (attr.isStringAttribute() &&
+                  attr.getKindAsString() == "enzyme_sret_v") {
+                sretv = true;
+                kind = "enzyme_sret";
+                value = attr.getValueAsString();
+              } else if (attr.isStringAttribute() &&
+                         attr.getKindAsString() == "enzymejl_returnRoots_v") {
+                sretv = true;
+                kind = "enzymejl_returnRoots";
+                value = attr.getValueAsString();
+              } else if (attr.isStringAttribute() &&
+                         attr.getKindAsString() == "enzymejl_rooted_typ_v") {
+                sretv = true;
+                kind = "enzymejl_rooted_typ_v";
+                value = attr.getValueAsString();
+              }
+            }
+            for (unsigned i = 0; i < AT->getNumElements(); i++) {
+              if (sretv)
+                NewAttrs = NewAttrs.addAttribute(
+                    F->getContext(), AttributeList::FirstArgIndex + vals.size(),
+                    Attribute::get(F->getContext(), kind, value));
+              vals.push_back(
+                  GradientUtils::extractMeta(B, CI->getArgOperand(j), i));
+            }
+            continue;
+          }
+        }
+      }
+
+      for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + j)) {
+        if (attr.isStringAttribute() &&
+            attr.getKindAsString() == "enzyme_sret_v") {
+          NewAttrs = NewAttrs.addAttribute(
+              F->getContext(), AttributeList::FirstArgIndex + vals.size(),
+              Attribute::get(F->getContext(), "enzyme_sret",
+                             attr.getValueAsString()));
+        } else if (attr.isStringAttribute() &&
+                   attr.getKindAsString() == "enzymejl_returnRoots_v") {
+          NewAttrs = NewAttrs.addAttribute(
+              F->getContext(), AttributeList::FirstArgIndex + vals.size(),
+              Attribute::get(F->getContext(), "enzymejl_returnRoots",
+                             attr.getValueAsString()));
+        } else if (attr.isStringAttribute() &&
+                   attr.getKindAsString() == "enzymejl_rooted_typ_v") {
+          NewAttrs = NewAttrs.addAttribute(
+              F->getContext(), AttributeList::FirstArgIndex + vals.size(),
+              Attribute::get(F->getContext(), "enzymejl_rooted_typ",
+                             attr.getValueAsString()));
+        } else {
+          NewAttrs = NewAttrs.addAttribute(
+              F->getContext(), AttributeList::FirstArgIndex + vals.size(),
+              attr);
+        }
+      }
+
+      vals.push_back(CI->getArgOperand(j));
+    }
+
+    SmallVector<OperandBundleDef, 1> Bundles;
+    for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
+      Bundles.emplace_back(CI->getOperandBundleAt(I));
+    auto NC = B.CreateCall(NewF, vals, Bundles);
+    NC->setAttributes(NewAttrs);
+
+    SmallVector<std::pair<unsigned, MDNode *>, 4> TheMDs;
+    CI->getAllMetadataOtherThanDebugLoc(TheMDs);
+    SmallVector<unsigned, 1> toCopy;
+    for (auto pair : TheMDs)
+      toCopy.push_back(pair.first);
+    if (!toCopy.empty())
+      NC->copyMetadata(*CI, toCopy);
+    NC->setDebugLoc(CI->getDebugLoc());
+
+    if (!RT->isVoidTy()) {
+      NC->takeName(CI);
+      CI->replaceAllUsesWith(NC);
+    }
+
+    NC->setCallingConv(CI->getCallingConv());
+    CI->eraseFromParent();
+  }
+  NewF->setAttributes(NewAttrs);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
+  for (auto pair : MD)
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  F->eraseFromParent();
+}
+
+class FixupJuliaCallingConventionNewPM
+    : public PassInfoMixin<FixupJuliaCallingConventionNewPM> {
   bool sret_jlvalue;
+
 public:
-  FixupJuliaCallingConventionNewPM(bool sret_jlvalue) : sret_jlvalue(sret_jlvalue) {}
+  FixupJuliaCallingConventionNewPM(bool sret_jlvalue)
+      : sret_jlvalue(sret_jlvalue) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
-    SmallVector<llvm::Function*, 16> Functions;
+    SmallVector<llvm::Function *, 16> Functions;
     for (auto &F : M) {
-      if (F.empty()) continue;
+      if (F.empty())
+        continue;
       Functions.push_back(&F);
     }
     for (auto *F : Functions) {
-      // Unconditionally apply fixing up layouts
       EnzymeFixupJuliaCallingConvention(F, sret_jlvalue);
+      changed = true;
+    }
+    return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+};
+
+class FixupBatchedJuliaCallingConventionNewPM
+    : public PassInfoMixin<FixupBatchedJuliaCallingConventionNewPM> {
+public:
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
+    bool changed = false;
+    SmallVector<llvm::Function *, 16> Functions;
+    for (auto &F : M) {
+      if (F.empty())
+        continue;
+      Functions.push_back(&F);
+    }
+    for (auto *F : Functions) {
+      EnzymeFixupBatchedJuliaCallingConvention(F);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
@@ -1174,6 +1439,9 @@ bool registerFixupJuliaPass(StringRef Name, ModulePassManager &MPM) {
     MPM.addPass(FixupJuliaCallingConventionNewPM(true));
     return true;
   }
+  if (Name == "enzyme-fixup-batched-julia") {
+    MPM.addPass(FixupBatchedJuliaCallingConventionNewPM());
+    return true;
+  }
   return false;
 }
-
