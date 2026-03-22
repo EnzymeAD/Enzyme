@@ -624,8 +624,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   if (sretTy) {
     CountTrackedPointers countF(sretTy);
     // If all fields of the sret struct are tracked pointers, the struct itself
-    // acts as a root anchor on the caller's stack frame. In this scenario, we do 
-    // not allocate an additional explicit ReturnRoots array argument.
+    // acts as a root anchor on the caller's stack frame. In this scenario, we
+    // do not allocate an additional explicit ReturnRoots array argument.
     if (countF.all) {
       roots_AT = nullptr;
       numRooting = 0;
