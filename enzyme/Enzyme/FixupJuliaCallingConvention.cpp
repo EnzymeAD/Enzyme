@@ -1,5 +1,7 @@
 #include "CApi.h"
+#include "GradientUtils.h"
 #include "Utils.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -8,8 +10,6 @@
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "GradientUtils.h"
-#include "llvm/ADT/SmallSet.h"
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
