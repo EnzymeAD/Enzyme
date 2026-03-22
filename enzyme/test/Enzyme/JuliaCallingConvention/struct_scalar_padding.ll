@@ -1,6 +1,6 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @test_scalar_padding(ptr noalias sret({ i64, ptr addrspace(10), i32, ptr addrspace(10) }) %sret, ptr noalias writeonly "enzymejl_returnRoots"="2" %0, ptr %arg)
+; CHECK-LABEL: define void @test_scalar_padding(ptr noalias sret(%outer_struct) %0, ptr noalias writeonly "enzymejl_returnRoots"="2" %1, ptr %arg)
 
 %outer_struct = type { i64, ptr addrspace(10), i32, ptr addrspace(10) }
 
