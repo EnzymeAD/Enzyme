@@ -4742,6 +4742,7 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
         llvm_unreachable("Unhandled");
       }
 
+
       switch (direction) {
       case SRetRootMovement::SRetPointerToRootPointer: {
         Value *outloc = constantInBoundsGEPHelper(B, jltype, sret, path);

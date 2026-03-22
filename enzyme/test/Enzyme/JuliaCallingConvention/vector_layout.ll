@@ -1,6 +1,6 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @test_vector(ptr noalias sret(<2 x {{.*}}>) %0, ptr %arg)
+; CHECK-LABEL: define void @test_vector({{.*}} noalias sret(<2 x {{.*}}>) %0, {{.*}} %arg)
 
 define void @test_vector(<2 x i8 addrspace(10)*>* sret(<2 x i8 addrspace(10)*>) %sret, <2 x i8 addrspace(10)*>* %arg) {
 entry:

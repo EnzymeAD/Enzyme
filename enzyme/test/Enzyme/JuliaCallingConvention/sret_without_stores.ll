@@ -1,6 +1,6 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @test_without_stores(ptr noalias sret({ {{.*}} }) %0, ptr %arg)
+; CHECK-LABEL: define void @test_without_stores({{.*}} noalias sret({ {{.*}} }) %0, {{.*}} %arg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 
