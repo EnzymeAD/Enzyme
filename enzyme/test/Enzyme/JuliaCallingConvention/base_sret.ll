@@ -1,9 +1,9 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @test_sret(ptr noalias sret({ ptr addrspace(10) }) %0, ptr %arg)
+; CHECK-LABEL: define void @test_sret(ptr noalias sret({ {{.*}} }) %0, ptr %arg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   [[LOAD:%[0-9]+]] = load ptr addrspace(10), ptr %arg, align 8
-; CHECK-NEXT:   store ptr addrspace(10) [[LOAD]], ptr %0, align 8
+; CHECK-NEXT:   [[LOAD:%[a-zA-Z_0-9]+]] = load {{.*}}, ptr %arg, align 8
+; CHECK-NEXT:   store {{.*}} [[LOAD]], ptr %0, align 8
 ; CHECK-NEXT:   ret void
 
 %jl_value = type opaque

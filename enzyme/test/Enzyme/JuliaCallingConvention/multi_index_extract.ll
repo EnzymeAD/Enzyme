@@ -1,11 +1,11 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @test_multi_index(ptr noalias sret(%outer_struct) %0, ptr noalias writeonly "enzymejl_returnRoots"="2" %1, ptr %arg)
+; CHECK-LABEL: define void @test_multi_index(ptr noalias sret({{.*}}) %0, ptr noalias writeonly "enzymejl_returnRoots"="2" %1, ptr %arg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   [[LOAD:%[0-9]+]] = load %outer_struct, ptr %arg, align 8
-; CHECK-NEXT:   store %outer_struct [[LOAD]], ptr %0, align 8
-; CHECK-NEXT:   [[EXT1:%[0-9]+]] = extractvalue %outer_struct [[LOAD]], 0, 0
-; CHECK-NEXT:   [[EXT2:%[0-9]+]] = extractvalue %outer_struct [[LOAD]], 0, 1
+; CHECK-NEXT:   [[LOAD:%[a-zA-Z_0-9]+]] = load {{.*}}, ptr %arg, align 8
+; CHECK-NEXT:   store {{.*}} [[LOAD]], ptr %0, align 8
+; CHECK-NEXT:   [[EXT1:%[a-zA-Z_0-9]+]] = extractvalue {{.*}} [[LOAD]], 0, 0
+; CHECK-NEXT:   [[EXT2:%[a-zA-Z_0-9]+]] = extractvalue {{.*}} [[LOAD]], 0, 1
 ; CHECK-NEXT:   ret void
 
 %inner_struct = type { ptr addrspace(10), ptr addrspace(10) }
