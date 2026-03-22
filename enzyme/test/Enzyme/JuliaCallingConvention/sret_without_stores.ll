@@ -1,4 +1,4 @@
-; RUN: %opt %loadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
 ; CHECK-LABEL: define void @test_without_stores(ptr noalias sret({ ptr addrspace(10) }) %sret, ptr noalias writeonly "enzymejl_returnRoots"="1" %0, ptr %arg)
 ; CHECK-NEXT: entry:

@@ -1,4 +1,4 @@
-; RUN: %opt %loadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
 ; CHECK-LABEL: define void @test_multi_index(ptr noalias sret({ { ptr addrspace(10), ptr addrspace(10) }, i8 }) %sret, ptr noalias writeonly "enzymejl_returnRoots"="2" %0, ptr %arg)
 ; CHECK-NEXT: entry:
