@@ -3475,7 +3475,26 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
-extern bool registerFixupJuliaPass(llvm::StringRef Name, llvm::ModulePassManager &MPM);
+void EnzymeFixupJuliaCallingConvention(llvm::Function *F, bool sret_jlvalue);
+
+class FixupJuliaCallingConventionNewPM : public llvm::PassInfoMixin<FixupJuliaCallingConventionNewPM> {
+  bool sret_jlvalue;
+public:
+  FixupJuliaCallingConventionNewPM(bool sret_jlvalue) : sret_jlvalue(sret_jlvalue) {}
+
+  llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &AM) {
+    bool changed = false;
+    std::vector<llvm::Function*> Functions;
+    for (auto &F : M) {
+      if (!F.empty()) Functions.push_back(&F);
+    }
+    for (auto *F : Functions) {
+      EnzymeFixupJuliaCallingConvention(F, sret_jlvalue);
+      changed = true;
+    }
+    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+  }
+};
 
 extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
                                               bool augment = false) {
@@ -3489,7 +3508,12 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(EnzymeNewPM());
           return true;
         }
-        if (registerFixupJuliaPass(Name, MPM)) {
+        if (Name == "enzyme-fixup-julia") {
+          MPM.addPass(FixupJuliaCallingConventionNewPM(false));
+          return true;
+        }
+        if (Name == "enzyme-fixup-julia-sret") {
+          MPM.addPass(FixupJuliaCallingConventionNewPM(true));
           return true;
         }
         if (Name == "preserve-nvvm") {

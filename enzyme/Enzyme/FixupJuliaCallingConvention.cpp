@@ -9,15 +9,18 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/IR/LegacyPassManager.h"
 
+#define addAttribute addAttributeAtIndex
+#define removeAttribute removeAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+
 #if LLVM_VERSION_MAJOR >= 17
 #include "llvm/TargetParser/Triple.h"
 #endif
 
 using namespace llvm;
 
-extern "C" {
-void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C, uint8_t sret_jlvalue_C);
-}
+
 
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr) {
@@ -1147,10 +1150,14 @@ public:
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     bool changed = false;
+    SmallVector<llvm::Function*, 16> Functions;
     for (auto &F : M) {
       if (F.empty()) continue;
+      Functions.push_back(&F);
+    }
+    for (auto *F : Functions) {
       // Unconditionally apply fixing up layouts
-      EnzymeFixupJuliaCallingConvention(&F, sret_jlvalue);
+      EnzymeFixupJuliaCallingConvention(F, sret_jlvalue);
       changed = true;
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
