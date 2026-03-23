@@ -19,7 +19,7 @@ entry:
   ret void
 }
 
-; CHECK: declare void @cblas_dsyrk(i32 {{.*}}, i32 "enzyme_inactive", i32 "enzyme_inactive", i32 "enzyme_inactive", i32 "enzyme_inactive", double, double* nocapture readonly, i32 "enzyme_inactive", double, double* nocapture, i32 "enzyme_inactive")
+; CHECK: declare void @cblas_dsyrk(i32{{.*}}, i32 "enzyme_inactive", i32 "enzyme_inactive", i32 "enzyme_inactive", i32 "enzyme_inactive", double, double* nocapture readonly, i32 "enzyme_inactive", double, double* nocapture, i32 "enzyme_inactive")
 
 ; CHECK: define internal void @[[active:.+]](i32 %layout, i32 %uplo, i32 %trans, i32 %n, i32 %k, double %alpha, double* %A, double* %"A'", i32 %lda, double %beta, double* %C, double* %"C'")
 ; CHECK:   call void @cblas_dsymm(i32 %layout, i8 {{.*}}, i32 %uplo, i32 {{.*}}, i32 {{.*}}, double %alpha, double* %"C'", i32 %n, double* %A, i32 %lda, double 1.000000e+00, double* %"A'", i32 %lda)
