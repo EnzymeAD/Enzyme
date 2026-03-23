@@ -2530,7 +2530,10 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
       if (seen.count(cur))
         continue;
       seen.insert(cur);
-      for (auto Succ : successors(cur)) {
+      auto terminator = cur->getTerminator();
+      if (!terminator)
+        continue;
+      for (auto Succ : successors(terminator)) {
         todo.push_back(Succ);
       }
     }
