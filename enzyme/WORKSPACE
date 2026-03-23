@@ -127,8 +127,8 @@ maybe(
 # compile_commands
 http_archive(
     name = "hedron_compile_commands",
-    strip_prefix = "bazel-compile-commands-extractor-359a657680aa74d2a70240bb310c1636601e0af8",
-    url = "https://github.com/vimarsh6739/bazel-compile-commands-extractor/archive/359a657680aa74d2a70240bb310c1636601e0af8.tar.gz",
+    strip_prefix = "bazel-compile-commands-extractor-84c8aadfeee9a09105ec22cc85d0f478c90a788a",
+    url = "https://github.com/vimarsh6739/bazel-compile-commands-extractor/archive/84c8aadfeee9a09105ec22cc85d0f478c90a788a.tar.gz",
 )
 
 load("@hedron_compile_commands//:workspace_setup.bzl", "hedron_compile_commands_setup")
