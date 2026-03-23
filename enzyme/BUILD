@@ -150,7 +150,10 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
 )
 
@@ -175,7 +178,10 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
 )
 
@@ -198,7 +204,10 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
 )
 
@@ -238,7 +247,10 @@ cc_library(
         "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:CodeGen",
-        "@llvm-project//llvm:Core"
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
     ],
 )
 
