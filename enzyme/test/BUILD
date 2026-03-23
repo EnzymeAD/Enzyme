@@ -1,3 +1,8 @@
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:public"],
+)
+
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 # Enzyme tests.
