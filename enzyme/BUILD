@@ -338,7 +338,7 @@ cc_library(
 expand_template(
     name = "_gen_enzyme-clang",
     out = "enzyme-clang-driver.cpp",
-    substitutions = {"@TOOL_NAME@": "clang"},
+    substitutions = { "@TOOL_NAME@": "clang", "@INITLLVM_ARGS@": ", /*InstallPipeSignalExitHandler=*/true, /*NeedsPOSIXUtilitySignalHandling=*/true" },
     template = "@llvm-project//llvm:cmake/modules/llvm-driver-template.cpp.in",
 )
 
