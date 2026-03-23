@@ -2,8 +2,8 @@
 
 #include "mlir/CAPI/IR.h"
 
-#include "Enzyme/MLIR/Dialect/Dialect.h"
-#include "Enzyme/MLIR/Dialect/Ops.h"
+#include "Dialect/Dialect.h"
+#include "Dialect/Ops.h"
 
 MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
                                            EnzymeRngDistribution dist) {
