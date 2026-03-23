@@ -3475,6 +3475,8 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
+bool registerFixupJuliaPass(llvm::StringRef Name, llvm::ModulePassManager &MPM);
+
 extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
                                               bool augment = false) {
   if (augment) {
@@ -3485,6 +3487,9 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
          llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
         if (Name == "enzyme") {
           MPM.addPass(EnzymeNewPM());
+          return true;
+        }
+        if (registerFixupJuliaPass(Name, MPM)) {
           return true;
         }
         if (Name == "preserve-nvvm") {
