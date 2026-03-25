@@ -89,7 +89,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     bool strongZero, unsigned width, Function *todiff, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
     bool shadowReturn, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    bool returnTape, bool returnPrimal, Type *additionalArg, bool omp) {
+    bool returnTape, bool returnPrimal, Type *additionalArg, bool omp,
+    bool profiled) {
   Function *oldFunc = todiff;
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
@@ -108,14 +109,16 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   std::string prefix;
 
   switch (mode) {
-  case DerivativeMode::ForwardModeError:
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
     prefix = "fwddiffe";
     break;
+  case DerivativeMode::ForwardModeError:
+    prefix = "fwderr";
+    break;
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
-    prefix = "diffe";
+    prefix = profiled ? "instr" : "diffe";
     break;
   case DerivativeMode::ReverseModePrimal:
     llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
@@ -129,7 +132,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
       nonconstant_values, returnvals, returnTape, returnPrimal,
       (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn,
       prefix + oldFunc->getName(), &originalToNew,
-      /*diffeReturnArg*/ diffeReturnArg, additionalArg);
+      /*diffeReturnArg*/ diffeReturnArg, additionalArg, profiled);
 
   // Convert overwritten args from the input function to the preprocessed
   // function
@@ -165,6 +168,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
       mode, runtimeActivity, strongZero, width, omp);
+  res->profiled = profiled;
 
   return res;
 }

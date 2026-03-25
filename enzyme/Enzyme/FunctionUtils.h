@@ -95,7 +95,8 @@ public:
   std::map<std::pair<llvm::Function *, DerivativeMode>, llvm::Function *> cache;
   std::map<llvm::Function *, llvm::Function *> CloneOrigin;
 
-  llvm::Function *preprocessForClone(llvm::Function *F, DerivativeMode mode);
+  llvm::Function *preprocessForClone(llvm::Function *F, DerivativeMode mode,
+                                     bool profiled = false);
 
   llvm::AAResults &getAAResultsFromFunction(llvm::Function *NewF);
 
@@ -108,7 +109,8 @@ public:
       llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, bool returnTape,
       bool returnPrimal, bool returnShadow, const llvm::Twine &name,
       llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
-      bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
+      bool diffeReturnArg, llvm::Type *additionalArg = nullptr,
+      bool profiled = false);
 
   void ReplaceReallocs(llvm::Function *NewF, bool mem2reg = false);
   void LowerAllocAddr(llvm::Function *NewF);

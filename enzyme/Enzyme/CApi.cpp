@@ -717,7 +717,8 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
           .runtimeActivity = (bool)runtimeActivity,
-          .strongZero = (bool)strongZero},
+          .strongZero = (bool)strongZero,
+          .profiled = false},
       eunwrap(TA), eunwrap(augmented)));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(

@@ -48,6 +48,10 @@
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
 
+#ifdef ENABLE_POSEIDON
+#include "Poseidon/Poseidon.h"
+#endif
+
 #define DEBUG_TYPE "enzyme"
 
 // Helper instruction visitor that generates adjoints
@@ -4610,7 +4614,8 @@ public:
                 .forceAnonymousTape = false,
                 .typeInfo = nextTypeInfo,
                 .runtimeActivity = gutils->runtimeActivity,
-                .strongZero = gutils->strongZero},
+                .strongZero = gutils->strongZero,
+                .profiled = gutils->profiled},
             TR.analyzer->interprocedural, subdata,
             /*omp*/ true);
 
@@ -5989,7 +5994,8 @@ public:
               .forceAnonymousTape = false,
               .typeInfo = nextTypeInfo,
               .runtimeActivity = gutils->runtimeActivity,
-              .strongZero = gutils->strongZero},
+              .strongZero = gutils->strongZero,
+              .profiled = gutils->profiled},
           TR.analyzer->interprocedural, subdata);
       if (!newcalled)
         return;
