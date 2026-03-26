@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -fpprofile-generate -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -fpprofile-generate -S | FileCheck %s
+; REQUIRES: poseidon
 
 ; CHECK: @ENZYME_FPPROFILE_RUNTIME_VAR = external global i32
 ; CHECK: @fpprofiled_preprocess_test_maxnum_zero = private unnamed_addr constant [28 x i8] c"preprocess_test_maxnum_zero\00", align 1

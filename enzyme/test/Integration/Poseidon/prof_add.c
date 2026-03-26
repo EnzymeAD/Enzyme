@@ -4,6 +4,7 @@
 // RUN: %clang++ %t.o %FPProfileLib -lstdc++ -lm -o %t.exe
 // RUN: rm -rf %t.profiles && ENZYME_FPPROFILE_DIR=%t.profiles %t.exe
 // RUN: cat %t.profiles/preprocess_tester.fpprofile | FileCheck %s
+// REQUIRES: poseidon
 
 #include <stdio.h>
 

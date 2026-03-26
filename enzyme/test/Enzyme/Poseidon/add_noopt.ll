@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s -dump-input=always
+; REQUIRES: poseidon
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {

@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -fpprofile-use=%S/Inputs/fma_opt_profiles -fpopt-enable-herbie=false -fpopt-enable-pt=false -fpopt-enable-solver=false -fpopt-cache-path= -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -fpprofile-use=%S/Inputs/fma_opt_profiles -fpopt-enable-herbie=false -fpopt-enable-pt=false -fpopt-enable-solver=false -fpopt-cache-path= -S | FileCheck %s
+; REQUIRES: poseidon
 
 ; Opt phase with no Herbie/PT: __enzyme_fp_optimize lowers to preprocess_tester call.
 

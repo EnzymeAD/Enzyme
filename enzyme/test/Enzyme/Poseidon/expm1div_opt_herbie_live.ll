@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -fpprofile-use=%S/Inputs/expm1div_profiles -fpopt-enable-herbie=true -fpopt-enable-pt=false -fpopt-enable-solver=false -fpopt-cache-path= -fpopt-print -S 2>&1 | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -fpprofile-use=%S/Inputs/expm1div_profiles -fpopt-enable-herbie=true -fpopt-enable-pt=false -fpopt-enable-solver=false -fpopt-cache-path= -fpopt-print -S 2>&1 | FileCheck %s
+; REQUIRES: poseidon
 
 ; Live Herbie on (exp(x) - 1) / x: verifies expm1 candidate is produced.
 

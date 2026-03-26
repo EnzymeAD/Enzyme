@@ -117,7 +117,10 @@ config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) <
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
 config.substitutions.append(('%hasMPFR', has_mpfr))
-config.substitutions.append(('%FPProfileLib', '@ENZYME_BINARY_DIR@/Enzyme/libEnzymeFPProfile.a'))
+
+if "@ENABLE_POSEIDON@" == "1":
+    config.available_features.add('poseidon')
+    config.substitutions.append(('%FPProfileLib', '@ENZYME_BINARY_DIR@/Enzyme/libEnzymeFPProfile.a'))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
