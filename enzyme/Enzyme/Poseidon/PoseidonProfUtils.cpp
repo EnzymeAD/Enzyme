@@ -43,11 +43,16 @@ void parseProfileFile(const std::string &profilePath,
   std::string line;
   std::regex indexPattern(R"(^(\d+)$)");
 
-  std::regex minResPattern(R"(^\s*MinRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex maxResPattern(R"(^\s*MaxRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumValuePattern(R"(^\s*SumValue\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumSensPattern(R"(^\s*SumSens\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumGradPattern(R"(^\s*SumGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex minResPattern(
+      R"(^\s*MinRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex maxResPattern(
+      R"(^\s*MaxRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumValuePattern(
+      R"(^\s*SumValue\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumSensPattern(
+      R"(^\s*SumSens\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumGradPattern(
+      R"(^\s*SumGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
   std::regex execPattern(R"(^\s*Exec\s*=\s*(\d+))");
   std::regex numOperandsPattern(R"(^\s*NumOperands\s*=\s*(\d+))");
   std::regex operandPattern(
