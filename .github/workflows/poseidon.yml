@@ -19,7 +19,7 @@ jobs:
         build: ["Release", "Debug"]
         os: [ubuntu-22.04]
   
-    timeout-minutes: 30
+    timeout-minutes: 60
     
     steps:
     - name: Install dependencies
@@ -27,8 +27,12 @@ jobs:
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get update
-          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev racket
+          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
           sudo python3 -m pip install --upgrade pip lit
+    - name: Install Racket
+      uses: Bogdanp/setup-racket@v1.12
+      with:
+        version: '8.15'
     - uses: actions/checkout@v4
     - name: mkdir
       run: rm -rf build && mkdir build
