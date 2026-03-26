@@ -41,6 +41,6 @@ jobs:
     - name: make check-poseidon
       working-directory: build
       run: make -j `nproc` check-poseidon
-    - name: make check-enzyme-integration
+    - name: make check-poseidon-integration
       working-directory: build
-      run: make -j3 check-enzyme-integration
+      run: make -j3 check-poseidon-integration
