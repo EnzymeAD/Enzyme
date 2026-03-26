@@ -321,6 +321,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
             break;
           case Intrinsic::tanh:
             OpcodeName = "tanh";
+            break;
 #endif
           case Intrinsic::exp:
             OpcodeName = "exp";
