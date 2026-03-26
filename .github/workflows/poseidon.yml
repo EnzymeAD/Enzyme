@@ -31,7 +31,7 @@ jobs:
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get update
-          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libclang-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
+          sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
           sudo python3 -m pip install --upgrade pip lit
 
     - name: Install Racket
