@@ -732,18 +732,21 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto adaptedMassMatrixSqrt =
           computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
+      bool strongZero = mcmcOp.getStrongZero();
+
       auto makeHMCContext = [&](Value currentInvMass,
                                 Value currentMassMatrixSqrt,
                                 Value currentStepSize) -> HMCContext {
         if (hasLogpdfFn) {
           return HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
                             currentMassMatrixSqrt, currentStepSize,
-                            trajectoryLength, positionSize);
+                            trajectoryLength, positionSize, strongZero);
         } else {
-          return HMCContext(
-              mcmcOp.getFnAttr(), fnInputs, fnResultTypes, originalTrace,
-              selection, allAddresses, currentInvMass, currentMassMatrixSqrt,
-              currentStepSize, trajectoryLength, positionSize, supports);
+          return HMCContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
+                            originalTrace, selection, allAddresses,
+                            currentInvMass, currentMassMatrixSqrt,
+                            currentStepSize, trajectoryLength, positionSize,
+                            supports, strongZero);
         }
       };
 
@@ -753,13 +756,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (hasLogpdfFn) {
           return NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
                              currentMassMatrixSqrt, currentStepSize,
-                             positionSize, U, maxDeltaEnergy, maxTreeDepth);
+                             positionSize, U, maxDeltaEnergy, maxTreeDepth,
+                             strongZero);
         } else {
           return NUTSContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                              originalTrace, selection, allAddresses,
                              currentInvMass, currentMassMatrixSqrt,
                              currentStepSize, positionSize, supports, U,
-                             maxDeltaEnergy, maxTreeDepth);
+                             maxDeltaEnergy, maxTreeDepth, strongZero);
         }
       };
 

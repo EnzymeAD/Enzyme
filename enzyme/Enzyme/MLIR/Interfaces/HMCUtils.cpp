@@ -372,7 +372,8 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
                                      enzyme::Activity::enzyme_active),
            enzyme::ActivityAttr::get(builder.getContext(),
                                      enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
+      builder.getI64IntegerAttr(1), builder.getBoolAttr(ctx.strongZero),
+      nullptr);
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
   autodiffBlock->addArgument(positionType, loc);
@@ -749,7 +750,8 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
                                      enzyme::Activity::enzyme_active),
            enzyme::ActivityAttr::get(builder.getContext(),
                                      enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
+      builder.getI64IntegerAttr(1), builder.getBoolAttr(ctx.strongZero),
+      nullptr);
 
   Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
   autodiffInitBlock->addArgument(positionType, loc);
