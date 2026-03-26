@@ -655,8 +655,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         logpdfFnAttr = mcmcOp.getLogpdfFnAttr();
         fnInputs.assign(inputs.begin() + 1, inputs.end());
         auto initialPos = mcmcOp.getInitialPosition();
-        positionSize =
-            cast<RankedTensorType>(initialPos.getType()).getShape()[1];
+        auto initPosType = cast<RankedTensorType>(initialPos.getType());
+        positionSize = initPosType.getNumElements();
         selection = mcmcOp.getSelectionAttr();
         allAddresses = mcmcOp.getAllAddressesAttr();
       } else {
