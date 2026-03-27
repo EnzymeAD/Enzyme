@@ -732,7 +732,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto adaptedMassMatrixSqrt =
           computeMassMatrixSqrt(rewriter, loc, adaptedInvMass, positionType);
 
-      bool strongZero = mcmcOp.getStrongZero();
+      auto autodiffAttrs = mcmcOp.getAutodiffAttrsAttr();
 
       auto makeHMCContext = [&](Value currentInvMass,
                                 Value currentMassMatrixSqrt,
@@ -740,13 +740,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (hasLogpdfFn) {
           return HMCContext(logpdfFnAttr, fnInputs, currentInvMass,
                             currentMassMatrixSqrt, currentStepSize,
-                            trajectoryLength, positionSize, strongZero);
+                            trajectoryLength, positionSize, autodiffAttrs);
         } else {
           return HMCContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                             originalTrace, selection, allAddresses,
                             currentInvMass, currentMassMatrixSqrt,
                             currentStepSize, trajectoryLength, positionSize,
-                            supports, strongZero);
+                            supports, autodiffAttrs);
         }
       };
 
@@ -757,13 +757,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           return NUTSContext(logpdfFnAttr, fnInputs, currentInvMass,
                              currentMassMatrixSqrt, currentStepSize,
                              positionSize, U, maxDeltaEnergy, maxTreeDepth,
-                             strongZero);
+                             autodiffAttrs);
         } else {
           return NUTSContext(mcmcOp.getFnAttr(), fnInputs, fnResultTypes,
                              originalTrace, selection, allAddresses,
                              currentInvMass, currentMassMatrixSqrt,
                              currentStepSize, positionSize, supports, U,
-                             maxDeltaEnergy, maxTreeDepth, strongZero);
+                             maxDeltaEnergy, maxTreeDepth, autodiffAttrs);
         }
       };
 

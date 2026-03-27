@@ -20,7 +20,7 @@ module {
     %res:8 = "enzyme.mcmc"(%rng, %step_size, %init_pos) {
       logpdf_fn = @logpdf,
       nuts_config = #enzyme.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-      strong_zero = true,
+      autodiff_attrs = {strong_zero = true},
       name = "nuts_strong_zero",
       selection = [],
       all_addresses = [],
@@ -66,7 +66,7 @@ module {
     %res:8 = "enzyme.mcmc"(%rng, %step_size, %init_pos) {
       logpdf_fn = @logpdf,
       hmc_config = #enzyme.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_step_size = false, adapt_mass_matrix = false>,
-      strong_zero = true,
+      autodiff_attrs = {strong_zero = true},
       name = "hmc_strong_zero",
       selection = [],
       all_addresses = [],

@@ -109,30 +109,31 @@ struct HMCContext {
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
-  bool strongZero = false;
+  DictionaryAttr autodiffAttrs;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              ArrayRef<Type> fnResultTypes, Value originalTrace,
              ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
              Value massMatrixSqrt, Value stepSize, Value trajectoryLength,
              int64_t positionSize, ArrayRef<SupportInfo> supports,
-             bool strongZero = false)
+             DictionaryAttr autodiffAttrs = {})
       : fn(fn), fnInputs(fnInputs),
         fnResultTypes(fnResultTypes.begin(), fnResultTypes.end()),
         originalTrace(originalTrace), selection(selection),
         allAddresses(allAddresses), invMass(invMass),
         massMatrixSqrt(massMatrixSqrt), stepSize(stepSize),
         trajectoryLength(trajectoryLength), positionSize(positionSize),
-        supports(supports.begin(), supports.end()), strongZero(strongZero) {}
+        supports(supports.begin(), supports.end()),
+        autodiffAttrs(autodiffAttrs) {}
 
   HMCContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
              Value invMass, Value massMatrixSqrt, Value stepSize,
              Value trajectoryLength, int64_t positionSize,
-             bool strongZero = false)
+             DictionaryAttr autodiffAttrs = {})
       : fnInputs(fnInputs), invMass(invMass), massMatrixSqrt(massMatrixSqrt),
         stepSize(stepSize), trajectoryLength(trajectoryLength),
-        positionSize(positionSize), logpdfFn(logpdfFn), strongZero(strongZero) {
-  }
+        positionSize(positionSize), logpdfFn(logpdfFn),
+        autodiffAttrs(autodiffAttrs) {}
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
 
@@ -178,20 +179,20 @@ struct NUTSContext : public HMCContext {
               ArrayAttr selection, ArrayAttr allAddresses, Value invMass,
               Value massMatrixSqrt, Value stepSize, int64_t positionSize,
               ArrayRef<SupportInfo> supports, Value H0, Value maxDeltaEnergy,
-              int64_t maxTreeDepth, bool strongZero = false)
+              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
       : HMCContext(fn, fnInputs, fnResultTypes, originalTrace, selection,
                    allAddresses, invMass, massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize,
-                   supports, strongZero),
+                   supports, autodiffAttrs),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
 
   NUTSContext(FlatSymbolRefAttr logpdfFn, ArrayRef<Value> fnInputs,
               Value invMass, Value massMatrixSqrt, Value stepSize,
               int64_t positionSize, Value H0, Value maxDeltaEnergy,
-              int64_t maxTreeDepth, bool strongZero = false)
+              int64_t maxTreeDepth, DictionaryAttr autodiffAttrs = {})
       : HMCContext(logpdfFn, fnInputs, invMass, massMatrixSqrt, stepSize,
                    /* Unused trajectoryLength */ Value(), positionSize,
-                   strongZero),
+                   autodiffAttrs),
         H0(H0), maxDeltaEnergy(maxDeltaEnergy), maxTreeDepth(maxTreeDepth) {}
 
   NUTSContext withH0(Value newH0) const {

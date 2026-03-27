@@ -374,18 +374,26 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
   }
 
   SmallVector<Value> autodiffInputs{autodiffPosition, gradSeed};
+  SmallVector<NamedAttribute> adAttrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr({enzyme::ActivityAttr::get(
+              builder.getContext(), enzyme::Activity::enzyme_active)})),
+      builder.getNamedAttr(
+          "ret_activity",
+          builder.getArrayAttr(
+              {enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_active),
+               enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_const)})),
+  };
+  if (ctx.autodiffAttrs) {
+    for (auto attr : ctx.autodiffAttrs)
+      adAttrs.push_back(attr);
+  }
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
       builder, loc, TypeRange{scalarType, rng.getType(), autodiffGradType},
-      autodiffInputs,
-      builder.getArrayAttr({enzyme::ActivityAttr::get(
-          builder.getContext(), enzyme::Activity::enzyme_active)}),
-      builder.getArrayAttr(
-          {enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_active),
-           enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(ctx.strongZero),
-      nullptr);
+      autodiffInputs, adAttrs);
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
   autodiffBlock->addArgument(autodiffPositionType, loc);
@@ -769,19 +777,27 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
   SmallVector<Value> autodiffInputs{autodiffQ0, gradSeedInit};
+  SmallVector<NamedAttribute> adInitAttrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr({enzyme::ActivityAttr::get(
+              builder.getContext(), enzyme::Activity::enzyme_active)})),
+      builder.getNamedAttr(
+          "ret_activity",
+          builder.getArrayAttr(
+              {enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_active),
+               enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_const)})),
+  };
+  if (ctx.autodiffAttrs) {
+    for (auto attr : ctx.autodiffAttrs)
+      adInitAttrs.push_back(attr);
+  }
   auto autodiffInit = enzyme::AutoDiffRegionOp::create(
       builder, loc,
       TypeRange{scalarType, rngForAutodiff.getType(), autodiffGradType},
-      autodiffInputs,
-      builder.getArrayAttr({enzyme::ActivityAttr::get(
-          builder.getContext(), enzyme::Activity::enzyme_active)}),
-      builder.getArrayAttr(
-          {enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_active),
-           enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(ctx.strongZero),
-      nullptr);
+      autodiffInputs, adInitAttrs);
 
   Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
   autodiffInitBlock->addArgument(autodiffQ0Type, loc);
