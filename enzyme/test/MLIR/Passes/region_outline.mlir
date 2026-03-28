@@ -68,6 +68,30 @@ llvm.func internal @d_Z6squarePfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !l
 
 // -----
 
+llvm.func @_Z4copyPfS_(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
+  %0 = llvm.load %arg0 {alignment = 4 : i64} : !llvm.ptr -> f32
+  llvm.store %0, %arg1 {alignment = 4 : i64} : f32, !llvm.ptr
+  llvm.return
+}
+
+llvm.func @test_llvm_outline(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: !llvm.ptr, %arg3: !llvm.ptr) {
+  enzyme.autodiff_region(%arg0, %arg1, %arg2, %arg3) {
+  ^bb0(%a: !llvm.ptr, %b: !llvm.ptr):
+    %0 = llvm.load %a {alignment = 4 : i64} : !llvm.ptr -> f32
+    llvm.store %0, %b {alignment = 4 : i64} : f32, !llvm.ptr
+    enzyme.yield
+  } attributes {activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_dup>], fn = "_Z4copyPfS_", ret_activity = []} : (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> ()
+  llvm.return
+}
+
+// CHECK: llvm.func @test_llvm_outline_to_diff0(%arg0: !llvm.ptr, %arg1: !llvm.ptr) {
+// CHECK-NEXT:   %[[V:.*]] = llvm.load %arg0 {alignment = 4 : i64} : !llvm.ptr -> f32
+// CHECK-NEXT:   llvm.store %[[V]], %arg1 {alignment = 4 : i64} : f32, !llvm.ptr
+// CHECK-NEXT:   llvm.return
+// CHECK-NEXT: }
+
+// -----
+
 func.func @outline_multi(%x: f64, %dr: f64) -> (f64, f64) {
   %r0 = enzyme.autodiff_region(%x, %dr) {
   ^bb0(%arg0: f64):

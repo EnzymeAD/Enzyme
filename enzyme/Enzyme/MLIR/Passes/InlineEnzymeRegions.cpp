@@ -149,7 +149,7 @@ struct InlineEnzymeForwardDiff
 // Based on
 // https://github.com/llvm/llvm-project/blob/665da0a1649814471739c41a702e0e9447316b20/mlir/lib/Dialect/GPU/Transforms/KernelOutlining.cpp
 template <typename DiffRegionOp>
-static FailureOr<func::FuncOp> outlineAutoDiffFunc(
+static FailureOr<FunctionOpInterface> outlineAutoDiffFunc(
     DiffRegionOp op, StringRef funcName, SmallVectorImpl<Value> &inputs,
     SmallVectorImpl<enzyme::Activity> &argActivities, OpBuilder &builder) {
   Region &autodiffRegion = op.getBody();
@@ -191,14 +191,37 @@ static FailureOr<func::FuncOp> outlineAutoDiffFunc(
       argActivities.push_back(enzyme::Activity::enzyme_const);
     }
   }
-  auto fnType = builder.getFunctionType(argTypes, resultTypes);
 
   // FIXME: making this location the location of the
   // enzyme.autodiff_region op causes translation to LLVM IR to fail due
   // to some issue with the dbg info.
   Location loc = UnknownLoc::get(op.getContext());
-  auto outlinedFunc = func::FuncOp::create(builder, loc, funcName, fnType);
-  Region &outlinedBody = outlinedFunc.getBody();
+
+  // Determine whether to outline as llvm.func or func.func
+  bool useLLVM = false;
+  if (auto parentModule = op->template getParentOfType<ModuleOp>())
+    if (auto *origFn = parentModule.lookupSymbol(op.getFn()))
+      useLLVM = dyn_cast<LLVM::LLVMFuncOp>(origFn) != nullptr;
+
+  FunctionOpInterface outlinedFunc;
+  if (useLLVM) {
+    Type llvmRetTy;
+    if (resultTypes.empty())
+      llvmRetTy = LLVM::LLVMVoidType::get(builder.getContext());
+    else if (resultTypes.size() == 1)
+      llvmRetTy = resultTypes[0];
+    else
+      llvmRetTy =
+          LLVM::LLVMStructType::getLiteral(builder.getContext(), resultTypes);
+    auto llvmFnTy = LLVM::LLVMFunctionType::get(llvmRetTy, argTypes);
+    outlinedFunc =
+        LLVM::LLVMFuncOp::create(builder, loc, funcName, llvmFnTy);
+  } else {
+    auto fnType = builder.getFunctionType(argTypes, resultTypes);
+    outlinedFunc = func::FuncOp::create(builder, loc, funcName, fnType);
+  }
+
+  Region &outlinedBody = outlinedFunc.getFunctionBody();
   deserializeFunctionAttributes(op, outlinedFunc, freeValues.size());
 
   // Copy over the function body.
@@ -213,15 +236,19 @@ static FailureOr<func::FuncOp> outlineAutoDiffFunc(
             entryBlock->getArgument(originalArgCount + operand.index()));
   autodiffRegion.cloneInto(&outlinedBody, map);
 
-  // Replace the terminators with returns
+  // Replace the terminators with returns appropriate for the function type.
   for (Block &block : autodiffRegion) {
     Block *clonedBlock = map.lookup(&block);
     auto terminator = dyn_cast<enzyme::YieldOp>(clonedBlock->getTerminator());
     if (!terminator)
       continue;
     OpBuilder replacer(terminator);
-    func::ReturnOp::create(replacer, terminator->getLoc(),
-                           terminator->getOperands());
+    if (useLLVM)
+      LLVM::ReturnOp::create(replacer, terminator->getLoc(),
+                             terminator->getOperands());
+    else
+      func::ReturnOp::create(replacer, terminator->getLoc(),
+                             terminator->getOperands());
     terminator->erase();
   }
 
@@ -265,7 +292,7 @@ LogicalResult outlineEnzymeAutoDiffRegion(enzyme::AutoDiffRegionOp op,
   // 1. primals and duplicated argument shadows
   // 2. free variables
   // 3. return variable shadows (a.k.a. seeds)
-  FailureOr<func::FuncOp> outlinedFunc = outlineAutoDiffFunc(
+  FailureOr<FunctionOpInterface> outlinedFunc = outlineAutoDiffFunc(
       op, funcName, primalsAndShadows, argActivities, builder);
   if (failed(outlinedFunc))
     return failure();
@@ -303,7 +330,7 @@ LogicalResult outlineEnzymeForwardDiffRegion(enzyme::ForwardDiffRegionOp op,
   // The final input ordering should be:
   // 1. primals and duplicated argument shadows
   // 2. free variables
-  FailureOr<func::FuncOp> outlinedFunc = outlineAutoDiffFunc(
+  FailureOr<FunctionOpInterface> outlinedFunc = outlineAutoDiffFunc(
       op, funcName, primalsAndShadows, argActivities, builder);
   if (failed(outlinedFunc))
     return failure();
