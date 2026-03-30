@@ -1170,8 +1170,9 @@ B2:
     // User-selected rewrites: parse IDs and apply the specified candidates.
     // IDs are R{coIdx}_{candIdx} for rewrites, PT{csIdx}_{candIdx} for PT.
     SmallVector<StringRef> ids;
-    StringRef(FPOptApplyRewrites).split(ids, ',', /*MaxSplit=*/-1,
-                                        /*KeepEmpty=*/false);
+    StringRef(FPOptApplyRewrites)
+        .split(ids, ',', /*MaxSplit=*/-1,
+               /*KeepEmpty=*/false);
 
     // Track which CO/CS has been applied to enforce at-most-one constraint
     SmallDenseSet<size_t> appliedCOs, appliedCSs;
@@ -1183,7 +1184,8 @@ B2:
         auto rest = id.drop_front(1);
         auto [coStr, candStr] = rest.split('_');
         size_t coIdx, candIdx;
-        if (coStr.getAsInteger(10, coIdx) || candStr.getAsInteger(10, candIdx)) {
+        if (coStr.getAsInteger(10, coIdx) ||
+            candStr.getAsInteger(10, candIdx)) {
           llvm::errs() << "FPOpt: Invalid rewrite ID '" << id << "'\n";
           continue;
         }
@@ -1213,7 +1215,8 @@ B2:
         auto rest = id.drop_front(2);
         auto [csStr, candStr] = rest.split('_');
         size_t csIdx, candIdx;
-        if (csStr.getAsInteger(10, csIdx) || candStr.getAsInteger(10, candIdx)) {
+        if (csStr.getAsInteger(10, csIdx) ||
+            candStr.getAsInteger(10, candIdx)) {
           llvm::errs() << "FPOpt: Invalid PT ID '" << id << "'\n";
           continue;
         }
