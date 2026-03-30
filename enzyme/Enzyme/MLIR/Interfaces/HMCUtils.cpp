@@ -64,8 +64,8 @@ SmallVector<Type> NUTSTreeState::getTypes() const {
 Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
                                StringRef label, bool debugDump) {
   if (debugDump) {
-    return impulse::DumpOp::create(builder, loc, value.getType(), value,
-                                   builder.getStringAttr(label))
+    return enzyme::DumpOp::create(builder, loc, value.getType(), value,
+                                  builder.getStringAttr(label))
         .getOutput();
   }
   return value;

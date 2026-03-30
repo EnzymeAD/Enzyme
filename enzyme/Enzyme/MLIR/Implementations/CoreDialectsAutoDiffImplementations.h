@@ -263,7 +263,6 @@ void registerMathDialectAutoDiffInterface(DialectRegistry &registry);
 void registerFuncDialectAutoDiffInterface(DialectRegistry &registry);
 void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
 void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
-void registerImpulseDialectAutoDiffInterface(DialectRegistry &registry);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 

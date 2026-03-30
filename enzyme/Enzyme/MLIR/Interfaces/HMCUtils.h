@@ -227,7 +227,7 @@ struct SubtreeBuildResult {
 };
 
 /// Conditionally dump a value for debugging.
-/// Emits an impulse::DumpOp if `debugDump` is true; otherwise has no effect.
+/// Emits an enzyme::DumpOp if `debugDump` is true; otherwise has no effect.
 Value conditionalDump(OpBuilder &builder, Location loc, Value value,
                       StringRef label, bool debugDump);
 

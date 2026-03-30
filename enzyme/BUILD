@@ -943,17 +943,6 @@ gentbl_cc_library(
     deps = [":ImplementationsCommonTdFiles"],
 )
 
-gentbl_cc_library(
-    name = "impulse-derivatives",
-    strip_include_prefix = "Enzyme/MLIR",
-    tbl_outs = [(
-        ["-gen-mlir-derivatives"],
-        "Enzyme/MLIR/Implementations/ImpulseDerivatives.inc",
-    )],
-    tblgen = ":enzyme-tblgen",
-    td_file = "Enzyme/MLIR/Implementations/ImpulseDerivatives.td",
-    deps = [":ImplementationsCommonTdFiles"],
-)
 
 cc_library(
     name = "EnzymeMLIR",
@@ -1000,7 +989,6 @@ cc_library(
         ":cf-derivatives",
         ":complex-derivatives",
         ":enzyme-derivatives",
-        ":impulse-derivatives",
         ":func-derivatives",
         ":linalg-derivatives",
         ":llvm-derivatives",
