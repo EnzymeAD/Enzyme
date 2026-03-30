@@ -1,7 +1,7 @@
-#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Dialect.h"
-#include "mlir/IR/DialectImplementation.h"
+#include "Dialect/Impulse/Impulse.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "Dialect/Impulse/ImpulseEnums.cpp.inc"

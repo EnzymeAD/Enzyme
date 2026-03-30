@@ -61,7 +61,7 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
         mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), upperBound);
 
   return wrap(mlir::impulse::SupportAttr::get(mlirCtx, supportKind, lowerAttr,
-                                             upperAttr));
+                                              upperAttr));
 }
 
 MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
@@ -70,8 +70,8 @@ MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
 
-  return wrap(mlir::impulse::HMCConfigAttr::get(mlirCtx, trajectoryLengthAttr,
-                                               adaptStepSize, adaptMassMatrix));
+  return wrap(mlir::impulse::HMCConfigAttr::get(
+      mlirCtx, trajectoryLengthAttr, adaptStepSize, adaptMassMatrix));
 }
 
 MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,

@@ -24,10 +24,12 @@ namespace enzyme {
 namespace transforms {
 
 /// Get the unconstrained size given a constrained size and support kind.
-int64_t getUnconstrainedSize(int64_t constrainedSize, impulse::SupportKind kind);
+int64_t getUnconstrainedSize(int64_t constrainedSize,
+                             impulse::SupportKind kind);
 
 /// Get the constrained size given an unconstrained size and support kind.
-int64_t getConstrainedSize(int64_t unconstrainedSize, impulse::SupportKind kind);
+int64_t getConstrainedSize(int64_t unconstrainedSize,
+                           impulse::SupportKind kind);
 
 /// Transform from constrained to unconstrained space.
 Value unconstrain(OpBuilder &builder, Location loc, Value constrained,
