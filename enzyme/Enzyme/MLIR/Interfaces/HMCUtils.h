@@ -11,6 +11,7 @@
 #ifndef ENZYME_MLIR_INTERFACES_HMC_UTILS_H
 #define ENZYME_MLIR_INTERFACES_HMC_UTILS_H
 
+#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/TransformUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -22,17 +23,16 @@
 #include "mlir/IR/Value.h"
 
 namespace mlir {
-namespace enzyme {
-namespace MCMC {
+namespace impulse {
 
 struct SupportInfo {
   int64_t offset;
   int64_t traceOffset;
   int64_t size;
-  enzyme::SupportAttr support;
+  impulse::SupportAttr support;
 
   SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
-              enzyme::SupportAttr support)
+              impulse::SupportAttr support)
       : offset(offset), traceOffset(traceOffset), size(size), support(support) {
   }
 };
@@ -156,7 +156,7 @@ struct HMCContext {
 
   bool hasConstrainedSupports() const {
     for (const auto &info : supports) {
-      if (info.support && info.support.getKind() != enzyme::SupportKind::REAL)
+      if (info.support && info.support.getKind() != impulse::SupportKind::REAL)
         return true;
     }
     return false;
@@ -227,7 +227,7 @@ struct SubtreeBuildResult {
 };
 
 /// Conditionally dump a value for debugging.
-/// Emits an enzyme::DumpOp if `debugDump` is true; otherwise has no effect.
+/// Emits an impulse::DumpOp if `debugDump` is true; otherwise has no effect.
 Value conditionalDump(OpBuilder &builder, Location loc, Value value,
                       StringRef label, bool debugDump);
 
@@ -460,8 +460,7 @@ Value constrainPosition(OpBuilder &builder, Location loc, Value unconstrained,
 Value computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
                                      Value unconstrained,
                                      ArrayRef<SupportInfo> supports);
-} // namespace MCMC
-} // namespace enzyme
+} // namespace impulse
 } // namespace mlir
 
 #endif // ENZYME_MLIR_INTERFACES_HMC_UTILS_H

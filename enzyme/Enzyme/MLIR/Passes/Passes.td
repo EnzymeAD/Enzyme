@@ -44,6 +44,7 @@ def ProbProgPass : Pass<"probprog"> {
     "arith::ArithDialect",
     "complex::ComplexDialect",
     "enzyme::EnzymeDialect",
+    "impulse::ImpulseDialect",
   ];
   let options = [
     Option<
