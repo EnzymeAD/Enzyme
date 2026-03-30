@@ -80,15 +80,14 @@ A preconfigured Docker image is also available; see the [CGO artifact repository
 
 ### Generate the Cost Model
 
-The cost model (`cm.csv`) is hardware-specific. To generate it for your machine:
+The cost model (`cm.csv`) is hardware-specific. A benchmarking script is provided at `Poseidon/scripts/microbm.py`. To generate the cost model for your machine:
 
 ```bash
-cd cost-model
-python3 microbm.py
+python3 <enzyme-src>/Enzyme/Poseidon/scripts/microbm.py
 cp results.csv cm.csv
 ```
 
-Then pass `--fpopt-cost-model-path=<...>/cost-model/cm.csv` during the optimization phase. Without a cost model, Poseidon falls back to LLVM's `TargetTransformInfo` estimates.
+Then pass `--fpopt-cost-model-path=cm.csv` during the optimization phase. An example cost model (generated on AMD Ryzen Threadripper PRO 7995WX) is provided at `Poseidon/scripts/cm_example.csv` for reference. Without a cost model, Poseidon falls back to LLVM's `TargetTransformInfo` estimates.
 
 ## Two-Phase Pipeline
 
