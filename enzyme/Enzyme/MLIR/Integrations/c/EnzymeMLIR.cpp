@@ -3,23 +3,24 @@
 #include "mlir/CAPI/IR.h"
 
 #include "Dialect/Dialect.h"
+#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 
 MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
                                            EnzymeRngDistribution dist) {
-  mlir::enzyme::RngDistribution rngDist;
+  mlir::impulse::RngDistribution rngDist;
   switch (dist) {
   case EnzymeRngDistribution_Uniform:
-    rngDist = mlir::enzyme::RngDistribution::UNIFORM;
+    rngDist = mlir::impulse::RngDistribution::UNIFORM;
     break;
   case EnzymeRngDistribution_Normal:
-    rngDist = mlir::enzyme::RngDistribution::NORMAL;
+    rngDist = mlir::impulse::RngDistribution::NORMAL;
     break;
   case EnzymeRngDistribution_MultiNormal:
-    rngDist = mlir::enzyme::RngDistribution::MULTINORMAL;
+    rngDist = mlir::impulse::RngDistribution::MULTINORMAL;
     break;
   }
-  return wrap(mlir::enzyme::RngDistributionAttr::get(unwrap(ctx), rngDist));
+  return wrap(mlir::impulse::RngDistributionAttr::get(unwrap(ctx), rngDist));
 }
 
 MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
@@ -27,25 +28,25 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
                                    bool hasUpperBound, double upperBound) {
   auto *mlirCtx = unwrap(ctx);
 
-  mlir::enzyme::SupportKind supportKind;
+  mlir::impulse::SupportKind supportKind;
   switch (kind) {
   case EnzymeSupportKind_Real:
-    supportKind = mlir::enzyme::SupportKind::REAL;
+    supportKind = mlir::impulse::SupportKind::REAL;
     break;
   case EnzymeSupportKind_Positive:
-    supportKind = mlir::enzyme::SupportKind::POSITIVE;
+    supportKind = mlir::impulse::SupportKind::POSITIVE;
     break;
   case EnzymeSupportKind_UnitInterval:
-    supportKind = mlir::enzyme::SupportKind::UNIT_INTERVAL;
+    supportKind = mlir::impulse::SupportKind::UNIT_INTERVAL;
     break;
   case EnzymeSupportKind_Interval:
-    supportKind = mlir::enzyme::SupportKind::INTERVAL;
+    supportKind = mlir::impulse::SupportKind::INTERVAL;
     break;
   case EnzymeSupportKind_GreaterThan:
-    supportKind = mlir::enzyme::SupportKind::GREATER_THAN;
+    supportKind = mlir::impulse::SupportKind::GREATER_THAN;
     break;
   case EnzymeSupportKind_LessThan:
-    supportKind = mlir::enzyme::SupportKind::LESS_THAN;
+    supportKind = mlir::impulse::SupportKind::LESS_THAN;
     break;
   }
 
@@ -59,7 +60,7 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
     upperAttr =
         mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), upperBound);
 
-  return wrap(mlir::enzyme::SupportAttr::get(mlirCtx, supportKind, lowerAttr,
+  return wrap(mlir::impulse::SupportAttr::get(mlirCtx, supportKind, lowerAttr,
                                              upperAttr));
 }
 
@@ -69,7 +70,7 @@ MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
 
-  return wrap(mlir::enzyme::HMCConfigAttr::get(mlirCtx, trajectoryLengthAttr,
+  return wrap(mlir::impulse::HMCConfigAttr::get(mlirCtx, trajectoryLengthAttr,
                                                adaptStepSize, adaptMassMatrix));
 }
 
@@ -84,11 +85,11 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
     maxDeltaEnergyAttr =
         mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), maxDeltaEnergy);
 
-  return wrap(mlir::enzyme::NUTSConfigAttr::get(
+  return wrap(mlir::impulse::NUTSConfigAttr::get(
       mlirCtx, maxTreeDepth, maxDeltaEnergyAttr, adaptStepSize,
       adaptMassMatrix));
 }
 
 MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
-  return wrap(mlir::enzyme::SymbolAttr::get(unwrap(ctx), ptr));
+  return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
 }
