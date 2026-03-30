@@ -1,6 +1,6 @@
 add_mlir_dialect(ImpulseOps impulse)
-add_mlir_doc(ImpulseDialect -gen-dialect-doc ImpulseDialect Enzyme/)
-add_mlir_doc(ImpulseOps -gen-op-doc ImpulseOps Enzyme/)
+add_mlir_doc(Dialect ImpulseDialect Impulse/ -gen-dialect-doc)
+add_mlir_doc(ImpulseOps ImpulseOps Impulse/ -gen-op-doc)
 
 set(LLVM_TARGET_DEFINITIONS ImpulseOps.td)
 mlir_tablegen(ImpulseAttributeInterfaces.h.inc -gen-attr-interface-decls)
