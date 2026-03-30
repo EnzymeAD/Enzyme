@@ -1,12 +1,10 @@
 # Poseidon
 
-Poseidon is a modular and extensible framework that fully automates floating-point optimizations for real-world applications within a production compiler. It operates as an LLVM pass inside [Enzyme](https://enzyme.mit.edu/) and uses a PGO-like two-phase compilation to automatically extract numerical context (value ranges, sensitivities) from small surrogate profiling runs. It then synthesizes algebraic rewrites via [Herbie](https://herbie.uwplse.org/), generates precision tuning candidates, and uses a dynamic programming solver to find Pareto-optimal combinations that trade off computation cost against numerical accuracy.
-
-Unlike prior tools that require DSL inputs or manual code edits, Poseidon works directly on compiled LLVM IR and interoperates with standard compiler analyses and optimizations (mem2reg, inlining, loop unrolling, SimplifyCFG), enabling it to extract larger FP subgraphs than would be available in source code or binaries.
+Poseidon is a modular and extensible framework that fully automates advanced floating-point rewriting techniques for real-world applications within a production compiler. It operates as a PGO-like two-phase compiler that automatically extract numerical context (e.g., value ranges, sensitivities) from small surrogate profiling runs. It synthesizes algebraic rewrites via [Herbie](https://herbie.uwplse.org/), generates precision tuning candidates, and uses a dynamic programming solver to find a Pareto frontier of optimized programs.
 
 For details, please read our paper [Thinking Fast and Correct: Automated Rewriting of Numerical Code through Compiler Augmentation](https://ece.is/assets/pdf/poseidon-cgo26.pdf) (CGO 2026).
 
-If you use Poseidon in an academic setting, please cite:
+If you use Poseidon in an academic setting, please kindly cite:
 
 ```bibtex
 @inproceedings{poseidon,
@@ -21,23 +19,71 @@ If you use Poseidon in an academic setting, please cite:
 
 ## Build
 
-See the [artifact repository](https://github.com/PRONTOLab/Poseidon) for full build instructions including Docker. In short:
+We recommend building from source and generating a hardware-specific cost model for best results. The cost model estimates per-operation latencies on your machine and is used by the DP solver to estimate computation costs.
+
+### Prerequisites
 
 ```bash
-cd Enzyme && mkdir build && cd build
-cmake -G Ninja ../enzyme/ \
-  -DLLVM_DIR=/path/to/llvm/build/lib/cmake/llvm \
-  -DLLVM_EXTERNAL_LIT=$(which lit) \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DENABLE_POSEIDON=ON
-ninja
+sudo apt install build-essential cmake ninja-build libmpfr-dev
+pip install lit numpy matplotlib tqdm
 ```
 
-Both phases must use identical compiler flags (e.g., `-O3`, `-ffast-math`, `-march=native`, etc.) to ensure profile indices match between compilations.
+Additionally, install [Racket](https://racket-lang.org/) and [Rust](https://www.rust-lang.org/tools/install).
+
+### Build LLVM
+
+```bash
+cd llvm-project
+mkdir build && cd build
+cmake -G Ninja \
+  -DLLVM_ENABLE_PROJECTS="clang" \
+  -DLLVM_ENABLE_LLD=ON \
+  -DLLVM_TARGETS_TO_BUILD="X86" \
+  -DCMAKE_BUILD_TYPE=Release \
+  ../llvm
+ninja
+cd ../..
+```
+
+### Build Enzyme with Poseidon Enabled
+
+```bash
+cd Enzyme
+mkdir build && cd build
+cmake -G Ninja ../enzyme/ \
+  -DLLVM_DIR=<...>/llvm-project/build/lib/cmake/llvm \
+  -DLLVM_EXTERNAL_LIT=$(which lit) \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DENABLE_POSEIDON=ON \
+  -DCMAKE_C_COMPILER=<...>/llvm-project/build/bin/clang \
+  -DCMAKE_CXX_COMPILER=<...>/llvm-project/build/bin/clang++
+ninja
+cd ../..
+```
+
+Replace `<...>` with the appropriate path prefix.
+
+A preconfigured Docker image is also available; see the [CGO artifact repository](https://github.com/PRONTOLab/Poseidon) for details.
+
+### Generate the Cost Model
+
+The cost model (`cm.csv`) is hardware-specific. To generate it for your machine:
+
+```bash
+cd cost-model
+python3 microbm.py
+cp results.csv cm.csv
+```
+
+Then pass `--fpopt-cost-model-path=<...>/cost-model/cm.csv` during the optimization phase. Without a cost model, Poseidon falls back to LLVM's `TargetTransformInfo` estimates.
 
 ## Two-Phase Pipeline
 
-### User Code
+See the [dquat benchmark](https://github.com/PRONTOLab/Poseidon/tree/main/dquat) for an end-to-end example.
+
+:warning: Please Note: Both phases we introduce below must use identical compiler flags (e.g., `-O3`, `-ffast-math`, `-march=native`, etc.) to ensure profile indices match between compilations.
+
+### User Code Modification
 
 Annotate the function to optimize with `__enzyme_fp_optimize`:
 
@@ -70,7 +116,7 @@ clang++ mycode.cpp $CXXFLAGS \
 ENZYME_FPPROFILE_DIR=./fpprofile ./mycode-prof <surrogate_inputs>
 ```
 
-The instrumented binary records per-instruction value ranges, gradient sensitivities, and execution counts into a `.fpprofile` directory. A small surrogate input (e.g., 1000 samples) is often sufficient.
+The instrumented binary records per-instruction value ranges, gradient sensitivities, and execution counts into a `.fpprofile` directory. A small surrogate input (e.g., 100 samples) is often sufficient.
 
 ### Phase 2: Optimization
 
@@ -90,29 +136,38 @@ clang++ mycode.cpp $CXXFLAGS \
 
 The first run invokes Herbie and the DP solver; results are cached in `--fpopt-cache-path`. Subsequent runs reuse the cache. The `--fpopt-comp-cost-budget` selects a point on the Pareto curve (0 = no-op baseline).
 
+## How to Apply Rewrites?
+
+Poseidon offers two ways to apply numerical rewrites:
+
+1. **Select an optimized program from the Pareto frontier.** Pass `--fpopt-comp-cost-budget=N` to pick a point computed by the DP solver. Each budget value corresponds to a different combination of rewrites and precision changes that the solver determined to be Pareto-optimal. The full set of available budgets is listed in `validate_config.json` (when using `--fpopt-report-path`) and `cache/budgets.txt`.
+
+2. **Obtain a custom optimized program.** Generate a [report](#reporting), review the individual rewrites in `_rewrites.json`, and pass the IDs of the ones you want via `--fpopt-apply-rewrites=R3_0,PT1_0,...`. This bypasses the DP solver and gives fine-grained control over exactly which rewrites are applied. See [Applying User-Selected Rewrites](#applying-user-selected-rewrites) for details.
+
 ## Reporting
 
-Add `--fpopt-report-path=<dir>` to emit structured optimization reports:
+By default, Poseidon silently applies the best solution within the given budget to the compiled binary. To understand *what* was changed and *why*, add `--fpopt-report-path=<dir>` (with `-g` for source locations):
 
 ```bash
-clang++ mycode.cpp $CXXFLAGS ... \
-  -mllvm --fpopt-report-path=./report \
+clang++ mycode.cpp $CXXFLAGS -g ... \
+  -mllvm --fpopt-report-path=./report
 ```
 
 ### Report Contents
 
 | File | Description |
 |------|-------------|
-| `<function>.json` | Full Pareto table: per-step source locations, symbolic expressions (original and rewritten), affected LLVM IR, Herbie accuracy bits, cost/accuracy deltas, gradient and execution count |
-| `<function>.txt` | Human-readable version of the same (suitable for feeding to an LLM for explanation) |
-| `validate_config.json` | Baked-in configuration: all Pareto budgets, profile path, cache path, RAPTOR dir |
-| `validate.py` | Self-contained validation script |
+| `<func>.json` | Full Pareto table with details |
+| `<func>.txt` | Plain-text version of the Pareto table |
+| `<func>_rewrites.json` | Detailed per-rewrite information: all rewrites categorized and ranked |
 
-Source locations (file, line, column) are populated when the source is compiled with `-g`. Without `-g`, the symbolic expressions and affected IR are still available.
+Source locations (file, line, column) are populated when compiled with `-g`. Without `-g`, the symbolic expressions and affected IR are still available.
 
-### Understanding Rewrites
+:bulb: For complex programs/rewrites, it may be beneficial to feed the `.txt` report and the program source code to an LLM and asking it to explain what each rewrite does and why it improves numerical accuracy.
 
-The text report lists each Pareto point with the rewrites applied. For example:
+### Understanding the Pareto Report
+
+The `<func>.json` and `<func>.txt` reports describe the full Pareto frontier. Each Pareto point represents one **optimized program** — a combination of rewrites and precision changes selected by the DP solver at a given computation cost budget. For example:
 
 ```
 --- Pareto Point #5: Cost=-6863264, Accuracy=3.964900e-01 ---
@@ -125,19 +180,53 @@ The text report lists each Pareto point with the rewrites applied. For example:
       %mul = fmul fast double %sqrt, 2.500000e-01
 ```
 
-Each rewrite shows:
-- **Original and rewritten symbolic expressions** in Herbie's S-expression format
-- **Source locations** (when compiled with `-g`) pointing to the C/C++ lines affected
-- **Affected LLVM IR instructions** that are replaced or erased
-- **Herbie accuracy improvement** in bits
+### Per-Rewrite Analysis
 
-For complex rewrites, consider feeding the `.txt` report along with the source code to an LLM and asking it to explain what each rewrite does and why it improves accuracy. The symbolic expressions are self-contained and map directly to the source locations listed.
+The `<func>_rewrites.json` file lists every **individual** rewrite candidate, categorized by its estimated impact:
 
-## Validation with validate.py
+- **`free_win`** — improves both accuracy and speed. Always beneficial.
+- **`accuracy_for_speed`** — improves accuracy at the cost of extra computation.
+- **`speed_for_accuracy`** — improves speed at the cost of some accuracy.
 
-The `validate.py` script (emitted alongside the report) automates accuracy and performance measurement across Pareto-optimal variants:
+Each entry includes an `efficiency` score that ranks tradeoffs: higher means more benefit per unit of cost. Entries are sorted by category (free wins first) then by efficiency descending.
+
+Each rewrite has a stable `id` (e.g., `R3_0`, `PT1_2`) that can be used with `--fpopt-apply-rewrites` (see below).
+
+Example:
+```json
+{
+  "id": "R6_3",
+  "category": "speed_for_accuracy",
+  "efficiency": 4.602e+11,
+  "computation_cost_delta": -22632,
+  "accuracy_cost_delta": 4.918e-08,
+  "original_expr": "(* (/ 1 (sqrt ...)) v5)",
+  "rewritten_expr": "#s(approx ...)",
+  "source_location": {"file": "dquat.cpp", "line": 116, "col": 18}
+}
+```
+
+### Applying User-Selected Rewrites
+
+A user can pick specific rewrites from `_rewrites.json` by their IDs (this bypasses the DP solver):
 
 ```bash
+clang++ mycode.cpp $CXXFLAGS ... \
+  -mllvm --fpopt-apply-rewrites=R5_5,R6_3,R7_3,PT1_0
+```
+
+With a few constraints:
+- At most one rewrite per expression (e.g., `R5_0` and `R5_1` conflict)
+- At most one precision change per subgraph (e.g., `PT1_0` and `PT1_2` conflict)
+
+Duplicates are detected and skipped with a warning.
+
+## Optimized Program Validation
+
+To validate the actual accuracy and runtime of optimized programs, a reference validation script is provided at `Poseidon/scripts/validate.py`. Copy it to your report directory alongside `validate_config.json`, then run:
+
+```bash
+cp <enzyme-src>/Enzyme/Poseidon/scripts/validate.py ./report/
 python3 report/validate.py mycode.cpp \
   --enzyme-plugin /path/to/ClangEnzyme-XX.so \
   --cxx /path/to/clang++ \
@@ -150,7 +239,7 @@ python3 report/validate.py mycode.cpp \
 
 ### What it does
 
-1. **Loads a gold reference** from `--gold-path` (MPFR ground truth; see [RAPTOR section](#generating-mpfr-gold-references-with-raptor) below)
+1. **Loads a gold accuracy reference** from `--gold-path` (MPFR ground truth; see [RAPTOR section](#generating-mpfr-gold-references-with-raptor) below)
 2. **Compiles the original** (unoptimized) binary, measures its runtime and accuracy against gold
 3. **Uniformly samples** N budgets from the full Pareto table (87 points for dquat with `-ffast-math`)
 4. **For each budget:** recompiles with Poseidon at that budget using the cached Herbie results + DP table, runs the resulting binary, captures output
@@ -174,9 +263,9 @@ python3 report/validate.py mycode.cpp \
 
 Here `ORIGINAL` is the unoptimized double-precision program. Negative budgets allow the solver to trade accuracy for speed; positive budgets allow extra computation to improve accuracy. The `MaxErr: 1179` in the original comes from catastrophic cancellation (`1 - cos(theta)` near zero), which Herbie's rewrites at positive budgets fix.
 
-## Generating MPFR Gold References with RAPTOR
+## (Optional) Generating MPFR References with RAPTOR
 
-For meaningful accuracy validation, the gold reference should be computed at high precision (MPFR-2048 bits) rather than using the original double-precision output. [RAPTOR](https://github.com/RIKEN-RCCS/RAPTOR) provides this capability by running every floating-point operation through MPFR with garbage collection to avoid OOM on large applications.
+For accuracy validation we recommend computing reference results at high floating-point precision (e.g., MPFR-2048 bits). [RAPTOR](https://github.com/RIKEN-RCCS/RAPTOR) provides this capability by running floating-point operations through MPFR. For the latest build and usage instructions of RAPTOR, see the [RAPTOR repository](https://github.com/RIKEN-RCCS/RAPTOR).
 
 ### Building RAPTOR
 
@@ -186,10 +275,6 @@ cd RAPTOR && mkdir build && cd build
 cmake .. -DLLVM_DIR=/path/to/llvm -DCMAKE_BUILD_TYPE=Release
 make -j
 ```
-
-RAPTOR requires LLVM >= 15 and MPFR. For LLVM >= 23, two patches are needed in `pass/Raptor.cpp`:
-- `#include "llvm/Passes/PassPlugin.h"` -> `#include "llvm/Plugins/PassPlugin.h"`
-- Remove the third argument from `createFunctionToLoopPassAdaptor`
 
 ### Source preparation
 
