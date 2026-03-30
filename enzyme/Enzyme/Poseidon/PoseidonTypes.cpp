@@ -720,9 +720,10 @@ void CandidateOutput::apply(
   //   llvm::errs() << "Parsed Herbie output: "
   //                << parsedNode->toFullExpression(valueToNodeMap) << "\n";
 
-  IRBuilder<> builder(cast<Instruction>(oldOutput)->getParent(),
-                      ++BasicBlock::iterator(cast<Instruction>(oldOutput)));
-  builder.setFastMathFlags(cast<Instruction>(oldOutput)->getFastMathFlags());
+  auto *oldInst = cast<Instruction>(oldOutput);
+
+  IRBuilder<> builder(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
+  builder.setFastMathFlags(oldInst->getFastMathFlags());
 
   // auto *F = cast<Instruction>(oldOutput)->getParent()->getParent();
   // llvm::errs() << "Before: " << *F << "\n";

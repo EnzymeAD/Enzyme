@@ -97,7 +97,6 @@ Add `--fpopt-report-path=<dir>` to emit structured optimization reports:
 ```bash
 clang++ mycode.cpp $CXXFLAGS ... \
   -mllvm --fpopt-report-path=./report \
-  -mllvm --fpopt-raptor-dir=/path/to/RAPTOR/build   # optional, for validate.py
 ```
 
 ### Report Contents
@@ -281,6 +280,6 @@ Then pass `--gold-path gold_mpfr.txt` to `validate.py`.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--fpopt-report-path` | | Output directory for JSON/text reports + validate.py |
-| `--fpopt-raptor-dir` | | RAPTOR build directory (baked into validate.py config) |
+| `--fpopt-apply-rewrites` | | Comma-separated rewrite IDs from `_rewrites.json` (bypasses DP solver) |
 | `--fpopt-print` | false | Print debug info to stderr |
 | `--fpopt-show-table` | false | Print full DP table to stderr |

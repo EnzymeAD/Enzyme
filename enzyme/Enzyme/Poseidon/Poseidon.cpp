@@ -1166,7 +1166,84 @@ B2:
     }
   }
 
-  if (!FPOptEnableSolver) {
+  if (!FPOptApplyRewrites.empty()) {
+    // User-selected rewrites: parse IDs and apply the specified candidates.
+    // IDs are R{coIdx}_{candIdx} for rewrites, PT{csIdx}_{candIdx} for PT.
+    SmallVector<StringRef> ids;
+    StringRef(FPOptApplyRewrites).split(ids, ',', /*MaxSplit=*/-1,
+                                        /*KeepEmpty=*/false);
+
+    // Track which CO/CS has been applied to enforce at-most-one constraint
+    SmallDenseSet<size_t> appliedCOs, appliedCSs;
+
+    for (auto id : ids) {
+      id = id.trim();
+      if (id.starts_with("R")) {
+        // Parse R{coIdx}_{candIdx}
+        auto rest = id.drop_front(1);
+        auto [coStr, candStr] = rest.split('_');
+        size_t coIdx, candIdx;
+        if (coStr.getAsInteger(10, coIdx) || candStr.getAsInteger(10, candIdx)) {
+          llvm::errs() << "FPOpt: Invalid rewrite ID '" << id << "'\n";
+          continue;
+        }
+        if (coIdx >= COs.size()) {
+          llvm::errs() << "FPOpt: CO index " << coIdx << " out of range ("
+                       << COs.size() << " COs)\n";
+          continue;
+        }
+        if (candIdx >= COs[coIdx].candidates.size()) {
+          llvm::errs() << "FPOpt: Candidate index " << candIdx
+                       << " out of range for CO " << coIdx << " ("
+                       << COs[coIdx].candidates.size() << " candidates)\n";
+          continue;
+        }
+        if (!appliedCOs.insert(coIdx).second) {
+          llvm::errs() << "FPOpt: CO " << coIdx
+                       << " already has a rewrite applied. Skipping " << id
+                       << "\n";
+          continue;
+        }
+        llvm::errs() << "FPOpt: Applying " << id << ": " << COs[coIdx].expr
+                     << " -> " << COs[coIdx].candidates[candIdx].expr << "\n";
+        COs[coIdx].apply(candIdx, valueToNodeMap, symbolToValueMap);
+        changed = true;
+
+      } else if (id.starts_with("PT")) {
+        auto rest = id.drop_front(2);
+        auto [csStr, candStr] = rest.split('_');
+        size_t csIdx, candIdx;
+        if (csStr.getAsInteger(10, csIdx) || candStr.getAsInteger(10, candIdx)) {
+          llvm::errs() << "FPOpt: Invalid PT ID '" << id << "'\n";
+          continue;
+        }
+        if (csIdx >= CSs.size()) {
+          llvm::errs() << "FPOpt: CS index " << csIdx << " out of range ("
+                       << CSs.size() << " CSs)\n";
+          continue;
+        }
+        if (candIdx >= CSs[csIdx].candidates.size()) {
+          llvm::errs() << "FPOpt: Candidate index " << candIdx
+                       << " out of range for CS " << csIdx << " ("
+                       << CSs[csIdx].candidates.size() << " candidates)\n";
+          continue;
+        }
+        if (!appliedCSs.insert(csIdx).second) {
+          llvm::errs() << "FPOpt: CS " << csIdx
+                       << " already has a PT applied. Skipping " << id << "\n";
+          continue;
+        }
+        llvm::errs() << "FPOpt: Applying " << id << ": "
+                     << CSs[csIdx].candidates[candIdx].desc << "\n";
+        CSs[csIdx].apply(candIdx);
+        changed = true;
+
+      } else {
+        llvm::errs() << "FPOpt: Unknown ID prefix in '" << id
+                     << "' (expected R or PT)\n";
+      }
+    }
+  } else if (!FPOptEnableSolver) {
     if (FPOptEnableHerbie) {
       for (auto &CO : COs) {
         CO.apply(0, valueToNodeMap, symbolToValueMap);

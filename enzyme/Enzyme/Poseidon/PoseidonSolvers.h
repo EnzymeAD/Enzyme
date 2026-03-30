@@ -35,6 +35,7 @@ extern llvm::cl::list<int64_t> FPOptShowTableCosts;
 extern llvm::cl::opt<bool> FPOptEarlyPrune;
 extern llvm::cl::opt<double> FPOptCostDominanceThreshold;
 extern llvm::cl::opt<double> FPOptAccuracyDominanceThreshold;
+extern llvm::cl::opt<std::string> FPOptApplyRewrites;
 }
 
 bool accuracyGreedySolver(
