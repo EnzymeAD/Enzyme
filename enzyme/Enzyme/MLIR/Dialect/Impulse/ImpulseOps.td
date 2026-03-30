@@ -630,26 +630,4 @@ def PopcountOp : Impulse_Op<"popcount", [Pure, SameOperandsAndResultElementType,
   }];
 }
 
-//===----------------------------------------------------------------------===//
-// Debug ops
-//===----------------------------------------------------------------------===//
-
-def DumpOp : Impulse_Op<"dump"> {
-  let summary = "Debug operation to dump a tensor value at runtime";
-  let description = [{
-    Debug operation that dumps a tensor value with a label.
-  }];
-
-  let arguments = (ins
-    AnyType:$value,
-    StrAttr:$label
-  );
-
-  let results = (outs AnyType:$output);
-
-  let assemblyFormat = [{
-    $value attr-dict `:` functional-type($value, results)
-  }];
-}
-
 #endif // IMPULSE_OPS
