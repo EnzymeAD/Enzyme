@@ -730,6 +730,7 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     Optional<AnyRankedTensor>:$initial_gradient,
     Optional<AnyRankedTensor>:$initial_potential_energy,
 
+    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
