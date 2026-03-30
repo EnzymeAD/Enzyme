@@ -17,6 +17,19 @@ If you use Poseidon in an academic setting, please kindly cite:
 }
 ```
 
+## Table of Contents
+
+- [Build](#build)
+- [Two-Phase Pipeline](#two-phase-pipeline)
+- [How to Apply Rewrites?](#how-to-apply-rewrites)
+- [Reporting](#reporting)
+  - [Per-Rewrite Analysis](#per-rewrite-analysis)
+  - [Applying User-Selected Rewrites](#applying-user-selected-rewrites)
+- [Optimized Program Validation](#optimized-program-validation)
+- [Generating MPFR References with RAPTOR](#optional-generating-mpfr-references-with-raptor)
+- [Command-Line Reference](#command-line-reference)
+
+
 ## Build
 
 We recommend building from source and generating a hardware-specific cost model for best results. The cost model estimates per-operation latencies on your machine and is used by the DP solver to estimate computation costs.
