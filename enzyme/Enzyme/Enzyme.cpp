@@ -2067,7 +2067,7 @@ public:
                   "to create a profile or -fpprofile-use=<dir> to use an "
                   "existing profile.");
     } else {
-      F = Logic.PPC.preprocessForClone(F, mode);
+      F = Logic.PPC.preprocessForClone(F, mode, /*profiled=*/true);
       setPoseidonMetadata(*F);
 
       SmallString<128> profilePath(FPProfileUse);
