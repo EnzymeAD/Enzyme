@@ -10,7 +10,7 @@
 #define IMPULSE_ENUMS
 
 include "mlir/IR/EnumAttr.td"
-include "Impulse/Dialect.td"
+include "Dialect.td"
 
 class Impulse_Attr<string name, string attrMnemonic, list<Trait> traits = []>
     : AttrDef<Impulse_Dialect, name, traits> {

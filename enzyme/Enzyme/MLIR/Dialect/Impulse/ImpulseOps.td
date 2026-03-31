@@ -9,8 +9,8 @@
 #ifndef IMPULSE_OPS
 #define IMPULSE_OPS
 
-include "Impulse/ImpulseEnums.td"
-include "Impulse/Dialect.td"
+include "ImpulseEnums.td"
+include "Dialect.td"
 
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/EnumAttr.td"
