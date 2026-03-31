@@ -447,7 +447,7 @@ td_library(
         "Enzyme/MLIR/Dialect/Impulse/Dialect.td",
         "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.td",
     ],
-    includes = [".", "Enzyme/MLIR/Dialect"],
+    includes = ["."],
     deps = [
         ":EnzymeDialectTdFiles",
         "@llvm-project//mlir:OpBaseTdFiles",
