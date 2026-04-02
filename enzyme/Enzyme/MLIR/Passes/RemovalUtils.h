@@ -1019,8 +1019,6 @@ struct IfLikeEnzymeOpsRemover
                                             info.popOp.getCache());
         rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
         rewriter.eraseOp(info.popOp);
-
-        idx++;
       }
     }
 
