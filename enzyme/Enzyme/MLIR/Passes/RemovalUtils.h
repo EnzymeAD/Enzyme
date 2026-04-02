@@ -924,19 +924,20 @@ struct IfLikeEnzymeOpsRemover
       falseTerm->insertOperands(falseTerm->getNumOperands(),
                                 ValueRange(falseValue));
     }
-
-    SmallVector<memref::AllocaOp> allocas;
     if (removeCaches) {
       for (auto &[pushedValue, info] : pushedCaches) {
-        auto allocaType = MemRefType::get(/*shape=*/{}, pushedValue.getType());
-        auto alloca = memref::AllocaOp::create(rewriter, pushedValue.getLoc(),
-                                               allocaType);
-        allocas.push_back(alloca);
+        Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
+                                                pushedValue.getType());
 
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(info.pushOp);
-        memref::StoreOp::create(rewriter, info.pushOp.getLoc(), pushedValue,
-                                alloca);
+        Value trueValue =
+            pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
+        Value falseValue =
+            pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
+
+        trueTerm->insertOperands(trueTerm->getNumOperands(),
+                                 ValueRange(trueValue));
+        falseTerm->insertOperands(falseTerm->getNumOperands(),
+                                  ValueRange(falseValue));
       }
     }
 
@@ -950,12 +951,10 @@ struct IfLikeEnzymeOpsRemover
     }
 
     if (removeCaches) {
-      for (auto &&[pair, alloca] : llvm::zip_equal(pushedCaches, allocas)) {
-        auto &[_, info] = pair;
-        auto newPushedValue = memref::LoadOp::create(
-            rewriter, info.pushOp.getLoc(), alloca, /*indices=*/{});
+      for (auto &[pushedValue, info] : pushedCaches) {
         enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                               info.initOp.getResult(), newPushedValue);
+                               info.initOp.getResult(), ifOp->getResult(idx));
+        idx++;
         rewriter.eraseOp(info.pushOp);
 
         OpBuilder::InsertionGuard guard(rewriter);
@@ -966,8 +965,6 @@ struct IfLikeEnzymeOpsRemover
                                             info.popOp.getCache());
         rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
         rewriter.eraseOp(info.popOp);
-
-        idx++;
       }
     }
 
