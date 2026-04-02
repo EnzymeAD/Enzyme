@@ -126,16 +126,6 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   }];
 }
 
-def JVPApplyOp : Enzyme_Op<"jvp_apply"> {
-  let summary = "Apply Jacobian-vector product";
-  let arguments = (ins AnyTensor:$jacobian, AnyTensor:$vector);
-  let results = (outs AnyTensor:$output);
-
-  let assemblyFormat = [{
-    `(` $jacobian `,` $vector `)` attr-dict `:` functional-type(operands, results)
-  }];
-}
-
 def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
@@ -168,16 +158,6 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
       return ::mlir::enzyme::detail::filterGradInputs<AutoDiffOp, true, false,
                                                       true>(*this);
     }
-  }];
-}
-
-def VJPApplyOp : Enzyme_Op<"vjp_apply"> {
-  let summary = "Apply vector-Jacobian product";
-  let arguments = (ins AnyTensor:$jacobian, AnyTensor:$vector);
-  let results = (outs AnyTensor:$output);
-
-  let assemblyFormat = [{
-    `(` $jacobian `,` $vector `)` attr-dict `:` functional-type(operands, results)
   }];
 }
 
