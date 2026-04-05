@@ -893,8 +893,11 @@ struct IfOpInterfaceReverse
          llvm::zip_equal(resultsActive, ifOp.getResults())) {
       if (active) {
         incomingGradients.push_back(gutils->diffe(res, builder));
-        if (!gutils->isConstantValue(res))
-          gutils->zeroDiffe(res, builder);
+        if (!gutils->isConstantValue(res)) {
+          auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+          if (iface && !iface.isMutable())
+            gutils->zeroDiffe(res, builder);
+        }
       }
     }
 
@@ -970,6 +973,99 @@ struct IfOpInterfaceReverse
 
   void createShadowValues(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils) const {}
+};
+
+struct IndexSwitchInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          IndexSwitchInterfaceReverse, scf::IndexSwitchOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto indexSwitch = cast<scf::IndexSwitchOp>(op);
+    if (indexSwitch.getNumResults() == 0)
+      return;
+
+    auto newSwitch =
+        cast<scf::IndexSwitchOp>(gutils->getNewFromOriginal(indexSwitch));
+    SmallVector<Type> newResultTypes;
+    SmallVector<bool> needsShadow;
+    for (auto result : op->getResults()) {
+      // TODO: consider isActivePointer/isActiveData methods on gutils?
+      newResultTypes.push_back(result.getType());
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      if (iface && iface.isMutable() && !gutils->isConstantValue(result)) {
+        newResultTypes.push_back(result.getType());
+        needsShadow.push_back(true);
+      } else {
+        needsShadow.push_back(false);
+      }
+    }
+
+    // TODO: would this be better handled by a gutils->Logic.visitChild call?
+    for (Region *oldReg : indexSwitch.getRegions()) {
+      for (Operation &bodyOp : oldReg->getOps()) {
+        if (auto iface = dyn_cast<ReverseAutoDiffOpInterface>(&bodyOp)) {
+          OpBuilder childBuilder(gutils->getNewFromOriginal(&bodyOp));
+          iface.createShadowValues(childBuilder, gutils);
+        }
+      }
+    }
+
+    // Replace the new op with an augmented op
+    auto augmentedOp = scf::IndexSwitchOp::create(
+        builder, op->getLoc(), newResultTypes,
+        gutils->getNewFromOriginal(indexSwitch.getArg()),
+        indexSwitch.getCases(), indexSwitch.getNumCases());
+
+    for (auto &&[oldReg, newReg, augReg] :
+         llvm::zip(indexSwitch.getRegions(), newSwitch.getRegions(),
+                   augmentedOp.getRegions())) {
+      augReg->takeBody(*newReg);
+      for (auto &&[oldBlk, augBlk] : llvm::zip(*oldReg, *augReg)) {
+        auto oldYield = cast<scf::YieldOp>(oldBlk.getTerminator());
+        auto augYield = cast<scf::YieldOp>(augBlk.getTerminator());
+
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(augYield);
+        SmallVector<Value> newOperands;
+        for (auto &&[oldOperand, augOperand] :
+             llvm::zip(oldYield->getOpOperands(), augYield->getOpOperands())) {
+          newOperands.push_back(augOperand.get());
+          if (needsShadow[oldOperand.getOperandNumber()]) {
+            newOperands.push_back(
+                gutils->invertPointerM(oldOperand.get(), builder));
+          }
+        }
+
+        scf::YieldOp::create(builder, oldYield.getLoc(), newOperands);
+        augYield.erase();
+      }
+    }
+
+    // Determine which returns correspond to the primal
+    SmallVector<Value> augmentedResults;
+    unsigned resIdx = 0;
+    for (auto res : indexSwitch.getResults()) {
+      augmentedResults.push_back(augmentedOp.getResult(resIdx));
+      resIdx++;
+      if (needsShadow[res.getResultNumber()]) {
+        gutils->setInvertedPointer(res, augmentedOp.getResult(resIdx));
+        resIdx++;
+      }
+    }
+    newSwitch.replaceAllUsesWith(augmentedResults);
+    newSwitch.erase();
+  }
 };
 
 struct ForOpADDataFlow
@@ -1267,6 +1363,7 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     registerInterfaces(context);
     scf::IfOp::attachInterface<IfOpInterfaceReverse>(*context);
     scf::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
+    scf::IndexSwitchOp::attachInterface<IndexSwitchInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
     scf::ParallelOp::attachInterface<ParallelOpADDataFlow>(*context);
