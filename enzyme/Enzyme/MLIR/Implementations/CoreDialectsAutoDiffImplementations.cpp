@@ -222,7 +222,7 @@ LogicalResult mlir::enzyme::detail::allocationForwardHandler(
 
   Value shadowRes = shadow->getResult(0);
 
-  gutils->setDiffe(orig->getResult(0), shadowRes, builder);
+  gutils->setInvertedPointer(orig->getResult(0), shadowRes);
   gutils->eraseIfUnused(orig);
 
   if (zero) {
