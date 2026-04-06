@@ -120,9 +120,19 @@ bool Poseidonable(const llvm::Value &V) {
     return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
   case Instruction::Call: {
     const CallInst *CI = dyn_cast<CallInst>(I);
-    if (CI && CI->getCalledFunction() &&
-        (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy())) {
-      StringRef funcName = CI->getCalledFunction()->getName();
+    if (!CI)
+      return false;
+
+    const Function *Callee = CI->getCalledFunction();
+    if (!Callee)
+      return false;
+
+    // GPU: __nv_* / __ocml_* functions annotated by PreserveNVVM
+    if (Callee->hasFnAttribute("enzyme_math"))
+      return true;
+
+    if (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy()) {
+      StringRef funcName = Callee->getName();
       return
           // LLVM intrinsics
           startsWith(funcName, "llvm.sin.") ||
@@ -350,8 +360,14 @@ void preprocessForPoseidon(Function *F) {
 bool fpOptimize(Function &F, const TargetTransformInfo &TTI, double errorTol) {
   bool changed = false;
 
-  // llvm::errs() << "FPOpt: Starting optimization for " << F.getName() << "\n";
-  // F.print(llvm::errs());
+  // debug info
+  if (isGPUMode(F)) {
+    llvm::errs() << "FPOpt: GPU mode active for " << F.getName() << "\n";
+    llvm::errs() << "  FP64:FP32 cost ratio: " << FPOptGPUFP64Ratio << "\n";
+    if (FPOptGPUEliminateFP64)
+      llvm::errs() << "  Eliminate FP64: all FP64 ops will be candidates for "
+                      "FP32 conversion\n";
+  }
 
   const std::string functionName = F.getName().str();
   assert(!FPProfileUse.empty());

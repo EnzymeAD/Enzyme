@@ -24,6 +24,7 @@
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
 #include "llvm/Passes/PassBuilder.h"
@@ -54,8 +55,12 @@
 #include <unordered_set>
 #include <utility>
 
+#include "llvm/Support/Debug.h"
+
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
+
+#define DEBUG_TYPE "poseidon"
 
 using namespace llvm;
 
@@ -70,6 +75,77 @@ cl::opt<unsigned>
 cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
                     cl::desc("The random seed used in the FPOpt pass"));
+cl::opt<double> FPOptGPUFP64Ratio(
+    "fpopt-gpu-fp64-ratio", cl::init(1.0), cl::Hidden,
+    cl::desc("FP64:FP32 throughput cost ratio for GPU targets. "
+             "Values > 1 make FP64 proportionally more expensive hence "
+             "discourage FP64 usage. "));
+cl::opt<bool>
+    FPOptGPUEliminateFP64("fpopt-gpu-eliminate-fp64", cl::init(false),
+                          cl::Hidden,
+                          cl::desc("When set, all FP64 ops must be removed "
+                                   "(e.g., B300 with no FP64 unit)"));
+cl::opt<std::string> FPOptScalarTypes(
+    "fpopt-scalar-types", cl::init(""), cl::Hidden,
+    cl::desc("Comma-separated list of supported scalar FP types "
+             "(e.g., half,bf16,float,double). Overrides the CSV header."));
+cl::opt<std::string> FPOptMatmulTypes(
+    "fpopt-matmul-types", cl::init(""), cl::Hidden,
+    cl::desc("Comma-separated list of supported matrix/tensor core types "
+             "(e.g., half,bf16,f8e4m3). Overrides the CSV header."));
+}
+
+static bool isTargetNVPTX(const Module &M) {
+  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
+         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
+}
+
+// TODO: handle amd
+bool isGPUMode(const Function &F) { return isTargetNVPTX(*F.getParent()); }
+
+static struct {
+  std::unordered_set<std::string> scalar;
+  std::unordered_set<std::string> matrix;
+} SupportedTypes;
+
+static const std::unordered_set<std::string> DefaultScalarTypes = {
+    "half", "bf16", "float", "double"};
+static const std::unordered_set<std::string> DefaultMatrixTypes = {
+    "half", "bf16", "float", "double", "f8e4m3", "f8e5m2"};
+
+static const std::unordered_set<std::string> &
+parseFlagOrFallback(const std::string &flag,
+                    std::unordered_set<std::string> &fromCSV,
+                    const std::unordered_set<std::string> &defaults) {
+  static std::unordered_map<const std::string *,
+                            std::unordered_set<std::string>>
+      cache;
+  if (!flag.empty()) {
+    auto &r = cache[&flag];
+    if (r.empty()) {
+      SmallVector<StringRef, 8> tokens;
+      StringRef(flag).split(tokens, ',', -1, false);
+      for (auto t : tokens)
+        r.insert(t.str());
+    }
+    return r;
+  }
+  if (!FPOptCostModelPath.empty()) {
+    getCostModel();
+    if (!fromCSV.empty())
+      return fromCSV;
+  }
+  return defaults;
+}
+
+const std::unordered_set<std::string> &getScalarTypes() {
+  return parseFlagOrFallback(FPOptScalarTypes, SupportedTypes.scalar,
+                             DefaultScalarTypes);
+}
+
+const std::unordered_set<std::string> &getMatrixTypes() {
+  return parseFlagOrFallback(FPOptMatmulTypes, SupportedTypes.matrix,
+                             DefaultMatrixTypes);
 }
 
 void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
@@ -215,6 +291,26 @@ getCostModel() {
     }
     std::string Line;
     while (std::getline(CostFile, Line)) {
+      if (Line.empty())
+        continue;
+      if (Line[0] == '#') {
+        // Parse "# scalar_types=..." and "# matrix_types=..." headers
+        auto content = StringRef(Line).drop_front(1).trim();
+        StringRef key, vals;
+        std::tie(key, vals) = content.split('=');
+        std::unordered_set<std::string> *target = nullptr;
+        if (key == "scalar_types")
+          target = &SupportedTypes.scalar;
+        else if (key == "matrix_types")
+          target = &SupportedTypes.matrix;
+        if (target && !vals.empty()) {
+          SmallVector<StringRef, 8> tokens;
+          vals.split(tokens, ',', -1, false);
+          for (auto t : tokens)
+            target->insert(t.str());
+        }
+        continue;
+      }
       std::istringstream SS(Line);
       std::string OpcodeStr, PrecisionStr, CostStr;
       if (!std::getline(SS, OpcodeStr, ',')) {
@@ -255,6 +351,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
   if (!I->getType()->isFPOrFPVectorTy())
     return 0;
 
+  InstructionCost cost;
   if (!FPOptCostModelPath.empty()) {
     std::string OpcodeName;
     switch (I->getOpcode()) {
@@ -386,6 +483,13 @@ InstructionCost getInstructionCompCost(const Instruction *I,
             llvm_unreachable(msg.c_str());
           }
           }
+        } else if (CalledFunc->hasFnAttribute("enzyme_math")) {
+          std::string mathName = CalledFunc->getFnAttribute("enzyme_math")
+                                     .getValueAsString()
+                                     .str();
+          if (!mathName.empty() && mathName.back() == 'f')
+            mathName.pop_back();
+          OpcodeName = mathName;
         } else {
           std::string FuncName = CalledFunc->getName().str();
           if (!FuncName.empty() &&
@@ -461,11 +565,26 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       PrecisionName = SrcPrecisionName;
     }
 
-    return queryCostModel(OpcodeName, PrecisionName);
+    cost = queryCostModel(OpcodeName, PrecisionName);
   } else {
-    llvm::errs() << "WARNING: Custom cost model not found, using TTI cost!\n";
-    return TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
+    cost = TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
   }
+
+  if (FPOptGPUFP64Ratio > 1.0) {
+    Type *Ty = I->getType();
+    if (I->getOpcode() == Instruction::FCmp)
+      Ty = I->getOperand(0)->getType();
+    if (Ty->isDoubleTy()) {
+#if LLVM_VERSION_MAJOR >= 21
+      int64_t rawCost = cost.getValue();
+#else
+      int64_t rawCost = cost.getValue().value_or(1);
+#endif
+      cost = InstructionCost(static_cast<int64_t>(rawCost * FPOptGPUFP64Ratio));
+    }
+  }
+
+  return cost;
 }
 
 const std::unordered_set<std::string> &getPTFuncs() {

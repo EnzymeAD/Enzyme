@@ -541,6 +541,16 @@ std::string getHerbieOperator(const Instruction &I) {
     assert(CI && CI->getCalledFunction() &&
            "getHerbieOperator: Call without a function");
 
+    if (CI->getCalledFunction()->hasFnAttribute("enzyme_math")) {
+      std::string mathName = CI->getCalledFunction()
+                                 ->getFnAttribute("enzyme_math")
+                                 .getValueAsString()
+                                 .str();
+      if (!mathName.empty() && mathName.back() == 'f')
+        mathName.pop_back();
+      return mathName;
+    }
+
     StringRef funcName = CI->getCalledFunction()->getName();
 
     // LLVM intrinsics
