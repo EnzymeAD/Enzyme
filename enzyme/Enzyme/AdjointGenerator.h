@@ -4177,6 +4177,11 @@ public:
         return false;
       }
       default:
+        if (!gutils->isConstantValue(&I)) {
+          auto toset =
+              Constant::getNullValue(gutils->getShadowType(I.getType()));
+          setDiffe(&I, toset, Builder2);
+        }
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
@@ -4204,10 +4209,6 @@ public:
              << Intrinsic::getName(ID) << "\n"
              << I;
         EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
-        if (!gutils->isConstantValue(&I))
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
         return false;
       }
       return false;

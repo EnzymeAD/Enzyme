@@ -130,9 +130,9 @@ cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                            cl::desc("Force inlining of autodiff"));
 
-cl::opt<bool> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(0),
-                                  cl::Hidden,
-                                  cl::desc("Force inlining of autodiff"));
+cl::opt<int> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(0),
+                                 cl::Hidden,
+                                 cl::desc("Force inlining of autodiff"));
 
 cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
                             cl::desc("Force noalias of autodiff"));

@@ -1,7 +1,13 @@
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:public"],
+)
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
 # Enzyme tests.
 # Placeholder: load sh_binary
 load("@llvm-project//llvm:lit_test.bzl", "package_path")
-load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 
 # Generates lit config input file by applying path placeholder substitutions
 # similar to the configure_lit_site_cfg CMake macro.

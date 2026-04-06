@@ -31,7 +31,8 @@
 
 namespace llvm {
 class ModulePass;
-}
+class FunctionPass;
+} // namespace llvm
 
 llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
