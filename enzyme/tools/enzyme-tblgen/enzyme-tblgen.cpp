@@ -89,12 +89,38 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
     if (opName == "SameTypesFunc" || Def->isSubClassOf("SameTypesFunc")) {
       os << curIndent << "auto " << FT << " = cast<CallInst>(&" << origName
          << ")->getFunctionType();\n";
-      os << curIndent << "auto " << callval
-         << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
-      os << Def->getValueInit("name")->getAsString();
-      os << ", " << FT
+      // When differentiating an NVPTX device function (has "implements2" attr
+      // set by PreserveNVVM), prefer the __nv_* version of the derivative
+      // helper function so the generated derivative code works on NVPTX device.
+      os << curIndent << "llvm::Value *" << callval
+         << " = [&]() -> llvm::Value* {\n";
+      os << curIndent << "  std::string _fn = "
+         << Def->getValueInit("name")->getAsString() << ";\n";
+      os << curIndent
+         << "  if (called && called->hasFnAttribute(\"implements2\")) {\n";
+      // Look for a function already in the module with
+      // implements2 = targetFuncName (e.g., __nv_cosh implements "cosh")
+      os << curIndent
+         << "    for (auto &_F : *gutils->oldFunc->getParent()) {\n";
+      os << curIndent
+         << "      if (_F.hasFnAttribute(\"implements2\") && "
+            "_F.getFnAttribute(\"implements2\").getValueAsString() == "
+         << Def->getValueInit("name")->getAsString() << ")\n";
+      os << curIndent << "        return &_F;\n";
+      os << curIndent << "    }\n";
+      // Not found in module: for NVPTX use __nv_<funcname> naming convention.
+      // (On NVPTX, device math functions follow the __nv_* naming scheme.)
+      os << curIndent
+         << "    if (gutils->oldFunc->getParent()->getTargetTriple().find("
+            "\"nvptx\") != std::string::npos)\n";
+      os << curIndent << "      _fn = \"__nv_\" + _fn;\n";
+      os << curIndent << "  }\n";
+      os << curIndent
+         << "  return gutils->oldFunc->getParent()->getOrInsertFunction(_fn, "
+         << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
             "\"enzymejl_needs_restoration\")).getCallee();\n";
+      os << curIndent << "}();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;

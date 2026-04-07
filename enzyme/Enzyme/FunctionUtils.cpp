@@ -28,6 +28,7 @@
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "PreserveNVVM.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -3354,6 +3355,53 @@ void SelectOptimization(Function *F) {
 }
 
 void ReplaceFunctionImplementation(Module &M) {
+  // For NVPTX targets, ensure __nv_* implementations are declared for any
+  // LLVM math intrinsics used in derivative code. Enzyme may generate calls
+  // to LLVM intrinsics like llvm.log.f64 or llvm.cos.f64 as part of
+  // derivatives, but on NVPTX these intrinsics must be lowered to __nv_log
+  // / __nv_cos etc. If the __nv_* function is not yet declared, declare it
+  // here so the replacement loop below can do the substitution correctly.
+  if (isTargetNVPTX(M)) {
+    // Pairs of {intrinsic base name, f32 suffix flag} -> NVPTX function name.
+    // Double variant: llvm.<base>.f64 -> __nv_<base>
+    // Float variant:  llvm.<base>.f32 -> __nv_<base>f
+    static const struct {
+      const char *base;
+    } nvptxMathFuncs[] = {
+        {"log"},   {"log2"},  {"log10"}, {"exp"},   {"exp2"},
+        {"sqrt"},  {"sin"},   {"cos"},   {"tanh"},  {"sinh"},
+        {"cosh"},  {"pow"},   {"fabs"},  {"floor"}, {"ceil"},
+        {"round"}, {"trunc"},
+    };
+    for (auto &entry : nvptxMathFuncs) {
+      StringRef base = entry.base;
+      // Process double (f64) and float (f32) variants
+      for (bool isFloat : {false, true}) {
+        std::string llvmIntrName =
+            (Twine("llvm.") + base + (isFloat ? ".f32" : ".f64")).str();
+        std::string nvFuncName =
+            (Twine("__nv_") + base + (isFloat ? "f" : "")).str();
+
+        // Only act if the LLVM intrinsic is referenced in the module but
+        // the __nv_* implementing function is not yet declared.
+        Function *intrFunc = M.getFunction(llvmIntrName);
+        if (!intrFunc)
+          continue;
+        if (M.getFunction(nvFuncName))
+          continue;
+
+        // Declare the __nv_* function with the same type as the intrinsic.
+        Function *nvFunc =
+            Function::Create(intrFunc->getFunctionType(),
+                             Function::ExternalLinkage, nvFuncName, M);
+        nvFunc->addFnAttr("implements", llvmIntrName);
+        nvFunc->addFnAttr("implements2", (Twine(base) + (isFloat ? "f" : "")).str());
+        nvFunc->addFnAttr("enzyme_math",
+                          (Twine(base) + (isFloat ? "f" : "")).str());
+      }
+    }
+  }
+
   for (Function &Impl : M) {
     for (auto attr : {"implements", "implements2"}) {
       if (!Impl.hasFnAttribute(attr))
