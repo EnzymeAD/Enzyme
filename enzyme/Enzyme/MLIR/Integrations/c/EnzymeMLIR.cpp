@@ -90,5 +90,6 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
 }
 
 MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
-  return wrap(mlir::enzyme::SymbolAttr::get(unwrap(ctx), ptr));
+  llvm::SmallVector<uint64_t, 1> path = {ptr};
+  return wrap(mlir::enzyme::SymbolAttr::get(unwrap(ctx), path));
 }

@@ -4,6 +4,7 @@ add_mlir_library(MLIREnzymeAnalysis
   DataFlowAliasAnalysis.cpp
   DataFlowActivityAnalysis.cpp
   DataFlowLattice.cpp
+  SampleDependenceAnalysis.cpp
 
   DEPENDS
   MLIRAutoDiffTypeInterfaceIncGen
@@ -12,4 +13,6 @@ add_mlir_library(MLIREnzymeAnalysis
 
   LINK_LIBS PUBLIC
   MLIRIR
+  MLIRSideEffectInterfaces
+  MLIRTransformUtils
 )

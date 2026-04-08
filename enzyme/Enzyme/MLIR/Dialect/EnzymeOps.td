@@ -239,7 +239,7 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp"]>]> {
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp", "MCMCRegionOp", "SampleRegionOp"]>]> {
   let summary = "Yield values at the end of an autodiff_region, loop, or if ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
@@ -458,10 +458,12 @@ def ExtractOp : Enzyme_Op<"extract"> {
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
   let summary = "Symbol associated with a Sample op";
   let description = [{
-  Symbol associated with a Sample op.
+  Symbol associated with a Sample op. Holds one or more uint64_t values.
+  A single value is a leaf symbol; multiple values encode a composite path
+  created by SICM submodel inlining.
   }];
-  let parameters = (ins "uint64_t":$ptr);
-  let assemblyFormat = "`<` $ptr `>`";
+  let parameters = (ins ArrayRefParameter<"uint64_t", "symbol path">:$path);
+  let hasCustomAssemblyFormat = 1;
 }
 
 def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
@@ -488,6 +490,35 @@ def SampleOp : Enzyme_Op<"sample",
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
+def SampleRegionOp : Enzyme_Op<"sample_region", [AutomaticAllocationScope]> {
+  let summary = "Sample from distribution with inlined sampler and logpdf";
+  let description = [{
+    A region-based sample operation where both the sampler function and
+    logpdf function bodies are inlined as nested regions.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<StrAttr>:$fn,
+    OptionalAttr<StrAttr>:$logpdf_fn,
+    OptionalAttr<SymbolAttr>:$symbol,
+    OptionalAttr<SupportAttr>:$support,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let regions = (region
+    AnyRegion:$sampler,
+    AnyRegion:$logpdf
+  );
+
+  let assemblyFormat = [{
+    `(` $inputs `)` `sampler` $sampler `logpdf` $logpdf attr-dict
+    `:` functional-type($inputs, $outputs)
   }];
 }
 
@@ -772,6 +803,84 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
   let hasVerifier = 1;
 }
 
+def MCMCRegionOp : Enzyme_Op<"mcmc_region", [AutomaticAllocationScope, AttrSizedOperandSegments]> {
+  let summary = "Inference region with sampler and unified logpdf";
+  let description = [{
+    A region-based inference operation with two regions:
+
+    - `sampler`: The model computation containing sample_region ops with sampler
+      regions (logpdf regions cleared after merging). Used by proposal-based
+      algorithms (MH, Gibbs) and preserved for outline compatibility.
+
+    - `logpdf`: Unified logpdf computation for ALL position-dependent terms.
+      Block arguments follow a calling convention:
+        args[0..num_position_args-1] = position values (sample-dependent,
+          ordered by `selection` attribute)
+        Captured values from enclosing scope = parameters (sample-invariant)
+
+      SICM operates on this region. The outline pass converts it to a
+      standalone function referenced by `logpdf_fn` on the resulting MCMCOp.
+
+    If the `logpdf` region is empty, the operation falls back to the sampler-only
+    mode (pre-logpdf-merging state or custom logpdf_fn).
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    Optional<AnyRankedTensor>:$original_trace,
+    AddressArrayAttr:$selection,
+    AddressArrayAttr:$all_addresses,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    Optional<AnyRankedTensor>:$initial_position,
+
+    // Continuation from saved state
+    Optional<AnyRankedTensor>:$initial_gradient,
+    Optional<AnyRankedTensor>:$initial_potential_energy,
+
+    OptionalAttr<StrAttr>:$fn,
+    DefaultValuedStrAttr<StrAttr, "">:$name,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_position_args,
+    DefaultValuedAttr<I64Attr, "0">:$position_size,
+    OptionalAttr<SupportArrayAttr>:$supports
+  );
+
+  let regions = (region AnyRegion:$sampler, AnyRegion:$logpdf);
+
+  let results = (outs
+    AnyRankedTensor:$new_trace,
+    AnyRankedTensor:$accepted,
+    AnyType:$output_rng_state,
+    AnyRankedTensor:$final_position,
+    AnyRankedTensor:$final_gradient,
+    AnyRankedTensor:$final_potential_energy,
+    AnyRankedTensor:$final_step_size,
+    AnyRankedTensor:$final_inverse_mass_matrix
+  );
+
+  let assemblyFormat = [{
+    `(` $inputs `)` (`given` $original_trace^)?
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    (`initial_position` `=` $initial_position^)?
+    (`initial_gradient` `=` $initial_gradient^)?
+    (`initial_potential_energy` `=` $initial_potential_energy^)?
+    $sampler (`logpdf` $logpdf^)?
+    attr-dict-with-keyword `:` functional-type(operands, results)
+  }];
+}
+
 def DotOp : Enzyme_Op<"dot", [Pure]> {
   let summary = "Computes a general dot product operation";
   let description = [{
@@ -937,6 +1046,7 @@ def DumpOp : Enzyme_Op<"dump"> {
     $value attr-dict `:` functional-type($value, results)
   }];
 }
+
 
 def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
   let summary = "affine atomic rmw operation";

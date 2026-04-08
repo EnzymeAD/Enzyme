@@ -71,3 +71,31 @@ void EnzymeDialect::initialize() {
 
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/EnzymeAttributes.cpp.inc"
+
+//===----------------------------------------------------------------------===//
+// SymbolAttr custom print/parse
+//===----------------------------------------------------------------------===//
+
+void SymbolAttr::print(AsmPrinter &printer) const {
+  printer << "<";
+  llvm::interleaveComma(getPath(), printer);
+  printer << ">";
+}
+
+Attribute SymbolAttr::parse(AsmParser &parser, Type type) {
+  if (parser.parseLess())
+    return {};
+  SmallVector<uint64_t> path;
+  uint64_t val;
+  if (failed(parser.parseInteger(val)))
+    return {};
+  path.push_back(val);
+  while (succeeded(parser.parseOptionalComma())) {
+    if (failed(parser.parseInteger(val)))
+      return {};
+    path.push_back(val);
+  }
+  if (parser.parseGreater())
+    return {};
+  return get(parser.getContext(), path);
+}

@@ -12,10 +12,12 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
     InlineEnzymeRegions.cpp
+    InlineMCMCRegions.cpp
     HoistEnzymeRegions.cpp
     LowerLLVMExtPass.cpp
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp
+    PrintSampleDependenceAnalysis.cpp
     EnzymeToMemRef.cpp
     SimplifyMath.cpp
     AddToOpToIndexAndLoad.cpp
@@ -25,7 +27,8 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     RemoveUnusedEnzymeOps.cpp
     SimplifyMemrefCache.cpp
     Utils.cpp
-  
+    SampleInvariantCodeMotion.cpp
+
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/Affine
 

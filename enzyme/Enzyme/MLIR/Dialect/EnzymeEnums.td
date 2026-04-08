@@ -88,6 +88,8 @@ def SupportAttr : Enzyme_Attr<"Support", "support"> {
   let assemblyFormat = "`<` $kind (`,` `lower` `=` $lower_bound^)? (`,` `upper` `=` $upper_bound^)? `>`";
 }
 
+def SupportArrayAttr : TypedArrayAttrBase<SupportAttr, "Array of support specifications">;
+
 def HMCConfigAttr : Enzyme_Attr<"HMCConfig", "hmc_config"> {
   let summary = "Configuration for HMC inference";
   let description = [{
