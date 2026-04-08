@@ -838,7 +838,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     alloc->setAlignment(Align(align));
   }
   if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
+    // For i1 predicate caches, "not executed" must behave like false.
+    // Otherwise reverse CFG reconstruction may branch on undef/poison (issue
+    // #2629).
+    bool forceZero =
+        T->isIntegerTy() && cast<IntegerType>(T)->getBitWidth() == 1;
+    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+                                        /*forceZero*/ forceZero);
     if (!isa<UndefValue>(val))
       scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
   }
