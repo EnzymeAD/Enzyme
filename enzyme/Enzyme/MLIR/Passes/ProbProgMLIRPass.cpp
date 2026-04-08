@@ -10,6 +10,7 @@
 // This file implements a pass to handle probabilistic programming operations
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ProbProgUtils.h"
@@ -30,8 +31,7 @@
 
 using namespace mlir;
 using namespace mlir::enzyme;
-using namespace enzyme;
-using namespace enzyme::MCMC;
+using namespace mlir::impulse;
 
 namespace mlir {
 namespace enzyme {
@@ -52,25 +52,25 @@ static int64_t computeTensorElementCount(RankedTensorType tensorType) {
   return elemCount;
 }
 
-using SampleOpMap = DenseMap<Attribute, enzyme::SampleOp>;
+using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
 
 static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
   SampleOpMap map;
-  fn.walk([&](enzyme::SampleOp sampleOp) {
+  fn.walk([&](impulse::SampleOp sampleOp) {
     if (auto symbol = sampleOp.getSymbolAttr())
       map[symbol] = sampleOp;
   });
   return map;
 }
 
-static enzyme::SampleOp findSampleBySymbol(const SampleOpMap &map,
-                                           Attribute targetSymbol) {
+static impulse::SampleOp findSampleBySymbol(const SampleOpMap &map,
+                                            Attribute targetSymbol) {
   auto it = map.find(targetSymbol);
   return it != map.end() ? it->second : nullptr;
 }
 
 static int64_t computeSampleElementCount(Operation *op,
-                                         enzyme::SampleOp sampleOp) {
+                                         impulse::SampleOp sampleOp) {
   int64_t totalCount = 0;
   for (unsigned i = 1; i < sampleOp.getNumResults(); ++i) {
     auto resultType = sampleOp.getResult(i).getType();
@@ -180,12 +180,12 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
-static SmallVector<MCMC::SupportInfo>
+static SmallVector<impulse::SupportInfo>
 collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
                                ArrayAttr selection, ArrayAttr allAddresses,
                                SymbolTableCollection &symbolTable) {
   auto sampleMap = buildSampleOpMap(fn);
-  SmallVector<MCMC::SupportInfo> supports;
+  SmallVector<impulse::SupportInfo> supports;
   int64_t currentPositionOffset = 0;
 
   for (auto addr : selection) {
@@ -279,16 +279,17 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       pm.getDependentDialects(registry);
     }
 
-    registry.insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
-                    mlir::complex::ComplexDialect, mlir::cf::ControlFlowDialect,
-                    mlir::enzyme::EnzymeDialect>();
+    registry
+        .insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
+                mlir::complex::ComplexDialect, mlir::cf::ControlFlowDialect,
+                mlir::enzyme::EnzymeDialect, mlir::impulse::ImpulseDialect>();
   }
 
   struct LowerUntracedCallPattern
-      : public mlir::OpRewritePattern<enzyme::UntracedCallOp> {
-    using mlir::OpRewritePattern<enzyme::UntracedCallOp>::OpRewritePattern;
+      : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
+    using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(enzyme::UntracedCallOp CI,
+    LogicalResult matchAndRewrite(impulse::UntracedCallOp CI,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -304,7 +305,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       FunctionOpInterface NewF = putils->newFunc;
 
       SmallVector<Operation *, 4> toErase;
-      NewF.walk([&](enzyme::SampleOp sampleOp) {
+      NewF.walk([&](impulse::SampleOp sampleOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -336,10 +337,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerSimulatePattern
-      : public mlir::OpRewritePattern<enzyme::SimulateOp> {
-    using mlir::OpRewritePattern<enzyme::SimulateOp>::OpRewritePattern;
+      : public mlir::OpRewritePattern<impulse::SimulateOp> {
+    using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(enzyme::SimulateOp CI,
+    LogicalResult matchAndRewrite(impulse::SimulateOp CI,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -385,7 +386,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t currentOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
+      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -455,7 +456,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
               auto flatSampleType = RankedTensorType::get(
                   {1, numElements}, sampleType.getElementType());
-              auto flatSample = enzyme::ReshapeOp::create(
+              auto flatSample = impulse::ReshapeOp::create(
                   rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
               auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
               auto row0 = arith::ConstantOp::create(
@@ -465,7 +466,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                   rewriter, sampleOp.getLoc(), i64S,
                   DenseElementsAttr::get(
                       i64S, rewriter.getI64IntegerAttr(currentOffset)));
-              currTrace = enzyme::DynamicUpdateSliceOp::create(
+              currTrace = impulse::DynamicUpdateSliceOp::create(
                               rewriter, sampleOp.getLoc(), traceType, currTrace,
                               flatSample, ValueRange{row0, colOff})
                               .getResult();
@@ -514,7 +515,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             for (auto t : genFn.getResultTypes())
               simResultTypes.push_back(t);
 
-            auto nestedSimulate = enzyme::SimulateOp::create(
+            auto nestedSimulate = impulse::SimulateOp::create(
                 rewriter, sampleOp.getLoc(), simResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subSelection);
             auto subTrace = nestedSimulate.getTrace();
@@ -538,7 +539,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 rewriter, sampleOp.getLoc(), i64S,
                 DenseElementsAttr::get(
                     i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = enzyme::DynamicUpdateSliceOp::create(
+            currTrace = impulse::DynamicUpdateSliceOp::create(
                             rewriter, sampleOp.getLoc(), traceType, currTrace,
                             subTrace, ValueRange{row0, colOff})
                             .getResult();
@@ -591,14 +592,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
     }
   };
 
-  struct LowerMCMCPattern : public mlir::OpRewritePattern<enzyme::MCMCOp> {
+  struct LowerMCMCPattern : public mlir::OpRewritePattern<impulse::InferOp> {
     bool debugDump;
 
     LowerMCMCPattern(MLIRContext *context, bool debugDump,
                      PatternBenefit benefit = 1)
         : OpRewritePattern(context, benefit), debugDump(debugDump) {}
 
-    LogicalResult matchAndRewrite(enzyme::MCMCOp mcmcOp,
+    LogicalResult matchAndRewrite(impulse::InferOp mcmcOp,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -930,8 +931,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         warmupInitArgs.push_back(windowIdx);
 
         auto warmupLoop =
-            enzyme::ForLoopOp::create(rewriter, loc, warmupLoopTypes, c0,
-                                      numWarmupConst, c1, warmupInitArgs);
+            impulse::ForOp::create(rewriter, loc, warmupLoopTypes, c0,
+                                   numWarmupConst, c1, warmupInitArgs);
 
         Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
         warmupBody->addArgument(i64TensorType, loc); // iteration index t
@@ -992,7 +993,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         // Use log_step_size_avg at last iteration
         auto isLastIter = arith::CmpIOp::create(
             rewriter, loc, arith::CmpIPredicate::eq, iterT, lastIterConst);
-        Value adaptedStepSizeInLoop = enzyme::SelectOp::create(
+        Value adaptedStepSizeInLoop = impulse::SelectOp::create(
             rewriter, loc, scalarType, isLastIter, finalStepSizeFromDA,
             currentStepSizeFromDA);
 
@@ -1026,17 +1027,17 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         if (adaptMassMatrix) {
           auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
           Value sample1D =
-              enzyme::ReshapeOp::create(rewriter, loc, sampleType1D, sample.q);
+              impulse::ReshapeOp::create(rewriter, loc, sampleType1D, sample.q);
           WelfordState updatedWelfordAfterSample = updateWelford(
               rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
 
-          conditionalWelford.mean = enzyme::SelectOp::create(
+          conditionalWelford.mean = impulse::SelectOp::create(
               rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
               updatedWelfordAfterSample.mean, welfordStateLoop.mean);
-          conditionalWelford.m2 = enzyme::SelectOp::create(
+          conditionalWelford.m2 = impulse::SelectOp::create(
               rewriter, loc, welfordStateLoop.m2.getType(), isMiddleWindow,
               updatedWelfordAfterSample.m2, welfordStateLoop.m2);
-          conditionalWelford.n = enzyme::SelectOp::create(
+          conditionalWelford.n = impulse::SelectOp::create(
               rewriter, loc, welfordStateLoop.n.getType(), isMiddleWindow,
               updatedWelfordAfterSample.n, welfordStateLoop.n);
         }
@@ -1064,8 +1065,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         Value newWindowIdx =
             arith::AddIOp::create(rewriter, loc, windowIdxLoop, c1);
         Value windowIdxAfterIncrement =
-            enzyme::SelectOp::create(rewriter, loc, i64TensorType, atWindowEnd,
-                                     newWindowIdx, windowIdxLoop);
+            impulse::SelectOp::create(rewriter, loc, i64TensorType, atWindowEnd,
+                                      newWindowIdx, windowIdxLoop);
 
         auto atMiddleWindowEnd =
             arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
@@ -1087,8 +1088,8 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         for (Type t : updatedDaState.getTypes())
           ifResultTypes.push_back(t);
 
-        auto ifOp = enzyme::IfOp::create(rewriter, loc, ifResultTypes,
-                                         atMiddleWindowEnd);
+        auto ifOp = impulse::IfOp::create(rewriter, loc, ifResultTypes,
+                                          atMiddleWindowEnd);
 
         {
           Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
@@ -1124,7 +1125,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               trueYieldValues.push_back(v);
           }
 
-          enzyme::YieldOp::create(rewriter, loc, trueYieldValues);
+          impulse::YieldOp::create(rewriter, loc, trueYieldValues);
         }
 
         {
@@ -1142,7 +1143,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           for (auto v : updatedDaState.toValues())
             falseYieldValues.push_back(v);
 
-          enzyme::YieldOp::create(rewriter, loc, falseYieldValues);
+          impulse::YieldOp::create(rewriter, loc, falseYieldValues);
         }
 
         rewriter.setInsertionPointAfter(ifOp);
@@ -1174,7 +1175,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         }
         warmupYieldValues.push_back(windowIdxAfterIncrement);
 
-        enzyme::YieldOp::create(rewriter, loc, warmupYieldValues);
+        impulse::YieldOp::create(rewriter, loc, warmupYieldValues);
 
         rewriter.setInsertionPointAfter(warmupLoop);
 
@@ -1236,7 +1237,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       SmallVector<Type> loopResultTypes = {
           positionType,         positionType,      scalarType,
           currentRng.getType(), samplesBufferType, acceptedBufferType};
-      auto forLoopOp = enzyme::ForLoopOp::create(
+      auto forLoopOp = impulse::ForOp::create(
           rewriter, loc, loopResultTypes, c0, numSamplesConst, c1,
           ValueRange{currentQ, currentGrad, currentU, currentRng, samplesBuffer,
                      acceptedBuffer});
@@ -1262,7 +1263,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto sample = runSampleStepWithStepSize(rewriter, loc, qLoop, gradLoop,
                                               ULoop, rngLoop, adaptedStepSize);
       auto q_constrained =
-          MCMC::constrainPosition(rewriter, loc, sample.q, supports);
+          impulse::constrainPosition(rewriter, loc, sample.q, supports);
 
       // Storage index: idx = (i - start_idx) / thinning
       auto iMinusStart =
@@ -1284,27 +1285,27 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto zeroCol = arith::ConstantOp::create(
           rewriter, loc, i64TensorType,
           DenseElementsAttr::get(i64TensorType, rewriter.getI64IntegerAttr(0)));
-      auto updatedSamplesBuffer = enzyme::DynamicUpdateSliceOp::create(
+      auto updatedSamplesBuffer = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, samplesBufferType, samplesBufferLoop, q_constrained,
           ValueRange{storageIdx, zeroCol});
-      auto selectedSamplesBuffer = enzyme::SelectOp::create(
+      auto selectedSamplesBuffer = impulse::SelectOp::create(
           rewriter, loc, samplesBufferType, shouldStore, updatedSamplesBuffer,
           samplesBufferLoop);
 
-      auto accepted1D = enzyme::ReshapeOp::create(
+      auto accepted1D = impulse::ReshapeOp::create(
           rewriter, loc, RankedTensorType::get({1}, rewriter.getI1Type()),
           sample.accepted);
-      auto updatedAcceptedBuffer = enzyme::DynamicUpdateSliceOp::create(
+      auto updatedAcceptedBuffer = impulse::DynamicUpdateSliceOp::create(
           rewriter, loc, acceptedBufferType, acceptedBufferLoop, accepted1D,
           ValueRange{storageIdx});
-      auto selectedAcceptedBuffer = enzyme::SelectOp::create(
+      auto selectedAcceptedBuffer = impulse::SelectOp::create(
           rewriter, loc, acceptedBufferType, shouldStore, updatedAcceptedBuffer,
           acceptedBufferLoop);
 
-      enzyme::YieldOp::create(rewriter, loc,
-                              ValueRange{sample.q, sample.grad, sample.U,
-                                         sample.rng, selectedSamplesBuffer,
-                                         selectedAcceptedBuffer});
+      impulse::YieldOp::create(rewriter, loc,
+                               ValueRange{sample.q, sample.grad, sample.U,
+                                          sample.rng, selectedSamplesBuffer,
+                                          selectedAcceptedBuffer});
 
       rewriter.setInsertionPointAfter(forLoopOp);
       Value finalQ = forLoopOp.getResult(0);
@@ -1326,10 +1327,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
     }
   };
 
-  struct LowerMHPattern : public mlir::OpRewritePattern<enzyme::MHOp> {
-    using mlir::OpRewritePattern<enzyme::MHOp>::OpRewritePattern;
+  struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
+    using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(enzyme::MHOp mhOp,
+    LogicalResult matchAndRewrite(impulse::MHOp mhOp,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -1371,7 +1372,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       for (auto t : fn.getResultTypes())
         regenResultTypes.push_back(t);
 
-      auto regenerateOp = rewriter.create<enzyme::RegenerateOp>(
+      auto regenerateOp = rewriter.create<impulse::RegenerateOp>(
           loc,
           /*resultTypes*/ regenResultTypes,
           /*fn*/ mhOp.getFnAttr(),
@@ -1395,11 +1396,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       auto oneConst = arith::ConstantOp::create(
           rewriter, loc, weightType, DenseElementsAttr::get(weightType, 1.0));
 
-      auto randomOp = enzyme::RandomOp::create(
+      auto randomOp = impulse::RandomOp::create(
           rewriter, loc, TypeRange{rngStateType, weightType}, newRng, zeroConst,
           oneConst,
-          enzyme::RngDistributionAttr::get(rewriter.getContext(),
-                                           enzyme::RngDistribution::UNIFORM));
+          impulse::RngDistributionAttr::get(rewriter.getContext(),
+                                            impulse::RngDistribution::UNIFORM));
       auto logRand = math::LogOp::create(rewriter, loc, randomOp.getResult());
       Value finalRng = randomOp.getOutputRngState();
 
@@ -1408,7 +1409,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           rewriter, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
 
       // 5. Select trace and weight based on acceptance
-      auto selectedTrace = enzyme::SelectOp::create(
+      auto selectedTrace = impulse::SelectOp::create(
           rewriter, loc, traceType, accepted, newTrace, oldTrace);
       auto selectedWeight = arith::SelectOp::create(rewriter, loc, accepted,
                                                     newWeight, oldWeight);
@@ -1420,10 +1421,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerGeneratePattern
-      : public mlir::OpRewritePattern<enzyme::GenerateOp> {
-    using mlir::OpRewritePattern<enzyme::GenerateOp>::OpRewritePattern;
+      : public mlir::OpRewritePattern<impulse::GenerateOp> {
+    using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(enzyme::GenerateOp CI,
+    LogicalResult matchAndRewrite(impulse::GenerateOp CI,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -1479,7 +1480,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
+      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -1524,13 +1525,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
               auto sliceType = RankedTensorType::get(
                   {1, numElements}, resultType.getElementType());
-              auto sliced = enzyme::SliceOp::create(
+              auto sliced = impulse::SliceOp::create(
                   rewriter, sampleOp.getLoc(), sliceType, constraint,
                   rewriter.getDenseI64ArrayAttr({0, constrainedOffset}),
                   rewriter.getDenseI64ArrayAttr(
                       {1, constrainedOffset + numElements}),
                   rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = enzyme::ReshapeOp::create(
+              auto extracted = impulse::ReshapeOp::create(
                   rewriter, sampleOp.getLoc(), resultType, sliced);
               sampledValues[i] = extracted.getResult();
               constrainedOffset += numElements;
@@ -1625,7 +1626,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
               auto flatSampleType = RankedTensorType::get(
                   {1, numElements}, sampleType.getElementType());
-              auto flatSample = enzyme::ReshapeOp::create(
+              auto flatSample = impulse::ReshapeOp::create(
                   rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
               auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
               auto row0 = arith::ConstantOp::create(
@@ -1635,7 +1636,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                   rewriter, sampleOp.getLoc(), i64S,
                   DenseElementsAttr::get(
                       i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = enzyme::DynamicUpdateSliceOp::create(
+              currTrace = impulse::DynamicUpdateSliceOp::create(
                               rewriter, sampleOp.getLoc(), traceType, currTrace,
                               flatSample, ValueRange{row0, colOff})
                               .getResult();
@@ -1689,7 +1690,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                   sampleOp, fn, CI.getConstrainedAddressesAttr(),
                   sampleOp.getSymbolAttr(), symbolTable);
 
-              subConstraint = enzyme::SliceOp::create(
+              subConstraint = impulse::SliceOp::create(
                   rewriter, sampleOp.getLoc(), subConstraintType, constraint,
                   rewriter.getDenseI64ArrayAttr({0, subConstraintOffset}),
                   rewriter.getDenseI64ArrayAttr(
@@ -1711,7 +1712,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             for (auto t : genFn.getResultTypes())
               genResultTypes.push_back(t);
 
-            auto nestedGenerate = enzyme::GenerateOp::create(
+            auto nestedGenerate = impulse::GenerateOp::create(
                 rewriter, sampleOp.getLoc(), genResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
                 subSelection, subConstrainedAddrs);
@@ -1733,7 +1734,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 rewriter, sampleOp.getLoc(), i64S,
                 DenseElementsAttr::get(
                     i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = enzyme::DynamicUpdateSliceOp::create(
+            currTrace = impulse::DynamicUpdateSliceOp::create(
                             rewriter, sampleOp.getLoc(), traceType, currTrace,
                             subTrace, ValueRange{row0, colOff})
                             .getResult();
@@ -1789,10 +1790,10 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
   };
 
   struct LowerRegeneratePattern
-      : public mlir::OpRewritePattern<enzyme::RegenerateOp> {
-    using mlir::OpRewritePattern<enzyme::RegenerateOp>::OpRewritePattern;
+      : public mlir::OpRewritePattern<impulse::RegenerateOp> {
+    using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(enzyme::RegenerateOp CI,
+    LogicalResult matchAndRewrite(impulse::RegenerateOp CI,
                                   PatternRewriter &rewriter) const override {
       SymbolTableCollection symbolTable;
 
@@ -1842,7 +1843,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t currentTraceOffset = 0;
 
       SmallVector<Operation *> toErase;
-      auto result = NewF.walk([&](enzyme::SampleOp sampleOp) -> WalkResult {
+      auto result = NewF.walk([&](impulse::SampleOp sampleOp) -> WalkResult {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
@@ -1899,13 +1900,13 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
               auto sliceType = RankedTensorType::get(
                   {1, numElements}, resultType.getElementType());
-              auto sliced = enzyme::SliceOp::create(
+              auto sliced = impulse::SliceOp::create(
                   rewriter, sampleOp.getLoc(), sliceType, prevTrace,
                   rewriter.getDenseI64ArrayAttr({0, extractOffset}),
                   rewriter.getDenseI64ArrayAttr(
                       {1, extractOffset + numElements}),
                   rewriter.getDenseI64ArrayAttr({1, 1}));
-              auto extracted = enzyme::ReshapeOp::create(
+              auto extracted = impulse::ReshapeOp::create(
                   rewriter, sampleOp.getLoc(), resultType, sliced);
               sampledValues[i] = extracted.getResult();
               extractOffset += numElements;
@@ -1959,7 +1960,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
               auto flatSampleType = RankedTensorType::get(
                   {1, numElements}, sampleType.getElementType());
-              auto flatSample = enzyme::ReshapeOp::create(
+              auto flatSample = impulse::ReshapeOp::create(
                   rewriter, sampleOp.getLoc(), flatSampleType, sampleValue);
               auto i64S = RankedTensorType::get({}, rewriter.getI64Type());
               auto row0 = arith::ConstantOp::create(
@@ -1969,7 +1970,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                   rewriter, sampleOp.getLoc(), i64S,
                   DenseElementsAttr::get(
                       i64S, rewriter.getI64IntegerAttr(currentTraceOffset)));
-              currTrace = enzyme::DynamicUpdateSliceOp::create(
+              currTrace = impulse::DynamicUpdateSliceOp::create(
                               rewriter, sampleOp.getLoc(), traceType, currTrace,
                               flatSample, ValueRange{row0, colOff})
                               .getResult();
@@ -2019,7 +2020,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
                                                       rewriter.getF64Type());
-            Value subPrevTrace = enzyme::SliceOp::create(
+            Value subPrevTrace = impulse::SliceOp::create(
                 rewriter, sampleOp.getLoc(), subTraceType, prevTrace,
                 rewriter.getDenseI64ArrayAttr({0, mergeOffset}),
                 rewriter.getDenseI64ArrayAttr(
@@ -2034,7 +2035,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             for (auto t : genFn.getResultTypes())
               regenResultTypes.push_back(t);
 
-            auto nestedRegenerate = enzyme::RegenerateOp::create(
+            auto nestedRegenerate = impulse::RegenerateOp::create(
                 rewriter, sampleOp.getLoc(), regenResultTypes,
                 sampleOp.getFnAttr(), sampleOp.getInputs(), subPrevTrace,
                 subSelection, subRegenerateAddrs);
@@ -2053,7 +2054,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 rewriter, sampleOp.getLoc(), i64S,
                 DenseElementsAttr::get(
                     i64S, rewriter.getI64IntegerAttr(mergeOffset)));
-            currTrace = enzyme::DynamicUpdateSliceOp::create(
+            currTrace = impulse::DynamicUpdateSliceOp::create(
                             rewriter, sampleOp.getLoc(), traceType, currTrace,
                             subTrace, ValueRange{row0, colOff})
                             .getResult();

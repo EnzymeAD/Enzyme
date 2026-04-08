@@ -22,8 +22,11 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
   MLIRAutoDiffOpInterfaceIncGen
   MLIRAutoDiffTypeInterfaceIncGen
   MLIREnzymeEnumsIncGen
+  MLIRImpulseOpsIncGen
+  MLIRImpulseEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRIR
   MLIREnzymeAnalysis
+  MLIRImpulse
 )
