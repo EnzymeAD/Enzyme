@@ -5409,10 +5409,24 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return applyChainRule(oval->getType(), BuilderM, rule);
   }
 
+  // Check invertedPointers before isConstantValue. If an explicit shadow was
+  // registered (e.g. by the forward-mode allocation handler), use it
+  // regardless of the activity analysis result. This prevents leaks when
+  // activity analysis is inconsistent between alloc (NON-CONST) and free
+  // (CONST) in forward-over-reverse mode.
+  {
+    auto ifound = invertedPointers.find(oval);
+    if (ifound != invertedPointers.end()) {
+      return &*ifound->second;
+    }
+  }
+
   bool shouldNullShadow = isConstantValue(oval);
   if (shouldNullShadow) {
     if (isa<InsertValueInst>(oval) || isa<ExtractValueInst>(oval) ||
-        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval)) {
+        isa<InsertElementInst>(oval) || isa<ExtractElementInst>(oval) ||
+        (isa<PHINode>(oval) && oval->getType()->isPointerTy()) ||
+        (isa<LoadInst>(oval) && oval->getType()->isPointerTy())) {
       shouldNullShadow = false;
       auto orig = cast<Instruction>(oval);
       if (knownRecomputeHeuristic.count(orig)) {
@@ -5517,13 +5531,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   auto M = oldFunc->getParent();
   assert(oval);
-
-  {
-    auto ifound = invertedPointers.find(oval);
-    if (ifound != invertedPointers.end()) {
-      return &*ifound->second;
-    }
-  }
 
   if (mode != DerivativeMode::ForwardMode &&
       mode != DerivativeMode::ForwardModeError &&
