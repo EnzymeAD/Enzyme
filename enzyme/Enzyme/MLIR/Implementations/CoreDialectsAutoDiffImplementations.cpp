@@ -334,6 +334,11 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
   llvm::SmallDenseSet<unsigned> resultPositionsToShadow;
 
+  // while these operands are inactive in the op region(s), we may still need to
+  // create placeholder shadows for them to ensure syntactic correctness for the
+  // IR
+  llvm::SmallDenseSet<unsigned> constOperandPositionsToShadow;
+
   SmallVector<RegionSuccessor> entrySuccessors;
   regionBranchOp.getEntrySuccessorRegions(
       SmallVector<Attribute>(op->getNumOperands(), Attribute()),
@@ -352,8 +357,25 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     // operands.
     for (auto &&[i, regionValue, operand] :
          llvm::enumerate(targetValues, operandRange)) {
-      if (gutils->isConstantValue(regionValue))
+
+      // check if all the predecessorValues are const too
+      SmallVector<Value> possibleActivePreds;
+      regionBranchOp.getPredecessorValues(successor, i, possibleActivePreds);
+
+      bool skipOpShadow = true;
+      for (auto pv : possibleActivePreds) {
+        if (!skipOpShadow)
+          break;
+        skipOpShadow = skipOpShadow && gutils->isConstantValue(pv);
+      };
+
+      if (!skipOpShadow)
+        constOperandPositionsToShadow.insert(
+            operandRange.getBeginOperandIndex() + i);
+
+      if (skipOpShadow && gutils->isConstantValue(regionValue))
         continue;
+
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       if (successor.isParent())
         resultPositionsToShadow.insert(i);
@@ -365,13 +387,16 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       resultPositionsToShadow.insert(res.getResultNumber());
 
   return controlFlowForwardHandler(
-      op, builder, gutils, operandPositionsToShadow, resultPositionsToShadow);
+      op, builder, gutils, operandPositionsToShadow, resultPositionsToShadow,
+      constOperandPositionsToShadow);
 }
 
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils,
     const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow,
-    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow) {
+    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow,
+    const llvm::SmallDenseSet<unsigned> &constOperandPositionToShadow) {
+
   // For all active results, add shadow types.
   // For now, assuming all results are relevant.
   Operation *newOp = gutils->getNewFromOriginal(op);
@@ -421,6 +446,63 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (auto &&[region, replacementRegion] :
        llvm::zip(newOp->getRegions(), replacement->getRegions())) {
     replacementRegion.takeBody(region);
+  }
+
+  // Re-fix block args for entry -> blk-successors
+  // if constOperandPositionsToShadow is non-empty, the takeBody(...) from
+  // earlier replaces the body for replacement(which has well formed
+  // successor-args) with newOp's successor regions
+  //
+  // We fix it by modifying the blockarguments for all the entry successors,
+  // adding a newblockarg for every entry in constOperandPositionsToShadow and
+  // updating the invertedPointerMap
+  if (!constOperandPositionToShadow.empty()) {
+    auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
+    auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+
+    SmallVector<RegionSuccessor> entrySuccessors;
+    regionBranchOp.getEntrySuccessorRegions(
+        SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+        entrySuccessors);
+
+    for (const RegionSuccessor &successor : entrySuccessors) {
+      if (successor.isParent())
+        continue;
+
+      OperandRange operandRange =
+          iface.getSuccessorOperands(regionBranchOp, successor);
+      ValueRange targetValues = regionBranchOp.getSuccessorInputs(successor);
+
+      for (int i = targetValues.size() - 1; i >= 0; --i) {
+        unsigned operandPosition = operandRange.getBeginOperandIndex() + i;
+        if (!constOperandPositionToShadow.contains(operandPosition))
+          continue;
+
+        auto regionValue = dyn_cast<BlockArgument>(targetValues[i]);
+        if (!regionValue || gutils->invertedPointers.contains(regionValue))
+          continue;
+
+        auto replacementArg =
+            cast<BlockArgument>(gutils->getNewFromOriginal(regionValue));
+        Block *replacementBlock = replacementArg.getOwner();
+
+        Value shadowArg;
+        if (replacementArg.getArgNumber() ==
+            replacementBlock->getNumArguments() - 1) {
+          shadowArg = replacementBlock->addArgument(
+              gutils->getShadowType(regionValue.getType()),
+              regionValue.getLoc());
+        } else {
+          shadowArg = replacementBlock->insertArgument(
+              replacementBlock->args_begin() + replacementArg.getArgNumber() +
+                  1,
+              gutils->getShadowType(regionValue.getType()),
+              regionValue.getLoc());
+        }
+
+        gutils->invertedPointers.map(regionValue, shadowArg);
+      }
+    }
   }
 
   // Inject the mapping for the new results into GradientUtil's shadow
