@@ -2515,4 +2515,12 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
 llvm::SmallVector<std::tuple<llvm::Instruction *, llvm::Value *, size_t>, 1>
 findAllUsersOf(llvm::Value *AI);
 
+static bool hasTerminator(llvm::BasicBlock *BB) {
+#if LLVM_VERSION_MAJOR >= 23
+  return BB->hasTerminator();
+#else
+  return BB->getTerminator();
+#endif
+}
+
 #endif // ENZYME_UTILS_H
