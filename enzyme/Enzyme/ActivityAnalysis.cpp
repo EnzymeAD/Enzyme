@@ -571,7 +571,7 @@ static const StringSet<> KnownInactiveFunctionInsts = {
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
-bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
+bool ActivityAnalyzer::isFunctionArgumentConstant(CallBase *CI, Value *val) {
   assert(directions & DOWN);
   if (isInactiveCall(*CI))
     return true;
@@ -645,6 +645,12 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
     return val != CI->getOperand(1);
 
+  if (Name == "__kmpc_reduce_nowait")
+    return val != CI->getOperand(4);
+
+  if (Name == "__kmpc_end_reduce_nowait")
+    return true;
+
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -673,6 +679,15 @@ static inline void propagateArgumentInformation(
       Name == "__lgammal_r_finite") {
 
     propagateFromOperand(CI.getArgOperand(0));
+    return;
+  }
+
+  if (Name == "__kmpc_reduce_nowait") {
+    propagateFromOperand(CI.getArgOperand(4));
+    return;
+  }
+
+  if (Name == "__kmpc_end_reduce_nowait") {
     return;
   }
 
@@ -1107,6 +1122,40 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
     }
   }
   return false;
+}
+
+bool ActivityAnalyzer::hasActiveArgumentOtherThan(Instruction *I, Value *Val,
+                                                  TypeResults const &TR) {
+  bool has_other_active_operand = false;
+  if (auto CB = dyn_cast<CallBase>(I)) {
+    if (EnzymeGlobalActivity)
+      return true;
+#if LLVM_VERSION_MAJOR >= 14
+    for (auto &arg : CB->args())
+#else
+    for (auto &arg : CB->arg_operands())
+#endif
+    {
+      if (arg == Val)
+        continue;
+      if (isFunctionArgumentConstant(CB, arg))
+        continue;
+      if (!DeducingPointers.count(arg) && isConstantValue(TR, arg)) {
+        continue;
+      }
+      has_other_active_operand = true;
+    }
+  } else {
+    for (auto &arg : I->operands()) {
+      if (arg == Val)
+        continue;
+      if (!DeducingPointers.count(arg) && isConstantValue(TR, arg)) {
+        continue;
+      }
+      has_other_active_operand = true;
+    }
+  }
+  return has_other_active_operand;
 }
 
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
@@ -2188,8 +2237,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // Notably need both to check the result and instruction since
           // A load that has as result an active pointer is not an active
           // instruction, but does have an active value
-          if (!Hypothesis->isConstantInstruction(TR, I) ||
-              (I != Val && !Hypothesis->isConstantValue(TR, I))) {
+          if ((!Hypothesis->isConstantInstruction(TR, I) ||
+               (I != Val && !Hypothesis->isConstantValue(TR, I))) &&
+              !(Hypothesis->isConstantValue(TR, I) &&
+                !Hypothesis->hasActiveArgumentOtherThan(I, Val, TR))) {
             potentiallyActiveLoad = I;
             // If this a potential pointer of pointer AND
             //     double** Val;
@@ -2208,10 +2259,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               //        double* I = *Val;
               //        I[0] = active;
               //
-              if ((I->mayWriteToMemory() &&
-                   !Hypothesis->isConstantInstruction(TR, I)) ||
-                  (!Hypothesis->DeducingPointers.count(I) &&
-                   !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I))) {
+              //  We have an exception for instructions with a single active
+              //  argument as the only way for data to flow into it is through
+              //  itself.
+              if (((I->mayWriteToMemory() &&
+                    !Hypothesis->isConstantInstruction(TR, I)) ||
+                   (!Hypothesis->DeducingPointers.count(I) &&
+                    !Hypothesis->isConstantValue(TR, I) && TR.anyPointer(I))) &&
+                  Hypothesis->hasActiveArgumentOtherThan(I, Val, TR)) {
                 if (EnzymePrintActivity)
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
@@ -2729,6 +2784,10 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                      << "\n";
       return true;
     }
+    // GEPs may be returning a pointer to an active constant (like a vtable),
+    // but we can still prove they are inactive if their USERS are inactive.
+    // However, since this is UP search, finding non-constant args means we
+    // cannot inductively prove it's inactive purely from origin.
     return false;
   } else if (auto ci = dyn_cast<CallInst>(inst)) {
     bool seenuse = false;
@@ -3586,7 +3645,8 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       if (!inst->mayWriteToMemory() ||
           (isa<CallInst>(inst) &&
            (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
-            isLocalReadOnlyOrThrow(cast<CallInst>(inst))))) {
+            isLocalReadOnlyOrThrow(cast<CallInst>(inst)))) ||
+          !hasActiveArgumentOtherThan(inst, val, TR)) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
         if (inst->getParent()->getParent() == TR.getFunction() &&

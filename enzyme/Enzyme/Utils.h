@@ -1844,6 +1844,13 @@ static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
   return isReadOnly(F, arg) && isWriteOnly(F, arg);
 }
 
+static inline bool isNoCapture(const llvm::Function *F, size_t idx) {
+  if (idx < F->arg_size() && F->getArg(idx)->hasNoCaptureAttr())
+    return true;
+  // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
+  //   return true;
+  return false;
+}
 static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
@@ -1853,11 +1860,9 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
     // call wrapping args into an array. This is because the wrapped array
     // may be nocapure/readonly, but the actual arg (which will be put in the
     // array) may not be.
-    if (F->getCallingConv() == call->getCallingConv())
-      if (idx < F->arg_size() && F->getArg(idx)->hasNoCaptureAttr())
-        return true;
-    // if (F->getAttributes().hasParamAttribute(idx, "enzyme_NoCapture"))
-    //   return true;
+    if (F->getCallingConv() == call->getCallingConv()) {
+      return isNoCapture(F, idx);
+    }
   }
   return false;
 }
