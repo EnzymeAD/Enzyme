@@ -24,7 +24,7 @@ declare double @llvm.sin.f64(double)
 declare double @__enzyme_error_estimate(double (double)*, ...)
 
 
-; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
+; CHECK: define internal double @fwderrtester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[i0:.+]] = tail call fast double @llvm.cos.f64(double %x)
 ; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"x'", %x

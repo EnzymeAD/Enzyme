@@ -28,6 +28,7 @@
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "Utils.h"
 
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -114,6 +115,10 @@
 
 #include "CacheUtility.h"
 #include "Utils.h"
+
+#ifdef ENABLE_POSEIDON
+#include "Poseidon/Poseidon.h"
+#endif
 
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
@@ -2244,8 +2249,8 @@ bool DetectReadonlyOrThrow(Module &M) {
   return changed;
 }
 
-Function *PreProcessCache::preprocessForClone(Function *F,
-                                              DerivativeMode mode) {
+Function *PreProcessCache::preprocessForClone(Function *F, DerivativeMode mode,
+                                              bool profiled) {
 
   TimeTraceScope timeScope("preprocessForClone", F->getName());
 
@@ -2691,7 +2696,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    if (mode != DerivativeMode::ForwardMode)
+    if (mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::ForwardModeError)
       ReplaceReallocs(NewF);
 
     {
@@ -2727,7 +2733,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
   }
 
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeError)
     ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
@@ -2738,6 +2745,19 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     auto unreachable = getGuaranteedUnreachable(NewF);
     UpgradeAllocasToMallocs(NewF, mode, unreachable);
   }
+
+#ifdef ENABLE_POSEIDON
+  if (profiled) {
+    preprocessForPoseidon(NewF);
+
+    auto PA = InstCombinePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+    PA = EarlyCSEPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+    PA = GVNPass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+  }
+#endif
 
   CanonicalizeLoops(NewF, FAM);
   RemoveRedundantPHI(NewF, FAM);
@@ -2999,9 +3019,14 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     SmallPtrSetImpl<Value *> &returnvals, bool returnTape, bool returnPrimal,
     bool returnShadow, const Twine &name,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> *VMapO,
-    bool diffeReturnArg, llvm::Type *additionalArg) {
+    bool diffeReturnArg, llvm::Type *additionalArg, bool profiled) {
   if (!F->empty())
-    F = preprocessForClone(F, mode);
+    F = preprocessForClone(F, mode, profiled);
+#ifdef ENABLE_POSEIDON
+  if (profiled) {
+    setPoseidonMetadata(*F);
+  }
+#endif
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
       F->getFunctionType(), mode, width, additionalArg, constant_args,

@@ -163,8 +163,8 @@ GradientUtils::GradientUtils(
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
     DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
     bool omp)
-    : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_),
-      invertedPointers(),
+    : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode), profiled(false),
+      oldFunc(oldFunc_), invertedPointers(),
       OrigDT(oldFunc_->empty()
                  ? ((DominatorTree *)nullptr)
                  : &Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(
@@ -4908,7 +4908,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .forceAnonymousTape = true,
                           .typeInfo = type_args,
                           .runtimeActivity = runtimeActivity,
-                          .strongZero = strongZero},
+                          .strongZero = strongZero,
+                          .profiled = false},
         TA,
         /*map*/ &augdata);
     assert(newf);
