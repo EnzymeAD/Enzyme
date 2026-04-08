@@ -27,12 +27,12 @@ module {
   }
 
   // CHECK: @fwddiffenrm2(%[[arg0:.+]]: memref<?xf64>, %[[arg1:.+]]: memref<?xf64>) -> f64 {
-  // CHECK:   %[[c0:.+]] = arith.constant 0 : index
-  // CHECK:   %[[c1:.+]] = arith.constant 1 : index
-  // CHECK:   %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK-DAG:   %[[c0:.+]] = arith.constant 0 : index
+  // CHECK-DAG:   %[[c1:.+]] = arith.constant 1 : index
+  // CHECK-DAG:   %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK-DAG:   %[[dim:.+]] = memref.dim %[[arg0]], %[[c0]] : memref<?xf64>
   // CHECK:   %[[cst_0:.+]] = arith.constant 0.000000e+00 : f64
-  // CHECK:   %[[dim:.+]] = memref.dim %[[arg0]], %[[c0]] : memref<?xf64>
-  // CHECK:   %[[x0:.+]]:2 = scf.parallel (%[[arg2:.+]]) = (%[[c0]]) to (%dim) step (%[[c1]]) init (%[[cst_0]], %[[cst]]) -> (f64, f64) {
+  // CHECK:   %[[x0:.+]]:2 = scf.parallel (%[[arg2:.+]]) = (%[[c0]]) to (%[[dim]]) step (%[[c1]]) init (%[[cst]], %[[cst_0]]) -> (f64, f64) {
   // CHECK:     %[[x1:.+]] = memref.load %[[arg1]][%[[arg2]]] : memref<?xf64>
   // CHECK:     %[[x2:.+]] = memref.load %[[arg0]][%[[arg2]]] : memref<?xf64>
   // CHECK:     %[[x3:.+]] = arith.mulf %[[x1]], %[[x2]] : f64
