@@ -100,33 +100,34 @@ attributes #8 = { noreturn nounwind }
 ; CHECK: define internal { double } @diffetaylorlog(double %x, i32 %SINCOSN, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp8 = icmp eq i32 %SINCOSN, 0
-; CHECK-NEXT:   %lcmp.mod_unwrap = icmp ne i32 %SINCOSN, 1
-; CHECK-NEXT:   %anot1_ = xor i1 %cmp8, true
-; CHECK-NEXT:   %[[andVal:.+]] = and i1 %lcmp.mod_unwrap, %anot1_
-; CHECK-NEXT:   %bnot1_ = xor i1 %lcmp.mod_unwrap, true
-; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %bnot1_, double %differeturn, double 0.000000e+00
-; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %[[andVal]], double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %lcmp.mod = icmp ne i32 %SINCOSN, 1
+; CHECK-NEXT:   %spec.select = select i1 %lcmp.mod, i8 2, i8 1
+; CHECK-NEXT:   %_cache.0 = select i1 %cmp8, i8 0, i8 %spec.select
+; CHECK-NEXT:   %[[i0:.+]] = icmp eq i8 1, %_cache.0
+; CHECK-NEXT:   %[[i1:.+]] = icmp eq i8 2, %_cache.0
+; CHECK-NEXT:   %[[sel0:.+]] = select{{( fast)?}} i1 %[[i0]], double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %[[sel1:.+]] = select{{( fast)?}} i1 %[[i1]], double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp8, label %invertentry, label %staging
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body, %entry
-; CHECK-NEXT:   %"x'de.0" = phi double [ %0, %entry ], [ %[[i7:.+]], %invertfor.body ]
-; CHECK-NEXT:   %2 = insertvalue { double } undef, double %"x'de.0", 0
-; CHECK-NEXT:   ret { double } %2
+; CHECK-NEXT:   %"x'de.0" = phi double [ %[[sel0]], %entry ], [ %[[i7:.+]], %invertfor.body ]
+; CHECK-NEXT:   %[[iv:.+]] = insertvalue { double } undef, double %"x'de.0", 0
+; CHECK-NEXT:   ret { double } %[[iv]]
 
 ; CHECK: invertfor.body:                                   ; preds = %staging, %incinvertfor.body
-; CHECK-NEXT:   %"x'de.1" = phi double [ %0, %staging ], [ %[[i7]], %incinvertfor.body ]
+; CHECK-NEXT:   %"x'de.1" = phi double [ %[[sel0]], %staging ], [ %[[i7]], %incinvertfor.body ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[_unwrap2:.+]], %staging ], [ %[[i10:.+]], %incinvertfor.body ]
 ; CHECK-NEXT:   %iv.next_unwrap = add nuw nsw i64 %"iv'ac.0", 1
 ; CHECK-NEXT:   %_unwrap = trunc i64 %iv.next_unwrap to i32
 ; CHECK-NEXT:   %conv_unwrap = sitofp i32 %_unwrap to double
-; CHECK-NEXT:   %[[d0diffez:.+]] = fdiv fast double %1, %conv_unwrap
+; CHECK-NEXT:   %[[d0diffez:.+]] = fdiv fast double %[[sel1]], %conv_unwrap
 ; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %conv_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %[[i4:.+]] = call fast double @llvm.pow.f64(double %x, double %[[i3]])
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %conv_unwrap, %[[i4]]
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[d0diffez]], %[[i5]]
 ; CHECK-NEXT:   %[[i7]] = fadd fast double %"x'de.1", %[[i6]]
 ; CHECK-NEXT:   %[[i8:.+]] = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %[[i9:.+]] = select{{( fast)?}} i1 %[[i8]], double 0.000000e+00, double %1
+; CHECK-NEXT:   %[[i9:.+]] = select{{( fast)?}} i1 %[[i8]], double 0.000000e+00, double %[[sel1]]
 ; CHECK-NEXT:   br i1 %[[i8]], label %invertentry, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
