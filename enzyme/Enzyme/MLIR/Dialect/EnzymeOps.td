@@ -161,6 +161,17 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
+def JacobianOp : Enzyme_Op<"jacobian",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Compute Jacobian for a function";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
@@ -228,15 +239,15 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
 }
 
 def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "LoopOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region or loop op";
+    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp", "ForLoopOp", "WhileLoopOp", "IfOp"]>]> {
+  let summary = "Yield values at the end of an autodiff_region, loop, or if ops";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
   }];
 }
 
-def LoopOp : Enzyme_Op<"loop", [AutomaticAllocationScope]> {
+def ForLoopOp : Enzyme_Op<"for_loop", [AutomaticAllocationScope]> {
   let summary = "Counted loop for probabilistic programming";
   let description = [{
     A counted loop operation that iterates from `lowerBound` to `upperBound`
@@ -444,16 +455,6 @@ def ExtractOp : Enzyme_Op<"extract"> {
 }
 
 // Probabilistic programming
-def Trace : Enzyme_Type<"Trace"> {
-  let summary = "Execution trace for probabilistic programs";
-  let description = [{
-    Reference: https://www.gen.dev/docs/stable/tutorials/basics/gfi/#Traces
-    Mutable storage for mapping all sampled symbols to their values, log-likelihoods,
-    and various other information from executing a traced probabilistic function.
-  }];
-  let mnemonic = "Trace";
-}
-
 def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
   let summary = "Symbol associated with a Sample op";
   let description = [{
@@ -465,14 +466,6 @@ def SymbolAttr : Enzyme_Attr<"Symbol", "symbol"> {
 
 def AddressAttr : TypedArrayAttrBase<SymbolAttr, "Address as an array of symbols">;
 def AddressArrayAttr : TypedArrayAttrBase<AddressAttr, "Array of addresses">;
-
-def Constraint : Enzyme_Type<"Constraint"> {
-  let summary = "A mutable storage mapping symbols to value constraints";
-  let description = [{
-  A mutable storage mapping symbols to value constraints.
-  }];
-  let mnemonic = "Constraint";
-}
 
 def SampleOp : Enzyme_Op<"sample",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
@@ -487,6 +480,7 @@ def SampleOp : Enzyme_Op<"sample",
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
+    OptionalAttr<SupportAttr>:$support,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -518,22 +512,33 @@ def UntracedCallOp : Enzyme_Op<"untracedCall"> {
 }
 
 def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Simulate a probabilistic function to generate execution trace";
+  let summary = "Simulate a generative function";
   let description = [{
-  Simulate a probabilistic function to generate execution trace
-  by replacing all SampleOps with distribution calls and recording
-  all sampled values into the trace. This op returns the trace, the weight
-  (accumulated log-probability), and the other outputs. By convention,
-  the 0th operand in `inputs` or `outputs` is the initial RNG state (seed).
+    Simulates a generative function, building a trace tensor containing all
+    sampled values and computing the accumulated log probability weight.
+
+    The `selection` attribute specifies all sample addresses in order,
+    determining the trace tensor layout.
+
+    Returns: (trace, weight, rng, retvals...)
+    - trace: tensor<1 x position_size x f64> - flattened samples
+    - weight: tensor<f64> - accumulated log probability
+    - rng: updated RNG state
+    - retvals: original function return values
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    AddressArrayAttr:$selection,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$weight,
+    Variadic<AnyType>:$outputs
+  );
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
@@ -541,140 +546,32 @@ def SimulateOp : Enzyme_Op<"simulate", [DeclareOpInterfaceMethods<SymbolUserOpIn
 }
 
 def GenerateOp : Enzyme_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Generate an execution trace and weight from a probabilistic function";
+  let summary = "Constrained generation from a generative function";
   let description = [{
-  Generate an execution trace and weight from a probabilistic function.
-  If a `constraint` dict is provided AND the sample op's `symbol` is in the
-  `constrained_symbols` array, we will use the corresponding constraint value
-  instead of generating new samples from the probabilistic function.
-  By convention, the 0th operand in `inputs` or `outputs` is the initial RNG
-  state (seed).
+    Generates from a generative function with some addresses constrained.
+    The constraint tensor contains flattened constrained values in the order
+    specified by constrained_addresses.
+
+    Returns: (trace, weight, rng, retvals...)
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
+    AnyRankedTensor:$constraint,
+    AddressArrayAttr:$selection,
     AddressArrayAttr:$constrained_addresses,
-    Constraint:$constraint,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type($inputs, results)
-  }];
-}
-
-def InitTraceOp : Enzyme_Op<"initTrace", [MemoryEffects<[MemAlloc]>]> {
-  let summary = "Initialize an execution trace for a probabilistic function";
-  let description = [{
-    Initialize an execution trace for a probabilistic function.
-  }];
-  let arguments = (ins );
-  let results = (outs Trace:$trace);
-  let assemblyFormat = "attr-dict `:` type($trace)";
-  let hasCanonicalizer = 1;
-}
-
-def AddSampleToTraceOp : Enzyme_Op<"addSampleToTrace", [Pure]> {
-  let summary = "Add a sampled value into the execution trace";
-  let description = [{
-  Add a sampled value into the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    SymbolAttr:$symbol,
-    Variadic<AnyType>:$sample
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$weight,
+    Variadic<AnyType>:$outputs
   );
 
-  let results = (outs Trace:$updated_trace);
-
   let assemblyFormat = [{
-    `(` $sample `:` type($sample) `)` `into` $trace attr-dict
-  }];
-}
-
-def AddSubtraceOp : Enzyme_Op<"addSubtrace", [Pure]> {
-  let summary = "Insert a subtrace into a parent trace";
-  let description = [{
-  Insert a subtrace into a parent trace.
-  }];
-
-  let arguments = (ins
-    Trace:$subtrace,
-    SymbolAttr:$symbol,
-    Trace:$trace
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    $subtrace `into` $trace attr-dict
-  }];
-}
-
-def AddWeightToTraceOp : Enzyme_Op<"addWeightToTrace", [Pure]> {
-  let summary = "Add the aggregated weight into the execution trace";
-  let description = [{
-  Add the aggregated log-probability weight to the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    AnyType:$weight
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    `(` $weight `:` type($weight) `)` `into` $trace attr-dict
-  }];
-}
-
-def AddRetvalToTraceOp : Enzyme_Op<"addRetvalToTrace", [Pure]> {
-  let summary = "Add the function's return value(s) into the execution trace";
-  let description = [{
-  Add the function's return value(s) into the execution trace.
-  }];
-
-  let arguments = (ins
-    Trace:$trace,
-    Variadic<AnyType>:$retval
-  );
-
-  let results = (outs Trace:$updated_trace);
-
-  let assemblyFormat = [{
-    `(` $retval `:` type($retval) `)` `into` $trace attr-dict
-  }];
-}
-
-def GetSampleFromConstraintOp : Enzyme_Op<"getSampleFromConstraint"> {
-  let summary = "Get sampled values from a constraint for a given symbol";
-  let description = [{
-  Get sampled values from a constraint for a given symbol.
-  }];
-  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
-  let results = (outs Variadic<AnyType>:$outputs);
-
-  let assemblyFormat = [{
-    $constraint attr-dict `:` type(results)
-  }];
-}
-
-def GetSubconstraintOp : Enzyme_Op<"getSubconstraint"> {
-  let summary = "Get a subconstraint from a constraint for a given symbol";
-  let description = [{
-  Get a subconstraint from a constraint for a given symbol.
-  }];
-  let arguments = (ins Constraint:$constraint, SymbolAttr:$symbol);
-
-  let results = (outs Constraint:$subconstraint);
-
-  let assemblyFormat = [{
-    $constraint attr-dict
+    $fn `(` $inputs `)` `given` $constraint attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -714,241 +611,312 @@ def RandomOp : Enzyme_Op<"random"> {
   }];
 }
 
-def GetSubtraceOp : Enzyme_Op<"getSubtrace", [Pure]> {
-  let summary = "Get a subtrace from a trace for a given symbol";
+def RandomSplitOp : Enzyme_Op<"randomSplit"> {
+  let summary = "Split RNG state into multiple independent states";
   let description = [{
-    Get a subtrace from a trace for a given symbol.
+    Splits an RNG state into multiple independent RNG states.
+    Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
   }];
-  let arguments = (ins Trace:$trace, SymbolAttr:$symbol);
 
-  let results = (outs Trace:$subtrace);
+  let arguments = (ins AnyType:$rng_state);
+  let results = (outs Variadic<AnyType>:$output_rng_states);
 
   let assemblyFormat = [{
-    $trace attr-dict
-  }];
-}
-
-def GetSampleFromTraceOp : Enzyme_Op<"getSampleFromTrace", [Pure]> {
-  let summary = "Get the sampled value for a given symbol from an execution trace";
-  let description = [{
-    Get the sampled value for a given symbol from an execution trace.
-  }];
-  let arguments = (ins Trace:$trace, SymbolAttr:$symbol);
-
-  let results = (outs Variadic<AnyType>:$sample);
-
-  let assemblyFormat = [{
-    $trace attr-dict `:` type($sample)
-  }];
-}
-
-def GetWeightFromTraceOp : Enzyme_Op<"getWeightFromTrace", [Pure]> {
-  let summary = "Get the accumulated weight from an execution trace";
-  let description = [{
-    Get the accumulated log-probability weight from an execution trace.
-  }];
-  let arguments = (ins Trace:$trace);
-
-  let results = (outs AnyType:$weight);
-
-  let assemblyFormat = [{
-    $trace attr-dict `:` type($weight)
-  }];
-}
-
-def GetFlattenedSamplesFromTraceOp : Enzyme_Op<"getFlattenedSamplesFromTrace", [Pure]> {
-  let summary = "Get multiple sampled values from a trace and flatten to position vector";
-  let description = [{
-    Get sampled values for multiple addresses from an execution trace and
-    flatten them into a single position vector for HMC.
-  }];
-  let arguments = (ins Trace:$trace, AddressArrayAttr:$selection);
-
-  let results = (outs AnyType:$position);
-
-  let assemblyFormat = [{
-    $trace attr-dict `:` type($position)
-  }];
-}
-
-def UnflattenSliceOp : Enzyme_Op<"unflatten_slice", [Pure]> {
-  let summary = "Extract a slice from a flattened position vector and reshape";
-  let description = [{
-    Extract a slice from a 1D position vector starting at the given offset,
-    and reconstruct the original multi-dimensional tensor shape (implied by the type).
-  }];
-
-  let arguments = (ins
-    AnyRankedTensor:$position,
-    I64Attr:$offset
-  );
-
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $position `[` $offset `]` attr-dict `:` type($position) `->` type($result)
-  }];
-}
-
-def UpdateOp : Enzyme_Op<"update", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Update trace with new position values and recompute weight";
-  let description = [{
-    Update selected addresses in a trace with new values from a position vector,
-    re-evaluate the probabilistic function, and return the updated trace with
-    the new weight (log probability) and updated RNG state.
-    By convention, the 0th operand in inputs is the initial RNG state.
-  }];
-  let arguments = (ins
-    FlatSymbolRefAttr:$fn,
-    Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
-    AnyType:$position,
-    AddressArrayAttr:$selection,
-    DefaultValuedStrAttr<StrAttr, "">:$name
-  );
-
-  let results = (outs Trace:$updated_trace, AnyType:$weight, AnyType:$output_rng_state);
-
-  let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace `at` $position attr-dict `:` functional-type(operands, results)
+    $rng_state attr-dict `:` functional-type(operands, results)
   }];
 }
 
 def RegenerateOp : Enzyme_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Regenerate selected addresses in a probabilistic function";
+  let summary = "Regenerate selected addresses in a trace";
   let description = [{
-    Regenerate selected addresses in a probabilistic function while keeping
-    other addresses fixed to their values in the given trace.
-    By convention, the 0th operand in inputs is the initial RNG state
-    and the 0th operand in results is the updated RNG state.
+    Regenerates selected addresses while keeping others fixed.
+    Used internally by MH.
+
+    Takes explicit old_trace and returns new trace with weight.
+
+    Returns: (new_trace, weight, retvals...)
+    - new_trace: tensor<1 x position_size x f64> - flattened samples
+    - weight: tensor<f64> - accumulated log probability
+    - retvals: original function return values
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
+    AnyRankedTensor:$original_trace,
     AddressArrayAttr:$selection,
+    AddressArrayAttr:$regenerate_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$trace, AnyType:$weight, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$new_trace,
+    AnyRankedTensor:$weight,
+    Variadic<AnyType>:$outputs
+  );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type(operands, results)
   }];
 }
 
 def MHOp : Enzyme_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
-    Perform a Metropolis-Hastings step on a probabilistic function.
-    This operation proposes a new trace by regenerating selected addresses,
-    computes the acceptance probability, and returns the updated trace.
-    By convention, the 0th operand in inputs is the initial RNG state
-    and the 0th operand in results is the updated RNG state.
+    Performs one MH step: regenerates selected addresses and accepts/rejects
+    based on weight ratio.
   }];
 
   let arguments = (ins
     FlatSymbolRefAttr:$fn,
+    AnyRankedTensor:$original_trace,
+    AnyRankedTensor:$original_weight,
     Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
     AddressArrayAttr:$selection,
+    AddressArrayAttr:$regenerate_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$new_trace,
+    AnyRankedTensor:$new_weight,
+    AnyRankedTensor:$accepted,
+    AnyType:$output_rng
+  );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace attr-dict `:` functional-type($inputs, results)
+    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight attr-dict `:` functional-type(operands, results)
   }];
 }
 
 def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference step for probabilistic programs";
+  let summary = "MCMC inference for probabilistic programs";
   let description = [{
-    Perform an MCMC inference step (HMC, NUTS, etc.) on a probabilistic function.
-    This operation proposes a new trace using the specified algorithm,
-    computes the acceptance probability, and returns the updated trace.
-    By convention, the 0th operand in inputs is the initial RNG state
-    and the 0th operand in results is the updated RNG state.
+    Runs MCMC inference on selected addresses.
 
-    Optional HMC-specific parameters:
-    - mass: Mass matrix (identity assumed if not provided)
-    - step_size: Leapfrong integration step size
-    - num_steps: Number of leapfrog steps
-    - initial_momentum: deterministic initial momentum (debug)
+    Two modes of operation:
+    1. Trace-based mode: `fn` and `original_trace` are provided. The model
+       function with `enzyme.sample` ops defines the density.
+    2. Custom logpdf mode: `logpdf_fn` and `initial_position` are provided.
+       The logpdf function maps position → scalar log-density directly.
+
+    The `selection` attribute determines which addresses to sample via HMC/NUTS.
+    All sample addresses are included in the trace tensor for consistency.
+
+    Returns: (trace, diagnostics, rng, final_position, final_gradient,
+              final_potential_energy, final_step_size, final_inverse_mass_matrix)
+    - trace: tensor<num_samples x position_size x f64>
+    - diagnostics: tensor<num_samples x i1> - placeholder for future expansion
+    - rng: updated RNG state
+    - final_position: tensor<1 x position_size x f64> - position after last sample
+    - final_gradient: tensor<1 x position_size x f64> - gradient at final position
+    - final_potential_energy: tensor<f64> - potential energy at final position
+    - final_step_size: tensor<f64> - adapted step size (after warmup)
+    - final_inverse_mass_matrix: tensor - adapted inverse mass matrix (after warmup)
   }];
 
   let arguments = (ins
-    MCMCAlgorithmAttr:$alg,
-    FlatSymbolRefAttr:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
-    Trace:$original_trace,
+    Optional<AnyRankedTensor>:$original_trace,
     AddressArrayAttr:$selection,
-    Optional<AnyType>:$mass,
-    Optional<AnyType>:$step_size,
-    Optional<AnyType>:$num_steps,
-    Optional<AnyType>:$initial_momentum,
+    AddressArrayAttr:$all_addresses,
+
+    DefaultValuedAttr<I64Attr, "0">:$num_warmup,
+    DefaultValuedAttr<I64Attr, "1">:$num_samples,
+    DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    // Algorithm-specific MCMC parameters
+    Optional<AnyRankedTensor>:$inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$step_size,
+
+    // Algorithm-specific configurations
+    OptionalAttr<HMCConfigAttr>:$hmc_config,
+    OptionalAttr<NUTSConfigAttr>:$nuts_config,
+
+    // Custom logpdf mode
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    Optional<AnyRankedTensor>:$initial_position,
+
+    Optional<AnyRankedTensor>:$initial_gradient,
+    Optional<AnyRankedTensor>:$initial_potential_energy,
+
+    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
-  let results = (outs Trace:$new_trace, AnyType:$accepted, AnyType:$output_rng_state);
+  let results = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$diagnostics,
+    AnyType:$output_rng_state,
+    AnyRankedTensor:$final_position,
+    AnyRankedTensor:$final_gradient,
+    AnyRankedTensor:$final_potential_energy,
+    AnyRankedTensor:$final_step_size,
+    AnyRankedTensor:$final_inverse_mass_matrix
+  );
 
   let assemblyFormat = [{
-    `algorithm` `=` $alg $fn `(` $inputs `)` `given` $original_trace
-    (`mass` `=` $mass^ `:` type($mass))?
-    (`step_size` `=` $step_size^ `:` type($step_size))?
-    (`num_steps` `=` $num_steps^ `:` type($num_steps))?
-    (`initial_momentum` `=` $initial_momentum^ `:` type($initial_momentum))?
-    attr-dict `:` functional-type($inputs, results)
+    ($fn^)?
+    `(` $inputs `)`
+    (`given` $original_trace^)?
+    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
+    (`step_size` `=` $step_size^)?
+    (`logpdf_fn` `=` $logpdf_fn^)?
+    (`initial_position` `=` $initial_position^)?
+    (`initial_gradient` `=` $initial_gradient^)?
+    (`initial_potential_energy` `=` $initial_potential_energy^)?
+    attr-dict `:` functional-type(operands, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 def DotOp : Enzyme_Op<"dot", [Pure]> {
-  let summary = "Compute dot product of two vectors";
+  let summary = "Computes a general dot product operation";
   let description = [{
-    Computes the dot product of two 1D tensors (vectors).
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def CholeskySolveOp : Enzyme_Op<"cholesky_solve", [Pure]> {
-  let summary = "Solve linear system Ax = b using Cholesky decomposition";
-  let description = [{
-    Solves the linear system Ax = b for x using Cholesky decomposition.
-    Assuming A is symmetric positive definite!
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
-def SelectTraceOp : Enzyme_Op<"selectTrace", [Pure]> {
-  let summary = "Select between two probabilistic traces based on a boolean tensor condition";
-  let description = [{
-    Selects between two !enzyme.Trace values (considered scalars here) based on a tensor<i1> condition.
+    Computes a general dot product operation. To be lowered to `stablehlo.dot_general`.
   }];
 
   let arguments = (ins
-    AnyTypeOf<[I1Tensor, I1]>:$condition,
-    Trace:$true_value,
-    Trace:$false_value
+    AnyRankedTensor:$lhs,
+    AnyRankedTensor:$rhs,
+    DenseI64ArrayAttr:$lhs_batching_dimensions,
+    DenseI64ArrayAttr:$rhs_batching_dimensions,
+    DenseI64ArrayAttr:$lhs_contracting_dimensions,
+    DenseI64ArrayAttr:$rhs_contracting_dimensions
   );
-
-  let results = (outs Trace:$result);
+  let results = (outs AnyRankedTensor:$result);
 
   let assemblyFormat = [{
-    $condition `,` $true_value `,` $false_value attr-dict `:` type($condition)
+    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def CholeskyOp : Enzyme_Op<"cholesky", [Pure]> {
+  let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
+  let description = [{
+    Computes the Cholesky decomposition of a symmetric positive definite matrix A.
+    Returns L such that A = L @ L^T (if lower=true) or A = U^T @ U (if lower=false).
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$input,
+    DefaultValuedAttr<BoolAttr, "true">:$lower
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def TriangularSolveOp : Enzyme_Op<"triangular_solve", [Pure]> {
+  let summary = "Solve a triangular linear system";
+  let description = [{
+    Solves a system of linear equations with a triangular coefficient matrix.
+    If left_side=true, solves op(A) @ X = B for X.
+    If left_side=false, solves X @ op(A) = B for X.
+    op(A) is determined by transpose_a: NO_TRANSPOSE, TRANSPOSE, or ADJOINT.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$a,
+    AnyRankedTensor:$b,
+    DefaultValuedAttr<BoolAttr, "true">:$left_side,
+    DefaultValuedAttr<BoolAttr, "true">:$lower,
+    DefaultValuedAttr<BoolAttr, "false">:$unit_diagonal,
+    DefaultValuedAttr<TransposeAttr, "Transpose::NO_TRANSPOSE">:$transpose_a
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $a `,` $b attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def SelectOp : Enzyme_Op<"select", [Pure]> {
+  let summary = "Exteneded select operation";
+  let description = [{
+    Extended select operation that supports:
+    - `tensor<i1>` conditions with differently-sized operands
+    - standard cases supported by `arith.select`
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$condition,
+    AnyType:$true_value,
+    AnyType:$false_value
+  );
+
+  let results = (outs AnyType:$result);
+
+  let assemblyFormat = [{
+    $condition `,` $true_value `,` $false_value attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def ReshapeOp : Enzyme_Op<"reshape", [Pure]> {
+  let summary = "Reshape a tensor to a new static shape";
+  let arguments = (ins AnyRankedTensor:$input);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` functional-type($input, $result)
+  }];
+}
+
+def SliceOp : Enzyme_Op<"slice", [Pure]> {
+  let summary = "Extract a static slice from a tensor";
+  let description = [{
+    Extract a static slice from a tensor.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    DenseI64ArrayAttr:$start_indices,
+    DenseI64ArrayAttr:$limit_indices,
+    DenseI64ArrayAttr:$strides
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type($operand, $result)
+  }];
+}
+
+def DynamicSliceOp : Enzyme_Op<"dynamic_slice", [Pure]> {
+  let summary = "Extract a slice from a tensor at dynamic start indices";
+  let description = [{
+    Extract a slice from a tensor at dynamic start indices.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    Variadic<AnyRankedTensor>:$start_indices,
+    DenseI64ArrayAttr:$slice_sizes
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand `,` $start_indices attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def DynamicUpdateSliceOp : Enzyme_Op<"dynamic_update_slice", [Pure]> {
+  let summary = "Update a slice in a tensor at dynamic start indices";
+  let description = [{
+    Update a slice in a tensor at dynamic start indices.
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$operand,
+    AnyRankedTensor:$update,
+    Variadic<AnyRankedTensor>:$start_indices
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand `,` $update `,` $start_indices attr-dict `:` functional-type(operands, results)
   }];
 }
 
@@ -987,6 +955,87 @@ def AffineAtomicRMWOp : Enzyme_Op<"affine_atomic_rmw"> {
   let assemblyFormat = [{
     $kind $value `,` $memref `,` `(` $map `)` `[` $indices `]` attr-dict `:` `(` type($value) `,`
     type($memref) `)` `->` type($result)
+  }];
+}
+
+def WhileLoopOp : Enzyme_Op<"while_loop", [AutomaticAllocationScope]> {
+  let summary = "While loop with condition";
+  let description = [{
+    A while loop operation that continues iterating as long as the condition
+    evaluates to true. Intended to be lowered to `stablehlo.while`.
+  }];
+
+  let arguments = (ins Variadic<AnyType>:$initArgs);
+  let regions = (region SizedRegion<1>:$conditionRegion,
+                        SizedRegion<1>:$bodyRegion);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $initArgs `:` type($initArgs) `)`
+    `->` type(results)
+    `condition` $conditionRegion
+    `body` $bodyRegion
+    attr-dict
+  }];
+}
+
+def IfOp : Enzyme_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> {
+  let summary = "Conditional execution with two branches";
+  let description = [{
+    A conditional operation that executes exactly one of two branches based on a
+    boolean predicate.
+  }];
+
+  let arguments = (ins AnyType:$predicate);
+  let regions = (region SizedRegion<1>:$trueBranch,
+                        SizedRegion<1>:$falseBranch);
+  let results = (outs Variadic<AnyType>:$results);
+
+  let assemblyFormat = [{
+    `(` $predicate `)` `(` $trueBranch `,` $falseBranch `)`
+    attr-dict `:` functional-type($predicate, results)
+  }];
+}
+
+def LogAddExpOp : Enzyme_Op<"log_add_exp", [Pure]> {
+  let summary = "Computes log(exp(x) + exp(y))";
+  let description = [{
+    Computes log(exp(x) + exp(y)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def LogisticOp : Enzyme_Op<"logistic", [Pure]> {
+  let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
+  let description = [{
+    Computes the logistic (sigmoid) function: 1 / (1 + exp(-x)).
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
+  }];
+}
+
+def PopcountOp : Enzyme_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Computes population count";
+  let description = [{
+    Returns the number of 1-bits elementwise.
+  }];
+
+  let arguments = (ins AnyRankedTensor:$operand);
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $operand attr-dict `:` functional-type(operands, results)
   }];
 }
 

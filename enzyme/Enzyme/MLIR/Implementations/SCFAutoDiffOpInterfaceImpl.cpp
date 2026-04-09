@@ -92,10 +92,11 @@ public:
   static IRMapping createArgumentMap(PatternRewriter &rewriter,
                                      scf::ForOp forOp, ArrayRef<Value> indFor,
                                      scf::ForOp otherForOp,
-                                     ArrayRef<Value> indOther) {
+                                     ArrayRef<Value> reversedOther) {
     IRMapping map;
-    for (auto &&[f, o] : llvm::zip_equal(indFor, indOther))
+    for (auto &&[f, o] : llvm::zip_equal(indFor, reversedOther)) {
       map.map(f, o);
+    }
 
     Value canIdx = forOp.getBody()->getArgument(0);
     if (!map.contains(canIdx)) {
@@ -411,14 +412,15 @@ public:
 
         auto term = oBB.getTerminator();
 
-        for (auto &&[active, arg, operand] :
-             llvm::zip_equal(operandsActive, revBB.getArguments().slice(1),
-                             term->getOperands())) {
+        unsigned argIdx = 1; // Skip over the reversed IV
+        for (auto &&[active, operand] :
+             llvm::zip_equal(operandsActive, term->getOperands())) {
           if (active) {
             // Set diffe here, not add because it should not accumulate across
             // iterations. Instead the new gradient for this operand is passed
             // in the return of the reverse for body.
-            gutils->setDiffe(operand, arg, bodyBuilder);
+            gutils->setDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
+            argIdx++;
           }
         }
 
@@ -450,11 +452,14 @@ public:
       }
     }
 
-    for (auto &&[active, res, arg] : llvm::zip_equal(
-             operandsActive, repFor->getResults(), forOp.getInitArgs())) {
+    unsigned resIdx = 0;
+    for (auto &&[active, arg] :
+         llvm::zip_equal(operandsActive, forOp.getInitArgs())) {
       if (active) {
-        if (!gutils->isConstantValue(arg))
-          gutils->addToDiffe(arg, res, builder);
+        if (!gutils->isConstantValue(arg)) {
+          gutils->addToDiffe(arg, repFor.getResult(resIdx), builder);
+          resIdx++;
+        }
       }
     }
 
@@ -653,6 +658,7 @@ struct ParallelOpEnzymeOpsRemover
     }
     return bounds;
   }
+
   static SmallVector<Value>
   computeReversedIndices(PatternRewriter &rewriter, scf::ParallelOp parOp,
                          ArrayRef<Value> otherInductionVariable,
@@ -669,7 +675,7 @@ struct ParallelOpEnzymeOpsRemover
                          parOp.getStep())) {
       Value val = iv;
       if (!matchPattern(lb, m_Zero())) {
-        val = arith::SubIOp::create(builder, parOp.getLoc(), val, step);
+        val = arith::SubIOp::create(builder, parOp.getLoc(), val, lb);
       }
 
       if (!matchPattern(step, m_One())) {
@@ -1002,6 +1008,257 @@ struct ForOpADDataFlow
   }
 };
 
+struct ParallelOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<ParallelOpADDataFlow,
+                                                  scf::ParallelOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto parOp = cast<scf::ParallelOp>(op);
+    const size_t num_lower = parOp.getLowerBound().size();
+    const size_t num_upper = parOp.getUpperBound().size();
+    const size_t num_step = parOp.getStep().size();
+    const size_t init_vals_offset = num_lower + num_upper + num_step;
+    return {parOp->getOperand(res.getResultNumber() + init_vals_offset),
+            parOp.getBody()
+                ->getTerminator()
+                ->getRegion(res.getResultNumber())
+                .front()
+                .getTerminator()
+                ->getOperand(0)};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    // TO DO:  do we need this?
+    assert(0);
+    return SmallVector<Value>();
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    SmallVector<Value> sv;
+
+    for (auto [idx, arg] : llvm::enumerate(term->getOperands())) {
+      if (arg == val) {
+        sv.push_back(term->getRegion(idx).front().getArgument(0));
+      }
+    }
+
+    return sv;
+  }
+};
+
+struct ReduceOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<ReduceOpADDataFlow,
+                                                  scf::ReduceOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    // ReduceOp's have no results
+    return SmallVector<Value>();
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    // The op here is the parent of the block, which is a ReduceOp
+    // All but the last block arguments match up with the corresponding operand
+    // of the reduce op.  The last matches up with terminator operand as well as
+    // the initial value.  If this is the ith block, it is the ith initial value
+
+    auto redOp = cast<scf::ReduceOp>(op);
+    mlir::Block *ownerBlock = arg.getOwner();
+    auto num_args = ownerBlock->getNumArguments();
+    auto arg_idx = arg.getArgNumber();
+    auto region_idx = ownerBlock->getParent()->getRegionNumber();
+    if (arg_idx == num_args - 1) {
+      auto parOp = cast<scf::ParallelOp>(redOp->getParentOp());
+      auto num_lb = parOp.getLowerBound().size();
+      auto num_ub = parOp.getUpperBound().size();
+      auto num_st = parOp.getStep().size();
+      return {parOp->getOperand(num_lb + num_ub + num_st + region_idx),
+              ownerBlock->getTerminator()->getOperand(0)};
+    } else {
+      return {redOp->getOperand(region_idx)};
+    }
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto redOp = cast<scf::ReduceOp>(op);
+    auto parOp = cast<scf::ParallelOp>(redOp->getParentOp());
+    mlir::Block *ownerBlock = term->getBlock();
+    auto region_idx = ownerBlock->getParent()->getRegionNumber();
+
+    return {parOp->getResult(region_idx), ownerBlock->getArgument(1)};
+  }
+};
+
+class SCFReduceAutoDiffOpInterface
+    : public AutoDiffOpInterface::ExternalModel<SCFReduceAutoDiffOpInterface,
+                                                scf::ReduceOp> {
+public:
+  LogicalResult createForwardModeTangent(Operation *origTerminator,
+                                         OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto parentOp = origTerminator->getParentOp();
+    if (!isa<scf::ParallelOp>(parentOp)) {
+      origTerminator->emitError()
+          << " createForwardModeTangent called with invalid parent" << *parentOp
+          << "\n";
+      return failure();
+    }
+
+    // Note, this works for scf::ReduceOp because it has the same number of
+    // operands as the parent (scf::ParallelOp) has results
+    assert(parentOp->getNumResults() == origTerminator->getNumOperands());
+    llvm::SmallDenseSet<unsigned> operandsToShadow;
+    for (auto res : parentOp->getResults()) {
+      if (!gutils->isConstantValue(res))
+        operandsToShadow.insert(res.getResultNumber());
+    }
+
+    SmallVector<Value> newOperands;
+    newOperands.reserve(origTerminator->getNumOperands() +
+                        operandsToShadow.size());
+    for (OpOperand &operand : origTerminator->getOpOperands()) {
+      newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
+      if (operandsToShadow.contains(operand.getOperandNumber()))
+        newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+    }
+
+    // Assuming shadows following the originals are fine.
+    // TODO: consider extending to have a ShadowableTerminatorOpInterface
+    Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
+    replTerminator->setOperands(newOperands);
+
+    // Differentiate the body of the reducer
+    for (auto &origRegion : origTerminator->getRegions()) {
+      for (auto &origBlock : origRegion) {
+        for (Operation &o : origBlock) {
+          if (failed(gutils->visitChild(&o))) {
+            replTerminator->emitError() << " Differentiating reducer block "
+                                        << *replTerminator << " failed!\n";
+          }
+        }
+      }
+    }
+
+    // Delete the primal operations in each differentiated reducer block by
+    // building a map of the operations that are ultimately used by starting
+    // from the shadow operands of the terminator (scf::ReduceReturnOp). Then
+    // erase all of the operations that aren't used.  Note that from above, all
+    // operands for the terminator are shadow operands.
+    for (auto &region : replTerminator->getRegions()) {
+      for (auto &block : region) {
+        std::map<Operation *, bool> used;
+        std::vector<Operation *> op_list;
+
+        // Initialize all operations as not used
+        for (Operation &o : block) {
+          used[&o] = false;
+          op_list.push_back(&o);
+        }
+
+        // Recursively mark operations that are used starting from the
+        // terminator
+        auto mark_used = [&used](const auto &self, Operation *op) -> void {
+          if (op != nullptr) {
+            assert(used.find(op) != used.end());
+            used[op] = true;
+            for (auto v : op->getOperands())
+              self(self, v.getDefiningOp());
+          }
+        };
+        mark_used(mark_used, block.getTerminator());
+
+        // Delete the unused operations squentially, starting from the last so
+        // that all users of an operation are erased before the operation itself
+        for (auto it = op_list.rbegin(); it != op_list.rend(); ++it) {
+          if (!used[*it]) {
+            (*it)->erase();
+          }
+        }
+
+        // Delete the primal arguments from the block.  We have to go backwards
+        // starting from the second-to-last as the args will shift forward after
+        // erasing.
+        for (int i = block.getNumArguments() - 2; i >= 0; i -= 2) {
+          block.eraseArgument(i);
+        }
+      }
+    }
+
+    // Create a new terminator combining the regions of differentiated and
+    // original terminators. We clone the original region so that it still
+    // exists for the undifferentiated reducer but we can take the region from
+    // the originally differentiated one because we delete it later
+    mlir::OpBuilder term_builder(replTerminator);
+    mlir::IRMapping mapper;
+    OperationState state(replTerminator->getLoc(),
+                         scf::ReduceOp::getOperationName());
+    state.addOperands(newOperands);
+    size_t num_regions = origTerminator->getNumRegions();
+    for (size_t i = 0; i < num_regions; ++i) {
+      Region *new_orig_region = state.addRegion();
+      Region *new_diff_region = state.addRegion();
+      origTerminator->getRegion(i).cloneInto(new_orig_region, mapper);
+      new_diff_region->takeBody(replTerminator->getRegion(i));
+    }
+    Operation *new_terminator_op = term_builder.create(state);
+    gutils->erase(replTerminator);
+    gutils->originalToNewFnOps[origTerminator] = new_terminator_op;
+
+    return success();
+  }
+};
+
+class SCFReduceReturnAutoDiffOpInterface
+    : public AutoDiffOpInterface::ExternalModel<
+          SCFReduceReturnAutoDiffOpInterface, scf::ReduceReturnOp> {
+public:
+  LogicalResult createForwardModeTangent(Operation *origTerminator,
+                                         OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto parentOp = origTerminator->getParentOp();
+    if (!isa<scf::ReduceOp>(parentOp)) {
+      origTerminator->emitError()
+          << " createForwardModeTangent called with invalid parent" << *parentOp
+          << "\n";
+      return failure();
+    }
+
+    // ReduceOp has no direct results, instead the result of the ith reducer
+    // block within the ReduceOp matches up with the ith result of the parent
+    // ParallelOp of the ReduceOp.  Therefore the terminator must have exactly 1
+    // operand and we will shadow it
+    auto reducer_index =
+        origTerminator->getBlock()->getParent()->getRegionNumber();
+    assert(reducer_index < parentOp->getParentOp()->getNumResults());
+    assert(origTerminator->getNumOperands() == 1);
+    llvm::SmallDenseSet<unsigned> operandsToShadow;
+    if (!gutils->isConstantValue(
+            parentOp->getParentOp()->getResult(reducer_index)))
+      operandsToShadow.insert(0);
+
+    // For scf::ReduceReturnOp only add the
+    // shadows as operands since the primal reducer will be in a different
+    // region with its own scf::ReduceReturnOp
+    SmallVector<Value> newOperands;
+    newOperands.reserve(operandsToShadow.size());
+    for (OpOperand &operand : origTerminator->getOpOperands()) {
+      if (operandsToShadow.contains(operand.getOperandNumber()))
+        newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+    }
+
+    // Special handling for scf::ReduceOp where the assumption that shadows
+    // follow originals is violated. Here the shadow operations need to be put
+    // in a shadow region.  It isn't clear how to do that directly, so instead
+    // we will create the shadows as normal and then create a new scf::ReduceOp
+    // terminator that combines the regions from the original and
+    // differentiated.  We then erase the primal operations from the derivative
+    // reducer region(s).
+    Operation *replTerminator = gutils->getNewFromOriginal(origTerminator);
+    replTerminator->setOperands(newOperands);
+
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
@@ -1012,6 +1269,11 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::IfOp::attachInterface<IfOpEnzymeOpsRemover>(*context);
     scf::ParallelOp::attachInterface<ParallelOpInterfaceReverse>(*context);
     scf::ParallelOp::attachInterface<ParallelOpEnzymeOpsRemover>(*context);
+    scf::ParallelOp::attachInterface<ParallelOpADDataFlow>(*context);
+    scf::ReduceOp::attachInterface<ReduceOpADDataFlow>(*context);
+    scf::ReduceOp::attachInterface<SCFReduceAutoDiffOpInterface>(*context);
+    scf::ReduceReturnOp::attachInterface<SCFReduceReturnAutoDiffOpInterface>(
+        *context);
     scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);

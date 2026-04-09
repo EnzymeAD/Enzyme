@@ -87,6 +87,7 @@ enum class ErrorType {
   GetIndexError = 9,
   NoTruncate = 10,
   GCRewrite = 11,
+  NaNError = 12,
 };
 
 extern "C" {
@@ -406,7 +407,6 @@ enum class MProbProgMode {
   Simulate = 1,
   Generate = 2,
   Regenerate = 3,
-  Update = 4,
 };
 
 /// Classification of value as an original program
@@ -1169,21 +1169,22 @@ enum class MPI_Elem {
   Old = 7
 };
 
-static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
-                                              unsigned AddressSpace = 0) {
-#if LLVM_VERSION_MAJOR >= 21
-  return llvm::PointerType::get(Context, AddressSpace);
+static inline llvm::PointerType *getPointerType(llvm::Type *T,
+                                                unsigned AddressSpace = 0) {
+#if LLVM_VERSION_MAJOR >= 17
+  return llvm::PointerType::get(T->getContext(), AddressSpace);
 #else
-  return llvm::PointerType::get(llvm::Type::getInt8Ty(Context), AddressSpace);
+  return llvm::PointerType::get(T, AddressSpace);
 #endif
 }
 
+static inline llvm::PointerType *getInt8PtrTy(llvm::LLVMContext &Context,
+                                              unsigned AddressSpace = 0) {
+  return getPointerType(llvm::Type::getInt8Ty(Context), AddressSpace);
+}
+
 static inline llvm::PointerType *getUnqual(llvm::Type *T) {
-#if LLVM_VERSION_MAJOR >= 17
-  return llvm::PointerType::getUnqual(T->getContext());
-#else
-  return llvm::PointerType::getUnqual(T);
-#endif
+  return getPointerType(T);
 }
 
 static inline llvm::StructType *getMPIHelper(llvm::LLVMContext &Context) {
@@ -1912,10 +1913,20 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::nvvm_barrier0:
 #else
   case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
+#if LLVM_VERSION_MAJOR < 22
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
+#else
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+  case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
   case Intrinsic::nvvm_membar_cta:
   case Intrinsic::nvvm_membar_gl:
   case Intrinsic::nvvm_membar_sys:
@@ -2396,10 +2407,6 @@ arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::LoopInfo &LI, llvm::Value *op0,
                              llvm::Value *op1, bool offsetAllowed = false);
 
-// Return true if the module has a triple indicating an nvptx target, false
-// otherwise.
-bool isTargetNVPTX(llvm::Module &M);
-
 static inline std::tuple<llvm::StringRef, llvm::StringRef, llvm::StringRef>
 tripleSplitDollar(llvm::StringRef caller) {
   if (!startsWith(caller, "ejl")) {
@@ -2507,5 +2514,13 @@ llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
 // constant gep offsets and casts
 llvm::SmallVector<std::tuple<llvm::Instruction *, llvm::Value *, size_t>, 1>
 findAllUsersOf(llvm::Value *AI);
+
+static bool hasTerminator(llvm::BasicBlock *BB) {
+#if LLVM_VERSION_MAJOR >= 23
+  return BB->hasTerminator();
+#else
+  return BB->getTerminator();
+#endif
+}
 
 #endif // ENZYME_UTILS_H

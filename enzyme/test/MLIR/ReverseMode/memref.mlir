@@ -70,24 +70,26 @@ func.func @dsubview(
 }
 
 // CHECK: func.func private @diffesubview_in_loop(%arg0: memref<4x3xf32, strided<[?, ?], offset: ?>>, %arg1: memref<4x3xf32, strided<[?, ?], offset: ?>>, %arg2: index, %arg3: memref<f32>, %arg4: memref<f32>) {
+// CHECK-NEXT:    %c3 = arith.constant 3 : index
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    affine.for %arg5 = 0 to 4 {
 // CHECK-NEXT:      %subview = memref.subview %arg0[%arg5, 0] [1, 3] [1, 1] : memref<4x3xf32, strided<[?, ?], offset: ?>> to memref<3xf32, strided<[?], offset: ?>>
-// CHECK-NEXT:      %0 = memref.load %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
-// CHECK-NEXT:      %1 = memref.load %arg3[] : memref<f32>
-// CHECK-NEXT:      %2 = arith.addf %0, %1 : f32
-// CHECK-NEXT:      memref.store %2, %arg3[] : memref<f32>
+// CHECK-NEXT:      %[[v0:.+]] = memref.load %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
+// CHECK-NEXT:      %[[v1:.+]] = memref.load %arg3[] : memref<f32>
+// CHECK-NEXT:      %[[v2:.+]] = arith.addf %[[v0]], %[[v1]] : f32
+// CHECK-NEXT:      memref.store %[[v2]], %arg3[] : memref<f32>
 // CHECK-NEXT:    }
 // CHECK-NEXT:    affine.for %arg5 = 0 to 4 {
-// CHECK-NEXT:      %subview = memref.subview %arg1[%arg5, 0] [1, 3] [1, 1] : memref<4x3xf32, strided<[?, ?], offset: ?>> to memref<3xf32, strided<[?], offset: ?>>
-// CHECK-NEXT:      %0 = memref.load %arg4[] : memref<f32>
+// CHECK-NEXT:      %[[ridx:.+]] = arith.subi %c3, %arg5 : index
+// CHECK-NEXT:      %subview = memref.subview %arg1[%[[ridx]], 0] [1, 3] [1, 1] : memref<4x3xf32, strided<[?, ?], offset: ?>> to memref<3xf32, strided<[?], offset: ?>>
+// CHECK-NEXT:      %[[v0:.+]] = memref.load %arg4[] : memref<f32>
 // CHECK-NEXT:      memref.store %cst, %arg4[] : memref<f32>
-// CHECK-NEXT:      %1 = memref.load %arg4[] : memref<f32>
-// CHECK-NEXT:      %2 = arith.addf %1, %0 : f32
-// CHECK-NEXT:      memref.store %2, %arg4[] : memref<f32>
-// CHECK-NEXT:      %3 = memref.load %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
-// CHECK-NEXT:      %4 = arith.addf %3, %0 : f32
-// CHECK-NEXT:      memref.store %4, %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
+// CHECK-NEXT:      %[[v1:.+]] = memref.load %arg4[] : memref<f32>
+// CHECK-NEXT:      %[[v2:.+]] = arith.addf %[[v1]], %[[v0]] : f32
+// CHECK-NEXT:      memref.store %[[v2]], %arg4[] : memref<f32>
+// CHECK-NEXT:      %[[v3:.+]] = memref.load %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
+// CHECK-NEXT:      %[[v4:.+]] = arith.addf %[[v3]], %[[v0]] : f32
+// CHECK-NEXT:      memref.store %[[v4]], %subview[%arg2] : memref<3xf32, strided<[?], offset: ?>>
 // CHECK-NEXT:    }
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }

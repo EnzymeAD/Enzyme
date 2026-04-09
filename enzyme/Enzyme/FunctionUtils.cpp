@@ -130,6 +130,10 @@ cl::opt<bool> EnzymePreopt("enzyme-preopt", cl::init(true), cl::Hidden,
 cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                            cl::desc("Force inlining of autodiff"));
 
+cl::opt<int> EnzymePostInlineOpt("enzyme-post-inline-opt", cl::init(0),
+                                 cl::Hidden,
+                                 cl::desc("Force inlining of autodiff"));
+
 cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
                             cl::desc("Force noalias of autodiff"));
 #if LLVM_VERSION_MAJOR < 16
@@ -743,7 +747,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
                     }));
 
     for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                    "enzymejl_allocart", "enzymejl_allocart_name"})
+                    "enzymejl_allocart", "enzymejl_allocart_name",
+                    "enzymejl_gc_alloc_rt"})
       if (auto M = AI->getMetadata(MD))
         CI->setMetadata(MD, M);
 
@@ -2062,10 +2067,11 @@ bool DetectReadonlyOrThrowFn(llvm::Function &F,
   }
 
   if (calls_todo.size() == 0) {
-    if (local)
+    if (local) {
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
-    else
+    } else {
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
+    }
   }
   return true;
 }
@@ -2223,10 +2229,11 @@ bool DetectReadonlyOrThrow(Module &M) {
       auto &fwd_set = found2->second;
       fwd_set.erase(cur);
       if (fwd_set.size() == 0) {
-        if (LocalReadOnlyFunctions.contains(F2))
+        if (LocalReadOnlyFunctions.contains(F2)) {
           F2->addFnAttr("enzyme_LocalReadOnlyOrThrow");
-        else
+        } else {
           F2->addFnAttr("enzyme_ReadOnlyOrThrow");
+        }
         todo.push_back(F2);
         todo_map.erase(F2);
       }
@@ -2295,6 +2302,31 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
       FAM.invalidate(*NewF, PA);
+
+      OptimizationLevel Level = OptimizationLevel::O0;
+
+      switch (EnzymePostInlineOpt) {
+      default:
+      case 0:
+        Level = OptimizationLevel::O0;
+        break;
+      case 1:
+        Level = OptimizationLevel::O1;
+        break;
+      case 2:
+        Level = OptimizationLevel::O2;
+        break;
+      case 3:
+        Level = OptimizationLevel::O3;
+        break;
+      }
+      if (Level != OptimizationLevel::O0) {
+        PassBuilder PB;
+        FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+            Level, ThinOrFullLTOPhase::None);
+        PA = FPM.run(*NewF, FAM);
+        FAM.invalidate(*NewF, PA);
+      }
     }
   }
 
@@ -3098,6 +3130,12 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
+      if (F->hasParamAttribute(ii, Attribute::Dereferenceable)) {
+        NewF->removeParamAttr(jj, Attribute::Dereferenceable);
+      }
+      if (F->hasParamAttribute(ii, Attribute::DereferenceableOrNull)) {
+        NewF->removeParamAttr(jj, Attribute::DereferenceableOrNull);
+      }
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
@@ -3105,27 +3143,30 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       hasPtrInput = true;
       ptrInputs[i] = (j + 1);
       // TODO: find a way to keep the attributes in vector mode.
-      if (width == 1)
-        for (auto ty : ShadowParamAttrsToPreserve)
+      if (width == 1) {
+        for (auto ty : ShadowParamAttrsToPreserve) {
           if (F->getAttributes().hasParamAttr(ii, ty)) {
             auto attr = F->getAttributes().getParamAttr(ii, ty);
             NewF->addParamAttr(jj + 1, attr);
           }
+        }
+      }
 
       for (auto attr : {"enzymejl_parmtype", "enzymejl_parmtype_ref",
                         "enzyme_type", "enzymejl_rooted_typ",
                         "enzymejl_returnRoots", "enzymejl_sret_union_bytes"})
         if (F->getAttributes().hasParamAttr(ii, attr)) {
-          if (width == 1)
+          if (width == 1) {
             NewF->addParamAttr(jj + 1,
                                F->getAttributes().getParamAttr(ii, attr));
-          else
+          } else {
             NewF->addParamAttr(jj + 1,
                                Attribute::get(F->getContext(),
                                               attr + std::string("_v"),
                                               F->getAttributes()
                                                   .getParamAttr(ii, attr)
                                                   .getValueAsString()));
+          }
         }
 
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {

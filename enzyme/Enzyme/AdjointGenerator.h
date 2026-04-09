@@ -276,6 +276,13 @@ public:
       break;
     }
 
+    if (gutils->isConstantInstruction(&inst)) {
+      if (Mode == DerivativeMode::ReverseModePrimal)
+        return;
+      eraseIfUnused(inst);
+      return;
+    }
+
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "in Mode: " << to_string(Mode) << "\n";
@@ -2419,6 +2426,15 @@ public:
       }
       goto def;
     }
+    case Instruction::AShr: {
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
@@ -2587,6 +2603,9 @@ public:
       }
       goto def;
     }
+    case Instruction::UDiv:
+    case Instruction::URem:
+    case Instruction::SRem:
     case Instruction::SDiv:
     case Instruction::Shl:
     case Instruction::Mul:
@@ -2816,6 +2835,48 @@ public:
       }
       goto def;
     }
+    case Instruction::LShr: {
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateLShr(idiff, ci);
+              };
+              auto dif = applyChainRule(orig_op0->getType(), Builder2, rule,
+                                        diffe(orig_op0, Builder2));
+              setDiffe(&BO, dif, Builder2);
+              return;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer or is constant
+        return;
+      }
+      goto def;
+    }
+    case Instruction::AShr:
+    case Instruction::SDiv:
+    case Instruction::UDiv:
+    case Instruction::SRem:
+    case Instruction::URem:
     case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
@@ -3674,7 +3735,7 @@ public:
         if (floatTy && gutils->isConstantValue(orig_src)) {
           call = BuilderZ.CreateMemSet(
               ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, salign, isVolatile);
+              length, dalign, isVolatile);
         } else {
           if (dsrc->getType()->isIntegerTy())
             dsrc =
@@ -3873,10 +3934,20 @@ public:
       case Intrinsic::nvvm_barrier0:
 #else
       case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
+#if LLVM_VERSION_MAJOR < 22
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or:
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys:
@@ -3925,10 +3996,19 @@ public:
       (void)vdiff;
 
       switch (ID) {
-
+#if LLVM_VERSION_MAJOR < 22
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or: {
+      case Intrinsic::nvvm_barrier0_or:
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
+      {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
         auto cal = cast<CallInst>(Builder2.CreateCall(
@@ -3952,6 +4032,7 @@ public:
       case Intrinsic::nvvm_barrier0:
 #else
       case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
@@ -4096,6 +4177,11 @@ public:
         return false;
       }
       default:
+        if (!gutils->isConstantValue(&I)) {
+          auto toset =
+              Constant::getNullValue(gutils->getShadowType(I.getType()));
+          setDiffe(&I, toset, Builder2);
+        }
         if (gutils->isConstantInstruction(&I))
           return false;
         if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
@@ -4123,10 +4209,6 @@ public:
              << Intrinsic::getName(ID) << "\n"
              << I;
         EmitNoDerivativeError(ss.str(), I, gutils, Builder2);
-        if (!gutils->isConstantValue(&I))
-          setDiffe(&I,
-                   Constant::getNullValue(gutils->getShadowType(I.getType())),
-                   Builder2);
         return false;
       }
       return false;
@@ -4388,16 +4470,17 @@ public:
                 if (F->getName() == "malloc") {
                   const_cast<AugmentedReturn *>(subdata)
                       ->tapeIndiciesToFree.emplace(pair.first);
-                  Value *Idxs[] = {
-                      ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()),
-                                       0),
-                      ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
-                                       pair.first)};
-                  op->replaceAllUsesWith(ph.CreateLoad(
-                      op->getType(),
-                      pair.first == -1
-                          ? tapeArg
-                          : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
+                  Value *toload = tapeArg;
+                  if (pair.first != -1) {
+                    Value *Idxs[] = {
+                        ConstantInt::get(
+                            Type::getInt64Ty(tapeArg->getContext()), 0),
+                        ConstantInt::get(
+                            Type::getInt32Ty(tapeArg->getContext()),
+                            pair.first)};
+                    toload = ph.CreateInBoundsGEP(tapeElemType, toload, Idxs);
+                  }
+                  op->replaceAllUsesWith(ph.CreateLoad(op->getType(), toload));
                   cast<Instruction>(op)->eraseFromParent();
                   if (op != alloc)
                     ci->eraseFromParent();
@@ -4640,7 +4723,7 @@ public:
 
               ptr = B.CreateBitCast(
                   ptr,
-                  PointerType::get(
+                  getPointerType(
                       IntToFloatTy(dif->getType()),
                       cast<PointerType>(ptr->getType())->getAddressSpace()));
               dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
@@ -4787,7 +4870,7 @@ public:
               Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
-        auto secretpt = PointerType::get(secretty, dstaddr);
+        auto secretpt = getPointerType(secretty, dstaddr);
         if (offset != 0) {
           dsto = Builder2.CreateConstInBoundsGEP1_64(
               Type::getInt8Ty(dsto->getContext()), dsto, offset);
@@ -4797,7 +4880,7 @@ public:
               Builder2.CreateIntToPtr(srco, getInt8PtrTy(dsto->getContext()));
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
-        secretpt = PointerType::get(secretty, srcaddr);
+        secretpt = getPointerType(secretty, srcaddr);
 
         if (offset != 0) {
           srco = Builder2.CreateConstInBoundsGEP1_64(
@@ -5272,13 +5355,22 @@ public:
                   call.getParamAttr(i, attr));
             } else if (attr == std::string("enzymejl_returnRoots")) {
               structAttrs[pre_args.size()].push_back(
-                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+                  Attribute::get(call.getContext(), "enzymejl_returnRoots_v",
+                                 call.getAttributes()
+                                     .getParamAttr(i, attr)
+                                     .getValueAsString()));
             } else if (attr == std::string("enzymejl_sret_union_bytes")) {
               structAttrs[pre_args.size()].push_back(Attribute::get(
-                  call.getContext(), "enzymejl_sret_union_bytes_v"));
+                  call.getContext(), "enzymejl_sret_union_bytes_v",
+                  call.getAttributes()
+                      .getParamAttr(i, attr)
+                      .getValueAsString()));
             } else if (attr == std::string("enzymejl_rooted_typ")) {
               structAttrs[pre_args.size()].push_back(
-                  Attribute::get(call.getContext(), "enzymejl_rooted_typ_v"));
+                  Attribute::get(call.getContext(), "enzymejl_rooted_typ_v",
+                                 call.getAttributes()
+                                     .getParamAttr(i, attr)
+                                     .getValueAsString()));
             }
           }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
@@ -5803,7 +5895,7 @@ public:
           shouldFree()) {
         assert(tape);
         auto tapep = BuilderZ.CreatePointerCast(
-            tape, PointerType::get(
+            tape, getPointerType(
                       fnandtapetype->tapeType,
                       cast<PointerType>(tape->getType())->getAddressSpace()));
         auto truetape =

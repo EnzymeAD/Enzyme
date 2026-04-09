@@ -12,6 +12,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeBatchToTensorPass.cpp
     EnzymeWrapPass.cpp
     InlineEnzymeRegions.cpp
+    HoistEnzymeRegions.cpp
     LowerLLVMExtPass.cpp
     PrintActivityAnalysis.cpp
     PrintAliasAnalysis.cpp
@@ -30,6 +31,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
 
   DEPENDS
   MLIREnzymePassIncGen
+  MLIREnzymeEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect

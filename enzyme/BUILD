@@ -1,4 +1,7 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+# generate compilation commands for enzymemlir - opt
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 
 licenses(["notice"])
@@ -132,6 +135,148 @@ gentbl_cc_library(
 )
 
 cc_library(
+    name = "EnzymeCacheUtility",
+    srcs = [
+        "Enzyme/CacheUtility.cpp",
+        "Enzyme/MustExitScalarEvolution.cpp",
+    ],
+    hdrs = glob(
+        [
+            "Enzyme/*.h",
+            "Enzyme/TypeAnalysis/*.h",
+        ],
+        exclude = ["Enzyme/AdjointGenerator.h"],
+    ),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+    ],
+)
+
+cc_library(
+    name = "EnzymeTypeAnalysis",
+    srcs = [
+        "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
+        "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
+        "Enzyme/TypeAnalysis/TypeTree.cpp",
+    ],
+    hdrs = glob(
+        [
+            "Enzyme/*.h",
+            "Enzyme/TypeAnalysis/*.h",
+        ],
+        exclude = ["Enzyme/AdjointGenerator.h"],
+    ),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":blas-typeanalysis",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+    ],
+)
+
+cc_library(
+    name = "EnzymePreserveNVVM",
+    srcs = [
+        "Enzyme/PreserveNVVM.cpp",
+    ],
+    hdrs = glob(
+        [
+            "Enzyme/*.h",
+            "Enzyme/TypeAnalysis/*.h",
+        ],
+        exclude = ["Enzyme/AdjointGenerator.h"],
+    ),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+        "-DENZYME_ENABLE_NVVM_ATTRIBUTION=0",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+    ],
+)
+
+cc_library(
+    name = "EnzymeDiffCore",
+    srcs = [
+        "Enzyme/ActivityAnalysis.cpp",
+        "Enzyme/CallDerivatives.cpp",
+        "Enzyme/DiffeGradientUtils.cpp",
+        "Enzyme/DifferentialUseAnalysis.cpp",
+        "Enzyme/EnzymeLogic.cpp",
+        "Enzyme/FunctionUtils.cpp",
+        "Enzyme/GradientUtils.cpp",
+        "Enzyme/InstructionBatcher.cpp",
+        "Enzyme/TraceGenerator.cpp",
+        "Enzyme/TraceInterface.cpp",
+        "Enzyme/TraceUtils.cpp",
+        "Enzyme/Utils.cpp",
+    ],
+    hdrs = glob([
+        "Enzyme/*.h",
+        "Enzyme/TypeAnalysis/*.h",
+    ]),
+    copts = [
+        "-Wno-unused-variable",
+        "-Wno-return-type",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":binop-derivatives",
+        ":blas-attributor",
+        ":blas-derivatives",
+        ":blas-diffuseanalysis",
+        ":call-derivatives",
+        ":inst-derivatives",
+        ":intr-derivatives",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:CodeGen",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Demangle",
+        "@llvm-project//llvm:IPO",
+        "@llvm-project//llvm:InstCombine",
+        "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Scalar",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:config",
+    ],
+)
+
+cc_library(
     name = "EnzymeStatic",
     srcs = glob(
         [
@@ -139,12 +284,34 @@ cc_library(
             "Enzyme/TypeAnalysis/*.cpp",
             "Enzyme/Clang/EnzymeClang.cpp",
         ],
-        exclude = ["Enzyme/eopt.cpp"],
+        exclude = [
+            "Enzyme/eopt.cpp",
+            "Enzyme/TypeAnalysis/TypeAnalysis.cpp",
+            "Enzyme/TypeAnalysis/TypeTree.cpp",
+            "Enzyme/TypeAnalysis/RustDebugInfo.cpp",
+            "Enzyme/CacheUtility.cpp",
+            "Enzyme/MustExitScalarEvolution.cpp",
+            "Enzyme/ActivityAnalysis.cpp",
+            "Enzyme/EnzymeLogic.cpp",
+            "Enzyme/Utils.cpp",
+            "Enzyme/FunctionUtils.cpp",
+            "Enzyme/GradientUtils.cpp",
+            "Enzyme/DiffeGradientUtils.cpp",
+            "Enzyme/DifferentialUseAnalysis.cpp",
+            "Enzyme/InstructionBatcher.cpp",
+            "Enzyme/TraceGenerator.cpp",
+            "Enzyme/TraceUtils.cpp",
+            "Enzyme/TraceInterface.cpp",
+            "Enzyme/CallDerivatives.cpp",
+        ],
     ),
-    hdrs = glob([
-        "Enzyme/*.h",
-        "Enzyme/TypeAnalysis/*.h",
-    ]) + ["Enzyme/Clang/bundled_includes.h"],
+    hdrs = glob(
+        [
+            "Enzyme/*.h",
+            "Enzyme/TypeAnalysis/*.h",
+        ],
+        exclude = ["Enzyme/AdjointGenerator.h"],
+    ) + ["Enzyme/Clang/bundled_includes.h"],
     copts = [
         "-DENZYME_RUNPASS=1",
         "-DENZYME_VERSION_MAJOR=0",
@@ -158,16 +325,11 @@ cc_library(
         "Enzyme/Clang",  # for bundled_includes.h
     ],
     visibility = ["//visibility:public"],
-    deps = [
-        ":binop-derivatives",
-        ":blas-attributor",
-        ":blas-derivatives",
-        ":blas-diffuseanalysis",
-        ":blas-typeanalysis",
+        deps = [
+        ":EnzymeCacheUtility",
+        ":EnzymeDiffCore",
+        ":EnzymeTypeAnalysis",
         ":bundled-includes",
-        ":call-derivatives",
-        ":inst-derivatives",
-        ":intr-derivatives",
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
         "@llvm-project//clang:driver",
@@ -185,6 +347,7 @@ cc_library(
         "@llvm-project//llvm:IRReader",
         "@llvm-project//llvm:InstCombine",
         "@llvm-project//llvm:Passes",
+        "@llvm-project//llvm:Plugins",
         "@llvm-project//llvm:Scalar",
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
@@ -200,7 +363,10 @@ cc_library(
 expand_template(
     name = "_gen_enzyme-clang",
     out = "enzyme-clang-driver.cpp",
-    substitutions = {"@TOOL_NAME@": "clang"},
+    substitutions = {
+        "@TOOL_NAME@": "clang",
+        "@INITLLVM_ARGS@": ", /*InstallPipeSignalExitHandler=*/true, /*NeedsPOSIXUtilitySignalHandling=*/true",
+    },
     template = "@llvm-project//llvm:cmake/modules/llvm-driver-template.cpp.in",
 )
 
@@ -253,7 +419,7 @@ td_library(
     includes = ["."],
     deps = [
         "@llvm-project//mlir:OpBaseTdFiles",
-    ]
+    ],
 )
 
 td_library(
@@ -264,6 +430,7 @@ td_library(
     ],
     includes = ["."],
     deps = [
+        "@llvm-project//mlir:ArithOpsTdFiles",
         "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
         "@llvm-project//mlir:FunctionInterfacesTdFiles",
         "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
@@ -271,13 +438,11 @@ td_library(
         "@llvm-project//mlir:OpBaseTdFiles",
         "@llvm-project//mlir:SideEffectInterfacesTdFiles",
         "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
-        "@llvm-project//mlir:ArithOpsTdFiles",
     ],
 )
 
 cc_library(
     name = "LLVMExtDialect",
-    strip_include_prefix = "Enzyme/MLIR",
     srcs = [
         "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtDialect.cpp",
         "Enzyme/MLIR/Dialect/LLVMExt/LLVMExtOps.cpp",
@@ -285,6 +450,7 @@ cc_library(
     hdrs = [
         "Enzyme/MLIR/Dialect/LLVMExt/LLVMExt.h",
     ],
+    strip_include_prefix = "Enzyme/MLIR",
     visibility = ["//visibility:public"],
     deps = [
         ":LLVMExtIncGen",
@@ -436,13 +602,17 @@ gentbl_cc_library(
     strip_include_prefix = "Enzyme/MLIR",
     tbl_outs = [
         (
-            ["-gen-attrdef-decls",
-             "-attrdefs-dialect=enzyme"],
+            [
+                "-gen-attrdef-decls",
+                "-attrdefs-dialect=enzyme",
+            ],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.h.inc",
         ),
         (
-            ["-gen-attrdef-defs",
-             "-attrdefs-dialect=enzyme"],
+            [
+                "-gen-attrdef-defs",
+                "-attrdefs-dialect=enzyme",
+            ],
             "Enzyme/MLIR/Dialect/EnzymeAttributes.cpp.inc",
         ),
     ],
@@ -674,28 +844,28 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":EnzymeAttributesIncGen",
         ":EnzymeAttributeInterfacesIncGen",
+        ":EnzymeAttributesIncGen",
         ":EnzymeEnumsIncGen",
         ":EnzymeOpInterfacesIncGen",
         ":EnzymeOpsIncGen",
-        ":LLVMExtDialect",
         ":EnzymePassesIncGen",
         ":EnzymeTypeInterfacesIncGen",
         ":EnzymeTypesIncGen",
+        ":LLVMExtDialect",
         ":affine-derivatives",
-        ":linalg-derivatives",
         ":arith-derivatives",
         ":cf-derivatives",
         ":complex-derivatives",
+        ":enzyme-derivatives",
         ":func-derivatives",
+        ":linalg-derivatives",
         ":llvm-derivatives",
         ":llvm-ext-derivatives",
         ":math-derivatives",
         ":memref-derivatives",
         ":nvvm-derivatives",
         ":scf-derivatives",
-        ":enzyme-derivatives",
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Demangle",
@@ -719,8 +889,8 @@ cc_library(
         "@llvm-project//mlir:FuncExtensions",
         "@llvm-project//mlir:FunctionInterfaces",
         "@llvm-project//mlir:GPUDialect",
-        "@llvm-project//mlir:InliningUtils",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InliningUtils",
         "@llvm-project//mlir:LLVMCommonConversion",
         "@llvm-project//mlir:LLVMDialect",
         "@llvm-project//mlir:LinalgDialect",
@@ -744,6 +914,22 @@ cc_library(
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",
     ],
+)
+
+cc_library(
+    name = "CInterface",
+    srcs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.cpp"],
+    hdrs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.h"],
+    includes = ["Enzyme/MLIR"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":EnzymeMLIR",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+    ],
+    alwayslink = True,
 )
 
 cc_binary(
@@ -784,8 +970,6 @@ cc_binary(
 
 exports_files(["run_lit.sh"])
 
-# generate compilation commands for enzymemlir-opt
-load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
 refresh_compile_commands(
     name = "refresh_compile_commands",
     targets = [":enzymemlir-opt"],

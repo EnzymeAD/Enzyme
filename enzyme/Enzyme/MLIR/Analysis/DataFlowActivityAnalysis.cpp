@@ -438,6 +438,10 @@ public:
 
   void visitCallOperand(OpOperand &operand) override {}
 
+  void
+  visitNonControlFlowArguments(RegionSuccessor &successor,
+                               ArrayRef<BlockArgument> arguments) override {}
+
   void transfer(Operation *op, ArrayRef<BackwardValueActivity *> operands,
                 ArrayRef<const BackwardValueActivity *> results) {
     // Propagate all operands to all results

@@ -3387,7 +3387,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 #endif
       Value *replacement = B.CreateAlloca(elTy, Size);
       for (auto MD : {"enzyme_active", "enzyme_inactive", "enzyme_type",
-                      "enzymejl_allocart", "enzymejl_allocart_name"})
+                      "enzymejl_allocart", "enzymejl_allocart_name",
+                      "enzymejl_gc_alloc_rt"})
         if (auto M = call.getMetadata(MD))
           cast<AllocaInst>(replacement)->setMetadata(MD, M);
       if (I)
@@ -3716,8 +3717,24 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     IRBuilder<> BuilderZ(&call);
     getForwardBuilder(BuilderZ);
 
-    bool forceErase = Mode == DerivativeMode::ReverseModeGradient ||
-                      Mode == DerivativeMode::ForwardModeSplit;
+    bool backwardsShadow = false;
+    bool forwardsShadow = true;
+    for (auto pair : gutils->backwardsOnlyShadows) {
+      if (pair.second.stores.count(&call)) {
+        backwardsShadow = true;
+        forwardsShadow = pair.second.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(pair.first))
+          if (!forwardsShadow && pair.second.LI &&
+              pair.second.LI->contains(inst->getParent()))
+            backwardsShadow = false;
+      }
+    }
+
+    bool forceErase =
+        !((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeCombined && forwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+          (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow));
 
     if (forceErase)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);

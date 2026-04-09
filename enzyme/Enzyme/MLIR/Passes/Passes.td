@@ -43,8 +43,6 @@ def ProbProgPass : Pass<"probprog"> {
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
-    "cf::ControlFlowDialect",
-    "tensor::TensorDialect",
     "enzyme::EnzymeDialect",
   ];
   let options = [
@@ -56,11 +54,11 @@ def ProbProgPass : Pass<"probprog"> {
       /*description=*/"Optimization passes to apply to generated probabilistic programs"
     >,
     Option<
-      /*C++ variable name=*/"debugMCMC",
-      /*CLI argument=*/"debug-mcmc",
+      /*C++ variable name=*/"debugDump",
+      /*CLI argument=*/"debug-dump",
       /*type=*/"bool",
       /*default=*/"false",
-      /*description=*/"Enable debug prints for MCMC algorithms"
+      /*description=*/"Enable debug dump"
     >,
   ];
 }
@@ -209,6 +207,13 @@ def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
   let summary = "Outlines enzyme.autodiff_region ops into enzyme.autodiff ops.";
   let dependentDialects = [
     "func::FuncDialect"
+  ];
+}
+
+def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {
+  let summary = "Hoist independent primal ops out of autodiff_region.";
+  let dependentDialects = [ 
+  "enzyme::EnzymeDialect",
   ];
 }
 

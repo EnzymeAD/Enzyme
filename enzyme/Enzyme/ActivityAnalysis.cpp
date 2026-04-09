@@ -321,12 +321,22 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::llround,
 #if LLVM_VERSION_MAJOR <= 20
     Intrinsic::nvvm_barrier0,
-#else
+#else 
     Intrinsic::nvvm_barrier_cta_sync_aligned_all,
-#endif
+    Intrinsic::nvvm_barrier_cta_sync_aligned_count,
+#endif 
+#if LLVM_VERSION_MAJOR < 22
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,
+#else
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_and_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_or_aligned_count,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_all,
+    Intrinsic::nvvm_barrier_cta_red_popc_aligned_count,
+#endif
     Intrinsic::nvvm_membar_cta,
     Intrinsic::nvvm_membar_gl,
     Intrinsic::nvvm_membar_sys,
@@ -451,6 +461,8 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // Rust
     "std::io::stdio::_eprint",
 
+    // RAJA
+    "RAJA::util::Registry<RAJA::util::PluginStrategy>",
 };
   // clang-format on
 
@@ -1330,14 +1342,18 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           } else {
             Instruction *LoadReval = nullptr;
             Instruction *StoreReval = nullptr;
+            Value *ValLoadReval = nullptr;
+            Value *ValStoreReval = nullptr;
             auto DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
                 new ActivityAnalyzer(*this, DOWN));
             DownHypothesis->ConstantValues.insert(Val);
             if (DownHypothesis->isValueInactiveFromUsers(
-                    TR, Val, UseActivity::OnlyLoads, &LoadReval) ||
+                    TR, Val, UseActivity::OnlyLoads, &LoadReval,
+                    &ValLoadReval) ||
                 (TR.query(GI)[{-1, -1}].isFloat() &&
                  DownHypothesis->isValueInactiveFromUsers(
-                     TR, Val, UseActivity::OnlyStores, &StoreReval))) {
+                     TR, Val, UseActivity::OnlyStores, &StoreReval,
+                     &ValStoreReval))) {
               insertConstantsFrom(TR, *DownHypothesis);
               InsertConstantValue(TR, Val);
               return true;
@@ -1348,8 +1364,24 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                                << " dependant on " << *LoadReval << "\n";
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
               }
-              if (StoreReval && EnzymeEnableRecursiveHypotheses)
+              if (StoreReval && EnzymeEnableRecursiveHypotheses) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " global activity of " << *Val
+                               << " dependant on " << *StoreReval << "\n";
                 ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
+              }
+              if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " global activity of " << *Val
+                               << " dependant on " << *ValLoadReval << "\n";
+                ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
+              }
+              if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << " global activity of " << *Val
+                               << " dependant on " << *ValStoreReval << "\n";
+                ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
+              }
             }
           }
         }
@@ -1693,13 +1725,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                  {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
                   UseActivity::AllStores, UseActivity::None}) {
               Instruction *LoadReval = nullptr;
-              if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
+              Value *ValLoadReval = nullptr;
+              if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval,
+                                           &ValLoadReval)) {
                 InsertConstantValue(TR, Val);
                 return true;
               }
               if (LoadReval && UA != UseActivity::AllStores &&
                   EnzymeEnableRecursiveHypotheses) {
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              }
+              if (ValLoadReval && UA != UseActivity::AllStores &&
+                  EnzymeEnableRecursiveHypotheses) {
+                ReEvaluateValueIfInactiveValue[ValLoadReval].insert(TmpOrig);
               }
             }
           } else if (directions & DOWN) {
@@ -1710,8 +1748,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                  {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
                   UseActivity::AllStores, UseActivity::None}) {
               Instruction *LoadReval = nullptr;
-              if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
-                                                           &LoadReval)) {
+              Value *ValLoadReval = nullptr;
+              if (DownHypothesis->isValueInactiveFromUsers(
+                      TR, TmpOrig, UA, &LoadReval, &ValLoadReval)) {
                 insertConstantsFrom(TR, *DownHypothesis);
                 InsertConstantValue(TR, Val);
                 return true;
@@ -1719,6 +1758,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                 if (LoadReval && UA != UseActivity::AllStores &&
                     EnzymeEnableRecursiveHypotheses) {
                   ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                }
+                if (ValLoadReval && UA != UseActivity::AllStores &&
+                    EnzymeEnableRecursiveHypotheses) {
+                  ReEvaluateValueIfInactiveValue[ValLoadReval].insert(TmpOrig);
                 }
               }
             }
@@ -1737,14 +1780,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                     new ActivityAnalyzer(*this, directions));
             Hypothesis->ActiveValues.insert(Val);
             Instruction *LoadReval = nullptr;
-            if (Hypothesis->isValueInactiveFromUsers(
-                    TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
+            Value *ValReval = nullptr;
+            if (Hypothesis->isValueInactiveFromUsers(TR, TmpOrig,
+                                                     UseActivity::OnlyStores,
+                                                     &LoadReval, &ValReval)) {
               insertConstantsFrom(TR, *Hypothesis);
               InsertConstantValue(TR, Val);
               return true;
             } else {
               if (LoadReval && EnzymeEnableRecursiveHypotheses) {
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              }
+              if (ValReval && EnzymeEnableRecursiveHypotheses) {
+                ReEvaluateValueIfInactiveValue[ValReval].insert(TmpOrig);
               }
             }
           }
@@ -1765,8 +1813,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                    {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
                     UseActivity::AllStores, UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
-                if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
-                                                             &LoadReval)) {
+                Value *ValLoadReval = nullptr;
+                if (DownHypothesis->isValueInactiveFromUsers(
+                        TR, TmpOrig, UA, &LoadReval, &ValLoadReval)) {
                   insertConstantsFrom(TR, *DownHypothesis);
                   InsertConstantValue(TR, Val);
                   return true;
@@ -1774,6 +1823,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   if (LoadReval && UA != UseActivity::AllStores &&
                       EnzymeEnableRecursiveHypotheses) {
                     ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                  }
+                  if (ValLoadReval && UA != UseActivity::AllStores &&
+                      EnzymeEnableRecursiveHypotheses) {
+                    ReEvaluateValueIfInactiveValue[ValLoadReval].insert(
+                        TmpOrig);
                   }
                 }
               }
@@ -1799,13 +1853,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
                 UseActivity::AllStores, UseActivity::None}) {
             Instruction *LoadReval = nullptr;
-            if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
+            Value *ValLoadReval = nullptr;
+            if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval,
+                                         &ValLoadReval)) {
               InsertConstantValue(TR, Val);
               return true;
             }
             if (LoadReval && UA != UseActivity::AllStores &&
                 EnzymeEnableRecursiveHypotheses) {
               ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+            }
+            if (ValLoadReval && UA != UseActivity::AllStores &&
+                EnzymeEnableRecursiveHypotheses) {
+              ReEvaluateValueIfInactiveValue[ValLoadReval].insert(TmpOrig);
             }
           }
         } else if (directions & DOWN) {
@@ -1816,8 +1876,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
                 UseActivity::AllStores, UseActivity::None}) {
             Instruction *LoadReval = nullptr;
-            if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
-                                                         &LoadReval)) {
+            Value *ValLoadReval = nullptr;
+            if (DownHypothesis->isValueInactiveFromUsers(
+                    TR, TmpOrig, UA, &LoadReval, &ValLoadReval)) {
               insertConstantsFrom(TR, *DownHypothesis);
               InsertConstantValue(TR, Val);
               return true;
@@ -1825,6 +1886,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               if (LoadReval && UA != UseActivity::AllStores &&
                   EnzymeEnableRecursiveHypotheses) {
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              }
+              if (ValLoadReval && UA != UseActivity::AllStores &&
+                  EnzymeEnableRecursiveHypotheses) {
+                ReEvaluateValueIfInactiveValue[ValLoadReval].insert(TmpOrig);
               }
             }
           }
@@ -1836,14 +1901,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   new ActivityAnalyzer(*this, directions));
           Hypothesis->ActiveValues.insert(Val);
           Instruction *LoadReval = nullptr;
-          if (Hypothesis->isValueInactiveFromUsers(
-                  TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
+          Value *ValLoadReval = nullptr;
+          if (Hypothesis->isValueInactiveFromUsers(TR, TmpOrig,
+                                                   UseActivity::OnlyStores,
+                                                   &LoadReval, &ValLoadReval)) {
             insertConstantsFrom(TR, *Hypothesis);
             InsertConstantValue(TR, Val);
             return true;
           } else {
             if (LoadReval && EnzymeEnableRecursiveHypotheses) {
               ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+            }
+            if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
+              ReEvaluateValueIfInactiveValue[ValLoadReval].insert(TmpOrig);
             }
           }
         }
@@ -2751,7 +2821,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                                                 llvm::Value *const val,
                                                 UseActivity PUA,
-                                                Instruction **FoundInst) {
+                                                Instruction **FoundInst,
+                                                Value **FoundVal) {
   assert(directions & DOWN);
   // Must be an analyzer only searching down, unless used outside
   // assert(directions == DOWN);
@@ -2802,6 +2873,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       llvm::errs() << "      considering use of " << *val << " - " << *a
                    << "\n";
 
+    Value *ActiveVal = nullptr;
+
     // Only ignore stores to the operand, not storing the operand
     // somewhere
     if (auto SI = dyn_cast<StoreInst>(a)) {
@@ -2809,10 +2882,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (UA == UseActivity::OnlyLoads) {
           continue;
         }
-        if (UA != UseActivity::AllStores &&
-            (ConstantValues.count(SI->getValueOperand()) ||
-             isa<ConstantInt>(SI->getValueOperand())))
-          continue;
+        if (UA != UseActivity::AllStores) {
+          if (ConstantValues.count(SI->getValueOperand()) ||
+              isa<ConstantInt>(SI->getValueOperand()))
+            continue;
+          else
+            ActiveVal = SI->getValueOperand();
+        }
+
         if (UA == UseActivity::None ||
             UA == UseActivity::OnlyNonPointerStores) {
           // If storing into itself, all potential uses are taken care of
@@ -3083,6 +3160,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
       auto F = getFunctionFromCall(call);
 
+      if (isDebugFunction(F))
+        continue;
+
       size_t idx = 0;
       for (auto &arg : call->args()) {
         if (arg != parent) {
@@ -3154,10 +3234,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
 
       if (F) {
-        if (UA == UseActivity::AllStores &&
-            (F->getName() == "julia.write_barrier" ||
-             F->getName() == "julia.write_barrier_binding"))
+        if (F->getName() == "julia.write_barrier" ||
+            F->getName() == "julia.write_barrier_binding")
           continue;
+        if (F->getIntrinsicID() == Intrinsic::memset &&
+            UA != UseActivity::AllStores) {
+          continue;
+        }
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {
 
@@ -3346,6 +3429,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                          << *I << "\n";
           }
           continue;
+        } else {
+          ActiveVal = I;
         }
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
@@ -3390,6 +3475,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
       if (FoundInst)
         *FoundInst = I;
+      if (FoundVal && ActiveVal)
+        *FoundVal = ActiveVal;
     }
 
   endloop:;

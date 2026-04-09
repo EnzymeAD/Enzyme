@@ -373,6 +373,13 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
   return {};
 }
 
+static bool isZero(llvm::Constant *cst) {
+#if LLVM_VERSION_MAJOR >= 22
+  return cst->isNullValue() || cst->isNegativeZeroValue();
+#else
+  return cst->isZeroValue();
+#endif
+}
 SmallVector<SelectInst *, 4>
 DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                Type *addingType, ArrayRef<Value *> idxs,
@@ -410,7 +417,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     //! optimize fadd of select to select of fadd
     if (SelectInst *select = dyn_cast<SelectInst>(dif)) {
       if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
@@ -419,7 +426,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-        if (ci->isZeroValue()) {
+        if (isZero(ci)) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
@@ -433,7 +440,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (BitCastInst *bc = dyn_cast<BitCastInst>(dif)) {
       if (SelectInst *select = dyn_cast<SelectInst>(bc->getOperand(0))) {
         if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(), old,
                 faddForNeg(old,
@@ -446,7 +453,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
-          if (ci->isZeroValue()) {
+          if (isZero(ci)) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(),
                 faddForNeg(old,
@@ -838,14 +845,18 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR < 17
-  if (origptr->getContext().supportsTypedPointers()) {
+  if (isa<PointerType>(origptr->getType()) &&
+      origptr->getContext().supportsTypedPointers()) {
     needsCast = origptr->getType()->getPointerElementType() != addingType;
   }
 #endif
 
   assert(ptr);
-  if (start != 0 || needsCast) {
+  if (start != 0 || needsCast || !isa<PointerType>(origptr->getType())) {
     auto rule = [&](Value *ptr) {
+      if (!isa<PointerType>(origptr->getType())) {
+        ptr = BuilderM.CreateIntToPtr(ptr, getUnqual(addingType));
+      }
       if (start != 0) {
         auto i8 = Type::getInt8Ty(ptr->getContext());
         ptr = BuilderM.CreatePointerCast(
@@ -865,7 +876,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     ptr = applyChainRule(
         PointerType::get(
             addingType,
-            cast<PointerType>(origptr->getType())->getAddressSpace()),
+            isa<PointerType>(origptr->getType())
+                ? cast<PointerType>(origptr->getType())->getAddressSpace()
+                : 0),
         BuilderM, rule, ptr);
   }
 

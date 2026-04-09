@@ -1,3 +1,8 @@
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:public"],
+)
+
 # Enzyme integration tests.
 
 load("@llvm-project//llvm:lit_test.bzl", "lit_test")

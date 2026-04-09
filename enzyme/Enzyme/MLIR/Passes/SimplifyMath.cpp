@@ -55,8 +55,8 @@ struct MathematicSimplification
     patterns.insert<ApplySimplificationPattern>(&getContext());
 
     GreedyRewriteConfig config;
-    (void)applyPatternsAndFoldGreedily(getOperation(), std::move(patterns),
-                                       config);
+    config.enableFolding();
+    (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
   };
 };
 } // end anonymous namespace

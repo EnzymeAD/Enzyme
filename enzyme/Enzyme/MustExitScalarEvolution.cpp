@@ -39,6 +39,10 @@
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 
+#if LLVM_VERSION_MAJOR <= 22
+#define SCEVUse const SCEV *
+#endif
+
 using namespace llvm;
 
 bool MustExitScalarEvolution::loopIsFiniteByAssumption(const Loop *L) {
@@ -359,8 +363,8 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     }
 #endif
 
-  const SCEV *LHS = getSCEV(ExitCond->getOperand(0));
-  const SCEV *RHS = getSCEV(ExitCond->getOperand(1));
+  SCEVUse LHS = getSCEV(ExitCond->getOperand(0));
+  SCEVUse RHS = getSCEV(ExitCond->getOperand(1));
 
 #define PROP_PHI(LHS)                                                          \
   if (auto un = dyn_cast<SCEVUnknown>(LHS)) {                                  \
@@ -440,7 +444,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), 1))};
       // Since this is not an infinite loop by induction, RHS cannot be
@@ -464,7 +468,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
-      SmallVector<const SCEV *, 2> sv = {
+      SmallVector<SCEVUse, 2> sv = {
           RHS,
           getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
       // Since this is not an infinite loop by induction, RHS cannot be
@@ -598,7 +602,7 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
   // Create an AddExpr for "PreStart" after subtracting Step. Full SCEV
   // subtraction is expensive. For this purpose, perform a quick and dirty
   // difference, by checking for Step in the operand list.
-  SmallVector<const SCEV *, 4> DiffOps;
+  SmallVector<SCEVUse, 4> DiffOps;
   for (const SCEV *Op : SA->operands())
     if (Op != Step)
       DiffOps.push_back(Op);

@@ -1473,7 +1473,13 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     // Distinguish later trough byRef if it is cblas (thus has layout)
     os << "        if (cblas) " << argName << ".push_back(arg_layout);\n";
   }
-  os << "        if (cublas) " << argName << ".push_back(arg_handle);\n";
+  os << "        if (cublas) " << argName << ".push_back(";
+  if (!forward)
+    os << "lookup(";
+  os << "arg_handle";
+  if (!forward)
+    os << ", Builder2)";
+  os << ");\n";
 
   for (size_t pos = fncHasLayout ? 1 : 0; pos < numArgs; pos++) {
     os << "        for (auto item : ";

@@ -117,6 +117,13 @@ inline void emit_attributeBLAS(const TGPattern &pattern, raw_ostream &os) {
           "llvm::Attribute::get(F->getContext(), llvm::Attribute::ZExt));\n";
   }
   os << "  }\n";
+
+  if (has_active_return(name)) {
+    os << "const bool cublasv2 = blas.prefix == "
+          "\"cublas\" && llvm::StringRef(blas.suffix).contains(\"v2\");\n";
+    os << "  if (cublasv2) argTys.push_back(getUnqual(fpType));\n";
+  }
+
   os << "  auto nextFT = llvm::FunctionType::get(prevFT->getReturnType(), "
         "argTys, false);\n";
   os << "  if (nextFT != prevFT && F->empty()) {\n";

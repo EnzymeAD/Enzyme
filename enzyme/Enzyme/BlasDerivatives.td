@@ -562,7 +562,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                   [
                   
                   /* alpha */ (AssertingInactiveArg), /*(Seq<["AB", "product", "m", "n"], [], true> 
-                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $n, $k), $B, (ld $B, $transb, $ldb, $k, $n), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
+                      (BlasCall<"gemm"> $layout, $transa, $transb, $m, $n, $k, Constant<"1.0">, $A, (ld $A, $transa, $lda, $k, $n), $B, (ld $B, $transb, $ldb, $n, $k), Constant<"0.0">, use<"AB">, $m),// TODO: check if last arg should be $m or $n
                       (FrobInnerProd<""> $m, $n, (Shadow $C), use<"AB">)),*/
                   /* A     */
                   (Seq<[], [], 1>
@@ -575,7 +575,7 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                             (Concat $k, $n)),
                         $alpha,
                         (Shadow $C),
-                        $A, (ld $A, $trans, $lda, $n, $k),
+                        $A, (ld $A, $trans, $lda, $k, $n),
                         Constant<"1">,
                         (Shadow $A)
                     ),
@@ -585,12 +585,12 @@ def syrk : CallBlasPattern<(Op $layout, $uplo, $trans, $n, $k, $alpha, $A, $lda,
                             (BFMul $alpha, (LoadLookup $layout, (Shadow $C), $i, $i)),
                             (First
                                 (Lookup $layout,
-                                    (Concat $A, (ld $A, $trans, $lda, $n, $k)),
+                                    (Concat $A, (ld $A, $trans, $lda, $k, $n)),
                                     (Rows $trans, $i, ConstantInt<0>),
                                     (Rows $trans, ConstantInt<0>, $i)
                                 )
                             ),
-                            (Rows $trans, (ld $A, $trans, $lda, $n, $k), ConstantInt<1>),
+                            (Rows $trans, (ld $A, $trans, $lda, $k, $n), ConstantInt<1>),
                             (First
                                 (Lookup $layout,
                                     (Shadow $A),

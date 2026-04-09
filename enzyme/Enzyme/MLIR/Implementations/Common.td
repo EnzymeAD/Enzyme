@@ -124,8 +124,8 @@ def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 def SelectIfComplex : StaticSelect<[{
   auto ty = imVal.getType();
   isa<ComplexType>(ty) ||
-    isa<TensorType>(ty) &&
-      isa<ComplexType>(cast<TensorType>(ty).getElementType());
+    (isa<TensorType>(ty) &&
+      isa<ComplexType>(cast<TensorType>(ty).getElementType()));
 }]>;
 
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {
@@ -180,9 +180,14 @@ def CheckedDivF : SubRoutine<(Op $diffret, $x),
 def LlvmCheckedMulF : LlvmInst<"FMulOp">;
 def LlvmExpF : LlvmInst<"ExpOp">;
 
+def ComplexCreate : ComplexInst<"CreateOp">;
+def ComplexRe : ComplexInst<"ReOp">;
+def ComplexIm : ComplexInst<"ImOp">;
+
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
 def ExpF : MathInst<"ExpOp">;
 def SqrtF : MathInst<"SqrtOp">;
+def AbsF : MathInst<"AbsFOp">;
 
 #endif // ENZYME_MLIR_IMPLEMENTATIONS_COMMON
