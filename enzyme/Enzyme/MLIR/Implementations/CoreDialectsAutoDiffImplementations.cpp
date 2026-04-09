@@ -334,6 +334,11 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   llvm::SmallDenseSet<unsigned> operandPositionsToShadow;
   llvm::SmallDenseSet<unsigned> resultPositionsToShadow;
 
+  // while these operands are inactive in the op region(s), we may still need to
+  // create placeholder shadows for them to ensure syntactic correctness for the
+  // IR
+  llvm::SmallDenseSet<unsigned> constOperandPositionsToShadow;
+
   SmallVector<RegionSuccessor> entrySuccessors;
   regionBranchOp.getEntrySuccessorRegions(
       SmallVector<Attribute>(op->getNumOperands(), Attribute()),
@@ -352,8 +357,44 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     // operands.
     for (auto &&[i, regionValue, operand] :
          llvm::enumerate(targetValues, operandRange)) {
-      if (gutils->isConstantValue(regionValue))
-        continue;
+
+      // check if we need to create a shadow for an inactive region value
+      if (gutils->isConstantValue(regionValue)) {
+
+        // if all the possible predecessors for this value are also const, then
+        // we can skip creating a shadow. Else we need to create a shadow for
+        // syntactic correctness
+
+        SmallVector<Value> possibleActivePreds;
+        SmallVector<RegionBranchPoint> predecessors;
+        regionBranchOp.getPredecessors(successor, predecessors);
+        for (RegionBranchPoint predecessor : predecessors) {
+          if (predecessor.isParent()) {
+            // if the predecessor is the parent itself, then it's just
+            // operand!
+            possibleActivePreds.push_back(operand);
+            continue;
+          }
+          auto terminator = predecessor.getTerminatorPredecessorOrNull();
+          auto predecessorOperands = terminator.getSuccessorOperands(successor);
+          if (i < predecessorOperands.size())
+            possibleActivePreds.push_back(predecessorOperands[i]);
+        }
+
+        bool skipOpShadow = true;
+        for (auto pv : possibleActivePreds) {
+          if (!skipOpShadow)
+            break;
+          skipOpShadow = skipOpShadow && gutils->isConstantValue(pv);
+        };
+        // if there's any possible active predecessor, we create a shadow for it
+        if (!skipOpShadow)
+          constOperandPositionsToShadow.insert(
+              operandRange.getBeginOperandIndex() + i);
+        if (skipOpShadow)
+          continue;
+      }
+
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       if (successor.isParent())
         resultPositionsToShadow.insert(i);
@@ -365,13 +406,16 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       resultPositionsToShadow.insert(res.getResultNumber());
 
   return controlFlowForwardHandler(
-      op, builder, gutils, operandPositionsToShadow, resultPositionsToShadow);
+      op, builder, gutils, operandPositionsToShadow, resultPositionsToShadow,
+      constOperandPositionsToShadow);
 }
 
 LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils,
     const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow,
-    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow) {
+    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow,
+    const llvm::SmallDenseSet<unsigned> &constOperandPositionToShadow) {
+
   // For all active results, add shadow types.
   // For now, assuming all results are relevant.
   Operation *newOp = gutils->getNewFromOriginal(op);
@@ -421,6 +465,74 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (auto &&[region, replacementRegion] :
        llvm::zip(newOp->getRegions(), replacement->getRegions())) {
     replacementRegion.takeBody(region);
+  }
+
+  // Re-fix block args for all successor regions
+  // Even though createWithShadows properly creates the differentiated control
+  // flow op(accounting for any const args which might have shadows),
+  // takeBody(...) replaces the successor regions entirely, including the block
+  // arguments. We fix the block arguments here for the entry successor regions.
+  if (!constOperandPositionToShadow.empty()) {
+    auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
+    auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+
+    SmallVector<RegionSuccessor> entrySuccessors;
+    regionBranchOp.getEntrySuccessorRegions(
+        SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+        entrySuccessors);
+
+    for (const RegionSuccessor &successor : entrySuccessors) {
+
+      if (successor.isParent())
+        continue;
+
+      OperandRange oldRegionOperands =
+          iface.getSuccessorOperands(regionBranchOp, successor);
+      ValueRange oldRegionInputs = regionBranchOp.getSuccessorInputs(successor);
+
+      // the new region corresponding to this successor(we want to modify the
+      // arguments of this region in-place)
+      auto &newRegion =
+          replacement->getRegion(successor.getSuccessor()->getRegionNumber());
+
+      for (int i = oldRegionInputs.size() - 1; i >= 0; --i) {
+        unsigned operandPosition = oldRegionOperands.getBeginOperandIndex() + i;
+        if (!constOperandPositionToShadow.contains(operandPosition))
+          continue;
+
+        auto oldRegionInput = dyn_cast<BlockArgument>(oldRegionInputs[i]);
+
+        if (!oldRegionInput ||
+            gutils->invertedPointers.contains(oldRegionInput))
+          continue;
+
+        auto newRegionInput =
+            cast<BlockArgument>(gutils->getNewFromOriginal(oldRegionInput));
+
+        auto typeIface =
+            dyn_cast<AutoDiffTypeInterface>(oldRegionInput.getType());
+
+        if (!typeIface) {
+          op->emitError() << " AutoDiffTypeInterface not implemented for "
+                          << oldRegionInput.getType() << "\n";
+          return failure();
+        }
+
+        Value newRegionShadow;
+        if (newRegionInput.getArgNumber() == newRegion.getNumArguments() - 1) {
+          newRegionShadow = newRegion.addArgument(
+              typeIface.getShadowType(gutils->width), newRegionInput.getLoc());
+        } else {
+          // insert at position i+1
+          newRegionShadow = newRegion.insertArgument(
+              newRegion.args_begin() + newRegionInput.getArgNumber() + 1,
+              typeIface.getShadowType(gutils->width), newRegionInput.getLoc());
+        }
+
+        // update the inverted pointer map
+        gutils->invertedPointers.map(oldRegionInput, newRegionShadow);
+      }
+    }
   }
 
   // Inject the mapping for the new results into GradientUtil's shadow

@@ -40,7 +40,8 @@ LogicalResult controlFlowForwardHandler(Operation *op, OpBuilder &builder,
 LogicalResult controlFlowForwardHandler(
     Operation *op, OpBuilder &builder, MGradientUtils *gutils,
     const llvm::SmallDenseSet<unsigned> &operandPositionsToShadow,
-    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow);
+    const llvm::SmallDenseSet<unsigned> &resultPositionsToShadow,
+    const llvm::SmallDenseSet<unsigned> &constOperandPositionToShadow);
 
 // Implements forward-mode differentiation of branching operations.
 // Assumes that successive shadows are legal
