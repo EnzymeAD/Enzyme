@@ -24,6 +24,8 @@ entry:
 }
 
 ; CHECK-LABEL: caller
+; CHECK:   %f2 = extractvalue %struct.c_v %cv, 0: {[-1]:Float@float}
+; CHECK:   %f2x3 = extractvalue %struct.c_v %cv, 1: {[-1]:Float@float}
 ; CHECK:   %f0 = extractvalue [2 x float] %f2, 0: {[-1]:Float@float}
 ; CHECK:   %f1 = extractvalue [2 x float] %f2, 1: {[-1]:Float@float}
 ; CHECK:   %f00 = extractvalue [2 x [3 x float]] %f2x3, 0, 0: {[-1]:Float@float}
