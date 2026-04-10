@@ -853,19 +853,53 @@ struct IfLikeEnzymeOpsRemover
     llvm::SetVector<Value> gradients;
 
     // We assume pushes are exclusive.
-    llvm::MapVector<Value, CacheInfo> pushedCaches;
+    llvm::MapVector<Value, CacheInfo> truePushedCaches, falsePushedCaches;
 
     // Grad to value
     IRMapping trueMapping, falseMapping;
 
     removalBlockExplore(trueBlock, trueMapping, rewriter, gradients,
-                        pushedCaches);
+                        truePushedCaches);
     removalBlockExplore(falseBlock, falseMapping, rewriter, gradients,
-                        pushedCaches);
+                        falsePushedCaches);
 
-    if (gradients.empty() && pushedCaches.empty())
+    bool cachesEmpty = truePushedCaches.empty() && falsePushedCaches.empty();
+    if (gradients.empty() && cachesEmpty)
       return success();
-    bool removeCaches = !op->hasAttr(kPreserveCacheAttrName);
+    bool removeCaches = !op->hasAttr(kPreserveCacheAttrName) && !cachesEmpty;
+    SmallVector<CacheInfo> trueCaches = llvm::map_to_vector(
+        truePushedCaches, [](auto pair) { return std::get<1>(pair); });
+    SmallVector<CacheInfo> falseCaches = llvm::map_to_vector(
+        falsePushedCaches, [](auto pair) { return std::get<1>(pair); });
+
+    if (removeCaches && hasMinCut(ifOp)) {
+      // Find the reverse if op
+      OpName reverseIfOp = nullptr;
+      auto findReverseIf = [&](Operation *parent) {
+        if (isa<OpName>(parent) &&
+            (reverseIfOp == nullptr || parent->isProperAncestor(reverseIfOp))) {
+          reverseIfOp = cast<OpName>(parent);
+        }
+      };
+      for (auto &[_, info] : truePushedCaches)
+        findReverseIf(info.popOp->getParentOp());
+      for (auto &[_, info] : falsePushedCaches)
+        findReverseIf(info.popOp->getParentOp());
+
+      assert(reverseIfOp && "unable to find reverse if op");
+
+      Block *reverseTrueBlock = FinalClass::getThenBlock(reverseIfOp, rewriter),
+            *reverseFalseBlock =
+                FinalClass::getElseBlock(reverseIfOp, rewriter);
+
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(reverseTrueBlock);
+      enzyme::minCutCache(trueBlock, reverseTrueBlock, trueCaches, rewriter,
+                          trueMapping);
+      rewriter.setInsertionPointToStart(reverseFalseBlock);
+      enzyme::minCutCache(falseBlock, reverseFalseBlock, falseCaches, rewriter,
+                          falseMapping);
+    }
 
     Operation *trueTerm = trueBlock->getTerminator();
     Operation *falseTerm = falseBlock->getTerminator();
@@ -890,8 +924,13 @@ struct IfLikeEnzymeOpsRemover
                                 ValueRange(falseValue));
     }
 
+    SmallVector<CacheInfo> allCaches;
+    allCaches.append(trueCaches);
+    allCaches.append(falseCaches);
+
     if (removeCaches) {
-      for (auto &[pushedValue, info] : pushedCaches) {
+      for (auto &info : allCaches) {
+        Value pushedValue = info.pushedValue();
         Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
                                                 pushedValue.getType());
 
@@ -917,7 +956,7 @@ struct IfLikeEnzymeOpsRemover
     }
 
     if (removeCaches) {
-      for (auto &[pushedValue, info] : pushedCaches) {
+      for (auto &info : allCaches) {
         enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
                                info.initOp.getResult(), ifOp->getResult(idx));
         rewriter.eraseOp(info.pushOp);
