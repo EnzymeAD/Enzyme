@@ -4013,8 +4013,8 @@ public:
       case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {
             ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)};
-        auto *Fn =
-            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
+        auto *Fn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
         auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
         cal->setCallingConv(Fn->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
@@ -4025,8 +4025,8 @@ public:
       case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
       case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all: {
         SmallVector<Value *, 1> args = {I.getOperand(0)};
-        auto *Fn =
-            getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
+        auto *Fn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
         auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
         cal->setCallingConv(Fn->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
