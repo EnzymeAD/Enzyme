@@ -388,10 +388,9 @@ bool preserveNVVM(bool Begin, Module &M) {
             }
 
             if (AS == "enzyme_elementwise_read" && Func) {
-              Func->addAttribute(
-                  AttributeList::FunctionIndex,
-                  Attribute::get(Func->getContext(),
-                                 "enzyme_elementwise_read"));
+              Func->addAttribute(AttributeList::FunctionIndex,
+                                 Attribute::get(Func->getContext(),
+                                                "enzyme_elementwise_read"));
               changed = true;
               replacements.push_back(Constant::getNullValue(CAOp->getType()));
               continue;
