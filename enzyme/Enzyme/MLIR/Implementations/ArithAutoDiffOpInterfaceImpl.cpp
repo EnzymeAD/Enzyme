@@ -102,6 +102,89 @@ struct ArithSubFSimplifyMathInterface
   }
 };
 
+struct SelectOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<SelectOpInterfaceReverse,
+                                                       arith::SelectOp> {
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    // TODO: reduce duplication, ideally make part of tablegen
+    if (!gutils->isConstantValue(selectOp.getResult())) {
+      auto iface =
+          dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+      if (iface && iface.isMutable()) {
+        return success();
+      }
+
+      Value condition = gutils->popCache(caches.front(), builder);
+      Value zero = arith::ConstantOp::create(
+          builder, selectOp.getLoc(), FloatAttr::get(selectOp.getType(), 0.0));
+      Value dret = gutils->diffe(selectOp.getResult(), builder);
+      if (!gutils->isConstantValue(selectOp.getTrueValue())) {
+        Value trueSelect = arith::SelectOp::create(builder, selectOp.getLoc(),
+                                                   condition, dret, zero);
+
+        gutils->addToDiffe(selectOp.getTrueValue(), trueSelect, builder);
+      }
+      if (!gutils->isConstantValue(selectOp.getFalseValue())) {
+        Value falseSelect = arith::SelectOp::create(builder, selectOp.getLoc(),
+                                                    condition, zero, dret);
+        gutils->addToDiffe(selectOp.getFalseValue(), falseSelect, builder);
+      }
+    }
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    SmallVector<Value> caches;
+    if (!gutils->isConstantValue(selectOp.getResult())) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+      auto iface =
+          dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+      if (iface && iface.isMutable()) {
+        return caches;
+      }
+
+      caches.push_back(gutils->initAndPushCache(
+          gutils->getNewFromOriginal(selectOp.getCondition()), cacheBuilder));
+    }
+    return caches;
+  }
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    if (gutils->isConstantValue(selectOp.getResult()))
+      return;
+
+    auto iface =
+        dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+    if (iface && iface.isMutable()) {
+      auto shadowOp = arith::SelectOp::create(
+          builder, selectOp.getLoc(),
+          gutils->getNewFromOriginal(selectOp.getCondition()),
+          gutils->invertPointerM(selectOp.getTrueValue(), builder),
+          gutils->invertPointerM(selectOp.getFalseValue(), builder));
+      gutils->setInvertedPointer(selectOp.getResult(), shadowOp.getResult());
+    }
+  }
+};
+
+struct SelectActivityInterface
+    : public ActivityOpInterface::ExternalModel<SelectActivityInterface,
+                                                arith::SelectOp> {
+  bool isInactive(Operation *op) const { return false; }
+  bool isArgInactive(Operation *op, size_t idx) const {
+    // arith.select is not inactive in general, but the condition is always
+    // inactive.
+    auto selectOp = cast<arith::SelectOp>(op);
+    return selectOp.getCondition() == selectOp.getOperand(idx);
+  }
+};
+
 #include "Implementations/ArithDerivatives.inc"
 } // namespace
 
@@ -109,6 +192,8 @@ void mlir::enzyme::registerArithDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     registerInterfaces(context);
+    arith::SelectOp::attachInterface<SelectActivityInterface>(*context);
+    arith::SelectOp::attachInterface<SelectOpInterfaceReverse>(*context);
     arith::ConstantOp::attachInterface<ArithConstantOpBatchInterface>(*context);
     arith::AddFOp::attachInterface<ArithAddFSimplifyMathInterface>(*context);
     arith::SubFOp::attachInterface<ArithSubFSimplifyMathInterface>(*context);
