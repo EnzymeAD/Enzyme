@@ -4944,7 +4944,7 @@ void GradientUtils::getReverseBuilder(IRBuilder<> &Builder2, bool original) {
   }
   assert(BB2);
 
-  if (BB2->getTerminator())
+  if (hasTerminator(BB2))
     Builder2.SetInsertPoint(BB2->getTerminator());
   else
     Builder2.SetInsertPoint(BB2);
