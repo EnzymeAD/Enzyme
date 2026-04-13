@@ -26,7 +26,8 @@ entry:
 
 declare float @__enzyme_autodiff(float (float addrspace(1)*)*, ...)
 
-; CHECK-LABEL: define float @vmul(float addrspace(1)* %inp) #[[VMULATTR:[0-9]+]]
+; CHECK-LABEL: define float @vmul(float addrspace(1)* %inp)
+; CHECK-SAME: #[[VMULATTR:[0-9]+]]
 ; CHECK: attributes #[[VMULATTR]] = { {{[^}]*}}"enzyme_elementwise_read"{{[^}]*}} }
 
 ; CHECK-LABEL: define internal void @diffevmul(float addrspace(1)* %inp, float addrspace(1)* %"inp'", float %differeturn)
