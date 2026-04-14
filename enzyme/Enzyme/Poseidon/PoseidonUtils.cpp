@@ -181,17 +181,24 @@ double getOneULP(double value) {
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   std::string baseName = funcName.str();
-  if (baseName.back() == 'f' || baseName.back() == 'l') {
+
+  std::string prefix;
+  if (baseName.size() > 5 && baseName.substr(0, 5) == "__nv_") {
+    prefix = "__nv_";
+    baseName = baseName.substr(5);
+  }
+
+  if (!baseName.empty() && (baseName.back() == 'f' || baseName.back() == 'l')) {
     baseName.pop_back();
   }
 
   if (LibmFuncs.count(baseName)) {
-    if (newType->isFloatTy()) {
-      return baseName + "f";
+    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy()) {
+      return prefix + baseName + "f";
     } else if (newType->isDoubleTy()) {
-      return baseName;
+      return prefix + baseName;
     } else if (newType->isFP128Ty() || newType->isX86_FP80Ty()) {
-      return baseName + "l";
+      return prefix + baseName + "l";
     }
   }
 
