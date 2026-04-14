@@ -80,11 +80,6 @@ cl::opt<double> FPOptGPUFP64Ratio(
     cl::desc("FP64:FP32 throughput cost ratio for GPU targets. "
              "Values > 1 make FP64 proportionally more expensive hence "
              "discourage FP64 usage. "));
-cl::opt<bool>
-    FPOptGPUEliminateFP64("fpopt-gpu-eliminate-fp64", cl::init(false),
-                          cl::Hidden,
-                          cl::desc("When set, all FP64 ops must be removed "
-                                   "(e.g., B300 with no FP64 unit)"));
 cl::opt<std::string> FPOptScalarTypes(
     "fpopt-scalar-types", cl::init(""), cl::Hidden,
     cl::desc("Comma-separated list of supported scalar FP types "
@@ -141,11 +136,6 @@ parseFlagOrFallback(const std::string &flag,
 const std::unordered_set<std::string> &getScalarTypes() {
   return parseFlagOrFallback(FPOptScalarTypes, SupportedTypes.scalar,
                              DefaultScalarTypes);
-}
-
-const std::unordered_set<std::string> &getMatrixTypes() {
-  return parseFlagOrFallback(FPOptMatmulTypes, SupportedTypes.matrix,
-                             DefaultMatrixTypes);
 }
 
 void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {

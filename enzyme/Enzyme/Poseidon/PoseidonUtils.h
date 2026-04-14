@@ -38,13 +38,11 @@ extern llvm::cl::opt<unsigned> FPOptRandomSeed;
 extern llvm::cl::opt<unsigned> FPOptMinUsesForSplit;
 extern llvm::cl::opt<unsigned> FPOptMinOpsForSplit;
 extern llvm::cl::opt<double> FPOptGPUFP64Ratio;
-extern llvm::cl::opt<bool> FPOptGPUEliminateFP64;
 }
 
 bool isGPUMode(const llvm::Function &F);
 
 const std::unordered_set<std::string> &getScalarTypes();
-const std::unordered_set<std::string> &getMatrixTypes();
 
 struct Subgraph;
 class FPNode;

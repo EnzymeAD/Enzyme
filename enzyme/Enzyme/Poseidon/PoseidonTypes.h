@@ -136,7 +136,7 @@ struct Subgraph {
 struct SolutionStep;
 
 struct RewriteCandidate {
-  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
+  InstructionCost CompCost = InstructionCost::getMax();
   double herbieCost = std::numeric_limits<double>::quiet_NaN();
   double herbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
@@ -155,8 +155,7 @@ public:
   unsigned executions = 0;
   const TargetTransformInfo *TTI = nullptr;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost initialCompCost =
-      std::numeric_limits<InstructionCost>::quiet_NaN();
+  InstructionCost initialCompCost = InstructionCost::getInvalid();
   double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
   double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   SmallVector<RewriteCandidate> candidates;
@@ -187,8 +186,7 @@ public:
   Subgraph *subgraph;
   const TargetTransformInfo &TTI;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost initialCompCost =
-      std::numeric_limits<InstructionCost>::quiet_NaN();
+  InstructionCost initialCompCost = InstructionCost::getInvalid();
   unsigned executions = 0;
   std::unordered_map<FPNode *, double> perOutputInitialAccCost;
   SmallVector<PTCandidate, 8> candidates;
