@@ -39,7 +39,15 @@ class FPLLValue;
 struct Subgraph;
 class CandidateSubgraph;
 
-enum class PrecisionChangeType { BF16, FP16, FP32, FP64, FP80, FP128 };
+enum class PrecisionChangeType {
+  BF16,
+  FP16,
+  FP32,
+  FP64,
+  FP80,
+  FP128,
+  MultiFloat
+};
 unsigned getMPFRPrec(PrecisionChangeType type);
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context);
 PrecisionChangeType getPrecisionChangeType(Type *type);
@@ -59,7 +67,7 @@ struct PrecisionChange {
 struct PTCandidate {
   SmallVector<PrecisionChange, 1> changes;
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
-  InstructionCost CompCost = std::numeric_limits<InstructionCost>::max();
+  InstructionCost CompCost = InstructionCost::getMax();
   std::string desc;
   std::unordered_map<FPNode *, double> perOutputAccCost;
   std::unordered_map<FPNode *, SmallVector<double, 4>> errors;
