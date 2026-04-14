@@ -707,9 +707,13 @@ B2:
                                "-fpopt-loose-coverage "
                                "to suppress this error\n");
             }
+            auto node = valueToNodeMap[op];
+            node->sens = 0;
+            node->grad = 0;
+            node->executions = 0;
             if (FPOptPrint)
-              llvm::errs() << "Sensitivity of " << *op
-                           << " not found in the log; using 0 instead\n";
+              llvm::errs() << "Sensitivity/gradient/executions of " << *op
+                           << " not found in the log; using 0 for all\n";
           }
         }
       }
