@@ -1146,10 +1146,12 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
     if (auto GV = dyn_cast<GlobalVariable>(Val)) {
       if (GV->getValueType()->isSized()) {
         auto Size = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
-        Data = analysis[Val].Lookup(Size, DL).Only(-1, nullptr);
-        Data.insert({-1}, BaseType::Pointer);
-        analysis[Val] = Data;
-        Origin = Val;
+        if (Size > 0) {
+          Data = analysis[Val].Lookup(Size, DL).Only(-1, nullptr);
+          Data.insert({-1}, BaseType::Pointer);
+          analysis[Val] = Data;
+          Origin = Val;
+        }
       }
     }
     // Add val so it can explicitly propagate this new info, if able to
