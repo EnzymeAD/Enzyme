@@ -938,21 +938,8 @@ B2:
         SmallSet<std::string, 8> args;
         getUniqueArgs(expr, args);
 
-        std::string properties = ":herbie-conversions ([binary64 binary32])";
-        if (valueToNodeMap[output]->dtype == "f32") {
-          properties += " :precision binary32";
-        } else if (valueToNodeMap[output]->dtype == "f64") {
-          properties += " :precision binary64";
-        } else {
-          llvm_unreachable("Unexpected dtype");
-        }
-
         std::string precondition =
             getPrecondition(args, valueToNodeMap, symbolToValueMap);
-        properties += " :pre " + precondition;
-
-        CandidateOutput CO(subgraph, output, expr, grad, executions, TTI);
-        properties += " :name \"" + std::to_string(newCOs.size()) + "\"";
 
         std::string argStr;
         for (const auto &arg : args) {
@@ -961,13 +948,22 @@ B2:
           argStr += arg;
         }
 
-        std::string herbieInput =
-            "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
-        if (FPOptPrint)
-          llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+        for (const char *prec : {"binary64", "binary32"}) {
+          std::string properties = ":herbie-conversions ([binary64 binary32])";
+          properties += std::string(" :precision ") + prec;
+          properties += " :pre " + precondition;
 
-        herbieInputs.push_back(herbieInput);
-        newCOs.push_back(CO);
+          CandidateOutput CO(subgraph, output, expr, grad, executions, TTI);
+          properties += " :name \"" + std::to_string(newCOs.size()) + "\"";
+
+          std::string herbieInput =
+              "(FPCore (" + argStr + ") " + properties + " " + expr + ")";
+          if (FPOptPrint)
+            llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+
+          herbieInputs.push_back(herbieInput);
+          newCOs.push_back(CO);
+        }
       }
 
       if (!herbieInputs.empty()) {
