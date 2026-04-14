@@ -45,30 +45,22 @@ FPEvaluator::FPEvaluator(PTCandidate *pt) {
 
 PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
   // If the node has a new precision from PT, use it
-  PrecisionChangeType precType;
-
   auto it = nodePrecisions.find(node);
-  if (it != nodePrecisions.end()) {
-    precType = it->second;
-  } else {
-    // Otherwise, use the node's original precision
-    if (node->dtype == "f32") {
-      precType = PrecisionChangeType::FP32;
-    } else if (node->dtype == "f64") {
-      precType = PrecisionChangeType::FP64;
-    } else {
-      llvm_unreachable(
-          ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
-              .c_str());
-    }
-  }
+  if (it != nodePrecisions.end())
+    return it->second;
 
-  if (precType != PrecisionChangeType::FP32 &&
-      precType != PrecisionChangeType::FP64) {
-    llvm_unreachable("Unsupported FP precision");
-  }
+  if (node->dtype == "f16")
+    return PrecisionChangeType::FP16;
+  if (node->dtype == "bf16")
+    return PrecisionChangeType::BF16;
+  if (node->dtype == "f32")
+    return PrecisionChangeType::FP32;
+  if (node->dtype == "f64")
+    return PrecisionChangeType::FP64;
 
-  return precType;
+  llvm_unreachable(
+      ("Operator " + node->op + " has unexpected dtype: " + node->dtype)
+          .c_str());
 }
 
 void FPEvaluator::evaluateNode(const FPNode *node,
