@@ -235,6 +235,28 @@ bool improveViaHerbie(
       "--num-iters",  std::to_string(HerbieNumIters),
       "--num-enodes", std::to_string(HerbieNumEnodes)};
 
+  std::string HerbiePlatformName;
+  if (!FPOptHerbiePlatform.empty()) {
+    HerbiePlatformName = FPOptHerbiePlatform;
+  } else {
+    const std::string &nativeArch = getCostModelNativeArch();
+    if (!nativeArch.empty()) {
+      std::string stripped = nativeArch;
+      size_t pos;
+      while ((pos = stripped.find('_')) != std::string::npos)
+        stripped.erase(pos, 1);
+      HerbiePlatformName = "cuda-" + stripped;
+    }
+  }
+  if (!HerbiePlatformName.empty()) {
+    BaseArgs.push_back("--platform");
+    BaseArgs.push_back(HerbiePlatformName);
+    if (FPOptPrint) {
+      llvm::errs() << "Poseidon: using Herbie platform '" << HerbiePlatformName
+                   << "'\n";
+    }
+  }
+
   BaseArgs.push_back("--disable");
   BaseArgs.push_back("generate:proofs");
 

@@ -118,6 +118,8 @@ StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {
     return "FP80";
   case PrecisionChangeType::FP128:
     return "FP128";
+  case PrecisionChangeType::MultiFloat:
+    return "MultiFloat";
   default:
     return "Unknown PT type";
   }

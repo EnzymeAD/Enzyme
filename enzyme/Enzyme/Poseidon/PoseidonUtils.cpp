@@ -84,10 +84,9 @@ cl::opt<std::string> FPOptScalarTypes(
     "fpopt-scalar-types", cl::init(""), cl::Hidden,
     cl::desc("Comma-separated list of supported scalar FP types "
              "(e.g., half,bf16,float,double). Overrides the CSV header."));
-cl::opt<std::string> FPOptMatmulTypes(
-    "fpopt-matmul-types", cl::init(""), cl::Hidden,
-    cl::desc("Comma-separated list of supported matrix/tensor core types "
-             "(e.g., half,bf16,f8e4m3). Overrides the CSV header."));
+cl::opt<std::string> FPOptHerbiePlatform(
+    "fpopt-herbie-platform", cl::init(""), cl::Hidden,
+    cl::desc("Explicit Herbie --platform name (e.g., cuda-sm120)."));
 }
 
 static bool isTargetNVPTX(const Module &M) {
@@ -102,6 +101,8 @@ static struct {
   std::unordered_set<std::string> scalar;
   std::unordered_set<std::string> matrix;
 } SupportedTypes;
+
+static std::string CostModelNativeArch;
 
 static const std::unordered_set<std::string> DefaultScalarTypes = {
     "half", "bf16", "float", "double"};
@@ -152,6 +153,7 @@ void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   if (verifyFunction(F, &llvm::errs())) {
+    F.print(llvm::errs());
     llvm_unreachable("Poseidon intermediate function failed verification");
   }
 
@@ -284,10 +286,16 @@ getCostModel() {
       if (Line.empty())
         continue;
       if (Line[0] == '#') {
-        // Parse "# scalar_types=..." and "# matrix_types=..." headers
+        // Parse "# scalar_types=...", "# matrix_types=...", "# native_arch=..."
         auto content = StringRef(Line).drop_front(1).trim();
         StringRef key, vals;
         std::tie(key, vals) = content.split('=');
+        key = key.trim();
+        vals = vals.trim();
+        if (key == "native_arch") {
+          CostModelNativeArch = vals.str();
+          continue;
+        }
         std::unordered_set<std::string> *target = nullptr;
         if (key == "scalar_types")
           target = &SupportedTypes.scalar;
@@ -320,6 +328,12 @@ getCostModel() {
     Loaded = true;
   }
   return CostModel;
+}
+
+const std::string &getCostModelNativeArch() {
+  if (!FPOptCostModelPath.empty())
+    getCostModel();
+  return CostModelNativeArch;
 }
 
 InstructionCost queryCostModel(const std::string &OpcodeName,
