@@ -570,22 +570,36 @@ InstructionCost getInstructionCompCost(const Instruction *I,
     }
 
     cost = queryCostModel(OpcodeName, PrecisionName);
+
+    // GPU F64 throughput adjustment.
+    if (FPOptGPUFP64Ratio > 1.0 && PrecisionName == "double") {
+      bool isConversion = (I->getOpcode() == Instruction::FPExt ||
+                           I->getOpcode() == Instruction::FPTrunc);
+      bool csvIsNative = false;
+      if (!CostModelNativeArch.empty()) {
+        if (auto *F = I->getFunction()) {
+          StringRef targetCpu =
+              F->getFnAttribute("target-cpu").getValueAsString();
+          if (!targetCpu.empty() && targetCpu == CostModelNativeArch)
+            csvIsNative = true;
+        }
+      }
+      if (!isConversion && !csvIsNative) {
+        InstructionCost f32Cost = queryCostModel(OpcodeName, "float");
+#if LLVM_VERSION_MAJOR >= 21
+        int64_t f64Latency = cost.getValue();
+        int64_t f32Raw = f32Cost.getValue();
+#else
+        int64_t f64Latency = cost.getValue().value_or(1);
+        int64_t f32Raw = f32Cost.getValue().value_or(1);
+#endif
+        int64_t throughputCost =
+            static_cast<int64_t>(f32Raw * FPOptGPUFP64Ratio);
+        cost = InstructionCost(std::max(f64Latency, throughputCost));
+      }
+    }
   } else {
     cost = TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
-  }
-
-  if (FPOptGPUFP64Ratio > 1.0) {
-    Type *Ty = I->getType();
-    if (I->getOpcode() == Instruction::FCmp)
-      Ty = I->getOperand(0)->getType();
-    if (Ty->isDoubleTy()) {
-#if LLVM_VERSION_MAJOR >= 21
-      int64_t rawCost = cost.getValue();
-#else
-      int64_t rawCost = cost.getValue().value_or(1);
-#endif
-      cost = InstructionCost(static_cast<int64_t>(rawCost * FPOptGPUFP64Ratio));
-    }
   }
 
   return cost;
