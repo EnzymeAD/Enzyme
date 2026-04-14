@@ -4628,9 +4628,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
 #endif
-      instbuilder.CreateCall(
-          getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          {});
+      auto BarrierFn =
+          getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst);
+      SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR > 20
+      if (Arch != Triple::amdgcn)
+        args.push_back(
+            ConstantInt::get(Type::getInt32Ty(BarrierFn->getContext()), 0));
+#endif
+      instbuilder.CreateCall(BarrierFn, args);
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
       IRBuilder<> sbuilder(sharedBlock);
