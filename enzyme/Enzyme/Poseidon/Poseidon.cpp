@@ -992,10 +992,19 @@ B2:
       auto *o0 = subgraph.outputs[0];
       CS.executions = valueToNodeMap[o0]->executions;
 
-      const SmallVector<PrecisionChangeType> precTypes{
-          PrecisionChangeType::FP32,
-          PrecisionChangeType::FP64,
-      };
+      SmallVector<PrecisionChangeType> precTypes;
+      if (isGPUMode(F)) {
+        const auto &scalar = getScalarTypes();
+        if (scalar.count("half"))
+          precTypes.push_back(PrecisionChangeType::FP16);
+        if (scalar.count("bf16"))
+          precTypes.push_back(PrecisionChangeType::BF16);
+
+        precTypes.push_back(PrecisionChangeType::MultiFloat);
+      }
+      precTypes.push_back(PrecisionChangeType::FP32);
+      if (!FPOptGPUEliminateFP64)
+        precTypes.push_back(PrecisionChangeType::FP64);
 
       const auto &PTFuncs = getPTFuncs();
 
