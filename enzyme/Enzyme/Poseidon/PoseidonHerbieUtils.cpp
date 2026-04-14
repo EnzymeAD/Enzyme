@@ -373,6 +373,8 @@ bool improveViaHerbie(
       // Handle alternatives
       for (size_t j = 0; j < alternatives.size(); ++j) {
         json::Array &entry = *alternatives[j].getAsArray();
+        if (entry.size() < 3)
+          continue;
         StringRef expr = entry[2].getAsString().value();
 
         if (seenExprSet.count(expr.str()) != 0) {
