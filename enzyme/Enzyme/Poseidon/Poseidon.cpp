@@ -364,9 +364,6 @@ bool fpOptimize(Function &F, const TargetTransformInfo &TTI, double errorTol) {
   if (isGPUMode(F)) {
     llvm::errs() << "FPOpt: GPU mode active for " << F.getName() << "\n";
     llvm::errs() << "  FP64:FP32 cost ratio: " << FPOptGPUFP64Ratio << "\n";
-    if (FPOptGPUEliminateFP64)
-      llvm::errs() << "  Eliminate FP64: all FP64 ops will be candidates for "
-                      "FP32 conversion\n";
   }
 
   const std::string functionName = F.getName().str();
@@ -1003,8 +1000,7 @@ B2:
         precTypes.push_back(PrecisionChangeType::MultiFloat);
       }
       precTypes.push_back(PrecisionChangeType::FP32);
-      if (!FPOptGPUEliminateFP64)
-        precTypes.push_back(PrecisionChangeType::FP64);
+      precTypes.push_back(PrecisionChangeType::FP64);
 
       const auto &PTFuncs = getPTFuncs();
 
