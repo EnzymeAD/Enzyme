@@ -1305,23 +1305,25 @@ bool accuracyDPSolver(
     }
   }
 
-  std::string budgetsFile = FPOptCachePath + "/budgets.txt";
-  if (!llvm::sys::fs::exists(budgetsFile)) {
-    std::string budgetsStr;
-    for (const auto &pair : costToAccuracyMap) {
-      budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
-    }
+  if (!FPOptCachePath.empty()) {
+    std::string budgetsFile = FPOptCachePath + "/budgets.txt";
+    if (!llvm::sys::fs::exists(budgetsFile)) {
+      std::string budgetsStr;
+      for (const auto &pair : costToAccuracyMap) {
+        budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
+      }
 
-    if (!budgetsStr.empty())
-      budgetsStr.pop_back();
+      if (!budgetsStr.empty())
+        budgetsStr.pop_back();
 
-    std::error_code EC;
-    llvm::raw_fd_ostream Out(budgetsFile, EC, llvm::sys::fs::OF_Text);
-    if (EC) {
-      llvm::errs() << "Error opening " << budgetsFile << ": " << EC.message()
-                   << "\n";
-    } else {
-      Out << budgetsStr;
+      std::error_code EC;
+      llvm::raw_fd_ostream Out(budgetsFile, EC, llvm::sys::fs::OF_Text);
+      if (EC) {
+        llvm::errs() << "Error opening " << budgetsFile << ": " << EC.message()
+                     << "\n";
+      } else {
+        Out << budgetsStr;
+      }
     }
   }
 
