@@ -336,11 +336,30 @@ struct IgnoreDerivativesSimplifyPattern
   }
 };
 
+struct RemoveAtomicPattern : public OpRewritePattern<memref::AtomicRMWOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::AtomicRMWOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getKind() != arith::AtomicRMWKind::addf)
+      return failure();
+    // Potentially super unsafe!!
+    ImplicitLocOpBuilder builder(op.getLoc(), rewriter);
+    Value load =
+        memref::LoadOp::create(builder, op.getMemref(), op.getIndices());
+    Value added = arith::AddFOp::create(builder, load, op.getValue());
+    memref::StoreOp::create(builder, added, op.getMemref(), op.getIndices());
+    rewriter.replaceOp(op, added);
+    return success();
+  }
+};
+
 static void applyPatterns(Operation *op) {
   RewritePatternSet patterns(op->getContext());
   patterns.insert<PopSimplify, GetSimplify, PushSimplify, SetSimplify,
                   InitSimplify, IgnoreDerivativesSimplifyPattern>(
       op->getContext());
+  patterns.insert<RemoveAtomicPattern>(op->getContext());
 
   GreedyRewriteConfig config;
   config.enableFolding();
