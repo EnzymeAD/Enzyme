@@ -290,28 +290,31 @@ private:
 
   OverwriteAnalyzer(FunctionOpInterface funcOp)
       : solver(DataFlowConfig().setInterprocedural(false)), modified(nullptr) {
-    dataflow::loadBaselineAnalyses(solver);
-    solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
-    solver.load<enzyme::PointsToPointerAnalysis>();
-    if (failed(solver.initializeAndRun(funcOp))) {
-      assert(false && "dataflow analysis failed");
-      valid = false;
-    } else {
-      funcOp.walk([&](MemoryEffectOpInterface memory) {
-        SmallVector<MemoryEffects::EffectInstance> effects;
-        memory.getEffects(effects);
-        for (const auto &effect : effects) {
-          if (isa<MemoryEffects::Write>(effect.getEffect())) {
-            Value val = effect.getValue();
-            if (val) {
-              (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
-            } else {
-              (void)modified.markUnknown();
-            }
-          }
-        }
-      });
-    }
+    valid = false;
+    return;
+
+    // dataflow::loadBaselineAnalyses(solver);
+    // solver.load<enzyme::AliasAnalysis>(funcOp.getContext(),
+    // /*relative=*/false); solver.load<enzyme::PointsToPointerAnalysis>(); if
+    // (failed(solver.initializeAndRun(funcOp))) {
+    //   assert(false && "dataflow analysis failed");
+    //   valid = false;
+    // } else {
+    //   funcOp.walk([&](MemoryEffectOpInterface memory) {
+    //     SmallVector<MemoryEffects::EffectInstance> effects;
+    //     memory.getEffects(effects);
+    //     for (const auto &effect : effects) {
+    //       if (isa<MemoryEffects::Write>(effect.getEffect())) {
+    //         Value val = effect.getValue();
+    //         if (val) {
+    //           (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+    //         } else {
+    //           (void)modified.markUnknown();
+    //         }
+    //       }
+    //     }
+    //   });
+    // }
   }
 };
 
@@ -319,6 +322,8 @@ bool isLoadMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
   if (!hasSingleEffect<MemoryEffects::Read>(op)) {
     return false;
   }
+
+  return op->hasAttr("enzyme.readonly");
   auto memory = cast<MemoryEffectOpInterface>(op);
   SmallVector<MemoryEffects::EffectInstance> effects;
   memory.getEffects(effects);
@@ -335,7 +340,8 @@ bool isLoadMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
 // reverse region or vice-versa.
 static inline bool isMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
-         (mlir::isPure(op) || isLoadMovable(analyzer, op));
+         (mlir::isPure(op) || isLoadMovable(analyzer, op) ||
+          op->hasAttr("enzyme.stack_alloca"));
 }
 
 // Given a graph `G`, construct a new graph `G2`, where all paths must terminate
