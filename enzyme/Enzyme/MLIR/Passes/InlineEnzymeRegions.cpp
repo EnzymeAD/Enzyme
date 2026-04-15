@@ -49,8 +49,6 @@ static StringRef getArgAttrsAttrName(Operation *operation) {
 }
 
 static void serializeFunctionAttributes(Operation *fn, Operation *regionOp) {
-  return; // try to avoid serializing any function attributes to see if this
-          // helps at all
   SmallVector<NamedAttribute> fnAttrs;
   fnAttrs.reserve(fn->getAttrDictionary().size());
   for (auto attr : fn->getAttrs()) {
@@ -59,7 +57,11 @@ static void serializeFunctionAttributes(Operation *fn, Operation *regionOp) {
     if (attr.getName() == getFunctionTypeAttrName(fn) ||
         attr.getName() == SymbolTable::getSymbolAttrName())
       continue;
-    fnAttrs.push_back(attr);
+    if (llvm::is_contained({"arg_attrs", "CConv", "linkage", "dso_local",
+                            "frame_pointer", "no_unwind"},
+                           attr.getName())) {
+      fnAttrs.push_back(attr);
+    }
   }
 
   regionOp->setAttr(kFnAttrsName,

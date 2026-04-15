@@ -19,10 +19,15 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
+
+#include "Analysis/DataFlowAliasAnalysis.h"
+#include "mlir/Analysis/DataFlow/Utils.h"
+#include "mlir/Analysis/DataFlowFramework.h"
 
 #include "mlir/Rewrite/PatternApplicator.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -356,6 +361,73 @@ static void annotateRegionOpsInLoops(Operation *op) {
   });
 }
 
+static void annotateReadOnlyLoads(Operation *op) {
+  op->walk([](FunctionOpInterface funcOp) {
+    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+    dataflow::loadBaselineAnalyses(solver);
+    solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
+    solver.load<enzyme::PointsToPointerAnalysis>();
+    if (failed(solver.initializeAndRun(funcOp))) {
+      return;
+    }
+    AliasClassLattice modified(nullptr);
+    funcOp.walk([&](MemoryEffectOpInterface memory) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memory.getEffects(effects);
+      for (const auto &effect : effects) {
+        if (isa<MemoryEffects::Write>(effect.getEffect())) {
+          Value val = effect.getValue();
+          if (val) {
+            (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+          } else {
+            (void)modified.markUnknown();
+          }
+        }
+      }
+    });
+
+    funcOp.walk([&](MemoryEffectOpInterface memory) {
+      if (!hasSingleEffect<MemoryEffects::Read>(memory)) {
+        return;
+      }
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memory.getEffects(effects);
+      assert(effects.size() == 1 &&
+             isa<MemoryEffects::Read>(effects.front().getEffect()));
+      Value ptr = effects.front().getValue();
+
+      // The load can be re-done if the pointer's contents are never modified
+      // by the function.
+
+      auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
+      if (ptrClass->alias(modified).isNo()) {
+        memory->setAttr("enzyme.readonly", UnitAttr::get(memory.getContext()));
+      }
+    });
+  });
+}
+
+static void annotateStackAllocations(Operation *op) {
+  // What if we just naively did a def-use traversal?
+  SmallVector<Operation *> frontier;
+  DenseSet<Operation *> visited;
+  op->walk([&](LLVM::AllocaOp allocaOp) { frontier.push_back(allocaOp); });
+
+  while (!frontier.empty()) {
+    Operation *curr = frontier.pop_back_val();
+    if (!visited.contains(curr)) {
+      visited.insert(curr);
+
+      curr->setAttr("enzyme.stack_alloca", UnitAttr::get(op->getContext()));
+      for (auto res : curr->getResults()) {
+        for (Operation *user : res.getUsers()) {
+          frontier.push_back(user);
+        }
+      }
+    }
+  }
+}
+
 // A worklist that supports removing operations
 // original implementation is from
 // https://github.com/llvm/llvm-project/blob/9d8d538e40ef040cb53e8db7a32f3024865187f3/mlir/lib/Transforms/Utils/GreedyPatternRewriteDriver.cpp#L198
@@ -462,8 +534,8 @@ void PostOrderWalkDriver::notifyOperationInserted(
     return;
   }
 
-  // Check if the inserted op would be next in the post order or not compared to
-  // the current operation.
+  // Check if the inserted op would be next in the post order or not compared
+  // to the current operation.
   bool shouldInsert = false;
   (void)root->walk([&](EnzymeOpsRemoverOpInterface iface) {
     if ((Operation *)iface == current) {
@@ -511,27 +583,9 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
   while (!worklist.empty()) {
     auto op = worklist.pop();
     auto iface = cast<EnzymeOpsRemoverOpInterface>(op);
-    // auto parent = op->getParentOfType<FunctionOpInterface>();
-    // llvm::errs() << "[debug] removing enzyme ops for " << op->getName()
-    //              << " at " << op->getLoc() << " inside function "
-    //              << parent.getName() << "\n";
-    // llvm::errs() << "* * * before removal * * *\n" << parent << "\n* * * * *
-    // *\n\n";
     current = op;
     rewriter.setInsertionPoint(current);
     result &= iface.removeEnzymeOps(rewriter).succeeded();
-
-    // if (failed(mlir::verify(parent))) {
-    //   llvm::errs() << "[debug] parent is invalid\n";
-    //   exit(1);
-    // }
-    // llvm::errs() << "[debug] after removal: " << parent << "\n";
-    // if (failed(mlir::verify(parent))) {
-    //   llvm::errs() << "[debug] verification failed\n";
-    // } else {
-    //   llvm::errs() << "[debug] verification succeeded\n";
-    // }
-
     current = nullptr;
   }
 
@@ -558,6 +612,8 @@ struct RemoveUnusedEnzymeOpsPass
     applyPatterns(op);
 
     annotateRegionOpsInLoops(op);
+    annotateReadOnlyLoads(op);
+    annotateStackAllocations(op);
     if (skipWorklist)
       return;
 
