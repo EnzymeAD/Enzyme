@@ -42,7 +42,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<std::complex<APFloat>>(values));
     } else {
-      llvm::errs() << " unsupported eltype: " << T.getElementType() 
+      llvm::errs() << " unsupported eltype: " << T.getElementType()
                    << " of type " << type << "\n";
     }
   } else if (auto T = cast<FloatType>(type)) {
