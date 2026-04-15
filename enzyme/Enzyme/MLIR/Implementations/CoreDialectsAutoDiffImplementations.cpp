@@ -18,6 +18,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/Utils.h"
 
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -51,8 +52,9 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     return FloatAttr::get(T, apvalue);
   } else if (auto T = cast<ComplexType>(type)) {
     auto F = cast<FloatType>(T.getElementType());
-    return complex::NumberAttr::get(T, APFloat(F.getFloatSemantics(), value),
-                                    APFloat(F.getFloatSemantics(), "0"));
+    return mlir::complex::NumberAttr::get(T,
+                                          APFloat(F.getFloatSemantics(), value),
+                                          APFloat(F.getFloatSemantics(), "0"));
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
   }
