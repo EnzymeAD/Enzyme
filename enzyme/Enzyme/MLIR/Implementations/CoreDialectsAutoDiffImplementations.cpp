@@ -322,6 +322,12 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
                     << "\n";
     return failure();
   }
+  auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+  if (!iface) {
+    op->emitError() << " ControlFlowAutoDiffOpInterface not implemented for "
+                    << *op << "\n";
+    return failure();
+  }
 
   // TODO: we may need to record, for every successor, which of its inputs
   // need a shadow to recreate the body correctly.
@@ -336,7 +342,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   for (const RegionSuccessor &successor : entrySuccessors) {
 
     OperandRange operandRange =
-        regionBranchOp.getEntrySuccessorOperands(successor);
+        iface.getSuccessorOperands(regionBranchOp, successor);
 
     ValueRange targetValues =
         successor.isParent() ? op->getResults()

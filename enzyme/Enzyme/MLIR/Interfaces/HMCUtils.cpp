@@ -361,26 +361,47 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
-  SmallVector<Value> autodiffInputs{position, gradSeed};
+  bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+  Value autodiffPosition = position;
+  auto autodiffPositionType = positionType;
+  auto autodiffGradType = positionType;
+  if (isCustomLogpdf) {
+    autodiffPosition =
+        enzyme::ReshapeOp::create(builder, loc, flatType, position);
+    autodiffPositionType = flatType;
+    autodiffGradType = flatType;
+  }
+
+  SmallVector<Value> autodiffInputs{autodiffPosition, gradSeed};
+  SmallVector<NamedAttribute> adAttrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr({enzyme::ActivityAttr::get(
+              builder.getContext(), enzyme::Activity::enzyme_active)})),
+      builder.getNamedAttr(
+          "ret_activity",
+          builder.getArrayAttr(
+              {enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_active),
+               enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_const)})),
+  };
+  if (ctx.autodiffAttrs) {
+    for (auto attr : ctx.autodiffAttrs)
+      adAttrs.push_back(attr);
+  }
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{scalarType, rng.getType(), positionType},
-      autodiffInputs,
-      builder.getArrayAttr({enzyme::ActivityAttr::get(
-          builder.getContext(), enzyme::Activity::enzyme_active)}),
-      builder.getArrayAttr(
-          {enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_active),
-           enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
+      builder, loc, TypeRange{scalarType, rng.getType(), autodiffGradType},
+      autodiffInputs, adAttrs);
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
-  autodiffBlock->addArgument(positionType, loc);
+  autodiffBlock->addArgument(autodiffPositionType, loc);
 
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
 
-  if (ctx.hasCustomLogpdf()) {
+  if (isCustomLogpdf) {
     SmallVector<Value> callArgs;
     callArgs.push_back(qArg);
     callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -424,9 +445,14 @@ GradientResult MCMC::computePotentialAndGradient(OpBuilder &builder,
 
   builder.setInsertionPointAfter(autodiffOp);
 
+  Value grad = autodiffOp.getResult(2);
+  if (isCustomLogpdf) {
+    grad = enzyme::ReshapeOp::create(builder, loc, positionType, grad);
+  }
+
   return {
       autodiffOp.getResult(0), // U
-      autodiffOp.getResult(2), // grad
+      grad,                    // grad
       autodiffOp.getResult(1)  // rng
   };
 }
@@ -690,8 +716,10 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   if (ctx.hasCustomLogpdf()) {
     q0 = initialPosition;
+    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+    auto q0Flat = enzyme::ReshapeOp::create(builder, loc, flatType, q0);
     SmallVector<Value> callArgs;
-    callArgs.push_back(q0);
+    callArgs.push_back(q0Flat);
     callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
                                        TypeRange{scalarType}, callArgs);
@@ -734,30 +762,50 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   }
 
   // 4. Compute initial gradient at q0
+  bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+  Value autodiffQ0 = q0;
+  auto autodiffQ0Type = positionType;
+  auto autodiffGradType = positionType;
+  if (isCustomLogpdf) {
+    autodiffQ0 = enzyme::ReshapeOp::create(builder, loc, flatType, q0);
+    autodiffQ0Type = flatType;
+    autodiffGradType = flatType;
+  }
+
   auto gradSeedInit = arith::ConstantOp::create(
       builder, loc, scalarType,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  SmallVector<Value> autodiffInputs{q0, gradSeedInit};
+  SmallVector<Value> autodiffInputs{autodiffQ0, gradSeedInit};
+  SmallVector<NamedAttribute> adInitAttrs{
+      builder.getNamedAttr(
+          "activity",
+          builder.getArrayAttr({enzyme::ActivityAttr::get(
+              builder.getContext(), enzyme::Activity::enzyme_active)})),
+      builder.getNamedAttr(
+          "ret_activity",
+          builder.getArrayAttr(
+              {enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_active),
+               enzyme::ActivityAttr::get(builder.getContext(),
+                                         enzyme::Activity::enzyme_const)})),
+  };
+  if (ctx.autodiffAttrs) {
+    for (auto attr : ctx.autodiffAttrs)
+      adInitAttrs.push_back(attr);
+  }
   auto autodiffInit = enzyme::AutoDiffRegionOp::create(
       builder, loc,
-      TypeRange{scalarType, rngForAutodiff.getType(), positionType},
-      autodiffInputs,
-      builder.getArrayAttr({enzyme::ActivityAttr::get(
-          builder.getContext(), enzyme::Activity::enzyme_active)}),
-      builder.getArrayAttr(
-          {enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_active),
-           enzyme::ActivityAttr::get(builder.getContext(),
-                                     enzyme::Activity::enzyme_const)}),
-      builder.getI64IntegerAttr(1), builder.getBoolAttr(false), nullptr);
+      TypeRange{scalarType, rngForAutodiff.getType(), autodiffGradType},
+      autodiffInputs, adInitAttrs);
 
   Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
-  autodiffInitBlock->addArgument(positionType, loc);
+  autodiffInitBlock->addArgument(autodiffQ0Type, loc);
 
   builder.setInsertionPointToStart(autodiffInitBlock);
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
-  if (ctx.hasCustomLogpdf()) {
+  if (isCustomLogpdf) {
     SmallVector<Value> callArgs;
     callArgs.push_back(q0Arg);
     callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
@@ -801,8 +849,10 @@ InitialHMCState MCMC::InitHMC(OpBuilder &builder, Location loc, Value rng,
   }
   builder.setInsertionPointAfter(autodiffInit);
 
-  // (U, rng, grad)
-  auto grad0 = autodiffInit.getResult(2);
+  Value grad0 = autodiffInit.getResult(2);
+  if (isCustomLogpdf) {
+    grad0 = enzyme::ReshapeOp::create(builder, loc, positionType, grad0);
+  }
 
   return {q0, U0, grad0, rngForSampleKernel};
 }

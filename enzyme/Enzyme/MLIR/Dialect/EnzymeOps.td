@@ -161,6 +161,17 @@ def AutoDiffOp : Enzyme_Op<"autodiff",
   }];
 }
 
+def JacobianOp : Enzyme_Op<"jacobian",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Compute Jacobian for a function";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 def AutoDiffRegionOp : Enzyme_Op<"autodiff_region", [AutomaticAllocationScope]> {
   let summary = "Perform reverse mode AD on a child region";
   let arguments = (ins Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity, ActivityArrayAttr:$ret_activity, DefaultValuedAttr<I64Attr, "1">:$width, DefaultValuedAttr<BoolAttr, "false">:$strong_zero, OptionalAttr<StrAttr>:$fn);
@@ -692,10 +703,16 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     The `selection` attribute determines which addresses to sample via HMC/NUTS.
     All sample addresses are included in the trace tensor for consistency.
 
-    Returns: (trace, diagnostics, rng)
+    Returns: (trace, diagnostics, rng, final_position, final_gradient,
+              final_potential_energy, final_step_size, final_inverse_mass_matrix)
     - trace: tensor<num_samples x position_size x f64>
     - diagnostics: tensor<num_samples x i1> - placeholder for future expansion
     - rng: updated RNG state
+    - final_position: tensor<1 x position_size x f64> - position after last sample
+    - final_gradient: tensor<1 x position_size x f64> - gradient at final position
+    - final_potential_energy: tensor<f64> - potential energy at final position
+    - final_step_size: tensor<f64> - adapted step size (after warmup)
+    - final_inverse_mass_matrix: tensor - adapted inverse mass matrix (after warmup)
   }];
 
   let arguments = (ins
@@ -721,13 +738,22 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
     Optional<AnyRankedTensor>:$initial_position,
 
+    Optional<AnyRankedTensor>:$initial_gradient,
+    Optional<AnyRankedTensor>:$initial_potential_energy,
+
+    OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs
     AnyRankedTensor:$trace,
     AnyRankedTensor:$diagnostics,
-    AnyType:$output_rng_state
+    AnyType:$output_rng_state,
+    AnyRankedTensor:$final_position,
+    AnyRankedTensor:$final_gradient,
+    AnyRankedTensor:$final_potential_energy,
+    AnyRankedTensor:$final_step_size,
+    AnyRankedTensor:$final_inverse_mass_matrix
   );
 
   let assemblyFormat = [{
@@ -738,6 +764,8 @@ def MCMCOp : Enzyme_Op<"mcmc", [DeclareOpInterfaceMethods<SymbolUserOpInterface>
     (`step_size` `=` $step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
     (`initial_position` `=` $initial_position^)?
+    (`initial_gradient` `=` $initial_gradient^)?
+    (`initial_potential_energy` `=` $initial_potential_energy^)?
     attr-dict `:` functional-type(operands, results)
   }];
 

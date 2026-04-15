@@ -124,8 +124,8 @@ def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 def SelectIfComplex : StaticSelect<[{
   auto ty = imVal.getType();
   isa<ComplexType>(ty) ||
-    isa<TensorType>(ty) &&
-      isa<ComplexType>(cast<TensorType>(ty).getElementType());
+    (isa<TensorType>(ty) &&
+      isa<ComplexType>(cast<TensorType>(ty).getElementType()));
 }]>;
 
 class ConstantFP<string val, string dialect_, string op_, string type_=""> : Operation</*primal*/0, /*shadow*/0> {

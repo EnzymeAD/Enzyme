@@ -42,7 +42,7 @@ bb:
 
 !0 = !{}
 
-; CHECK: define internal void @diffewat({} addrspace(10)* align 16 dereferenceable(40) %arg2, {} addrspace(10)* align 16 %"arg2'", i8* %tapeArg) 
+; CHECK: define internal void @diffewat({} addrspace(10)* align 16 %arg2, {} addrspace(10)* align 16 %"arg2'", i8* %tapeArg) 
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i8*, i8* }*
 ; CHECK-NEXT:   %truetape = load { i8*, i8* }, { i8*, i8* }* %0, align 8

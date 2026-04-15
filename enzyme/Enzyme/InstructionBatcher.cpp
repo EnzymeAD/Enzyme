@@ -204,7 +204,11 @@ void InstructionBatcher::visitReturnInst(llvm::ReturnInst &ret) {
   }
 
   if (ret.getNumOperands() != 0) {
+#if LLVM_VERSION_MAJOR > 22
+    auto ret = Builder2.CreateAggregateRet(rets);
+#else
     auto ret = Builder2.CreateAggregateRet(rets.data(), width);
+#endif
     ret->setDebugLoc(placeholder->getDebugLoc());
     placeholder->eraseFromParent();
   }

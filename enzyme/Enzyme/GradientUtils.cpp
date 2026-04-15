@@ -1611,16 +1611,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
     // Don't attempt to unroll a loop induction variable in other
     // circumstances
-    auto &LLI = Logic.PPC.FAM.getResult<LoopAnalysis>(*parent->getParent());
     std::set<BasicBlock *> prevIteration;
-    if (LLI.isLoopHeader(parent)) {
+    BasicBlock *origParent = isOriginal(parent);
+    assert(origParent);
+    if (OrigLI->isLoopHeader(origParent)) {
       if (phi->getNumIncomingValues() != 2) {
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
-      auto L = LLI.getLoopFor(parent);
+      auto OrigL = OrigLI->getLoopFor(origParent);
       for (auto PH : predecessors(parent)) {
-        if (L->contains(PH))
+        BasicBlock *origPH = isOriginal(PH);
+        assert(origPH);
+        if (OrigL->contains(origPH))
           prevIteration.insert(PH);
       }
       if (prevIteration.size() && !legalRecompute(phi, available, &BuilderM)) {
@@ -1629,16 +1632,33 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
     }
     for (auto &val : phi->incoming_values()) {
-      if (isPotentialLastLoopValue(val, parent, LLI)) {
-        if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
-          llvm::errs() << " module: " << *newFunc->getParent() << "\n";
-          llvm::errs() << " newFunc: " << *newFunc << "\n";
-          llvm::errs() << " parent: " << *parent << "\n";
-          llvm::errs() << " val: " << *val << "\n";
-        }
-        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-        goto endCheck;
+      auto inst = dyn_cast<Instruction>(val);
+      if (!inst)
+        continue;
+      auto origInstParent = isOriginal(inst->getParent());
+      assert(origInstParent);
+      const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
+      if (!InstLoop) {
+        continue;
       }
+      bool isParentLoop = false;
+      for (const llvm::Loop *L = OrigLI->getLoopFor(origParent); L;
+           L = L->getParentLoop()) {
+        if (L == InstLoop) {
+          isParentLoop = true;
+          break;
+        }
+      }
+      if (isParentLoop)
+        continue;
+      if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
+        llvm::errs() << " module: " << *newFunc->getParent() << "\n";
+        llvm::errs() << " newFunc: " << *newFunc << "\n";
+        llvm::errs() << " parent: " << *parent << "\n";
+        llvm::errs() << " val: " << *val << "\n";
+      }
+      assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+      goto endCheck;
     }
 
     if (phi->getNumIncomingValues() == 1) {
@@ -2510,7 +2530,10 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
       if (seen.count(cur))
         continue;
       seen.insert(cur);
-      for (auto Succ : successors(cur)) {
+      auto terminator = cur->getTerminator();
+      if (!terminator)
+        continue;
+      for (auto Succ : successors(terminator)) {
         todo.push_back(Succ);
       }
     }
@@ -4921,7 +4944,7 @@ void GradientUtils::getReverseBuilder(IRBuilder<> &Builder2, bool original) {
   }
   assert(BB2);
 
-  if (BB2->getTerminator())
+  if (hasTerminator(BB2))
     Builder2.SetInsertPoint(BB2->getTerminator());
   else
     Builder2.SetInsertPoint(BB2);
