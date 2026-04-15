@@ -50,7 +50,9 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     APFloat apvalue(T.getFloatSemantics(), value);
     return FloatAttr::get(T, apvalue);
   } else if (auto T = cast<ComplexType>(type)) {
-    std::complex<double> cvalue(std::stod(value), 0);
+    auto F = cast<FloatType>(T.getElementType());
+    std::complex<APFloat> cvalue(APFloat(F.getFloatSemantics(), value),
+                                 APFloat(F.getFloatSemantics(), "0"));
     return ComplexAttr::get(T, cvalue);
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
