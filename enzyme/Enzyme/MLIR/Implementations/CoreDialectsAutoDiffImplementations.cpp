@@ -35,10 +35,11 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
       APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<APFloat>(values));
-    } else if (auto ET = dyn_cast<ComplexType>(T.getElementType())) {
+    } else if (auto CET = dyn_cast<ComplexType>(T.getElementType())) {
+      auto ET = cast<FloatType>(CET.getElementType());
       std::complex<APFloat> values[] = {
-          std::complex<APFloat>(APFloat(ET.getElementType().getFloatSemantics(), value),
-                                APFloat(ET.getElementType().getFloatSemantics(), "0"))};
+          std::complex<APFloat>(APFloat(ET.getFloatSemantics(), value),
+                                APFloat(ET.getFloatSemantics(), "0"))};
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<std::complex<APFloat>>(values));
     } else {
