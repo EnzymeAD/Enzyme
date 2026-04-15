@@ -36,9 +36,11 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<APFloat>(values));
     } else if (auto ET = dyn_cast<ComplexType>(T.getElementType())) {
-      std::complex<double> values[] = {std::complex<double>(std::stod(value), 0)};
+      std::complex<APFloat> values[] = {
+          std::complex<APFloat>(APFloat(ET.getElementType().getFloatSemantics(), value),
+                                APFloat(ET.getElementType().getFloatSemantics(), "0"))};
       return DenseElementsAttr::get(cast<ShapedType>(type),
-                                    ArrayRef<std::complex<double>>(values));
+                                    ArrayRef<std::complex<APFloat>>(values));
     } else {
       llvm::errs() << " unsupported eltype: " << T.getElementType() 
                    << " of type " << type << "\n";
