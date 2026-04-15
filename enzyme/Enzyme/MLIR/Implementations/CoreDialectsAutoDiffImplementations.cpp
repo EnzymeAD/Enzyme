@@ -31,18 +31,27 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     return cast<TypedAttr>(ATI.createNullAttr());
   }
   if (auto T = dyn_cast<TensorType>(type)) {
-    auto ET = dyn_cast<FloatType>(T.getElementType());
-    if (!ET) {
-      llvm::errs() << " unsupported eltype: " << ET << " of type " << type
-                   << "\n";
+    if (auto ET = dyn_cast<FloatType>(T.getElementType())) {
+      APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<APFloat>(values));
+    } else if (auto ET = dyn_cast<ComplexType>(T.getElementType())) {
+      std::complex<double> values[] = {std::complex<double>(std::stod(value), 0)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<std::complex<double>>(values));
+    } else {
+      llvm::errs() << " unsupported eltype: " << T.getElementType() 
+                   << " of type " << type << "\n";
     }
-    APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
-    return DenseElementsAttr::get(cast<ShapedType>(type),
-                                  ArrayRef<APFloat>(values));
+  } else if (auto T = cast<FloatType>(type)) {
+    APFloat apvalue(T.getFloatSemantics(), value);
+    return FloatAttr::get(T, apvalue);
+  } else if (auto T = cast<ComplexType>(type)) {
+    std::complex<double> cvalue(std::stod(value), 0);
+    return ComplexAttr::get(T, cvalue);
+  } else {
+    llvm::errs() << " unsupported type: " << type << "\n";
   }
-  auto T = cast<FloatType>(type);
-  APFloat apvalue(T.getFloatSemantics(), value);
-  return FloatAttr::get(T, apvalue);
 }
 
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
