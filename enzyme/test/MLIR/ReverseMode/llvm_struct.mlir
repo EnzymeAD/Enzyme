@@ -22,7 +22,7 @@ llvm.func @kernel(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: f64, %arg3: f64) {
     activity = [#enzyme<activity enzyme_dup>, #enzyme<activity enzyme_const>],
     ret_activity = [#enzyme<activity enzyme_activenoneed>],
     fn = "compute"
-  } : (!llvm.ptr, !llvm.ptr, f64, f64) -> f64
+  } : (!llvm.ptr, !llvm.ptr, f64, f64) -> ()
   llvm.return
 }
 
