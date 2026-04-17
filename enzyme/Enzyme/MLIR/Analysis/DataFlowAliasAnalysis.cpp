@@ -270,6 +270,52 @@ static bool isNoOp(Operation *op) {
              LLVM::LifetimeEndOp, LLVM::AssumeOp, LLVM::UnreachableOp>(op);
 }
 
+static bool isAliasRelevantEffect(const MemoryEffects::EffectInstance &effect) {
+  Value v = effect.getValue();
+  if (v)
+    return true;
+
+  if (const auto *resource = effect.getResource())
+    return resource->isAddressable();
+
+  return true;
+}
+
+static Value getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(
+    Operation *op,
+    ArrayRef<MemoryEffects::EffectInstance> effects) {
+  Value allocatedValue = nullptr;
+  bool sawAllocate = false;
+
+  for (const auto &effect : effects) {
+    Value v = effect.getValue();
+
+    if (isa<MemoryEffects::Allocate>(effect.getEffect()) &&
+        v && v.getDefiningOp() == op && isPointerLike(v.getType())) {
+      sawAllocate = true;
+
+      // Single-result helper: reject multiple allocated pointer-like results.
+      if (!allocatedValue)
+        allocatedValue = v;
+      else
+        return nullptr;
+
+      continue;
+    }
+
+    // Ignore non-alias-relevant effects, e.g. runtime/comm effects on
+    // non-addressable resources.
+    if (!isAliasRelevantEffect(effect))
+      continue;
+
+    // Any other alias-relevant effect means this op is not "pure alloc-like"
+    // for our purposes.
+    return nullptr;
+  }
+
+  return sawAllocate ? allocatedValue : nullptr;
+}
+
 LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
     Operation *op, const PointsToSets &before, PointsToSets *after) {
   join(after, before);
@@ -289,11 +335,11 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
 
   // If the operation allocates fresh memory and doesn't write into it, that
   // memory is known not to point to any known alias class.
-  if (effects.size() == 1 &&
-      isa<MemoryEffects::Allocate>(effects.front().getEffect()) &&
-      effects.front().getValue()) {
+  if (Value allocatedValue =
+          getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(op,
+                                                                        effects)) {
     const auto *destClasses = getOrCreateFor<AliasClassLattice>(
-        getProgramPointAfter(op), effects.front().getValue());
+        getProgramPointAfter(op), allocatedValue);
     propagateIfChanged(
         after, after->setPointingToEmpty(destClasses->getAliasClassesObject()));
     return success();
@@ -832,15 +878,65 @@ void enzyme::AliasAnalysis::setToEntryState(AliasClassLattice *lattice) {
 // would need additional processing.
 //
 // TODO: turn this into an interface.
-static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
+static bool isAliasTransferFullyDescribedByMemoryEffects(
+    Operation *op,
+    ArrayRef<MemoryEffects::EffectInstance> effects) {
   if (auto call = dyn_cast<CallOpInterface>(op)) {
     if (auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee())) {
-      if (symbol.getLeafReference().getValue() == "malloc") {
+      StringRef name = symbol.getLeafReference().getValue();
+      if (name == "malloc" || name == "calloc" || name == "_Znwm")
         return true;
-      }
     }
   }
-  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op);
+
+  if (isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op))
+    return true;
+
+  // Generic alloc-like op: fresh pointer-like result, no alias-relevant
+  // effects other than the allocation itself.
+  return getSingleFreshAllocatedPointerLikeResultIfEffectOnlyAllocLike(op,
+                                                                       effects) != nullptr;
+}
+
+static bool isAliasRelevantRead(const MemoryEffects::EffectInstance &effect) {
+  if (!isa<MemoryEffects::Read>(effect.getEffect()))
+    return false;
+
+  // Reading a concrete pointer-like value may influence aliasing of results.
+  if (Value v = effect.getValue())
+    return isPointerLike(v.getType());
+
+  // Value-less read: only alias-relevant if it may touch addressable memory.
+  if (const auto *resource = effect.getResource())
+    return resource->isAddressable();
+
+  // No resource information -> be conservative.
+  return true;
+}
+
+static bool hasFreshPointerLikeResultsFromAllocate(
+    Operation *op, ArrayRef<MemoryEffects::EffectInstance> effects) {
+  DenseSet<Value> allocatedResults;
+  for (const auto &effect : effects) {
+    Value v = effect.getValue();
+    if (!v)
+      continue;
+    if (!isa<MemoryEffects::Allocate>(effect.getEffect()))
+      continue;
+    if (v.getDefiningOp() != op)
+      continue;
+    if (!isPointerLike(v.getType()))
+      continue;
+    allocatedResults.insert(v);
+  }
+
+  for (Value result : op->getResults()) {
+    if (!isPointerLike(result.getType()))
+      continue;
+    if (!allocatedResults.count(result))
+      return false;
+  }
+  return true;
 }
 
 void enzyme::AliasAnalysis::transfer(
@@ -852,7 +948,8 @@ void enzyme::AliasAnalysis::transfer(
     // If the effect is global read, record that.
     Value value = effect.getValue();
     if (!value) {
-      globalRead |= isa<MemoryEffects::Read>(effect.getEffect());
+      globalRead |= isa<MemoryEffects::Read>(effect.getEffect()) &&
+                    isAliasRelevantEffect(effect);
       continue;
     }
 
@@ -923,7 +1020,7 @@ void enzyme::AliasAnalysis::transfer(
   }
 
   // If it was enough to reason about effects, exit here.
-  if (!effects.empty() && isAliasTransferFullyDescribedByMemoryEffects(op))
+  if (!effects.empty() &&  isAliasTransferFullyDescribedByMemoryEffects(op, effects))
     return;
 
   // Conservatively assume all results alias all operands.
@@ -1016,9 +1113,64 @@ LogicalResult getEffectsForExternalCall(
   return failure();
 }
 
+
+static bool shouldUseEntryClassForAddressOf(Operation *symbol) {
+  // Fill this in with your preferred "public/external" predicate.
+  // Typical idea:
+  //   external / external_weak / available_externally -> true
+  //   internal / private -> false
+  // TODO: unnamed_addr needs to be handled 
+  if (auto g = dyn_cast<LLVM::GlobalOp>(symbol)) {
+    auto linkage = g.getLinkage();
+    return linkage == LLVM::Linkage::External ||
+           linkage == LLVM::Linkage::ExternWeak ||
+           linkage == LLVM::Linkage::AvailableExternally;
+  }
+
+  if (auto f = dyn_cast<LLVM::LLVMFuncOp>(symbol)) {
+    auto linkage = f.getLinkage();
+    return linkage == LLVM::Linkage::External ||
+           linkage == LLVM::Linkage::ExternWeak ||
+           linkage == LLVM::Linkage::AvailableExternally;
+  }
+
+  if (auto a = dyn_cast<LLVM::AliasOp>(symbol)) {
+    auto linkage = a.getLinkage();
+    return linkage == LLVM::Linkage::External ||
+           linkage == LLVM::Linkage::ExternWeak ||
+           linkage == LLVM::Linkage::AvailableExternally;
+  }
+
+  // Conservative fallback.
+  return true;
+}
+
+
 LogicalResult enzyme::AliasAnalysis::visitOperation(
     Operation *op, ArrayRef<const AliasClassLattice *> operands,
     ArrayRef<AliasClassLattice *> results) {
+  if (auto addr = dyn_cast<LLVM::AddressOfOp>(op)) {
+    AliasClassLattice *resultLattice = results[0];
+
+    Operation *symbol =
+        SymbolTable::lookupNearestSymbolFrom(op, addr.getGlobalNameAttr());
+
+    DistinctAttr cls = nullptr;
+    if (!symbol || shouldUseEntryClassForAddressOf(symbol)) {
+      cls = entryClass;
+    } else {
+      cls = originalClasses.getOriginalClass(
+          resultLattice->getAnchor(),
+          addr.getGlobalNameAttr());
+    }
+
+    propagateIfChanged(
+        resultLattice,
+        resultLattice->join(
+            AliasClassLattice::single(resultLattice->getAnchor(), cls)));
+
+    return success();
+  }
 
   // If we don't have memory effect information, don't assume anything about
   // values.
@@ -1027,7 +1179,7 @@ LogicalResult enzyme::AliasAnalysis::visitOperation(
     for (OpResult result : op->getResults()) {
       if (!isPointerLike(result.getType()))
         continue;
-
+        
       (void)results[result.getResultNumber()]->markUnknown();
     }
     return success();
