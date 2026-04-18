@@ -910,8 +910,8 @@ InstructionCost getCompCost(
   builder.setFastMathFlags(FMF);
   Value *RetVal = parsedNode->getLLValue(builder, &VMap);
   assert(RetVal && "Parsed node did not produce a value");
-  assert((RetVal->getType() == ReturnType) &&
-         "Return value type mismatch with temp function return type");
+  if (RetVal->getType() != ReturnType)
+    RetVal = builder.CreateFPCast(RetVal, ReturnType);
   builder.CreateRet(RetVal);
 
   // llvm::errs() << "Temp function before optimizations:\n";
