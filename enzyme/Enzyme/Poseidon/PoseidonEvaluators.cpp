@@ -11,7 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <cstring>
 
 #include <cmath>
 
@@ -20,6 +23,57 @@
 #include "PoseidonTypes.h"
 
 using namespace llvm;
+
+namespace {
+struct DS {
+  float hi, lo;
+  double toF64() const { return (double)hi + (double)lo; }
+  static DS fromF64(double x) {
+    float h = (float)x;
+    return {h, (float)(x - (double)h)};
+  }
+};
+DS dsTwoSum(float a, float b) {
+  float s = a + b, ap = s - b, bp = s - ap;
+  return {s, (a - ap) + (b - bp)};
+}
+DS dsFastTwoSum(float a, float b) {
+  float s = a + b;
+  return {s, b - (s - a)};
+}
+DS dsTwoProd(float a, float b) {
+  float p = a * b;
+  const float c = 4097.0f;
+  float ta = c * a, hi_a = ta - (ta - a), lo_a = a - hi_a;
+  float tb = c * b, hi_b = tb - (tb - b), lo_b = b - hi_b;
+  float e = ((hi_a * hi_b - p) + hi_a * lo_b + lo_a * hi_b) + lo_a * lo_b;
+  return {p, e};
+}
+DS dsNeg(DS x) { return {-x.hi, -x.lo}; }
+DS dsAdd(DS x, DS y) {
+  DS ab = dsTwoSum(x.hi, y.hi), cd = dsTwoSum(x.lo, y.lo);
+  DS ac = dsFastTwoSum(ab.hi, cd.hi);
+  return dsFastTwoSum(ac.hi, (ab.lo + cd.lo) + ac.lo);
+}
+DS dsSub(DS x, DS y) { return dsAdd(x, dsNeg(y)); }
+DS dsMul(DS x, DS y) {
+  DS pe = dsTwoProd(x.hi, y.hi);
+  return dsFastTwoSum(pe.hi, pe.lo + (x.hi * y.lo + x.lo * y.hi));
+}
+DS dsDiv(DS x, DS y) {
+  float zhi = x.hi / y.hi;
+  DS pe = dsTwoProd(zhi, y.hi);
+  float d = ((x.hi - pe.hi) - pe.lo + x.lo) - zhi * y.lo;
+  return dsFastTwoSum(zhi, d / y.hi);
+}
+DS dsSqrt(DS x) {
+  float zhi = sqrtf(x.hi);
+  DS pe = dsTwoProd(zhi, zhi);
+  float d = ((x.hi - pe.hi) - pe.lo) + x.lo;
+  return dsFastTwoSum(zhi, d / (2.0f * zhi));
+}
+DS dsFma(DS a, DS b, DS c) { return dsAdd(dsMul(a, b), c); }
+} // namespace
 
 extern "C" {
 cl::opt<bool> FPOptStrictMode(
@@ -143,64 +197,92 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     evaluateNode(operand.get(), inputValues);
   }
 
+  if (nodePrec == PrecisionChangeType::FP80 ||
+      nodePrec == PrecisionChangeType::FP128)
+    llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
+
   double res = 0.0;
 
-  auto evalUnary = [&](auto doubleFunc, auto floatFunc) -> double {
+  bool useReducedFloat = (nodePrec == PrecisionChangeType::FP32 ||
+                          nodePrec == PrecisionChangeType::FP16 ||
+                          nodePrec == PrecisionChangeType::BF16);
+  bool useMultiFloat = (nodePrec == PrecisionChangeType::MultiFloat);
+
+  auto truncToPrec = [&](float val) -> float {
+    const fltSemantics *sem = nullptr;
+    if (nodePrec == PrecisionChangeType::BF16)
+      sem = &APFloat::BFloat();
+    else if (nodePrec == PrecisionChangeType::FP16)
+      sem = &APFloat::IEEEhalf();
+    else
+      return val;
+    bool losesInfo;
+    APFloat ap((double)val);
+    ap.convert(*sem, APFloat::rmNearestTiesToEven, &losesInfo);
+    ap.convert(APFloat::IEEEsingle(), APFloat::rmNearestTiesToEven, &losesInfo);
+    return ap.convertToFloat();
+  };
+
+  auto toF = [&](double v) -> float {
+    return truncToPrec(static_cast<float>(v));
+  };
+
+  using DSUnaryFn = DS (*)(DS);
+  using DSBinaryFn = DS (*)(DS, DS);
+  using DSTernaryFn = DS (*)(DS, DS, DS);
+
+  auto evalUnary = [&](auto f64Fn, auto f32Fn,
+                       DSUnaryFn dsFn = nullptr) -> double {
     double op = getResult(node->operands[0].get());
-    if (nodePrec == PrecisionChangeType::FP32)
-      return floatFunc(static_cast<float>(op));
-    else
-      return doubleFunc(op);
+    if (useReducedFloat)
+      return (double)truncToPrec(f32Fn(toF(op)));
+    if (useMultiFloat && dsFn)
+      return dsFn(DS::fromF64(op)).toF64();
+    return f64Fn(op);
   };
-
-  auto evalBinary = [&](auto doubleFunc, auto floatFunc) -> double {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    if (nodePrec == PrecisionChangeType::FP32)
-      return floatFunc(static_cast<float>(op0), static_cast<float>(op1));
-    else
-      return doubleFunc(op0, op1);
+  auto evalBinary = [&](auto f64Fn, auto f32Fn,
+                        DSBinaryFn dsFn = nullptr) -> double {
+    double a = getResult(node->operands[0].get());
+    double b = getResult(node->operands[1].get());
+    if (useReducedFloat)
+      return (double)truncToPrec(f32Fn(toF(a), toF(b)));
+    if (useMultiFloat && dsFn)
+      return dsFn(DS::fromF64(a), DS::fromF64(b)).toF64();
+    return f64Fn(a, b);
   };
-
-  auto evalTernary = [&](auto doubleFunc, auto floatFunc) -> double {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    double op2 = getResult(node->operands[2].get());
-    if (nodePrec == PrecisionChangeType::FP32)
-      return floatFunc(static_cast<float>(op0), static_cast<float>(op1),
-                       static_cast<float>(op2));
-    else
-      return doubleFunc(op0, op1, op2);
+  auto evalTernary = [&](auto f64Fn, auto f32Fn,
+                         DSTernaryFn dsFn = nullptr) -> double {
+    double a = getResult(node->operands[0].get());
+    double b = getResult(node->operands[1].get());
+    double c = getResult(node->operands[2].get());
+    if (useReducedFloat)
+      return (double)truncToPrec(f32Fn(toF(a), toF(b), toF(c)));
+    if (useMultiFloat && dsFn)
+      return dsFn(DS::fromF64(a), DS::fromF64(b), DS::fromF64(c)).toF64();
+    return f64Fn(a, b, c);
+  };
+  auto evalCompare = [&](auto cmp) -> double {
+    double a = getResult(node->operands[0].get());
+    double b = getResult(node->operands[1].get());
+    bool r = useReducedFloat ? cmp(toF(a), toF(b)) : cmp(a, b);
+    return r ? 1.0 : 0.0;
   };
 
   if (node->op == "neg") {
-    double op = getResult(node->operands[0].get());
-    res =
-        (nodePrec == PrecisionChangeType::FP32) ? -static_cast<float>(op) : -op;
+    res = evalUnary([](double x) { return -x; }, [](float x) { return -x; },
+                    dsNeg);
   } else if (node->op == "+") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    res = (nodePrec == PrecisionChangeType::FP32)
-              ? static_cast<float>(op0) + static_cast<float>(op1)
-              : op0 + op1;
+    res = evalBinary([](double a, double b) { return a + b; },
+                     [](float a, float b) { return a + b; }, dsAdd);
   } else if (node->op == "-") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    res = (nodePrec == PrecisionChangeType::FP32)
-              ? static_cast<float>(op0) - static_cast<float>(op1)
-              : op0 - op1;
+    res = evalBinary([](double a, double b) { return a - b; },
+                     [](float a, float b) { return a - b; }, dsSub);
   } else if (node->op == "*") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    res = (nodePrec == PrecisionChangeType::FP32)
-              ? static_cast<float>(op0) * static_cast<float>(op1)
-              : op0 * op1;
+    res = evalBinary([](double a, double b) { return a * b; },
+                     [](float a, float b) { return a * b; }, dsMul);
   } else if (node->op == "/") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    res = (nodePrec == PrecisionChangeType::FP32)
-              ? static_cast<float>(op0) / static_cast<float>(op1)
-              : op0 / op1;
+    res = evalBinary([](double a, double b) { return a / b; },
+                     [](float a, float b) { return a / b; }, dsDiv);
   } else if (node->op == "sin") {
     res = evalUnary(static_cast<double (*)(double)>(std::sin),
                     static_cast<float (*)(float)>(sinf));
@@ -224,7 +306,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
                     static_cast<float (*)(float)>(log1pf));
   } else if (node->op == "sqrt") {
     res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
-                    static_cast<float (*)(float)>(sqrtf));
+                    static_cast<float (*)(float)>(sqrtf), dsSqrt);
   } else if (node->op == "cbrt") {
     res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
                     static_cast<float (*)(float)>(cbrtf));
@@ -311,7 +393,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
                      static_cast<float (*)(float, float)>(remainderf));
   } else if (node->op == "fma") {
     res = evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
-                      static_cast<float (*)(float, float, float)>(fmaf));
+                      static_cast<float (*)(float, float, float)>(fmaf), dsFma);
   } else if (node->op == "lgamma") {
     res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
                     static_cast<float (*)(float)>(lgammaf));
@@ -319,47 +401,17 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     res = evalUnary(static_cast<double (*)(double)>(std::tgamma),
                     static_cast<float (*)(float)>(tgammaf));
   } else if (node->op == "==") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) == static_cast<float>(op1)
-                      : op0 == op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x == y; });
   } else if (node->op == "!=") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) != static_cast<float>(op1)
-                      : op0 != op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x != y; });
   } else if (node->op == "<") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) < static_cast<float>(op1)
-                      : op0 < op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x < y; });
   } else if (node->op == ">") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) > static_cast<float>(op1)
-                      : op0 > op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x > y; });
   } else if (node->op == "<=") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) <= static_cast<float>(op1)
-                      : op0 <= op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x <= y; });
   } else if (node->op == ">=") {
-    double op0 = getResult(node->operands[0].get());
-    double op1 = getResult(node->operands[1].get());
-    bool result = (nodePrec == PrecisionChangeType::FP32)
-                      ? static_cast<float>(op0) >= static_cast<float>(op1)
-                      : op0 >= op1;
-    res = result ? 1.0 : 0.0;
+    res = evalCompare([](auto x, auto y) { return x >= y; });
   } else if (node->op == "PI") {
     res = M_PI;
   } else if (node->op == "E") {
