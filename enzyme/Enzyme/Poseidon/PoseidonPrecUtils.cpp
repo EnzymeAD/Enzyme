@@ -32,6 +32,7 @@
 #include "../Utils.h"
 #include "Poseidon.h"
 #include "PoseidonEvaluators.h"
+#include "PoseidonMultiFloat.h"
 #include "PoseidonPrecUtils.h"
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
@@ -208,13 +209,32 @@ void changePrecision(Instruction *I, PrecisionChange &change,
 
       if (!newFuncName.empty()) {
         Module *M = CI->getModule();
-        SmallVector<Type *, 4> newArgTypes(newArgs.size(), newType);
 
+        Type *funcType = newType;
+        bool needsPromotion = newType->isHalfTy() || newType->isBFloatTy();
+        if (needsPromotion)
+          funcType = Type::getFloatTy(newType->getContext());
+
+        SmallVector<Value *, 4> callArgs;
+        for (auto *arg : newArgs) {
+          if (needsPromotion && arg->getType()->isFloatingPointTy() &&
+              arg->getType() != funcType)
+            callArgs.push_back(
+                Builder.CreateFPExt(arg, funcType, "fpopt.promote"));
+          else
+            callArgs.push_back(arg);
+        }
+
+        SmallVector<Type *, 4> funcArgTypes(callArgs.size(), funcType);
         FunctionCallee newFuncCallee = M->getOrInsertFunction(
-            newFuncName, FunctionType::get(newType, newArgTypes, false));
+            newFuncName, FunctionType::get(funcType, funcArgTypes, false));
 
         if (Function *newFunc = dyn_cast<Function>(newFuncCallee.getCallee())) {
-          newI = Builder.CreateCall(newFunc, newArgs);
+          Value *callResult = Builder.CreateCall(newFunc, callArgs);
+          if (needsPromotion)
+            newI = Builder.CreateFPTrunc(callResult, newType, "fpopt.demote");
+          else
+            newI = callResult;
         } else {
           llvm::errs() << "PT: Failed to get "
                        << getPrecisionChangeTypeString(change.newType)
@@ -239,7 +259,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
 // values and change outputs in VMap to new casted outputs.
 void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
   SetVector<Instruction *> operations;
-  ValueToValueMapTy clonedToOriginal; // Maps cloned outputs to old outputs
+  DenseMap<Value *, Value *>
+      clonedToOriginal; // Maps cloned outputs to old outputs
   if (VMap) {
     for (auto *I : subgraph.operations) {
       assert(VMap->count(I));
@@ -294,6 +315,24 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
 
     SmallVector<Instruction *, 8> instsToChangeSorted;
     topoSort(instsToChange, instsToChangeSorted);
+
+    if (change.newType == PrecisionChangeType::MultiFloat) {
+      SmallPtrSet<Instruction *, 8> allChangedSet(instsToChange.begin(),
+                                                  instsToChange.end());
+      DenseMap<Value *, Value *> restoredValues;
+      applyMultiFloat(instsToChangeSorted, allChangedSet, &restoredValues);
+      if (VMap) {
+        for (auto &[oldClonedI, restoredV] : restoredValues) {
+          if (clonedToOriginal.count(oldClonedI)) {
+            (*VMap)[clonedToOriginal[oldClonedI]] = restoredV;
+          }
+        }
+      } else {
+        for (auto *I : instsToChangeSorted)
+          subgraph.operations.remove(I);
+      }
+      continue;
+    }
 
     for (auto *I : instsToChangeSorted) {
       changePrecision(I, change, oldToNew);
