@@ -103,6 +103,18 @@ cl::opt<bool> FPOptMultiOutputPTOnly(
     "fpopt-multi-output-pt-only", cl::init(false), cl::Hidden,
     cl::desc("Skip Herbie expression generation for subgraphs with multiple "
              "outputs (only apply precision changes)"));
+cl::opt<bool> FPOptEliminateF64(
+    "fpopt-eliminate-f64", cl::init(false), cl::Hidden,
+    cl::desc("Forbid FP64 in PT candidates; for GPUs with no fast F64"));
+cl::opt<int>
+    FPOptTwoTierStep("fpopt-two-tier-step", cl::init(10), cl::Hidden,
+                     cl::desc("Percent step for two-tier split-point sweep"));
+cl::opt<bool> FPOptEnableThreeTier(
+    "fpopt-enable-three-tier", cl::init(true), cl::Hidden,
+    cl::desc("Emit three-tier precision-change candidates"));
+cl::opt<int> FPOptThreeTierStep(
+    "fpopt-three-tier-step", cl::init(20), cl::Hidden,
+    cl::desc("Percent step for three-tier split-point sweep"));
 }
 
 bool Poseidonable(const llvm::Value &V) {
@@ -354,6 +366,84 @@ void preprocessForPoseidon(Function *F) {
     }
   }
 }
+
+namespace {
+
+struct TierPair {
+  PrecisionChangeType hi;
+  PrecisionChangeType lo;
+};
+
+struct TierTriple {
+  PrecisionChangeType hi;
+  PrecisionChangeType mid;
+  PrecisionChangeType lo;
+};
+
+static const TierPair kCanonicalPairs[] = {
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32},
+    {PrecisionChangeType::FP64, PrecisionChangeType::MultiFloat},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::BF16},
+    {PrecisionChangeType::MultiFloat, PrecisionChangeType::FP32},
+    {PrecisionChangeType::MultiFloat, PrecisionChangeType::FP16},
+    {PrecisionChangeType::MultiFloat, PrecisionChangeType::BF16},
+    {PrecisionChangeType::FP32, PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP32, PrecisionChangeType::BF16},
+};
+
+static const TierTriple kCanonicalTriples[] = {
+    {PrecisionChangeType::FP64, PrecisionChangeType::MultiFloat,
+     PrecisionChangeType::FP32},
+    {PrecisionChangeType::FP64, PrecisionChangeType::MultiFloat,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::MultiFloat,
+     PrecisionChangeType::BF16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
+     PrecisionChangeType::BF16},
+    {PrecisionChangeType::MultiFloat, PrecisionChangeType::FP32,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::MultiFloat, PrecisionChangeType::FP32,
+     PrecisionChangeType::BF16},
+};
+
+static bool precAllowed(PrecisionChangeType t, bool eliminateF64, bool gpuMode,
+                        const std::unordered_set<std::string> &hwScalar) {
+  if (eliminateF64 && t == PrecisionChangeType::FP64)
+    return false;
+  if (t == PrecisionChangeType::MultiFloat && !gpuMode)
+    return false;
+  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar.count("half")))
+    return false;
+  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar.count("bf16")))
+    return false;
+  return true;
+}
+
+static bool tierPairAllowed(TierPair tp, bool eliminateF64, bool gpuMode,
+                            const std::unordered_set<std::string> &hwScalar) {
+  return precAllowed(tp.hi, eliminateF64, gpuMode, hwScalar) &&
+         precAllowed(tp.lo, eliminateF64, gpuMode, hwScalar);
+}
+
+static bool tierTripleAllowed(TierTriple tr, bool eliminateF64, bool gpuMode,
+                              const std::unordered_set<std::string> &hwScalar) {
+  return precAllowed(tr.hi, eliminateF64, gpuMode, hwScalar) &&
+         precAllowed(tr.mid, eliminateF64, gpuMode, hwScalar) &&
+         precAllowed(tr.lo, eliminateF64, gpuMode, hwScalar);
+}
+
+static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
+  std::string s = getPrecisionChangeTypeString(t).str();
+  s += "(";
+  s += std::to_string(pct);
+  s += "%)";
+  return s;
+}
+
+} // namespace
 
 // Run (our choice of) floating point optimizations on function `F`.
 // Return whether or not we change the function.
@@ -979,152 +1069,153 @@ B2:
     }
 
     if (FPOptEnablePT) {
-      // Sort `cs.operations` by the gradient and construct
-      // `PrecisionChange`s.
       CandidateSubgraph CS(subgraph, TTI);
       auto *o0 = subgraph.outputs[0];
       CS.executions = valueToNodeMap[o0]->executions;
 
-      SmallVector<PrecisionChangeType> precTypes;
-      if (isGPUMode(F)) {
-        const auto &scalar = getScalarTypes();
-        if (scalar.count("half"))
-          precTypes.push_back(PrecisionChangeType::FP16);
-        if (scalar.count("bf16"))
-          precTypes.push_back(PrecisionChangeType::BF16);
-
-        precTypes.push_back(PrecisionChangeType::MultiFloat);
-      }
-      precTypes.push_back(PrecisionChangeType::FP32);
-      precTypes.push_back(PrecisionChangeType::FP64);
-
-      const auto &PTFuncs = getPTFuncs();
-
-      // Check if we have a cached DP table
       std::string cacheFilePath = FPOptCachePath + "/table.json";
       bool skipEvaluation = FPOptSolverType == "dp" &&
                             !FPOptCachePath.empty() &&
                             llvm::sys::fs::exists(cacheFilePath);
 
-      SetVector<FPLLValue *> operations;
+      const auto &PTFuncs = getPTFuncs();
+      SetVector<FPLLValue *> funcsSet, allSet;
       for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
                "Corrupted FPNode for original instructions");
         auto node = cast<FPLLValue>(valueToNodeMap[I].get());
+        allSet.insert(node);
         if (PTFuncs.count(node->op) != 0) {
-          operations.insert(node);
+          funcsSet.insert(node);
           llvm::errs() << "FPOpt: PT Function identified: " << *I << "\n";
         }
       }
-
-      // Prioritize operations with low sensitivity scores
-      SmallVector<FPLLValue *> sortedOps(operations.begin(), operations.end());
-      llvm::sort(sortedOps, [](const auto &a, const auto &b) {
+      SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
+      SmallVector<FPLLValue *> sortedAllOps(allSet.begin(), allSet.end());
+      auto bySens = [](const auto &a, const auto &b) {
         return a->sens < b->sens;
-      });
+      };
+      llvm::sort(sortedFuncs, bySens);
+      llvm::sort(sortedAllOps, bySens);
 
-      // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
-      size_t lastNumChanged = 0;
-      for (int percent = 10; percent <= 100; percent += 10) {
-        size_t numToChange = sortedOps.size() * percent / 100;
-        if (numToChange == 0 || numToChange == lastNumChanged) {
-          continue;
-        }
+      const bool gpuMode = isGPUMode(F);
+      static const std::unordered_set<std::string> kEmptyScalars;
+      const std::unordered_set<std::string> &hwScalar =
+          gpuMode ? getScalarTypes() : kEmptyScalars;
+      PrecisionChangeType curr =
+          getPrecisionChangeType(subgraph.outputs[0]->getType());
 
-        lastNumChanged = numToChange;
+      auto emitCandidate =
+          [&](SmallVectorImpl<std::pair<PrecisionChangeType,
+                                        SetVector<FPLLValue *>>> &assignment,
+              std::string desc) {
+            SmallVector<PrecisionChange, 3> changes;
+            for (auto &kv : assignment) {
+              if (kv.first != curr && !kv.second.empty())
+                changes.emplace_back(kv.second, curr, kv.first);
+            }
+            if (changes.empty())
+              return;
+            PTCandidate cand{std::move(changes), std::move(desc)};
+            if (!skipEvaluation)
+              cand.CompCost = getCompCost(subgraph, TTI, cand);
+            CS.candidates.push_back(std::move(cand));
+          };
 
-        if (FPOptPrint && numToChange > 0) {
-          llvm::errs() << "Created PrecisionChange for " << percent
-                       << "% of Funcs (" << numToChange << ")\n";
-          double minSens = sortedOps[0]->sens;
-          double maxSens = sortedOps[numToChange - 1]->sens;
-          llvm::errs() << "Sensitivity score range: [" << minSens << ", "
-                       << maxSens << "]\n";
-        }
-
-        for (auto prec : precTypes) {
-          PrecisionChangeType currentPrec =
-              getPrecisionChangeType(subgraph.outputs[0]->getType());
-          if (prec == currentPrec) {
+      auto sweepTwoTier = [&](TierPair tp, ArrayRef<FPLLValue *> sortedAsc,
+                              StringRef label) {
+        const size_t N = sortedAsc.size();
+        const int step = std::max(5, FPOptTwoTierStep.getValue());
+        size_t prev = N + 1;
+        for (int pct = 0; pct <= 100 - step; pct += step) {
+          size_t k = N * pct / 100;
+          if (k == prev)
             continue;
+          prev = k;
+
+          SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
+          SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
+
+          if (FPOptPrint) {
+            llvm::errs() << "Created " << label
+                         << " two-tier PT candidate: " << fmtPrecPct(tp.hi, pct)
+                         << " + " << fmtPrecPct(tp.lo, 100 - pct) << " (N=" << N
+                         << ")\n";
           }
+          std::string desc = label.str();
+          if (!desc.empty())
+            desc += " ";
+          desc += fmtPrecPct(tp.hi, pct);
+          desc += " + ";
+          desc += fmtPrecPct(tp.lo, 100 - pct);
 
-          std::string precStr = getPrecisionChangeTypeString(prec).str();
-          std::string desc =
-              "Funcs 0% -- " + std::to_string(percent) + "% -> " + precStr;
-
-          SetVector<FPLLValue *> nodesToChange(sortedOps.begin(),
-                                               sortedOps.begin() + numToChange);
-          PrecisionChange change(nodesToChange, currentPrec, prec);
-
-          SmallVector<PrecisionChange, 1> changes{std::move(change)};
-          PTCandidate candidate{std::move(changes), desc};
-
-          if (!skipEvaluation) {
-            candidate.CompCost = getCompCost(subgraph, TTI, candidate);
-          }
-
-          CS.candidates.push_back(std::move(candidate));
+          SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 2>
+              assignment;
+          assignment.emplace_back(tp.hi, std::move(hiOps));
+          assignment.emplace_back(tp.lo, std::move(loOps));
+          emitCandidate(assignment, std::move(desc));
         }
+      };
+
+      auto sweepThreeTier = [&](TierTriple tr, ArrayRef<FPLLValue *> sortedAsc,
+                                StringRef label) {
+        const size_t N = sortedAsc.size();
+        const int step = std::max(5, FPOptThreeTierStep.getValue());
+        for (int pctHi = step; pctHi <= 100 - 2 * step; pctHi += step) {
+          for (int pctHiMid = pctHi + step; pctHiMid <= 100 - step;
+               pctHiMid += step) {
+            size_t k0 = N * pctHi / 100;
+            size_t k1 = N * pctHiMid / 100;
+            if (k0 == 0 || k0 >= k1 || k1 >= N)
+              continue;
+
+            SetVector<FPLLValue *> hiOps(sortedAsc.end() - k0, sortedAsc.end());
+            SetVector<FPLLValue *> midOps(sortedAsc.end() - k1,
+                                          sortedAsc.end() - k0);
+            SetVector<FPLLValue *> loOps(sortedAsc.begin(),
+                                         sortedAsc.end() - k1);
+
+            if (FPOptPrint) {
+              llvm::errs() << "Created " << label
+                           << " three-tier PT candidate: "
+                           << fmtPrecPct(tr.hi, pctHi) << " + "
+                           << fmtPrecPct(tr.mid, pctHiMid - pctHi) << " + "
+                           << fmtPrecPct(tr.lo, 100 - pctHiMid) << " (N=" << N
+                           << ")\n";
+            }
+            std::string desc = label.str();
+            if (!desc.empty())
+              desc += " ";
+            desc += fmtPrecPct(tr.hi, pctHi);
+            desc += " + ";
+            desc += fmtPrecPct(tr.mid, pctHiMid - pctHi);
+            desc += " + ";
+            desc += fmtPrecPct(tr.lo, 100 - pctHiMid);
+
+            SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>,
+                        3>
+                assignment;
+            assignment.emplace_back(tr.hi, std::move(hiOps));
+            assignment.emplace_back(tr.mid, std::move(midOps));
+            assignment.emplace_back(tr.lo, std::move(loOps));
+            emitCandidate(assignment, std::move(desc));
+          }
+        }
+      };
+
+      for (TierPair tp : kCanonicalPairs) {
+        if (!tierPairAllowed(tp, FPOptEliminateF64, gpuMode, hwScalar))
+          continue;
+        sweepTwoTier(tp, sortedAllOps, "All");
+        if (!sortedFuncs.empty())
+          sweepTwoTier(tp, sortedFuncs, "Funcs");
       }
 
-      SetVector<FPLLValue *> allOperations;
-      for (auto *I : subgraph.operations) {
-        assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
-               "Corrupted FPNode for original instructions");
-        auto node = cast<FPLLValue>(valueToNodeMap[I].get());
-        allOperations.insert(node);
-      }
-
-      // Prioritize operations with low sensitivity scores
-      SmallVector<FPLLValue *> sortedAllOps(allOperations.begin(),
-                                            allOperations.end());
-      llvm::sort(sortedAllOps, [](const auto &a, const auto &b) {
-        return a->sens < b->sens;
-      });
-
-      // Create PrecisionChanges for 0-10%, 0-20%, ..., up to 0-100%
-      lastNumChanged = 0;
-      for (int percent = 10; percent <= 100; percent += 10) {
-        size_t numToChange = sortedAllOps.size() * percent / 100;
-        if (numToChange == 0 || numToChange == lastNumChanged) {
-          continue;
-        }
-
-        lastNumChanged = numToChange;
-
-        if (FPOptPrint && numToChange > 0) {
-          llvm::errs() << "Created PrecisionChange for " << percent
-                       << "% of all operations (" << numToChange << ")\n";
-          double minSens = sortedAllOps[0]->sens;
-          double maxSens = sortedAllOps[numToChange - 1]->sens;
-          llvm::errs() << "Sensitivity score range: [" << minSens << ", "
-                       << maxSens << "]\n";
-        }
-
-        for (auto prec : precTypes) {
-          PrecisionChangeType currentPrec =
-              getPrecisionChangeType(subgraph.outputs[0]->getType());
-          if (prec == currentPrec) {
+      if (FPOptEnableThreeTier) {
+        for (TierTriple tr : kCanonicalTriples) {
+          if (!tierTripleAllowed(tr, FPOptEliminateF64, gpuMode, hwScalar))
             continue;
-          }
-
-          std::string precStr = getPrecisionChangeTypeString(prec).str();
-          std::string desc =
-              "All 0% -- " + std::to_string(percent) + "% -> " + precStr;
-
-          SetVector<FPLLValue *> nodesToChange(
-              sortedAllOps.begin(), sortedAllOps.begin() + numToChange);
-          PrecisionChange change(nodesToChange, currentPrec, prec);
-
-          SmallVector<PrecisionChange, 1> changes{std::move(change)};
-          PTCandidate candidate{std::move(changes), desc};
-
-          if (!skipEvaluation) {
-            candidate.CompCost = getCompCost(subgraph, TTI, candidate);
-          }
-
-          CS.candidates.push_back(std::move(candidate));
+          sweepThreeTier(tr, sortedAllOps, "All");
         }
       }
 
