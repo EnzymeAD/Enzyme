@@ -235,6 +235,28 @@ bool improveViaHerbie(
       "--num-iters",  std::to_string(HerbieNumIters),
       "--num-enodes", std::to_string(HerbieNumEnodes)};
 
+  std::string HerbiePlatformName;
+  if (!FPOptHerbiePlatform.empty()) {
+    HerbiePlatformName = FPOptHerbiePlatform;
+  } else {
+    const std::string &nativeArch = getCostModelNativeArch();
+    if (!nativeArch.empty()) {
+      std::string stripped = nativeArch;
+      size_t pos;
+      while ((pos = stripped.find('_')) != std::string::npos)
+        stripped.erase(pos, 1);
+      HerbiePlatformName = "cuda-" + stripped;
+    }
+  }
+  if (!HerbiePlatformName.empty()) {
+    BaseArgs.push_back("--platform");
+    BaseArgs.push_back(HerbiePlatformName);
+    if (FPOptPrint) {
+      llvm::errs() << "Poseidon: using Herbie platform '" << HerbiePlatformName
+                   << "'\n";
+    }
+  }
+
   BaseArgs.push_back("--disable");
   BaseArgs.push_back("generate:proofs");
 
@@ -351,6 +373,8 @@ bool improveViaHerbie(
       // Handle alternatives
       for (size_t j = 0; j < alternatives.size(); ++j) {
         json::Array &entry = *alternatives[j].getAsArray();
+        if (entry.size() < 3)
+          continue;
         StringRef expr = entry[2].getAsString().value();
 
         if (seenExprSet.count(expr.str()) != 0) {
@@ -540,6 +564,16 @@ std::string getHerbieOperator(const Instruction &I) {
     const CallInst *CI = dyn_cast<CallInst>(&I);
     assert(CI && CI->getCalledFunction() &&
            "getHerbieOperator: Call without a function");
+
+    if (CI->getCalledFunction()->hasFnAttribute("enzyme_math")) {
+      std::string mathName = CI->getCalledFunction()
+                                 ->getFnAttribute("enzyme_math")
+                                 .getValueAsString()
+                                 .str();
+      if (!mathName.empty() && mathName.back() == 'f')
+        mathName.pop_back();
+      return mathName;
+    }
 
     StringRef funcName = CI->getCalledFunction()->getName();
 
@@ -876,8 +910,8 @@ InstructionCost getCompCost(
   builder.setFastMathFlags(FMF);
   Value *RetVal = parsedNode->getLLValue(builder, &VMap);
   assert(RetVal && "Parsed node did not produce a value");
-  assert((RetVal->getType() == ReturnType) &&
-         "Return value type mismatch with temp function return type");
+  if (RetVal->getType() != ReturnType)
+    RetVal = builder.CreateFPCast(RetVal, ReturnType);
   builder.CreateRet(RetVal);
 
   // llvm::errs() << "Temp function before optimizations:\n";

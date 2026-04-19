@@ -37,7 +37,15 @@ extern llvm::cl::opt<unsigned> FPOptNumSamples;
 extern llvm::cl::opt<unsigned> FPOptRandomSeed;
 extern llvm::cl::opt<unsigned> FPOptMinUsesForSplit;
 extern llvm::cl::opt<unsigned> FPOptMinOpsForSplit;
+extern llvm::cl::opt<double> FPOptGPUFP64Ratio;
+extern llvm::cl::opt<std::string> FPOptHerbiePlatform;
 }
+
+const std::string &getCostModelNativeArch();
+
+bool isGPUMode(const llvm::Function &F);
+
+const std::unordered_set<std::string> &getScalarTypes();
 
 struct Subgraph;
 class FPNode;

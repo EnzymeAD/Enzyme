@@ -24,6 +24,7 @@
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 
 #include "llvm/Passes/PassBuilder.h"
@@ -54,8 +55,12 @@
 #include <unordered_set>
 #include <utility>
 
+#include "llvm/Support/Debug.h"
+
 #include "PoseidonTypes.h"
 #include "PoseidonUtils.h"
+
+#define DEBUG_TYPE "poseidon"
 
 using namespace llvm;
 
@@ -70,6 +75,68 @@ cl::opt<unsigned>
 cl::opt<unsigned>
     FPOptRandomSeed("fpopt-random-seed", cl::init(239778888), cl::Hidden,
                     cl::desc("The random seed used in the FPOpt pass"));
+cl::opt<double> FPOptGPUFP64Ratio(
+    "fpopt-gpu-fp64-ratio", cl::init(1.0), cl::Hidden,
+    cl::desc("FP64:FP32 throughput cost ratio for GPU targets. "
+             "Values > 1 make FP64 proportionally more expensive hence "
+             "discourage FP64 usage. "));
+cl::opt<std::string> FPOptScalarTypes(
+    "fpopt-scalar-types", cl::init(""), cl::Hidden,
+    cl::desc("Comma-separated list of supported scalar FP types "
+             "(e.g., half,bf16,float,double). Overrides the CSV header."));
+cl::opt<std::string> FPOptHerbiePlatform(
+    "fpopt-herbie-platform", cl::init(""), cl::Hidden,
+    cl::desc("Explicit Herbie --platform name (e.g., cuda-sm120)."));
+}
+
+static bool isTargetNVPTX(const Module &M) {
+  return M.getTargetTriple().getArch() == Triple::ArchType::nvptx ||
+         M.getTargetTriple().getArch() == Triple::ArchType::nvptx64;
+}
+
+// TODO: handle amd
+bool isGPUMode(const Function &F) { return isTargetNVPTX(*F.getParent()); }
+
+static struct {
+  std::unordered_set<std::string> scalar;
+  std::unordered_set<std::string> matrix;
+} SupportedTypes;
+
+static std::string CostModelNativeArch;
+
+static const std::unordered_set<std::string> DefaultScalarTypes = {
+    "half", "bf16", "float", "double"};
+static const std::unordered_set<std::string> DefaultMatrixTypes = {
+    "half", "bf16", "float", "double", "f8e4m3", "f8e5m2"};
+
+static const std::unordered_set<std::string> &
+parseFlagOrFallback(const std::string &flag,
+                    std::unordered_set<std::string> &fromCSV,
+                    const std::unordered_set<std::string> &defaults) {
+  static std::unordered_map<const std::string *,
+                            std::unordered_set<std::string>>
+      cache;
+  if (!flag.empty()) {
+    auto &r = cache[&flag];
+    if (r.empty()) {
+      SmallVector<StringRef, 8> tokens;
+      StringRef(flag).split(tokens, ',', -1, false);
+      for (auto t : tokens)
+        r.insert(t.str());
+    }
+    return r;
+  }
+  if (!FPOptCostModelPath.empty()) {
+    getCostModel();
+    if (!fromCSV.empty())
+      return fromCSV;
+  }
+  return defaults;
+}
+
+const std::unordered_set<std::string> &getScalarTypes() {
+  return parseFlagOrFallback(FPOptScalarTypes, SupportedTypes.scalar,
+                             DefaultScalarTypes);
 }
 
 void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
@@ -86,6 +153,7 @@ void runPoseidonFunctionSimplify(Function &F, OptimizationLevel Level) {
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   if (verifyFunction(F, &llvm::errs())) {
+    F.print(llvm::errs());
     llvm_unreachable("Poseidon intermediate function failed verification");
   }
 
@@ -113,17 +181,24 @@ double getOneULP(double value) {
 
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
   std::string baseName = funcName.str();
-  if (baseName.back() == 'f' || baseName.back() == 'l') {
+
+  std::string prefix;
+  if (baseName.size() > 5 && baseName.substr(0, 5) == "__nv_") {
+    prefix = "__nv_";
+    baseName = baseName.substr(5);
+  }
+
+  if (!baseName.empty() && (baseName.back() == 'f' || baseName.back() == 'l')) {
     baseName.pop_back();
   }
 
   if (LibmFuncs.count(baseName)) {
-    if (newType->isFloatTy()) {
-      return baseName + "f";
+    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy()) {
+      return prefix + baseName + "f";
     } else if (newType->isDoubleTy()) {
-      return baseName;
+      return prefix + baseName;
     } else if (newType->isFP128Ty() || newType->isX86_FP80Ty()) {
-      return baseName + "l";
+      return prefix + baseName + "l";
     }
   }
 
@@ -215,6 +290,32 @@ getCostModel() {
     }
     std::string Line;
     while (std::getline(CostFile, Line)) {
+      if (Line.empty())
+        continue;
+      if (Line[0] == '#') {
+        // Parse "# scalar_types=...", "# matrix_types=...", "# native_arch=..."
+        auto content = StringRef(Line).drop_front(1).trim();
+        StringRef key, vals;
+        std::tie(key, vals) = content.split('=');
+        key = key.trim();
+        vals = vals.trim();
+        if (key == "native_arch") {
+          CostModelNativeArch = vals.str();
+          continue;
+        }
+        std::unordered_set<std::string> *target = nullptr;
+        if (key == "scalar_types")
+          target = &SupportedTypes.scalar;
+        else if (key == "matrix_types")
+          target = &SupportedTypes.matrix;
+        if (target && !vals.empty()) {
+          SmallVector<StringRef, 8> tokens;
+          vals.split(tokens, ',', -1, false);
+          for (auto t : tokens)
+            target->insert(t.str());
+        }
+        continue;
+      }
       std::istringstream SS(Line);
       std::string OpcodeStr, PrecisionStr, CostStr;
       if (!std::getline(SS, OpcodeStr, ',')) {
@@ -236,6 +337,12 @@ getCostModel() {
   return CostModel;
 }
 
+const std::string &getCostModelNativeArch() {
+  if (!FPOptCostModelPath.empty())
+    getCostModel();
+  return CostModelNativeArch;
+}
+
 InstructionCost queryCostModel(const std::string &OpcodeName,
                                const std::string &PrecisionName) {
   const auto &CostModel = getCostModel();
@@ -255,6 +362,7 @@ InstructionCost getInstructionCompCost(const Instruction *I,
   if (!I->getType()->isFPOrFPVectorTy())
     return 0;
 
+  InstructionCost cost;
   if (!FPOptCostModelPath.empty()) {
     std::string OpcodeName;
     switch (I->getOpcode()) {
@@ -386,6 +494,13 @@ InstructionCost getInstructionCompCost(const Instruction *I,
             llvm_unreachable(msg.c_str());
           }
           }
+        } else if (CalledFunc->hasFnAttribute("enzyme_math")) {
+          std::string mathName = CalledFunc->getFnAttribute("enzyme_math")
+                                     .getValueAsString()
+                                     .str();
+          if (!mathName.empty() && mathName.back() == 'f')
+            mathName.pop_back();
+          OpcodeName = mathName;
         } else {
           std::string FuncName = CalledFunc->getName().str();
           if (!FuncName.empty() &&
@@ -461,11 +576,40 @@ InstructionCost getInstructionCompCost(const Instruction *I,
       PrecisionName = SrcPrecisionName;
     }
 
-    return queryCostModel(OpcodeName, PrecisionName);
+    cost = queryCostModel(OpcodeName, PrecisionName);
+
+    // GPU F64 throughput adjustment.
+    if (FPOptGPUFP64Ratio > 1.0 && PrecisionName == "double") {
+      bool isConversion = (I->getOpcode() == Instruction::FPExt ||
+                           I->getOpcode() == Instruction::FPTrunc);
+      bool csvIsNative = false;
+      if (!CostModelNativeArch.empty()) {
+        if (auto *F = I->getFunction()) {
+          StringRef targetCpu =
+              F->getFnAttribute("target-cpu").getValueAsString();
+          if (!targetCpu.empty() && targetCpu == CostModelNativeArch)
+            csvIsNative = true;
+        }
+      }
+      if (!isConversion && !csvIsNative) {
+        InstructionCost f32Cost = queryCostModel(OpcodeName, "float");
+#if LLVM_VERSION_MAJOR >= 21
+        int64_t f64Latency = cost.getValue();
+        int64_t f32Raw = f32Cost.getValue();
+#else
+        int64_t f64Latency = cost.getValue().value_or(1);
+        int64_t f32Raw = f32Cost.getValue().value_or(1);
+#endif
+        int64_t throughputCost =
+            static_cast<int64_t>(f32Raw * FPOptGPUFP64Ratio);
+        cost = InstructionCost(std::max(f64Latency, throughputCost));
+      }
+    }
   } else {
-    llvm::errs() << "WARNING: Custom cost model not found, using TTI cost!\n";
-    return TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
+    cost = TTI.getInstructionCost(I, TargetTransformInfo::TCK_RecipThroughput);
   }
+
+  return cost;
 }
 
 const std::unordered_set<std::string> &getPTFuncs() {
