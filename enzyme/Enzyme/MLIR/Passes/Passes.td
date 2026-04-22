@@ -39,7 +39,7 @@ def DifferentiatePass : Pass<"enzyme"> {
 }
 
 def ExpandImpulsePass : Pass<"expand-impulse"> {
-  let summary = "Expand Impulse region ops (simulate/generate/mcmc/mh) to lower-level Impulse ops";
+  let summary = "Materialize Impulse ops to probabilistic programming algorithms";
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
