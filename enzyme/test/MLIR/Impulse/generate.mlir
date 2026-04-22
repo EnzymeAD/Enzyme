@@ -1,5 +1,5 @@
-// RUN: %eopt --probprog --split-input-file %s | FileCheck %s --check-prefix=BASE
-// RUN: %eopt --probprog --split-input-file %s | FileCheck %s --check-prefix=HIER
+// RUN: %eopt --expand-impulse --split-input-file %s | FileCheck %s --check-prefix=BASE
+// RUN: %eopt --expand-impulse --split-input-file %s | FileCheck %s --check-prefix=HIER
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)

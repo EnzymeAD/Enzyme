@@ -38,8 +38,8 @@ def DifferentiatePass : Pass<"enzyme"> {
   ];
 }
 
-def ProbProgPass : Pass<"probprog"> {
-  let summary = "ProbProg Passes";
+def ExpandImpulsePass : Pass<"expand-impulse"> {
+  let summary = "Expand Impulse region ops (simulate/generate/mcmc/mh) to lower-level Impulse ops";
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
@@ -52,7 +52,7 @@ def ProbProgPass : Pass<"probprog"> {
       /*CLI argument=*/"postpasses",
       /*type=*/"std::string",
       /*default=*/"",
-      /*description=*/"Optimization passes to apply to generated probabilistic programs"
+      /*description=*/"Optimization passes to apply to expanded probabilistic programs"
     >,
     Option<
       /*C++ variable name=*/"debugDump",

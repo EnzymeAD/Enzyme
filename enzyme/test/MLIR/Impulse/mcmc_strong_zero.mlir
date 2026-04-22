@@ -1,4 +1,4 @@
-// RUN: %eopt --probprog %s | FileCheck %s
+// RUN: %eopt --expand-impulse %s | FileCheck %s
 
 module {
   func.func @logpdf(%x : tensor<2xf64>) -> tensor<f64> {

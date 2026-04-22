@@ -1,4 +1,4 @@
-// RUN: %eopt --probprog %s | FileCheck %s
+// RUN: %eopt --expand-impulse %s | FileCheck %s
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)

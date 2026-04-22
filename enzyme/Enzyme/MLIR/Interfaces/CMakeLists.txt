@@ -12,7 +12,7 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
   GradientUtils.cpp
   GradientUtilsReverse.cpp
   HMCUtils.cpp
-  ProbProgUtils.cpp
+  ImpulseUtils.cpp
   TransformUtils.cpp
   EnzymeLogic.cpp
   EnzymeLogicReverse.cpp

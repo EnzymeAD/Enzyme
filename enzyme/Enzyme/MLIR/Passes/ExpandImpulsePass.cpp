@@ -1,5 +1,4 @@
-//===- ProbProgMLIRPass.cpp - Replace calls with ProbProg operations
-//------------ //
+//===- ExpandImpulsePass.cpp - Expand Impulse region ops ----------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,13 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass to handle probabilistic programming operations
+// This file implements a pass that expands high-level Impulse region ops
+// (simulate, generate, regenerate, mcmc, mh, untraced_call) into lower-level
+// Impulse ops (sample, random, etc.) plus arith/math/cf.
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/HMCUtils.h"
-#include "Interfaces/ProbProgUtils.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
@@ -27,7 +28,7 @@
 
 #include "llvm/ADT/APFloat.h"
 
-#define DEBUG_TYPE "probprog"
+#define DEBUG_TYPE "expand-impulse"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -35,7 +36,7 @@ using namespace mlir::impulse;
 
 namespace mlir {
 namespace enzyme {
-#define GEN_PASS_DEF_PROBPROGPASS
+#define GEN_PASS_DEF_EXPANDIMPULSEPASS
 #include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
@@ -265,8 +266,9 @@ computeOffsetForNestedSample(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
-struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
-  using ProbProgPassBase::ProbProgPassBase;
+struct ExpandImpulsePass
+    : public enzyme::impl::ExpandImpulsePassBase<ExpandImpulsePass> {
+  using ExpandImpulsePassBase::ExpandImpulsePassBase;
 
   MEnzymeLogic Logic;
 
@@ -297,11 +299,11 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr()));
 
       if (fn.getFunctionBody().empty()) {
-        CI.emitError("ProbProg: trying to call an empty function");
+        CI.emitError("Impulse: trying to call an empty function");
         return failure();
       }
 
-      auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Call);
+      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Call);
       FunctionOpInterface NewF = putils->newFunc;
 
       SmallVector<Operation *, 4> toErase;
@@ -349,7 +351,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       if (fn.getFunctionBody().empty()) {
         CI.emitError(
-            "ProbProg: calling `simulate` on an empty function; if this "
+            "Impulse: calling `simulate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "logpdf attribute to avoid recursive `simulate` calls which is "
             "intended for generative functions");
@@ -360,12 +362,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t positionSize =
           computePositionSizeForSelection(CI, fn, selection, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError("ProbProg: failed to compute position size for simulate");
+        CI.emitError("Impulse: failed to compute position size for simulate");
         return failure();
       }
 
-      auto putils = MProbProgUtils::CreateFromClone(fn, MProbProgMode::Simulate,
-                                                    positionSize);
+      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Simulate,
+                                                  positionSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -420,7 +422,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           }
 
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("ProbProg: failed to construct logpdf call; "
+            sampleOp.emitError("Impulse: failed to construct logpdf call; "
                                "logpdf function has wrong number of arguments");
             return WalkResult::interrupt();
           }
@@ -450,7 +452,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               int64_t numElements = computeTensorElementCount(sampleType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported");
+                    "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
@@ -481,7 +483,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
-                "ProbProg: generative function body is empty; "
+                "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
             return WalkResult::interrupt();
           }
@@ -501,7 +503,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 sampleOp, genFn, subSelection, symbolTable);
             if (subPositionSize <= 0) {
               sampleOp.emitError(
-                  "ProbProg: failed to compute sub-position size");
+                  "Impulse: failed to compute sub-position size");
               return WalkResult::interrupt();
             }
 
@@ -527,7 +529,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             int64_t mergeOffset = computeOffsetForNestedSample(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
-              sampleOp.emitError("ProbProg: failed to compute merge offset");
+              sampleOp.emitError("Impulse: failed to compute merge offset");
               return WalkResult::interrupt();
             }
 
@@ -562,7 +564,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.eraseOp(op);
 
       if (result.wasInterrupted()) {
-        CI.emitError("ProbProg: failed to walk sample ops");
+        CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
@@ -608,26 +610,26 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       if (!hasLogpdfFn) {
         auto fnAttr = mcmcOp.getFnAttr();
         if (!fnAttr) {
-          mcmcOp.emitError("ProbProg: either fn or logpdf_fn must be provided");
+          mcmcOp.emitError("Impulse: either fn or logpdf_fn must be provided");
           return failure();
         }
         auto fn = cast<FunctionOpInterface>(
             symbolTable.lookupNearestSymbolFrom(mcmcOp, fnAttr));
         if (fn.getFunctionBody().empty()) {
-          mcmcOp.emitError("ProbProg: calling `mcmc` on an empty function");
+          mcmcOp.emitError("Impulse: calling `mcmc` on an empty function");
           return failure();
         }
       }
 
       if (!mcmcOp.getStepSize()) {
-        mcmcOp.emitError("ProbProg: MCMC requires step_size parameter");
+        mcmcOp.emitError("Impulse: MCMC requires step_size parameter");
         return failure();
       }
 
       bool isHMC = mcmcOp.getHmcConfig().has_value();
       bool isNUTS = mcmcOp.getNutsConfig().has_value();
       if (!isHMC && !isNUTS) {
-        mcmcOp.emitError("ProbProg: Unknown MCMC algorithm");
+        mcmcOp.emitError("Impulse: Unknown MCMC algorithm");
         return failure();
       }
 
@@ -638,7 +640,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       auto inputs = mcmcOp.getInputs();
       if (inputs.empty()) {
-        mcmcOp.emitError("ProbProg: MCMC requires at least rng_state input");
+        mcmcOp.emitError("Impulse: MCMC requires at least rng_state input");
         return failure();
       }
 
@@ -1339,7 +1341,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       if (fn.getFunctionBody().empty()) {
         mhOp.emitError(
-            "ProbProg: calling `mh` on an empty function; if this is a "
+            "Impulse: calling `mh` on an empty function; if this is a "
             "distribution function, its sample op should have a logpdf "
             "attribute to avoid recursive `mh` calls which is intended for "
             "generative functions");
@@ -1433,7 +1435,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       if (fn.getFunctionBody().empty()) {
         CI.emitError(
-            "ProbProg: calling `generate` on an empty function; if this "
+            "Impulse: calling `generate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "logpdf attribute to avoid recursive `generate` calls which is "
             "intended for generative functions");
@@ -1444,20 +1446,19 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t positionSize =
           computePositionSizeForSelection(CI, fn, selection, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError("ProbProg: failed to compute position size for generate");
+        CI.emitError("Impulse: failed to compute position size for generate");
         return failure();
       }
 
       int64_t constraintSize = computePositionSizeForSelection(
           CI, fn, CI.getConstrainedAddressesAttr(), symbolTable);
       if (constraintSize < 0) {
-        CI.emitError(
-            "ProbProg: failed to compute constraint size for generate");
+        CI.emitError("Impulse: failed to compute constraint size for generate");
         return failure();
       }
 
-      auto putils = MProbProgUtils::CreateFromClone(
-          fn, MProbProgMode::Generate, positionSize, constraintSize);
+      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Generate,
+                                                  positionSize, constraintSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -1496,7 +1497,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
               if (address.size() != 1) {
                 sampleOp.emitError(
-                    "ProbProg: distribution function cannot have composite "
+                    "Impulse: distribution function cannot have composite "
                     "constrained address");
                 return WalkResult::interrupt();
               }
@@ -1519,7 +1520,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               int64_t numElements = computeTensorElementCount(resultType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported");
+                    "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
@@ -1553,7 +1554,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
             if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
               sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call for constrained "
+                  "Impulse: failed to construct logpdf call for constrained "
                   "sample; logpdf function has wrong number of arguments");
               return WalkResult::interrupt();
             }
@@ -1591,7 +1592,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
             if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
               sampleOp.emitError(
-                  "ProbProg: failed to construct logpdf call; "
+                  "Impulse: failed to construct logpdf call; "
                   "logpdf function has wrong number of arguments");
               return WalkResult::interrupt();
             }
@@ -1620,7 +1621,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               int64_t numElements = computeTensorElementCount(sampleType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported");
+                    "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
@@ -1651,7 +1652,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
-                "ProbProg: generative function body is empty; "
+                "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
             return WalkResult::interrupt();
           }
@@ -1676,7 +1677,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             int64_t subConstraintSize = computePositionSizeForSelection(
                 sampleOp, genFn, subConstrainedAddrs, symbolTable);
             if (subPositionSize <= 0 || subConstraintSize < 0) {
-              sampleOp.emitError("ProbProg: failed to compute sub-position or "
+              sampleOp.emitError("Impulse: failed to compute sub-position or "
                                  "sub-constraint size");
               return WalkResult::interrupt();
             }
@@ -1755,7 +1756,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.eraseOp(op);
 
       if (result.wasInterrupted()) {
-        CI.emitError("ProbProg: failed to walk sample ops");
+        CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
@@ -1802,7 +1803,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
       if (fn.getFunctionBody().empty()) {
         CI.emitError(
-            "ProbProg: calling `regenerate` on an empty function; if this "
+            "Impulse: calling `regenerate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
             "logpdf attribute to avoid recursive `regenerate` calls which is "
             "intended for generative functions");
@@ -1813,13 +1814,12 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
       int64_t positionSize =
           computePositionSizeForSelection(CI, fn, selection, symbolTable);
       if (positionSize <= 0) {
-        CI.emitError(
-            "ProbProg: failed to compute position size for regenerate");
+        CI.emitError("Impulse: failed to compute position size for regenerate");
         return failure();
       }
 
-      auto putils = MProbProgUtils::CreateFromClone(
-          fn, MProbProgMode::Regenerate, positionSize);
+      auto putils = ImpulseUtils::CreateFromClone(fn, ImpulseMode::Regenerate,
+                                                  positionSize);
       FunctionOpInterface NewF = putils->newFunc;
 
       OpBuilder entryBuilder(putils->initializationBlock,
@@ -1858,7 +1858,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
             if (!address.empty() && address[0] == sampleOp.getSymbolAttr()) {
               if (address.size() != 1) {
                 sampleOp.emitError(
-                    "ProbProg: distribution function cannot have composite "
+                    "Impulse: distribution function cannot have composite "
                     "selected address");
                 return WalkResult::interrupt();
               }
@@ -1894,7 +1894,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               int64_t numElements = computeTensorElementCount(resultType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported");
+                    "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
@@ -1926,7 +1926,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
           }
 
           if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("ProbProg: failed to construct logpdf call; "
+            sampleOp.emitError("Impulse: failed to construct logpdf call; "
                                "logpdf function has wrong number of arguments");
             return WalkResult::interrupt();
           }
@@ -1954,7 +1954,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
               int64_t numElements = computeTensorElementCount(sampleType);
               if (numElements < 0) {
                 sampleOp.emitError(
-                    "ProbProg: dynamic tensor dimensions not supported");
+                    "Impulse: dynamic tensor dimensions not supported");
                 return WalkResult::interrupt();
               }
 
@@ -1985,7 +1985,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
-                "ProbProg: generative function body is empty; "
+                "Impulse: generative function body is empty; "
                 "if this is a distribution, add a logpdf attribute");
             return WalkResult::interrupt();
           }
@@ -2007,14 +2007,14 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
                 sampleOp, genFn, subSelection, symbolTable);
             if (subPositionSize <= 0) {
               sampleOp.emitError(
-                  "ProbProg: failed to compute sub-position size");
+                  "Impulse: failed to compute sub-position size");
               return WalkResult::interrupt();
             }
 
             int64_t mergeOffset = computeOffsetForNestedSample(
                 sampleOp, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
             if (mergeOffset < 0) {
-              sampleOp.emitError("ProbProg: failed to compute merge offset");
+              sampleOp.emitError("Impulse: failed to compute merge offset");
               return WalkResult::interrupt();
             }
 
@@ -2075,7 +2075,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
         rewriter.eraseOp(op);
 
       if (result.wasInterrupted()) {
-        CI.emitError("ProbProg: failed to walk sample ops");
+        CI.emitError("Impulse: failed to walk sample ops");
         return failure();
       }
 
@@ -2111,7 +2111,7 @@ struct ProbProgPass : public enzyme::impl::ProbProgPassBase<ProbProgPass> {
 
 } // end anonymous namespace
 
-void ProbProgPass::runOnOperation() {
+void ExpandImpulsePass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   patterns.add<LowerUntracedCallPattern, LowerSimulatePattern,
                LowerGeneratePattern, LowerMHPattern, LowerRegeneratePattern>(
@@ -2131,7 +2131,8 @@ void ProbProgPass::runOnOperation() {
 
     if (mlir::failed(mlir::parsePassPipeline(postpasses, pm))) {
       getOperation()->emitError()
-          << "Failed to parse probprog post-passes pipeline: " << postpasses;
+          << "Failed to parse expand-impulse post-passes pipeline: "
+          << postpasses;
       signalPassFailure();
       return;
     }

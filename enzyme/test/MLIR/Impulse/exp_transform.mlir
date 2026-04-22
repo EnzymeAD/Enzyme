@@ -1,4 +1,4 @@
-// RUN: %eopt --probprog --canonicalize %s | FileCheck %s
+// RUN: %eopt --expand-impulse --canonicalize %s | FileCheck %s
 
 module {
   func.func private @exponential(%rng : tensor<2xui64>, %rate : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
