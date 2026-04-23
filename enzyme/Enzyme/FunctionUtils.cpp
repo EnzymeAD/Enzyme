@@ -2241,6 +2241,50 @@ bool DetectReadonlyOrThrow(Module &M) {
 
     inverse_todo_map.erase(found);
   }
+
+  for (auto &F : M) {
+    for (auto &B : F) {
+      for (auto &I : B) {
+        if (auto CB = dyn_cast<CallBase>(&I)) {
+          auto CF = CB->getCalledFunction();
+          if (!CF)
+            continue;
+          if (CF->getName() != "__kmpc_reduce_nowait")
+            continue;
+          auto ReduceF = dyn_cast<Function>(getBaseObject(CB->getOperand(5)));
+          if (!ReduceF)
+            continue;
+          if (!isNoCapture(CB, 4) && isNoCapture(ReduceF, 0) &&
+              isNoCapture(ReduceF, 1)) {
+            addCallSiteNoCapture(CB, 4);
+            changed = true;
+          }
+          if (!CB->hasFnAttr(Attribute::NoFree) &&
+              ReduceF->hasFnAttribute(Attribute::NoFree)) {
+            CB->addFnAttr(Attribute::NoFree);
+            changed = true;
+          }
+          if (isReadNone(ReduceF, 0) && isReadNone(ReduceF, 1) &&
+              !isReadNone(CB, 4)) {
+            CB->removeParamAttr(4, Attribute::ReadOnly);
+            CB->removeParamAttr(4, Attribute::WriteOnly);
+            CB->addParamAttr(4, Attribute::ReadNone);
+            changed = true;
+          }
+          if (isReadOnly(ReduceF, 0) && isReadOnly(ReduceF, 1) &&
+              !isReadOnly(CB, 4) && !isWriteOnly(CB, 4)) {
+            CB->addParamAttr(4, Attribute::ReadOnly);
+            changed = true;
+          }
+          if (isWriteOnly(ReduceF, 0) && isWriteOnly(ReduceF, 1) &&
+              !isReadOnly(CB, 4) && !isWriteOnly(CB, 4)) {
+            CB->addParamAttr(4, Attribute::WriteOnly);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
   return changed;
 }
 
