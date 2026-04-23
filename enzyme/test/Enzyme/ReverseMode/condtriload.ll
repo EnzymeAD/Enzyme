@@ -49,6 +49,11 @@ entry:
 
 ; CHECK: define internal void @diffealldiv(double* %a, double* %"a'", i1 %cmp, i32 %val, double %differeturn)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %switch.selectcmp = icmp eq i32 %val, 17
+; CHECK-NEXT:   %switch.select = select i1 %switch.selectcmp, i8 0, i8 1
+; CHECK-NEXT:   %switch.selectcmp6 = icmp eq i32 %val, 13
+; CHECK-NEXT:   %switch.select7 = select i1 %switch.selectcmp6, i8 2, i8 %switch.select
+; CHECK-NEXT:   %_cache.1 = select i1 %cmp, i8 %switch.select7, i8 undef
 ; CHECK-NEXT:   %0 = select {{(fast )?}}i1 %cmp, double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp, label %invertend, label %invertentry
 
@@ -103,12 +108,12 @@ entry:
 ; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %l1_unwrap, %invertend_phirc ], [ %l2_unwrap, %[[invertend_phirc1]] ], [ %l3_unwrap, %[[invertend_phirc2]] ]
 ; CHECK-NEXT:   %[[m0diffep:.+]] = fmul fast double %0, %7
 ; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[m0diffep]], %[[m0diffep]]
-; CHECK-NEXT:   %anot1_ = xor i1 %c1_unwrap, true
-; CHECK-NEXT:   %bnot1_ = xor i1 %c2_unwrap, true
-; CHECK-NEXT:   %andVal1 = and i1 %bnot1_, %anot1_
-; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %c1_unwrap, double %[[i8]], double 0.000000e+00
-; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %andVal1, double %[[i8]], double 0.000000e+00
-; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %c2_unwrap, double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[icmp0:.+]] = icmp eq i8 0, %_cache.1
+; CHECK-NEXT:   %[[icmp1:.+]] = icmp eq i8 1, %_cache.1
+; CHECK-NEXT:   %[[icmp2:.+]] = icmp eq i8 2, %_cache.1
+; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %[[icmp2]], double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %[[icmp1]], double %[[i8]], double 0.000000e+00
+; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %[[icmp0]], double %[[i8]], double 0.000000e+00
 ; CHECK-NEXT:   br i1 %c1_unwrap, label %invertbdef, label %staging
 
 ; CHECK: staging:

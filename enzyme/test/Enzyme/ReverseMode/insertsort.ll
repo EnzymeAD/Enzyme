@@ -114,7 +114,7 @@ attributes #0 = { noinline norecurse nounwind uwtable }
 ; CHECK-NEXT:   br i1 %[[cmp3_rev:.+]], label %invertwhile.body, label %invertland.rhs
 
 ; CHECK: invertwhile.end:                                  ; preds = %entry, %while.body, %land.rhs
-; CHECK-NEXT:   %[[cmp3_rev]] = phi i1 [ undef, %entry ], [ %cmp3, %while.body ], [ %cmp3, %land.rhs ]
+; CHECK-NEXT:   %[[cmp3_rev]] = phi i1 [ false, %entry ], [ %cmp3, %while.body ], [ %cmp3, %land.rhs ]
 ; CHECK-NEXT:   %loopLimit_cache.0 = phi i64 [ undef, %entry ], [ %iv, %while.body ], [ %iv, %land.rhs ]
 ; CHECK-NEXT:   br i1 %cmp29, label %invertwhile.end.loopexit, label %invertentry
 ; CHECK-NEXT: }
