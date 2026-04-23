@@ -48,7 +48,7 @@ using namespace mlir;
 using namespace mlir::dataflow;
 
 static bool isPointerLike(Type type) {
-  return isa<MemRefType, LLVM::LLVMPointerType>(type);
+  return isa<MemRefType, LLVM::LLVMPointerType, enzyme::CacheType>(type);
 }
 
 //===----------------------------------------------------------------------===//
@@ -121,29 +121,6 @@ ChangeResult enzyme::PointsToSets::update(const AliasClassSet &keysToUpdate,
       [&](DistinctAttr dest, AliasClassSet::State state) {
         assert(state == AliasClassSet::State::Defined &&
                "unknown must have been handled above");
-#ifndef NDEBUG
-        if (replace) {
-          auto it = map.find(dest);
-          if (it != map.end()) {
-            // Check that we are updating to a state that's >= in the
-            // lattice.
-            // TODO: consider a stricter check that we only replace unknown
-            // values or a value with itself, currently blocked by memalign.
-            AliasClassSet valuesCopy(values);
-            (void)valuesCopy.join(it->getSecond());
-            values.print(llvm::errs());
-            llvm::errs() << "\n";
-            it->getSecond().print(llvm::errs());
-            llvm::errs() << "\n";
-            valuesCopy.print(llvm::errs());
-            llvm::errs() << "\n";
-            assert(valuesCopy == values &&
-                   "attempting to replace a pointsTo entry with an alias class "
-                   "set that is ordered _before_ the existing one -> "
-                   "non-monotonous update ");
-          }
-        }
-#endif // NDEBUG
         return joinPotentiallyMissing(dest, values);
       });
 }
@@ -278,7 +255,7 @@ LogicalResult enzyme::PointsToPointerAnalysis::visitOperation(
   // fixpoint and bail.
   auto memory = dyn_cast<MemoryEffectOpInterface>(op);
   if (!memory) {
-    if (isNoOp(op))
+    if (isNoOp(op) || isMemoryEffectFree(op))
       return success();
     propagateIfChanged(after, after->markAllPointToUnknown());
     return success();
@@ -557,7 +534,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       std::optional<LLVM::ModRefInfo> otherModRef =
           getFunctionOtherModRef(callee);
 
-      SmallVector<int> pointerLikeOperands;
+      SmallVector<unsigned> pointerLikeOperands;
       for (auto &&[i, operand] : llvm::enumerate(call.getArgOperands())) {
         if (isPointerLike(operand.getType()))
           pointerLikeOperands.push_back(i);
@@ -575,7 +552,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
         // unknown alias sets into any writable pointer.
         (void)functionMayCapture.markUnknown();
       } else {
-        for (int pointerAsData : pointerLikeOperands) {
+        for (unsigned pointerAsData : pointerLikeOperands) {
           // If not captured, it cannot be stored in anything.
           if ((pointerAsData < numArguments &&
                !!callee.getArgAttr(pointerAsData,
@@ -593,7 +570,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
       AliasClassSet writableClasses = AliasClassSet::getUndefined();
       AliasClassSet nonWritableOperandClasses = AliasClassSet::getUndefined();
       ChangeResult changed = ChangeResult::NoChange;
-      for (int pointerOperand : pointerLikeOperands) {
+      for (unsigned pointerOperand : pointerLikeOperands) {
         auto *destClasses = getOrCreateFor<AliasClassLattice>(
             getProgramPointAfter(call), call.getArgOperands()[pointerOperand]);
 
@@ -696,7 +673,7 @@ void enzyme::PointsToPointerAnalysis::visitCallControlFlowTransfer(
           continue;
         }
 
-        for (int operandNo : pointerLikeOperands) {
+        for (unsigned operandNo : pointerLikeOperands) {
           const auto *srcClasses = getOrCreateFor<AliasClassLattice>(
               getProgramPointAfter(call), call.getArgOperands()[operandNo]);
           if (mayReadArg(callee, operandNo, argModRef)) {
@@ -840,7 +817,8 @@ static bool isAliasTransferFullyDescribedByMemoryEffects(Operation *op) {
       }
     }
   }
-  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp>(op);
+  return isa<memref::LoadOp, memref::StoreOp, LLVM::LoadOp, LLVM::StoreOp,
+             enzyme::PushOp, enzyme::PopOp>(op);
 }
 
 void enzyme::AliasAnalysis::transfer(
