@@ -1,6 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -S -enzyme-loose-types | FileCheck %s; fi
+; RUN: if [ %llvmver -ne 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -S -enzyme-loose-types | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify)" -S -enzyme-loose-types | FileCheck %s
-; UNSUPPORTED: llvm16
 ;
 ; Test that reverse-mode AD with -enzyme-loose-types handles @llvm.umax.i32
 ; intrinsic calls on integer values without crashing in invertPointerM.
