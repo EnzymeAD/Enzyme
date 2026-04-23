@@ -8659,6 +8659,27 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
+      // If the original instruction was a malloc with enzyme_fromstack,
+      // the allocation is needed but was incorrectly replaced by a
+      // fictiousPHI. Restore it as a stack allocation (alloca).
+      if (auto *origCall = dyn_cast<CallInst>(pair.second)) {
+        if (auto MD = hasMetadata(origCall, "enzyme_fromstack")) {
+          IRBuilder<> B(&newFunc->getEntryBlock().front());
+          Value *Size = getNewFromOriginal(origCall->getArgOperand(0));
+          Type *elTy = Type::getInt8Ty(origCall->getContext());
+          Value *replacement = B.CreateAlloca(elTy, Size);
+          auto Alignment =
+              cast<ConstantInt>(
+                  cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                  ->getLimitedValue();
+          if (Alignment) {
+            cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
+          }
+          pp->replaceAllUsesWith(replacement);
+          erase(pp);
+          continue;
+        }
+      }
       if (CustomErrorHandler) {
         std::string str;
         raw_string_ostream ss(str);
