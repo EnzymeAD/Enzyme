@@ -30,8 +30,12 @@
 #include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
-#include "EnzymeLogic.h"
 #include "TypeAnalysis/TypeAnalysis.h"
+#include <string>
+#include <array>
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallString.h"
+#include <set>
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalValue.h"
@@ -4762,34 +4766,6 @@ Function *EnzymeLogic::CreateForwardDiff(
         !hasconstant && returnUsed)
       return foundcalled;
 
-    if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant) {
-      if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
-      }
-      if (!returnUsed && retType != DIFFE_TYPE::CONSTANT && !hasconstant) {
-        FunctionType *FTy = FunctionType::get(
-            todiff->getReturnType(), foundcalled->getFunctionType()->params(),
-            foundcalled->getFunctionType()->isVarArg());
-        Function *NewF = Function::Create(
-            FTy, Function::LinkageTypes::InternalLinkage,
-            "fixderivative_" + todiff->getName(), todiff->getParent());
-        for (auto pair : llvm::zip(NewF->args(), foundcalled->args())) {
-          std::get<0>(pair).setName(std::get<1>(pair).getName());
-        }
-
-        BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
-        IRBuilder<> bb(BB);
-        SmallVector<Value *, 2> args;
-        for (auto &a : NewF->args())
-          args.push_back(&a);
-        auto cal = bb.CreateCall(foundcalled, args);
-        cal->setCallingConv(foundcalled->getCallingConv());
-
-        bb.CreateRet(bb.CreateExtractValue(cal, 1));
-        return ForwardCachedFunctions[tup] = NewF;
-      }
-      assert(returnUsed);
-    }
-
     SmallVector<Type *, 2> curTypes;
     bool legal = true;
     SmallVector<DIFFE_TYPE, 4> nextConstantArgs;
@@ -4819,12 +4795,15 @@ Function *EnzymeLogic::CreateForwardDiff(
       curTypes.push_back(additionalArg);
     }
     if (legal) {
-      Type *RT = todiff->getReturnType();
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
-        RT = StructType::get(RT->getContext(), {RT, RT});
-      }
-      if (!returnUsed && retType == DIFFE_TYPE::CONSTANT) {
-        RT = Type::getVoidTy(RT->getContext());
+      Type *RT = foundcalled->getReturnType();
+      if (!returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+          if (RT->isStructTy()) {
+              RT = RT->getStructElementType(1);
+          }
+      } else if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
+          if (RT->isStructTy()) {
+              RT = RT->getStructElementType(0);
+          }
       }
 
       FunctionType *FTy = FunctionType::get(
@@ -4835,14 +4814,25 @@ Function *EnzymeLogic::CreateForwardDiff(
           "fixderivative_" + todiff->getName(), todiff->getParent());
 
       auto foundArg = NewF->arg_begin();
+      auto fcArg = foundcalled->arg_begin();
       SmallVector<Value *, 2> nextArgs;
       for (auto tup : llvm::zip(todiff->args(), constant_args)) {
         nextArgs.push_back(foundArg);
         auto &arg = std::get<0>(tup);
-        foundArg->setName(arg.getName());
+        if (fcArg != foundcalled->arg_end()) {
+          foundArg->setName(fcArg->getName());
+          fcArg++;
+        } else {
+          foundArg->setName(arg.getName());
+        }
         foundArg++;
         if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
-          foundArg->setName(arg.getName() + "'");
+          if (fcArg != foundcalled->arg_end()) {
+            foundArg->setName(fcArg->getName());
+            fcArg++;
+          } else {
+            foundArg->setName(arg.getName() + "'");
+          }
           nextConstantArgs.push_back(std::get<1>(tup));
           nextArgs.push_back(foundArg);
           foundArg++;
@@ -4874,12 +4864,42 @@ Function *EnzymeLogic::CreateForwardDiff(
       auto cal = bb.CreateCall(foundcalled, nextArgs);
       cal->setCallingConv(foundcalled->getCallingConv());
 
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+      if (RT->isVoidTy()) {
+        bb.CreateRetVoid();
+      } else if (cal->getType() == RT) {
         bb.CreateRet(cal);
+      } else if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+        if (cal->getType()->isStructTy()) {
+          bb.CreateRet(cal);
+        } else {
+          SmallVector<Value *, 2> primalArgs;
+          auto argIt = NewF->arg_begin();
+          for (auto tup : llvm::zip(todiff->args(), constant_args)) {
+            primalArgs.push_back(argIt);
+            argIt++;
+            if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
+              argIt++;
+            }
+          }
+          auto primalCal = bb.CreateCall(todiff, primalArgs);
+          primalCal->setCallingConv(todiff->getCallingConv());
+          Value *str = UndefValue::get(RT);
+          str = bb.CreateInsertValue(str, primalCal, 0);
+          str = bb.CreateInsertValue(str, cal, 1);
+          bb.CreateRet(str);
+        }
       } else if (returnUsed) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 0));
+        if (cal->getType()->isStructTy()) {
+          bb.CreateRet(bb.CreateExtractValue(cal, 0));
+        } else {
+          bb.CreateRet(cal);
+        }
       } else if (retType != DIFFE_TYPE::CONSTANT) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 1));
+        if (cal->getType()->isStructTy()) {
+          bb.CreateRet(bb.CreateExtractValue(cal, 1));
+        } else {
+          bb.CreateRet(cal);
+        }
       } else {
         bb.CreateRetVoid();
       }
