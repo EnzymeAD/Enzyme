@@ -4093,42 +4093,44 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
-      if (!gutils->isConstantValue(call.getArgOperand(0))) {
-        IRBuilder<> Builder2(&call);
-        getForwardBuilder(Builder2);
-        auto origfree = call.getArgOperand(0);
-        auto newfree = gutils->getNewFromOriginal(call.getArgOperand(0));
-        auto tofree = gutils->invertPointerM(origfree, Builder2);
+      // Always emit checked_free for both primal and shadow, regardless
+      // of isConstantValue. In forward-over-reverse mode, the activity
+      // analysis can be inconsistent between allocation (NON-CONST, shadow
+      // created) and deallocation (CONST, no shadow free). The checked_free
+      // function safely handles primal == shadow by not freeing.
+      IRBuilder<> Builder2(&call);
+      getForwardBuilder(Builder2);
+      auto origfree = call.getArgOperand(0);
+      auto newfree = gutils->getNewFromOriginal(call.getArgOperand(0));
+      auto tofree = gutils->invertPointerM(origfree, Builder2);
 
-        Function *free = getOrInsertCheckedFree(
-            *call.getModule(), &call, newfree->getType(), gutils->getWidth());
+      Function *free = getOrInsertCheckedFree(
+          *call.getModule(), &call, newfree->getType(), gutils->getWidth());
 
-        bool used = true;
-        if (auto instArg = dyn_cast<Instruction>(call.getArgOperand(0)))
-          used = unnecessaryInstructions.find(instArg) ==
-                 unnecessaryInstructions.end();
+      bool used = true;
+      if (auto instArg = dyn_cast<Instruction>(call.getArgOperand(0)))
+        used = unnecessaryInstructions.find(instArg) ==
+               unnecessaryInstructions.end();
 
-        SmallVector<Value *, 3> args;
-        if (used)
-          args.push_back(newfree);
-        else
-          args.push_back(
-              Constant::getNullValue(call.getArgOperand(0)->getType()));
+      SmallVector<Value *, 3> args;
+      if (used)
+        args.push_back(newfree);
+      else
+        args.push_back(
+            Constant::getNullValue(call.getArgOperand(0)->getType()));
 
-        auto rule = [&args](Value *tofree) { args.push_back(tofree); };
-        applyChainRule(Builder2, rule, tofree);
+      auto rule = [&args](Value *tofree) { args.push_back(tofree); };
+      applyChainRule(Builder2, rule, tofree);
 
-        for (size_t i = 1; i < call.arg_size(); i++) {
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-        }
-
-        auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
-        frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-
-        eraseIfUnused(call);
-        return true;
+      for (size_t i = 1; i < call.arg_size(); i++) {
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
       }
+
+      auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
+      frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+
       eraseIfUnused(call);
+      return true;
     }
     auto callval = call.getCalledOperand();
 
@@ -4216,7 +4218,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     // TODO HANDLE FREE
-    llvm::errs() << "freeing without malloc " << *val << "\n";
+    // Suppress warning for common safe cases (phi nodes, loads) that are
+    // conservatively handled but can't be statically matched to allocations
+    if (!isa<PHINode>(val) && !isa<LoadInst>(val)) {
+      llvm::errs() << "freeing without malloc " << *val << "\n";
+    }
     eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
   }
