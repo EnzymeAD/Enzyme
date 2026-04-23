@@ -37,6 +37,8 @@ class FunctionPass;
 llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
+bool isTargetNVPTX(llvm::Module &M);
+
 class PreserveNVVMNewPM final
     : public llvm::AnalysisInfoMixin<PreserveNVVMNewPM> {
   friend struct llvm::AnalysisInfoMixin<PreserveNVVMNewPM>;
