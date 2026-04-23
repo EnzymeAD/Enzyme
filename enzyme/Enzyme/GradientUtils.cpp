@@ -6573,6 +6573,13 @@ end:;
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
+  if (looseTypeAnalysis && oval->getType()->isIntOrIntVectorTy()) {
+    auto *shadow = Constant::getNullValue(getShadowType(oval->getType()));
+    invertedPointers.insert(
+        std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+    return shadow;
+  }
+
   if (CustomErrorHandler) {
     std::string str;
     raw_string_ostream ss(str);
