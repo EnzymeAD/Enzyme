@@ -18,6 +18,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/Utils.h"
 
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -31,18 +32,32 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     return cast<TypedAttr>(ATI.createNullAttr());
   }
   if (auto T = dyn_cast<TensorType>(type)) {
-    auto ET = dyn_cast<FloatType>(T.getElementType());
-    if (!ET) {
-      llvm::errs() << " unsupported eltype: " << ET << " of type " << type
-                   << "\n";
+    if (auto ET = dyn_cast<FloatType>(T.getElementType())) {
+      APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<APFloat>(values));
+    } else if (auto CET = dyn_cast<ComplexType>(T.getElementType())) {
+      auto ET = cast<FloatType>(CET.getElementType());
+      std::complex<APFloat> values[] = {
+          std::complex<APFloat>(APFloat(ET.getFloatSemantics(), value),
+                                APFloat(ET.getFloatSemantics(), "0"))};
+      return DenseElementsAttr::get(cast<ShapedType>(type),
+                                    ArrayRef<std::complex<APFloat>>(values));
+    } else {
+      llvm::errs() << " unsupported eltype: " << T.getElementType()
+                   << " of type " << type << "\n";
     }
-    APFloat values[] = {APFloat(ET.getFloatSemantics(), value)};
-    return DenseElementsAttr::get(cast<ShapedType>(type),
-                                  ArrayRef<APFloat>(values));
+  } else if (auto T = cast<FloatType>(type)) {
+    APFloat apvalue(T.getFloatSemantics(), value);
+    return FloatAttr::get(T, apvalue);
+  } else if (auto T = cast<ComplexType>(type)) {
+    auto F = cast<FloatType>(T.getElementType());
+    return mlir::complex::NumberAttr::get(
+        T, APFloat(F.getFloatSemantics(), value).convertToDouble(),
+        APFloat(F.getFloatSemantics(), "0").convertToDouble());
+  } else {
+    llvm::errs() << " unsupported type: " << type << "\n";
   }
-  auto T = cast<FloatType>(type);
-  APFloat apvalue(T.getFloatSemantics(), value);
-  return FloatAttr::get(T, apvalue);
 }
 
 void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
