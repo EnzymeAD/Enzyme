@@ -441,6 +441,24 @@ td_library(
     ],
 )
 
+td_library(
+    name = "ImpulseDialectTdFiles",
+    srcs = [
+        "Enzyme/MLIR/Dialect/Impulse/Dialect.td",
+        "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.td",
+    ],
+    includes = ["."],
+    deps = [
+        ":EnzymeDialectTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:ControlFlowInterfacesTdFiles",
+        "@llvm-project//mlir:FunctionInterfacesTdFiles",
+        "@llvm-project//mlir:LoopLikeInterfaceTdFiles",
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+        "@llvm-project//mlir:ViewLikeInterfaceTdFiles",
+    ],
+)
+
 cc_library(
     name = "LLVMExtDialect",
     srcs = [
@@ -619,6 +637,111 @@ gentbl_cc_library(
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "Enzyme/MLIR/Dialect/EnzymeOps.td",
     deps = [":EnzymeDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ImpulseOpsIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [
+        (
+            ["-gen-op-decls"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.cpp.inc",
+        ),
+        (
+            [
+                "-gen-dialect-decls",
+                "-dialect=impulse",
+            ],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOpsDialect.h.inc",
+        ),
+        (
+            [
+                "-gen-dialect-defs",
+                "-dialect=impulse",
+            ],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOpsDialect.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    deps = [":ImpulseDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ImpulseTypesIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [
+        (
+            ["-gen-typedef-decls"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOpsTypes.h.inc",
+        ),
+        (
+            ["-gen-typedef-defs"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseOpsTypes.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    deps = [":ImpulseDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ImpulseEnumsIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [
+        (
+            ["-gen-enum-decls"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.h.inc",
+        ),
+        (
+            ["-gen-enum-defs"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseEnums.td",
+    deps = [":ImpulseDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ImpulseAttributesIncGen",
+    strip_include_prefix = "Enzyme/MLIR",
+    tbl_outs = [
+        (
+            [
+                "-gen-attrdef-decls",
+                "-attrdefs-dialect=impulse",
+            ],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.h.inc",
+        ),
+        (
+            [
+                "-gen-attrdef-defs",
+                "-attrdefs-dialect=impulse",
+            ],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributes.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    deps = [":ImpulseDialectTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ImpulseAttributeInterfacesIncGen",
+    tbl_outs = [
+        (
+            ["-gen-attr-interface-decls"],
+            "Enzyme/MLIR/Dialect/Impulse/ImpulseAttributeInterfaces.h.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Dialect/Impulse/ImpulseOps.td",
+    deps = [":ImpulseDialectTdFiles"],
 )
 
 gentbl_cc_library(
@@ -820,10 +943,12 @@ gentbl_cc_library(
     deps = [":ImplementationsCommonTdFiles"],
 )
 
+
 cc_library(
     name = "EnzymeMLIR",
     srcs = glob([
         "Enzyme/MLIR/Dialect/*.cpp",
+        "Enzyme/MLIR/Dialect/Impulse/*.cpp",
         "Enzyme/MLIR/Passes/*.cpp",
         "Enzyme/MLIR/Interfaces/*.cpp",
         "Enzyme/MLIR/Analysis/*.cpp",
@@ -831,6 +956,7 @@ cc_library(
     ]),
     hdrs = glob([
         "Enzyme/MLIR/Dialect/*.h",
+        "Enzyme/MLIR/Dialect/Impulse/*.h",
         "Enzyme/MLIR/Passes/*.h",
         "Enzyme/MLIR/Interfaces/*.h",
         "Enzyme/MLIR/Analysis/*.h",
@@ -852,6 +978,11 @@ cc_library(
         ":EnzymePassesIncGen",
         ":EnzymeTypeInterfacesIncGen",
         ":EnzymeTypesIncGen",
+        ":ImpulseAttributeInterfacesIncGen",
+        ":ImpulseAttributesIncGen",
+        ":ImpulseEnumsIncGen",
+        ":ImpulseOpsIncGen",
+        ":ImpulseTypesIncGen",
         ":LLVMExtDialect",
         ":affine-derivatives",
         ":arith-derivatives",

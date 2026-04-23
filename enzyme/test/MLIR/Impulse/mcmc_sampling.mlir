@@ -1,21 +1,21 @@
-// RUN: %eopt --probprog %s | FileCheck %s
+// RUN: %eopt --expand-impulse %s | FileCheck %s
 
 module {
   func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = enzyme.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #enzyme.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
   }
 
   func.func @sampling_basic(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #enzyme.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-        name = "sampling_basic", selection = [[#enzyme.symbol<1>]], all_addresses = [[#enzyme.symbol<1>]], num_warmup = 0, num_samples = 10 }
+      { nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
+        name = "sampling_basic", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
   }
@@ -23,10 +23,10 @@ module {
   func.func @sampling_thinning(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<5x1xf64>, tensor<5xi1>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #enzyme.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
-        name = "sampling_thinning", selection = [[#enzyme.symbol<1>]], all_addresses = [[#enzyme.symbol<1>]], num_warmup = 0, num_samples = 10, thinning = 2 }
+      { nuts_config = #impulse.nuts_config<max_tree_depth = 5, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
+        name = "sampling_thinning", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10, thinning = 2 }
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<5x1xf64>, tensor<5xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2 : tensor<5x1xf64>, tensor<5xi1>, tensor<2xui64>
   }
@@ -34,10 +34,10 @@ module {
   func.func @sampling_with_warmup(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:8 = enzyme.mcmc @test(%rng, %mean, %stddev) given %init_trace
+    %res:8 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
       step_size = %step_size
-      { nuts_config = #enzyme.nuts_config<max_tree_depth = 5>,
-        name = "sampling_with_warmup", selection = [[#enzyme.symbol<1>]], all_addresses = [[#enzyme.symbol<1>]], num_warmup = 5, num_samples = 10 }
+      { nuts_config = #impulse.nuts_config<max_tree_depth = 5>,
+        name = "sampling_with_warmup", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 5, num_samples = 10 }
       : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#1, %res#2 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
   }
@@ -55,8 +55,8 @@ module {
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<0.000000e+00> : tensor<1x1xf64>
 //
 // --- RNG splits ---
-// CHECK: enzyme.randomSplit
-// CHECK: enzyme.randomSplit
+// CHECK: impulse.randomSplit
+// CHECK: impulse.randomSplit
 //
 // --- Initial gradient via autodiff ---
 // CHECK: enzyme.autodiff_region(%{{.+}}, %{{.+}}) {
@@ -67,23 +67,23 @@ module {
 // CHECK: } attributes {activity = [#enzyme<activity enzyme_active>], ret_activity = [#enzyme<activity enzyme_active>, #enzyme<activity enzyme_const>]}
 //
 // --- Sampling loop: for i in 0..10 ---
-// CHECK: %[[SLOOP:.+]]:6 = enzyme.for_loop(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>)
+// CHECK: %[[SLOOP:.+]]:6 = impulse.for(%[[C0]] : tensor<i64>) to(%[[C10]] : tensor<i64>)
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %[[SAMP_INIT]], %[[ACC_INIT]] : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>
 // CHECK: ^bb0(%[[S_ITER:.+]]: tensor<i64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<1x1xf64>, %{{.+}}: tensor<f64>, %{{.+}}: tensor<2xui64>, %{{.+}}: tensor<10x1xf64>, %{{.+}}: tensor<10xi1>):
 //
 // --- Momentum sampling ---
-// CHECK: enzyme.random {{.*}} {rng_distribution = #enzyme<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
+// CHECK: impulse.random {{.*}} {rng_distribution = #impulse<rng_distribution NORMAL>} : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Kinetic energy ---
-// CHECK: enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 //
 // --- NUTS tree building ---
-// CHECK: enzyme.while_loop
+// CHECK: impulse.while
 //
 // --- Sample storage: update samples buffer ---
-// CHECK: enzyme.dynamic_update_slice %{{.+}}, %{{.+}}, %[[S_ITER]], %{{.+}} : (tensor<10x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<10x1xf64>
-// CHECK: enzyme.yield %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>
+// CHECK: impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %[[S_ITER]], %{{.+}} : (tensor<10x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<10x1xf64>
+// CHECK: impulse.yield %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<10x1xf64>, tensor<10xi1>
 // CHECK: }
 // CHECK: return %[[SLOOP]]#4, %[[SLOOP]]#5, %[[SLOOP]]#3 : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
 // CHECK: }
@@ -95,7 +95,7 @@ module {
 // CHECK-SAME: -> (tensor<5x1xf64>, tensor<5xi1>, tensor<2xui64>)
 //
 // --- Thinning loop ---
-// CHECK: enzyme.for_loop
+// CHECK: impulse.for
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<5x1xf64>, tensor<5xi1>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<5x1xf64>, tensor<5xi1>
 //
@@ -107,7 +107,7 @@ module {
 // CHECK: arith.andi
 //
 // --- Sample storage ---
-// CHECK: enzyme.dynamic_update_slice %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : (tensor<5x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<5x1xf64>
+// CHECK: impulse.dynamic_update_slice %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : (tensor<5x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<5x1xf64>
 // CHECK: return {{.*}} : tensor<5x1xf64>, tensor<5xi1>, tensor<2xui64>
 // CHECK: }
 
@@ -118,7 +118,7 @@ module {
 // CHECK-SAME: -> (tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>)
 //
 // --- Warmup loop ---
-// CHECK: %[[WARMUP:.+]]:16 = enzyme.for_loop
+// CHECK: %[[WARMUP:.+]]:16 = impulse.for
 // CHECK-SAME: iter_args(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}}, %{{.+}} : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>)
 // CHECK-SAME: -> tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<f64>, tensor<i64>, tensor<f64>, tensor<1xf64>, tensor<1xf64>, tensor<i64>, tensor<i64>
 //
@@ -130,27 +130,27 @@ module {
 // CHECK: math.exp
 //
 // --- Welford update ---
-// CHECK: enzyme.reshape {{.*}} : (tensor<1x1xf64>) -> tensor<1xf64>
+// CHECK: impulse.reshape {{.*}} : (tensor<1x1xf64>) -> tensor<1xf64>
 // CHECK: arith.subf {{.*}} : tensor<1xf64>
 // CHECK: arith.divf {{.*}} : tensor<1xf64>
 // CHECK: arith.addf {{.*}} : tensor<1xf64>
 //
 // --- Window boundary logic ---
-// CHECK: enzyme.if
+// CHECK: impulse.if
 // CHECK: math.sqrt
-// CHECK: enzyme.yield
+// CHECK: impulse.yield
 // CHECK: }, {
-// CHECK: enzyme.yield
+// CHECK: impulse.yield
 // CHECK: })
 //
 // --- Post-warmup sampling ---
-// CHECK: enzyme.for_loop
+// CHECK: impulse.for
 // CHECK-SAME: iter_args(%[[WARMUP]]#0, %[[WARMUP]]#1, %[[WARMUP]]#2, %[[WARMUP]]#3
 // CHECK-SAME: : tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<2xui64>
 //
 // --- Momentum with adapted mass matrix ---
-// CHECK: enzyme.dot {{.*}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
-// CHECK: enzyme.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
+// CHECK: impulse.dot {{.*}} : (tensor<1x1xf64>, tensor<1x1xf64>) -> tensor<1x1xf64>
+// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = array<i64: 0, 1>
 //
 // CHECK: return {{.*}} : tensor<10x1xf64>, tensor<10xi1>, tensor<2xui64>
 // CHECK: }
