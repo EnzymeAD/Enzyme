@@ -3321,6 +3321,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (!pair.second ||
           gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first)))
         Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+    // Do not pre-seed &call itself as "not needed": when &call appears in both
+    // knownRecomputeHeuristic and unnecessaryIntermediates, it would be seeded
+    // as false, causing is_value_needed_in_reverse to short-circuit at the
+    // seen-map check and return false even when &call's result is genuinely
+    // needed in the reverse pass, incorrectly causing primalNeededInReverse=false.
+    Seen.erase(UsageKey(&call, QueryType::Primal));
 
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
