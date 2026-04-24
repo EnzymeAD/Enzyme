@@ -51,12 +51,19 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringMap.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TimeProfiler.h"
+
+#define DEBUG_TYPE "enzyme"
+
+STATISTIC(NumValuesCached, "Number of values cached for the reverse pass");
+STATISTIC(NumValuesRecomputed,
+          "Number of values recomputed instead of cached");
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -8515,6 +8522,7 @@ void GradientUtils::computeMinCache() {
 
             if (oneneed || shadowOneNeed) {
               knownRecomputeHeuristic[&I] = false;
+              ++NumValuesCached;
 
               CountTrackedPointers T(I.getType());
               assert(!T.derived);
@@ -8592,6 +8600,10 @@ void GradientUtils::computeMinCache() {
 
     for (auto V : Intermediates) {
       knownRecomputeHeuristic[V] = !MinReq.count(V);
+      if (MinReq.count(V))
+        ++NumValuesCached;
+      else
+        ++NumValuesRecomputed;
       if (!MinReq.count(V) && NeedGraph.count(V)) {
         if (auto CI = dyn_cast<CallInst>(V))
           if (getFuncNameFromCall(CI) == "julia.call")
