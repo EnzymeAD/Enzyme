@@ -2436,11 +2436,13 @@ static inline std::string convertSRetTypeToString(llvm::Type *T) {
   return std::to_string((size_t)T);
 }
 
-static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
+static inline llvm::Type *
+convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
   if (str == "test_type") {
     assert(C);
     llvm::SmallVector<llvm::Type *, 1> elts;
-    elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}), AddressSpace::Tracked));
+    elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}),
+                                          AddressSpace::Tracked));
     return llvm::StructType::get(*C, elts);
   }
   if (str == "test_type2") {

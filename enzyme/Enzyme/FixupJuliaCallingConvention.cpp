@@ -944,42 +944,49 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         if (enzyme_srets.count(i)) {
           auto val = CI->getArgOperand(i);
 
-          if (isa<UndefValue>(val) || isa<PoisonValue>(val) || isa<ConstantPointerNull>(val)) {
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) ||
+              isa<ConstantPointerNull>(val)) {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << "Unsupported constant argument in FixupJuliaCallingConvention\n";
+            ss << "Unsupported constant argument in "
+                  "FixupJuliaCallingConvention\n";
             ss << " + val: " << *val << "\n";
             ss << " + Function being rewritten: " << F->getName() << "\n";
             ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
             }
           }
           if (!isa<Instruction>(val)) {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << "Unsupported non-instruction argument in FixupJuliaCallingConvention\n";
+            ss << "Unsupported non-instruction argument in "
+                  "FixupJuliaCallingConvention\n";
             ss << " + val: " << *val << "\n";
             ss << " + Function being rewritten: " << F->getName() << "\n";
             ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
             }
           }
           assert(isa<Instruction>(val));
-            Value *gep = sret;
-            if (ST) {
-              IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
-              gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
-            }
+          Value *gep = sret;
+          if (ST) {
+            IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
+            gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+          }
 
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
@@ -1025,72 +1032,79 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 
         if (rroots.count(i)) {
           auto val = CI->getArgOperand(i);
-          if (isa<UndefValue>(val) || isa<PoisonValue>(val) || isa<ConstantPointerNull>(val)) {
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) ||
+              isa<ConstantPointerNull>(val)) {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << "Unsupported constant argument in FixupJuliaCallingConvention\n";
+            ss << "Unsupported constant argument in "
+                  "FixupJuliaCallingConvention\n";
             ss << " + val: " << *val << "\n";
             ss << " + Function being rewritten: " << F->getName() << "\n";
             ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
             }
           }
           if (!isa<Instruction>(val)) {
             std::string s;
             llvm::raw_string_ostream ss(s);
-            ss << "Unsupported non-instruction argument in FixupJuliaCallingConvention\n";
+            ss << "Unsupported non-instruction argument in "
+                  "FixupJuliaCallingConvention\n";
             ss << " + val: " << *val << "\n";
             ss << " + Function being rewritten: " << F->getName() << "\n";
             ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
             }
           }
           assert(isa<Instruction>(val));
 
-            auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
-                                           "enzymejl_returnRoots");
-            auto attrv = attr.getValueAsString();
-            assert(attrv.size());
-            size_t subCount = convertRRootCountFromString(attrv);
+          auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
+                                         "enzymejl_returnRoots");
+          auto attrv = attr.getValueAsString();
+          assert(attrv.size());
+          size_t subCount = convertRRootCountFromString(attrv);
 
-            Value *gep = nullptr;
+          Value *gep = nullptr;
 
-            if (roots_AT) {
-              assert(roots);
-              IRBuilder<> GEPB(cast<Instruction>(roots)->getNextNode());
-              gep = roots;
-              if (local_root_count != 0) {
-                gep = GEPB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
-                                                     local_root_count);
-              }
-
-              if (subCount != numRooting) {
-                gep = GEPB.CreatePointerCast(
-                    gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
-              }
-              local_root_count += subCount;
-              if (reret_roots.count(i))
-                sretCount++;
-            } else {
-              assert(reret_roots.count(i));
-              assert(sret);
-              IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
-              gep = sret;
-              if (ST) {
-                gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
-              }
-              sretCount++;
+          if (roots_AT) {
+            assert(roots);
+            IRBuilder<> GEPB(cast<Instruction>(roots)->getNextNode());
+            gep = roots;
+            if (local_root_count != 0) {
+              gep = GEPB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
+                                                    local_root_count);
             }
+
+            if (subCount != numRooting) {
+              gep = GEPB.CreatePointerCast(
+                  gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+            }
+            local_root_count += subCount;
+            if (reret_roots.count(i))
+              sretCount++;
+          } else {
+            assert(reret_roots.count(i));
+            assert(sret);
+            IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
+            gep = sret;
+            if (ST) {
+              gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+            }
+            sretCount++;
+          }
 
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
