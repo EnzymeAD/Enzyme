@@ -1154,7 +1154,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     for (auto &&[val, gep, ty] : preCallReplacements) {
       auto &M = *B.GetInsertBlock()->getModule();
       auto &C = M.getContext();
-      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(C)}, true);
+      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
       auto printfFunc = M.getOrInsertFunction("printf", printfTy);
       auto fmt1 = B.CreateGlobalStringPtr("FixupJuliaCallConv: preCallReplacements copying old=%p into new=%p, type size=%lu bytes\n");
       auto size = M.getDataLayout().getTypeAllocSize(ty);
@@ -1211,7 +1211,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     for (auto &&[val, gep, ty, jlvalue] : postCallReplacements) {
       auto &M = *B.GetInsertBlock()->getModule();
       auto &C = M.getContext();
-      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(C)}, true);
+      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
       auto printfFunc = M.getOrInsertFunction("printf", printfTy);
       auto fmt2 = B.CreateGlobalStringPtr("FixupJuliaCallConv: postCallReplacements copying new=%p into old=%p, type size=%lu bytes\n");
       auto size = M.getDataLayout().getTypeAllocSize(ty);
