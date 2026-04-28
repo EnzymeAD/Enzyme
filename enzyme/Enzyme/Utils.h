@@ -2443,7 +2443,10 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
     llvm::SmallVector<llvm::Type *, 1> elts;
     elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}),
                                           AddressSpace::Tracked));
-    return llvm::StructType::get(*C, llvm::StructType::get(*C, elts));
+    llvm::Type *inner = llvm::StructType::get(*C, elts);
+    llvm::SmallVector<llvm::Type *, 1> innerElts;
+    innerElts.push_back(inner);
+    return llvm::StructType::get(*C, innerElts);
   }
   if (str == "test_type2") {
     assert(C);
