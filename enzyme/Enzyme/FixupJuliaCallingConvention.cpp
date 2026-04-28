@@ -942,14 +942,48 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
 
         if (enzyme_srets.count(i)) {
-
           auto val = CI->getArgOperand(i);
 
-          IRBuilder<> AIB(cast<Instruction>(val));
-          Value *gep = sret;
-          if (ST) {
-            gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) || isa<ConstantPointerNull>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported constant argument in FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              llvm::errs() << ss.str() << "\n";
+            }
+            llvm::errs().flush();
+            exit(1);
           }
+          if (!isa<Instruction>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported non-instruction argument in FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              llvm::errs() << ss.str() << "\n";
+            }
+            llvm::errs().flush();
+            exit(1);
+          }
+          assert(isa<Instruction>(val));
+            Value *gep = sret;
+            if (ST) {
+              IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
+              gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+            }
 
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
@@ -995,40 +1029,76 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 
         if (rroots.count(i)) {
           auto val = CI->getArgOperand(i);
-          IRBuilder<> AIB(cast<Instruction>(val));
-
-          auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
-                                         "enzymejl_returnRoots");
-          auto attrv = attr.getValueAsString();
-          assert(attrv.size());
-          size_t subCount = convertRRootCountFromString(attrv);
-
-          Value *gep = nullptr;
-
-          if (roots_AT) {
-            assert(roots);
-            gep = roots;
-            if (local_root_count != 0) {
-              gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
-                                                   local_root_count);
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) || isa<ConstantPointerNull>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported constant argument in FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              llvm::errs() << ss.str() << "\n";
             }
-
-            if (subCount != numRooting) {
-              gep = AIB.CreatePointerCast(
-                  gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
-            }
-            local_root_count += subCount;
-            if (reret_roots.count(i))
-              sretCount++;
-          } else {
-            assert(reret_roots.count(i));
-            assert(sret);
-            gep = sret;
-            if (ST) {
-              gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
-            }
-            sretCount++;
+            llvm::errs().flush();
+            exit(1);
           }
+          if (!isa<Instruction>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported non-instruction argument in FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: " << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              llvm::errs() << ss.str() << "\n";
+            }
+            llvm::errs().flush();
+            exit(1);
+          }
+          assert(isa<Instruction>(val));
+
+            auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
+                                           "enzymejl_returnRoots");
+            auto attrv = attr.getValueAsString();
+            assert(attrv.size());
+            size_t subCount = convertRRootCountFromString(attrv);
+
+            Value *gep = nullptr;
+
+            if (roots_AT) {
+              assert(roots);
+              IRBuilder<> GEPB(cast<Instruction>(roots)->getNextNode());
+              gep = roots;
+              if (local_root_count != 0) {
+                gep = GEPB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
+                                                     local_root_count);
+              }
+
+              if (subCount != numRooting) {
+                gep = GEPB.CreatePointerCast(
+                    gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
+              }
+              local_root_count += subCount;
+              if (reret_roots.count(i))
+                sretCount++;
+            } else {
+              assert(reret_roots.count(i));
+              assert(sret);
+              IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
+              gep = sret;
+              if (ST) {
+                gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+              }
+              sretCount++;
+            }
 
           bool handled = false;
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
