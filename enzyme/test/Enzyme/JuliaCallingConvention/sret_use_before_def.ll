@@ -18,11 +18,12 @@
 ; CHECK-NEXT:   store [6 x i64] %val, ptr %1, align 8
 ; CHECK-NEXT:   ret void
 
-define void @caller({ {} addrspace(10)* }* %arg, { {} addrspace(10)* } addrspace(10)* %valid_ptr) {
+define void @caller({ { {} addrspace(10)* } }* %arg, { {} addrspace(10)* } addrspace(10)* %valid_ptr) {
 entry:
   %alloca = alloca { { {} addrspace(10)* } }
   %sret_box = alloca [6 x i64]
-  store { {} addrspace(10)* }* %arg, { { {} addrspace(10)* } }* %alloca
+  %arg_val = load { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %arg
+  store { { {} addrspace(10)* } } %arg_val, { { {} addrspace(10)* } }* %alloca
   %gep1 = getelementptr inbounds { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %alloca, i32 0, i32 0
   call void @callee({ { {} addrspace(10)* } }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %gep1, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_box)
   ret void

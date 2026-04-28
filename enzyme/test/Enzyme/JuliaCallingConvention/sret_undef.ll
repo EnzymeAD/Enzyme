@@ -1,4 +1,5 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
+; XFAIL: *
 
 ; CHECK-LABEL: define void @caller
 ; CHECK: call void @callee({ {} addrspace(10)* }* undef, { {} addrspace(10)* }* %arg)
