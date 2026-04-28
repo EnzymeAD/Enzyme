@@ -2443,7 +2443,7 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
     llvm::SmallVector<llvm::Type *, 1> elts;
     elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}),
                                           AddressSpace::Tracked));
-    return llvm::StructType::get(*C, elts);
+    return llvm::StructType::get(*C, llvm::StructType::get(*C, elts));
   }
   if (str == "test_type2") {
     assert(C);

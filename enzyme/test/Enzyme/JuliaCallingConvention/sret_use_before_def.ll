@@ -2,32 +2,33 @@
 
 ; CHECK-LABEL: define void @caller(ptr %arg, ptr addrspace(10) %valid_ptr)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %stack_sret = alloca { ptr addrspace(10), [6 x i64] }, align 8
-; CHECK-NEXT:   %0 = getelementptr inbounds { ptr addrspace(10), [6 x i64] }, ptr %stack_sret, i32 0, i32 1
-; CHECK-NEXT:   %1 = getelementptr inbounds { ptr addrspace(10), [6 x i64] }, ptr %stack_sret, i32 0, i32 0
+; CHECK-NEXT:   %stack_sret = alloca { { ptr addrspace(10) }, [6 x i64] }, align 8
+; CHECK-NEXT:   %0 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %stack_sret, i32 0, i32 1
+; CHECK-NEXT:   %1 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %stack_sret, i32 0, i32 0
 ; CHECK-NEXT:   store ptr %arg, ptr %1, align 8
-; CHECK-NEXT:   call void @callee(ptr sret({ ptr addrspace(10), [6 x i64] }) %stack_sret)
+; CHECK-NEXT:   call void @callee(ptr sret({ { ptr addrspace(10) }, [6 x i64] }) %stack_sret)
 ; CHECK-NEXT:   ret void
 
-; CHECK-LABEL: define void @callee(ptr noalias sret({ ptr addrspace(10), [6 x i64] }) %0)
+; CHECK-LABEL: define void @callee(ptr noalias sret({ { ptr addrspace(10) }, [6 x i64] }) %0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %1 = getelementptr inbounds { ptr addrspace(10), [6 x i64] }, ptr %0, i32 0, i32 1
-; CHECK-NEXT:   %2 = getelementptr inbounds { ptr addrspace(10), [6 x i64] }, ptr %0, i32 0, i32 0
+; CHECK-NEXT:   %1 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %0, i32 0, i32 1
+; CHECK-NEXT:   %2 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %0, i32 0, i32 0
 ; CHECK-NEXT:   %val = load [6 x i64], ptr %1, align 8
 ; CHECK-NEXT:   store [6 x i64] %val, ptr %1, align 8
 ; CHECK-NEXT:   ret void
 
-define void @caller({ {} addrspace(10)* }* %arg, { {} addrspace(10)* } addrspace(10)* %valid_ptr) {
+define void @caller({ { {} addrspace(10)* } }* %arg, { { {} addrspace(10)* } } addrspace(10)* %valid_ptr) {
 entry:
-  %alloca = alloca { {} addrspace(10)* }
+  %alloca = alloca { { {} addrspace(10)* } }
   %sret_box = alloca [6 x i64]
-  %arg_val = load { {} addrspace(10)* }, { {} addrspace(10)* }* %arg
-  store { {} addrspace(10)* } %arg_val, { {} addrspace(10)* }* %alloca
-  call void @callee({ {} addrspace(10)* }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %alloca, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_box)
+  %arg_val = load { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %arg
+  store { { {} addrspace(10)* } } %arg_val, { { {} addrspace(10)* } }* %alloca
+  %gep1 = getelementptr inbounds { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %alloca, i32 0, i32 0
+  call void @callee({ { {} addrspace(10)* } }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %gep1, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_box)
   ret void
 }
 
-define void @callee({ {} addrspace(10)* }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %sret_return, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_return_prime) {
+define void @callee({ { {} addrspace(10)* } }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %sret_return, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_return_prime) {
 entry:
   %val = load [6 x i64], [6 x i64]* %sret_return_prime, align 8
   store [6 x i64] %val, [6 x i64]* %sret_return_prime, align 8
