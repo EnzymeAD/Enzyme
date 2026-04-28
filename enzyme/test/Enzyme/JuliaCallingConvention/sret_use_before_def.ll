@@ -54,18 +54,20 @@ entry:
 
 define void @caller2(double* %arg) {
 entry:
-  %sret_box = alloca double
+  %sret_box = alloca { double }
   %val = load double, double* %arg, align 8
-  store double %val, double* %sret_box, align 8
-  call void @callee2(double* "enzyme_sret"="test_type3" "enzyme_type"="{[-1]:Pointer}" %sret_box)
-  %val2 = load double, double* %sret_box, align 8
+  %gep = getelementptr inbounds { double }, { double }* %sret_box, i32 0, i32 0
+  store double %val, double* %gep, align 8
+  call void @callee2({ double }* "enzyme_sret"="test_type3" "enzyme_type"="{[-1]:Pointer}" %sret_box)
+  %val2 = load double, double* %gep, align 8
   store double %val2, double* %arg, align 8
   ret void
 }
 
-define void @callee2(double* "enzyme_sret"="test_type3" "enzyme_type"="{[-1]:Pointer}" %sret_return) {
+define void @callee2({ double }* "enzyme_sret"="test_type3" "enzyme_type"="{[-1]:Pointer}" %sret_return) {
 entry:
-  %val = load double, double* %sret_return, align 8
-  store double %val, double* %sret_return, align 8
+  %gep = getelementptr inbounds { double }, { double }* %sret_return, i32 0, i32 0
+  %val = load double, double* %gep, align 8
+  store double %val, double* %gep, align 8
   ret void
 }
