@@ -23,8 +23,7 @@ entry:
   %sret_box = alloca [6 x i64]
   %arg_val = load { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %arg
   store { { {} addrspace(10)* } } %arg_val, { { {} addrspace(10)* } }* %alloca
-  %gep1 = getelementptr inbounds { { {} addrspace(10)* } }, { { {} addrspace(10)* } }* %alloca, i32 0, i32 0
-  call void @callee({ { {} addrspace(10)* } }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %gep1, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_box)
+  call void @callee({ { {} addrspace(10)* } }* "enzyme_sret"="test_type" "enzyme_type"="{[-1]:Pointer}" %alloca, [6 x i64]* "enzyme_sret"="test_type2" "enzyme_type"="{[-1]:Pointer}" %sret_box)
   ret void
 }
 
