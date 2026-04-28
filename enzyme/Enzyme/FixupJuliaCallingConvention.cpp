@@ -31,7 +31,7 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         Attrs
             .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
                           "enzyme_sret")
-            .getValueAsString());
+            .getValueAsString(), &arg->getContext());
 
   CountTrackedPointers tracked(SRetType);
   if (tracked.count == 0) {
@@ -468,7 +468,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         // Case 3: No jlvalue_t's were stored into the sret.
         llvm::Type *SRetType = convertSRetTypeFromString(
             Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")
-                .getValueAsString());
+                .getValueAsString(), &F->getContext());
         if (auto count = CountTrackedPointers(SRetType).count) {
           srets_without_stores[i] = count;
           noroot_enzyme_srets.insert(i);
@@ -581,7 +581,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   for (auto idx : enzyme_srets) {
     llvm::Type *SRetType = convertSRetTypeFromString(
         Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret")
-            .getValueAsString());
+            .getValueAsString(), &F->getContext());
 #if LLVM_VERSION_MAJOR < 17
     if (F->getContext().supportsTypedPointers()) {
       auto T = FT->getParamType(idx)->getPointerElementType();

@@ -18,7 +18,7 @@
 ; CHECK-NEXT:   store [6 x i64] %val, ptr %1, align 8
 ; CHECK-NEXT:   ret void
 
-define void @caller({ {} addrspace(10)* }* %arg, { {} addrspace(10)* } addrspace(10) %valid_ptr) {
+define void @caller({ {} addrspace(10)* }* %arg, { {} addrspace(10)* } addrspace(10)* %valid_ptr) {
 entry:
   %alloca = alloca { { {} addrspace(10)* } }
   %sret_box = alloca [6 x i64]
