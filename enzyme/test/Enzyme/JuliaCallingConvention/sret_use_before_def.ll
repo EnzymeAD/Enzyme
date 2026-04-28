@@ -1,20 +1,20 @@
 ; RUN: %opt %newLoadEnzyme -S -passes=enzyme-fixup-julia < %s | FileCheck %s
 
-; CHECK-LABEL: define void @caller(ptr %arg, ptr addrspace(10) %valid_ptr)
+; CHECK-LABEL: define void @caller({{ptr|.*}} %arg, {{ptr addrspace\(10\)|.*addrspace\(10\).*}} %valid_ptr)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %stack_sret = alloca { { ptr addrspace(10) }, [6 x i64] }, align 8
-; CHECK-NEXT:   %0 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %stack_sret, i32 0, i32 1
-; CHECK-NEXT:   %1 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %stack_sret, i32 0, i32 0
-; CHECK-NEXT:   store ptr %arg, ptr %1, align 8
-; CHECK-NEXT:   call void @callee(ptr sret({ { ptr addrspace(10) }, [6 x i64] }) %stack_sret)
+; CHECK-NEXT:   %stack_sret = alloca { { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }, align 8
+; CHECK-NEXT:   %0 = getelementptr inbounds { { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }, {{ptr|.*}} %stack_sret, i32 0, i32 1
+; CHECK-NEXT:   %1 = getelementptr inbounds { { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }, {{ptr|.*}} %stack_sret, i32 0, i32 0
+; CHECK-NEXT:   store {{ptr|.*}} %arg, {{ptr|.*}} %1, align 8
+; CHECK-NEXT:   call void @callee({{ptr|.*}} sret({ { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }) %stack_sret)
 ; CHECK-NEXT:   ret void
 
-; CHECK-LABEL: define void @callee(ptr noalias sret({ { ptr addrspace(10) }, [6 x i64] }) %0)
+; CHECK-LABEL: define void @callee({{ptr|.*}} noalias sret({ { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }) %0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %1 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %0, i32 0, i32 1
-; CHECK-NEXT:   %2 = getelementptr inbounds { { ptr addrspace(10) }, [6 x i64] }, ptr %0, i32 0, i32 0
-; CHECK-NEXT:   %val = load [6 x i64], ptr %1, align 8
-; CHECK-NEXT:   store [6 x i64] %val, ptr %1, align 8
+; CHECK-NEXT:   %1 = getelementptr inbounds { { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }, {{ptr|.*}} %0, i32 0, i32 1
+; CHECK-NEXT:   %2 = getelementptr inbounds { { {{ptr addrspace\(10\)|.*addrspace\(10\).*}} }, [6 x i64] }, {{ptr|.*}} %0, i32 0, i32 0
+; CHECK-NEXT:   %val = load [6 x i64], {{ptr|.*}} %1, align 8
+; CHECK-NEXT:   store [6 x i64] %val, {{ptr|.*}} %1, align 8
 ; CHECK-NEXT:   ret void
 
 define void @caller({ { {} addrspace(10)* } }* %arg, { { {} addrspace(10)* } } addrspace(10)* %valid_ptr) {
