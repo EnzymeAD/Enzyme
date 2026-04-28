@@ -956,10 +956,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              llvm::errs() << ss.str() << "\n";
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
             }
-            llvm::errs().flush();
-            exit(1);
           }
           if (!isa<Instruction>(val)) {
             std::string s;
@@ -973,10 +971,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              llvm::errs() << ss.str() << "\n";
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
             }
-            llvm::errs().flush();
-            exit(1);
           }
           assert(isa<Instruction>(val));
             Value *gep = sret;
@@ -1041,10 +1037,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              llvm::errs() << ss.str() << "\n";
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
             }
-            llvm::errs().flush();
-            exit(1);
           }
           if (!isa<Instruction>(val)) {
             std::string s;
@@ -1058,10 +1052,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
               CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
                                  nullptr, nullptr, nullptr);
             } else {
-              llvm::errs() << ss.str() << "\n";
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI, ss.str());
             }
-            llvm::errs().flush();
-            exit(1);
           }
           assert(isa<Instruction>(val));
 
