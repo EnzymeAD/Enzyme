@@ -1156,9 +1156,21 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       auto &C = M.getContext();
       auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
       auto printfFunc = M.getOrInsertFunction("printf", printfTy);
-      auto fmt1 = B.CreateGlobalStringPtr("FixupJuliaCallConv: preCallReplacements copying old=%p into new=%p, type size=%lu bytes\n");
       auto size = M.getDataLayout().getTypeAllocSize(ty);
-      B.CreateCall(printfFunc, {fmt1, val, gep, B.getInt64(size)});
+
+      auto numWords = (size + 7) / 8;
+      for (size_t w = 0; w < numWords; ++w) {
+        auto gepWordPtr = B.CreatePointerCast(gep, PointerType::getUnqual(Type::getInt64Ty(C)));
+        auto gepWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), gepWordPtr, w);
+        auto gepVal = B.CreateLoad(Type::getInt64Ty(C), gepWordGep);
+
+        auto valWordPtr = B.CreatePointerCast(val, PointerType::getUnqual(Type::getInt64Ty(C)));
+        auto valWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), valWordPtr, w);
+        auto valVal = B.CreateLoad(Type::getInt64Ty(C), valWordGep);
+
+        auto fmt1 = B.CreateGlobalStringPtr("FixupJuliaCallConv: preCallReplacements word %lu of %lu bytes: old=%016lx, new=%016lx\n");
+        B.CreateCall(printfFunc, {fmt1, B.getInt64(w), B.getInt64(size), valVal, gepVal});
+      }
 
       copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {}, /*shouldZero*/ true);
     }
@@ -1213,9 +1225,21 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       auto &C = M.getContext();
       auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
       auto printfFunc = M.getOrInsertFunction("printf", printfTy);
-      auto fmt2 = B.CreateGlobalStringPtr("FixupJuliaCallConv: postCallReplacements copying new=%p into old=%p, type size=%lu bytes\n");
       auto size = M.getDataLayout().getTypeAllocSize(ty);
-      B.CreateCall(printfFunc, {fmt2, gep, val, B.getInt64(size)});
+
+      auto numWords = (size + 7) / 8;
+      for (size_t w = 0; w < numWords; ++w) {
+        auto gepWordPtr = B.CreatePointerCast(gep, PointerType::getUnqual(Type::getInt64Ty(C)));
+        auto gepWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), gepWordPtr, w);
+        auto gepVal = B.CreateLoad(Type::getInt64Ty(C), gepWordGep);
+
+        auto valWordPtr = B.CreatePointerCast(val, PointerType::getUnqual(Type::getInt64Ty(C)));
+        auto valWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), valWordPtr, w);
+        auto valVal = B.CreateLoad(Type::getInt64Ty(C), valWordGep);
+
+        auto fmt2 = B.CreateGlobalStringPtr("FixupJuliaCallConv: postCallReplacements word %lu of %lu bytes: new=%016lx, old=%016lx\n");
+        B.CreateCall(printfFunc, {fmt2, B.getInt64(w), B.getInt64(size), gepVal, valVal});
+      }
 
       if (jlvalue) {
         auto ld = B.CreateLoad(ty, gep);
