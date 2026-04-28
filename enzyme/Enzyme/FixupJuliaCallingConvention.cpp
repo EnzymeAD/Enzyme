@@ -585,7 +585,14 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 #if LLVM_VERSION_MAJOR < 17
     if (F->getContext().supportsTypedPointers()) {
       auto T = FT->getParamType(idx)->getPointerElementType();
-      assert(T == SRetType);
+      if (T != SRetType) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Type mismatch in FixupJuliaCallingConvention:\n";
+        ss << " + T: " << *T << "\n";
+        ss << " + SRetType: " << *SRetType << "\n";
+        EmitFailure("TypeMismatch", F->getSubprogram(), F, ss.str());
+      }
     }
 #endif
     Types.push_back(SRetType);
