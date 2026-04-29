@@ -428,6 +428,10 @@ uint8_t EnzymeGradientUtilsGetStrongZero(GradientUtils *gutils) {
   return gutils->strongZero;
 }
 
+uint8_t EnzymeGradientUtilsGetAtomicAdd(GradientUtils *gutils) {
+  return gutils->AtomicAdd;
+}
+
 uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
   return gutils->getWidth();
 }
