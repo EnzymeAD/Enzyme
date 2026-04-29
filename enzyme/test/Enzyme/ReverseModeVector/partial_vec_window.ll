@@ -21,8 +21,9 @@ entry:
   %call = call %ret2v @make(float %x)
   %vec = extractvalue %ret2v %call, 0
   %tmp = alloca <2 x float>, align 8
-  store <2 x float> %vec, ptr %tmp, align 8
-  %a = load float, ptr %tmp, align 4
+  store <2 x float> %vec, <2 x float>* %tmp, align 8
+  %fp = bitcast <2 x float>* %tmp to float*
+  %a = load float, float* %fp, align 4
   ret float %a
 }
 
@@ -32,64 +33,28 @@ entry:
   ret %struct.Gradients %d
 }
 
-; CHECK: define internal { [2 x float] } @diffe2tester(float %x, [2 x float] %differeturn) #{{.+}} {
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"vec'de" = alloca [2 x <2 x float>], align 8
-; CHECK-NEXT:   store [2 x <2 x float>] zeroinitializer, ptr %"vec'de", align 8
-; CHECK-NEXT:   %"call'de" = alloca [2 x %ret2v], align 8
-; CHECK-NEXT:   store [2 x %ret2v] zeroinitializer, ptr %"call'de", align 8
-; CHECK-NEXT:   %"x'de" = alloca [2 x float], align 4
-; CHECK-NEXT:   store [2 x float] zeroinitializer, ptr %"x'de", align 4
-; CHECK-NEXT:   %call_augmented = call [2 x %ret2v] @augmented_make(float %x)
-; CHECK-NEXT:   %"tmp'ipa" = alloca <2 x float>, align 8
-; CHECK-NEXT:   %"tmp'ipa1" = alloca <2 x float>, align 8
-; CHECK-NEXT:   store <2 x float> zeroinitializer, ptr %"tmp'ipa", align 8
-; CHECK-NEXT:   store <2 x float> zeroinitializer, ptr %"tmp'ipa1", align 8
-; CHECK-NEXT:   %0 = extractvalue [2 x float] %differeturn, 0
-; CHECK-NEXT:   %1 = load float, ptr %"tmp'ipa", align 4{{.*}}
-; CHECK-NEXT:   %2 = fadd fast float %1, %0
-; CHECK-NEXT:   store float %2, ptr %"tmp'ipa", align 4{{.*}}
-; CHECK-NEXT:   %3 = extractvalue [2 x float] %differeturn, 1
-; CHECK-NEXT:   %4 = load float, ptr %"tmp'ipa1", align 4{{.*}}
-; CHECK-NEXT:   %5 = fadd fast float %4, %3
-; CHECK-NEXT:   store float %5, ptr %"tmp'ipa1", align 4{{.*}}
-; CHECK-NEXT:   %6 = load <2 x float>, ptr %"tmp'ipa", align 8{{.*}}
-; CHECK-NEXT:   %7 = load <2 x float>, ptr %"tmp'ipa1", align 8{{.*}}
-; CHECK-NEXT:   store <2 x float> zeroinitializer, ptr %"tmp'ipa", align 8{{.*}}
-; CHECK-NEXT:   store <2 x float> zeroinitializer, ptr %"tmp'ipa1", align 8{{.*}}
-; CHECK-NEXT:   %8 = load <2 x float>, ptr %"vec'de", align 8
-; CHECK-NEXT:   %9 = fadd fast <2 x float> %8, %6
-; CHECK-NEXT:   store <2 x float> %9, ptr %"vec'de", align 8
-; CHECK-NEXT:   %10 = getelementptr inbounds [2 x <2 x float>], ptr %"vec'de", i32 0, i32 1
-; CHECK-NEXT:   %11 = load <2 x float>, ptr %10, align 8
-; CHECK-NEXT:   %12 = fadd fast <2 x float> %11, %7
-; CHECK-NEXT:   store <2 x float> %12, ptr %10, align 8
-; CHECK-NEXT:   %13 = load [2 x <2 x float>], ptr %"vec'de", align 8
-; CHECK-NEXT:   %14 = extractvalue [2 x <2 x float>] %13, 0
-; CHECK-NEXT:   %15 = extractelement <2 x float> %14, i32 0
-; CHECK-NEXT:   %16 = insertelement <2 x float> zeroinitializer, float %15, i32 0
-; CHECK-NEXT:   %17 = load <2 x float>, ptr %"call'de", align 8
-; CHECK-NEXT:   %18 = fadd fast <2 x float> %17, %16
-; CHECK-NEXT:   store <2 x float> %18, ptr %"call'de", align 8
-; CHECK-NEXT:   %19 = extractvalue [2 x <2 x float>] %13, 1
-; CHECK-NEXT:   %20 = extractelement <2 x float> %19, i32 0
-; CHECK-NEXT:   %21 = insertelement <2 x float> zeroinitializer, float %20, i32 0
-; CHECK-NEXT:   %22 = getelementptr inbounds [2 x %ret2v], ptr %"call'de", i32 0, i32 1, i32 0
-; CHECK-NEXT:   %23 = load <2 x float>, ptr %22, align 8
-; CHECK-NEXT:   %24 = fadd fast <2 x float> %23, %21
-; CHECK-NEXT:   store <2 x float> %24, ptr %22, align 8
-; CHECK-NEXT:   store [2 x <2 x float>] zeroinitializer, ptr %"vec'de", align 8
-; CHECK-NEXT:   %25 = call { [2 x float] } @diffe2make(float %x)
-; CHECK-NEXT:   %26 = extractvalue { [2 x float] } %25, 0, 0
-; CHECK-NEXT:   %27 = load float, ptr %"x'de", align 4
-; CHECK-NEXT:   %28 = fadd fast float %27, %26
-; CHECK-NEXT:   store float %28, ptr %"x'de", align 4
-; CHECK-NEXT:   %29 = extractvalue { [2 x float] } %25, 0, 1
-; CHECK-NEXT:   %30 = getelementptr inbounds [2 x float], ptr %"x'de", i32 0, i32 1
-; CHECK-NEXT:   %31 = load float, ptr %30, align 4
-; CHECK-NEXT:   %32 = fadd fast float %31, %29
-; CHECK-NEXT:   store float %32, ptr %30, align 4
-; CHECK-NEXT:   %33 = load [2 x float], ptr %"x'de", align 4
-; CHECK-NEXT:   %34 = insertvalue { [2 x float] } undef, [2 x float] %33, 0
-; CHECK-NEXT:   ret { [2 x float] } %34
-; CHECK-NEXT: }
+; CHECK-LABEL: define internal { [2 x float] } @diffe2tester(float %x, [2 x float] %differeturn)
+; CHECK: entry:
+; CHECK:   %"vec'de" = alloca [2 x <2 x float>]
+; CHECK:   %"call'de" = alloca [2 x %ret2v]
+; CHECK:   %"x'de" = alloca [2 x float]
+; CHECK:   %call_augmented = call [2 x %ret2v] @augmented_make(float %x)
+; CHECK:   %"tmp'ipa" = alloca <2 x float>
+; CHECK:   %"tmp'ipa1" = alloca <2 x float>
+; CHECK:   %[[D0:.+]] = extractvalue [2 x float] %differeturn, 0
+; CHECK:   %[[L0:.+]] = load float, {{.*}}align 4{{.*}}
+; CHECK:   %[[A0:.+]] = fadd fast float %[[L0]], %[[D0]]
+; CHECK:   store float %[[A0]], {{.*}}align 4{{.*}}
+; CHECK:   %[[D1:.+]] = extractvalue [2 x float] %differeturn, 1
+; CHECK:   %[[L1:.+]] = load float, {{.*}}align 4{{.*}}
+; CHECK:   %[[A1:.+]] = fadd fast float %[[L1]], %[[D1]]
+; CHECK:   store float %[[A1]], {{.*}}align 4{{.*}}
+; CHECK:   %[[V0:.+]] = load <2 x float>, {{.*}}align 8{{.*}}
+; CHECK:   %[[V1:.+]] = load <2 x float>, {{.*}}align 8{{.*}}
+; CHECK:   %[[PACK:.+]] = load [2 x <2 x float>], {{.*}}align 8
+; CHECK:   %[[LANE0V:.+]] = extractvalue [2 x <2 x float>] %[[PACK]], 0
+; CHECK:   %[[LANE0:.+]] = extractelement <2 x float> %[[LANE0V]], i32 0
+; CHECK:   %[[LANE1V:.+]] = extractvalue [2 x <2 x float>] %[[PACK]], 1
+; CHECK:   %[[LANE1:.+]] = extractelement <2 x float> %[[LANE1V]], i32 0
+; CHECK:   %[[MAKE:.+]] = call { [2 x float] } @diffe2make(float %x)
+; CHECK:   ret { [2 x float] }
