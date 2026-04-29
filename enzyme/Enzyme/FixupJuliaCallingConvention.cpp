@@ -449,7 +449,7 @@ static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges,
 }
 static bool isReadOnlyNoCapture(Function *F, unsigned argNo) {
   return F->hasParamAttribute(argNo, Attribute::ReadOnly) &&
-         F->hasParamAttribute(argNo, Attribute::NoCapture);
+         F->getArg(argNo)->hasNoCaptureAttr();
 }
 
 static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
