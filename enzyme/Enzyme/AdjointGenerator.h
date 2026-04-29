@@ -3996,90 +3996,36 @@ public:
       (void)vdiff;
 
       switch (ID) {
-#if LLVM_VERSION_MAJOR < 21
+#if LLVM_VERSION_MAJOR <= 20
+      case Intrinsic::nvvm_barrier0:
+#else
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
+#endif
+#if LLVM_VERSION_MAJOR < 22
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or: {
-        SmallVector<Value *, 1> args = {};
-        auto *Fn = getIntrinsicDeclaration(M, Intrinsic::nvvm_barrier0);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
-#elif LLVM_VERSION_MAJOR < 22
-      case Intrinsic::nvvm_barrier0_popc:
-      case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or: {
-        SmallVector<Value *, 1> args = {
-            ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)};
-        auto *Fn = getIntrinsicDeclaration(
-            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
+      case Intrinsic::nvvm_barrier0_or:
 #else
       case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all: {
-        SmallVector<Value *, 1> args = {I.getOperand(0)};
-        auto *Fn = getIntrinsicDeclaration(
-            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
       case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
       case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count: {
-        SmallVector<Value *, 2> args = {I.getOperand(0), I.getOperand(1)};
-        auto *Fn = getIntrinsicDeclaration(
-            M, Intrinsic::nvvm_barrier_cta_sync_aligned_count);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
-#endif
-
-#if LLVM_VERSION_MAJOR < 21
-      case Intrinsic::nvvm_barrier0: {
-        SmallVector<Value *, 1> args = {};
-        auto *Fn = getIntrinsicDeclaration(M, ID);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
-#else
-      case Intrinsic::nvvm_barrier_cta_sync_aligned_all: {
-        SmallVector<Value *, 1> args = {I.getOperand(0)};
-        auto *Fn = getIntrinsicDeclaration(M, ID);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
-      case Intrinsic::nvvm_barrier_cta_sync_aligned_count: {
-        SmallVector<Value *, 2> args = {I.getOperand(0), I.getOperand(1)};
-        auto *Fn = getIntrinsicDeclaration(M, ID);
-        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
-        cal->setCallingConv(Fn->getCallingConv());
-        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
-        return false;
-      }
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
 #endif
       case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
-        auto cal = cast<CallInst>(
-            Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
-        cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
+        auto &Call = cast<CallBase>(I);
+        SmallVector<Value *, 4> args;
+        args.reserve(Call.arg_size());
+        for (unsigned i = 0; i < Call.arg_size(); ++i)
+          args.push_back(gutils->getNewFromOriginal(Call.getArgOperand(i)));
+        auto *Fn = getIntrinsicDeclaration(M, ID);
+        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
+        cal->setCallingConv(Fn->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }

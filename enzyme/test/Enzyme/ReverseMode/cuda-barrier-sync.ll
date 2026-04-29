@@ -31,7 +31,7 @@ target triple = "nvptx64-nvidia-cuda"
 
 declare void @llvm.nvvm.barrier.cta.sync.aligned.all(i32)
 declare void @llvm.nvvm.barrier.cta.sync.aligned.count(i32, i32)
-declare float @__enzyme_autodiff(float (float)*, ...)
+declare float @__enzyme_autodiff(...)
 
 define float @f_sync_all(float %x) {
 entry:
@@ -43,6 +43,19 @@ entry:
 define float @test_all(float %x) {
 entry:
   %r = call float (float (float)*, ...) @__enzyme_autodiff(float (float)* @f_sync_all, float %x)
+  ret float %r
+}
+
+define float @f_sync_all_dyn(i32 %id, float %x) {
+entry:
+  call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %id)
+  %res = fadd float %x, 1.000000e+00
+  ret float %res
+}
+
+define float @test_all_dyn(i32 %id, float %x) {
+entry:
+  %r = call float (float (i32, float)*, ...) @__enzyme_autodiff(float (i32, float)* @f_sync_all_dyn, i32 %id, float %x)
   ret float %r
 }
 
@@ -59,12 +72,35 @@ entry:
   ret float %r
 }
 
+define float @f_sync_count_dyn(i32 %id, i32 %n, float %x) {
+entry:
+  call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %id, i32 %n)
+  %res = fadd float %x, 1.000000e+00
+  ret float %res
+}
+
+define float @test_count_dyn(i32 %id, i32 %n, float %x) {
+entry:
+  %r = call float (float (i32, i32, float)*, ...) @__enzyme_autodiff(float (i32, i32, float)* @f_sync_count_dyn, i32 %id, i32 %n, float %x)
+  ret float %r
+}
+
 ; CHECK: define internal { float } @diffef_sync_all(float %x, float %differeturn)
 ; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 7)
 ; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 7)
 ; CHECK: ret { float }
 
+; CHECK: define internal { float } @diffef_sync_all_dyn(i32 %id, float %x, float %differeturn)
+; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %id)
+; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 %id)
+; CHECK: ret { float }
+
 ; CHECK: define internal { float } @diffef_sync_count(float %x, float %differeturn)
 ; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 7, i32 16)
 ; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 7, i32 16)
+; CHECK: ret { float }
+
+; CHECK: define internal { float } @diffef_sync_count_dyn(i32 %id, i32 %n, float %x, float %differeturn)
+; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %id, i32 %n)
+; CHECK: call void @llvm.nvvm.barrier.cta.sync.aligned.count(i32 %id, i32 %n)
 ; CHECK: ret { float }
