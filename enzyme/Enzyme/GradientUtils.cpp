@@ -6323,6 +6323,34 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     switch (II->getIntrinsicID()) {
     default:
       goto end;
+#if LLVM_VERSION_MAJOR >= 12
+    case Intrinsic::smax:
+    case Intrinsic::smin:
+    case Intrinsic::umax:
+    case Intrinsic::umin: {
+      Value *val0 = invertPointerM(II->getArgOperand(0), bb, nullShadow);
+      Value *val1 = invertPointerM(II->getArgOperand(1), bb, nullShadow);
+      assert(val0->getType() == val1->getType());
+
+      auto rule = [&](Value *val0, Value *val1) {
+        Value *args[] = {val0, val1};
+        auto shadow = cast<CallInst>(
+            bb.CreateCall(II->getCalledFunction(), args,
+                          II->getName() + "'ipbi"));
+        shadow->setAttributes(II->getAttributes());
+        shadow->setCallingConv(II->getCallingConv());
+        shadow->setTailCallKind(II->getTailCallKind());
+        shadow->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+        return shadow;
+      };
+
+      Value *shadow = applyChainRule(II->getType(), bb, rule, val0, val1);
+
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+      return shadow;
+    }
+#endif
 #if LLVM_VERSION_MAJOR < 20
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:
@@ -6571,13 +6599,6 @@ end:;
 
   if (isa<CallBase>(oval) && TR.query(oval)[{-1}].isFloat()) {
     return Constant::getNullValue(getShadowType(oval->getType()));
-  }
-
-  if (looseTypeAnalysis && oval->getType()->isIntOrIntVectorTy()) {
-    auto *shadow = Constant::getNullValue(getShadowType(oval->getType()));
-    invertedPointers.insert(
-        std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return shadow;
   }
 
   if (CustomErrorHandler) {

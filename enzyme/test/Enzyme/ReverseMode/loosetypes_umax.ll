@@ -13,7 +13,8 @@
 ; @llvm.umax.i32. Without the fix, this hits:
 ;   assert(0 && "cannot find deal with ptr that isnt arg")
 ;
-; The fix returns a zero shadow for integer values under loose-types analysis.
+; The fix handles llvm.umax as a binop-like intrinsic during shadow
+; reconstruction, instead of falling through to the generic no-shadow path.
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -73,9 +74,10 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-SAME: i32 %face_idx, ptr noalias
 ; CHECK-SAME: %nbr)
 
-; Verify the primal block correctly computes and stores i32 umax with zero shadow
+; Verify the primal block computes both the original and shadow i32 umax values.
 ; CHECK:        %new_flag = tail call i32 @llvm.umax.i32(i32 %old_flag, i32 %flag)
-; CHECK-NEXT:   store i32 0, ptr %"flags_elem'ipg"
+; CHECK-NEXT:   %[[NEW_FLAG_IP:.+]] = {{(tail )?}}call i32 @llvm.umax.i32(i32 %{{.+}}, i32 %{{.+}})
+; CHECK-NEXT:   store i32 %[[NEW_FLAG_IP]], ptr %"flags_elem'ipg"
 ; CHECK-NEXT:   store i32 %new_flag, ptr %flags_elem
 
 ; Verify the reverse block correctly propagates float derivatives
