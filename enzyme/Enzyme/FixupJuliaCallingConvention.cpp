@@ -1,7 +1,7 @@
 #include "CApi.h"
+#include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "Utils.h"
-#include "FunctionUtils.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -23,7 +23,9 @@
 
 using namespace llvm;
 
-extern bool DetectPointerArgOfFn(llvm::Function &F, llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
+extern bool
+DetectPointerArgOfFn(llvm::Function &F,
+                     llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
 
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr) {
@@ -427,7 +429,8 @@ static bool isOpaque(llvm::Type *T) {
 #endif
 }
 
-static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges, uint64_t start, uint64_t end) {
+static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges,
+                        uint64_t start, uint64_t end) {
   std::vector<std::pair<uint64_t, uint64_t>> nextRanges;
   for (auto &range : ranges) {
     if (end <= range.first || start >= range.second) {
@@ -484,12 +487,14 @@ static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
       }
 
       if (auto *I = dyn_cast<Instruction>(U)) {
-        if (I->getParent() != &F->getEntryBlock() && !PDT.dominates(I->getParent(), &F->getEntryBlock()))
+        if (I->getParent() != &F->getEntryBlock() &&
+            !PDT.dominates(I->getParent(), &F->getEntryBlock()))
           continue;
 
         if (auto *SI = dyn_cast<StoreInst>(I)) {
           if (SI->getPointerOperand() == val) {
-            auto storeSize = DL.getTypeAllocSize(SI->getValueOperand()->getType());
+            auto storeSize =
+                DL.getTypeAllocSize(SI->getValueOperand()->getType());
             removeRange(ranges, offset, offset + storeSize);
             if (ranges.empty())
               return true;
@@ -499,26 +504,26 @@ static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
 
         if (auto *MSI = dyn_cast<MemSetInst>(I)) {
           if (MSI->getDest() == val) {
-        if (auto *CI = dyn_cast<ConstantInt>(MSI->getLength())) {
+            if (auto *CI = dyn_cast<ConstantInt>(MSI->getLength())) {
               removeRange(ranges, offset, offset + CI->getZExtValue());
               if (ranges.empty())
                 return true;
               continue;
+            }
+          }
         }
-      }
-    }
 
         if (auto *MCI = dyn_cast<MemCpyInst>(I)) {
           if (MCI->getDest() == val) {
-        if (auto *CI = dyn_cast<ConstantInt>(MCI->getLength())) {
+            if (auto *CI = dyn_cast<ConstantInt>(MCI->getLength())) {
               removeRange(ranges, offset, offset + CI->getZExtValue());
               if (ranges.empty())
                 return true;
               continue;
+            }
+          }
         }
       }
-    }
-  }
     }
   }
 
@@ -843,8 +848,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   }
   // Compute the readonly/nocapture/etc properties for analysis use later.
   {
-  SmallPtrSet<Function *, 1> calls_todo;
-  (void)DetectPointerArgOfFn(*F, calls_todo);
+    SmallPtrSet<Function *, 1> calls_todo;
+    (void)DetectPointerArgOfFn(*F, calls_todo);
   }
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
@@ -1110,15 +1115,18 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                 should_sret = true;
             }
 
-            // Don't bother to copy back in if the original function doesn't store anything.
+            // Don't bother to copy back in if the original function doesn't
+            // store anything.
             bool copyBack = !isReadOnlyNoCapture(F, i);
             if (copyBack) {
               postCallReplacements.emplace_back(val, gep, Types[sretCount],
                                                 should_sret);
             }
-            // Only copy in the inital value if the function reads, or we are going to copy back
-            // and the function doesn't store all bytes.
-            if (!isWriteOnly(CI, i) || (copyBack && !isGuaranteedToFullyWrite(F, i, Types[sretCount]))) {
+            // Only copy in the inital value if the function reads, or we are
+            // going to copy back and the function doesn't store all bytes.
+            if (!isWriteOnly(CI, i) ||
+                (copyBack &&
+                 !isGuaranteedToFullyWrite(F, i, Types[sretCount]))) {
               preCallReplacements.emplace_back(val, gep, Types[sretCount]);
             }
           }
@@ -1152,7 +1160,6 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                           ss.str());
             }
           }
-
 
           auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
                                          "enzymejl_returnRoots");
