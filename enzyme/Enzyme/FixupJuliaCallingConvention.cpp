@@ -1,6 +1,7 @@
 #include "CApi.h"
 #include "GradientUtils.h"
 #include "Utils.h"
+#include "FunctionUtils.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -21,6 +22,8 @@
 #endif
 
 using namespace llvm;
+
+extern bool DetectPointerArgOfFn(llvm::Function &F, llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
 
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr) {
@@ -440,9 +443,9 @@ static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges, uint
   }
   ranges = std::move(nextRanges);
 }
-
-static bool isNotWrittenOrCaptured(Function *F, unsigned argNo) {
-  return isReadOnly(F, argNo) && isNoCapture(F, argNo);
+static bool isReadOnlyNoCapture(Function *F, unsigned argNo) {
+  return F->hasParamAttribute(argNo, Attribute::ReadOnly) &&
+         F->hasParamAttribute(argNo, Attribute::NoCapture);
 }
 
 static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
@@ -838,13 +841,11 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     DestI->setName(I.getName()); // Copy the name over...
     VMap[&I] = &*DestI++;        // Add mapping to VMap
   }
-
   // Compute the readonly/nocapture/etc properties for analysis use later.
   {
   SmallPtrSet<Function *, 1> calls_todo;
-  (void)DetectPointerArgOfFn(F, calls_todo);
+  (void)DetectPointerArgOfFn(*F, calls_todo);
   }
-
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
@@ -1074,25 +1075,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                           ss.str());
             }
           }
-          if (!isa<Instruction>(val)) {
-            std::string s;
-            llvm::raw_string_ostream ss(s);
-            ss << "Unsupported non-instruction argument in "
-                  "FixupJuliaCallingConvention\n";
-            ss << " + val: " << *val << "\n";
-            ss << " + Function being rewritten: " << F->getName() << "\n";
-            ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: "
-               << CI->getParent()->getParent()->getName() << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
-            } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
-                          ss.str());
-            }
-          }
-          assert(isa<Instruction>(val));
+
           Value *gep = sret;
           if (ST) {
             IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
@@ -1169,25 +1152,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                           ss.str());
             }
           }
-          if (!isa<Instruction>(val)) {
-            std::string s;
-            llvm::raw_string_ostream ss(s);
-            ss << "Unsupported non-instruction argument in "
-                  "FixupJuliaCallingConvention\n";
-            ss << " + val: " << *val << "\n";
-            ss << " + Function being rewritten: " << F->getName() << "\n";
-            ss << " + CI erring: " << *CI << "\n";
-            ss << " + Function containing CI: "
-               << CI->getParent()->getParent()->getName() << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
-                                 nullptr, nullptr, nullptr);
-            } else {
-              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
-                          ss.str());
-            }
-          }
-          assert(isa<Instruction>(val));
+
 
           auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
                                          "enzymejl_returnRoots");
@@ -1263,26 +1228,6 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     // TODO we can optimize this further and avoid the copy in the primal and/or
     // forward mode as the copy is _only_ needed for the adjoint.
     for (auto &&[val, gep, ty] : preCallReplacements) {
-      auto &M = *B.GetInsertBlock()->getModule();
-      auto &C = M.getContext();
-      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
-      auto printfFunc = M.getOrInsertFunction("printf", printfTy);
-      auto size = M.getDataLayout().getTypeAllocSize(ty);
-
-      auto numWords = (size + 7) / 8;
-      for (size_t w = 0; w < numWords; ++w) {
-        auto gepWordPtr = B.CreatePointerCast(gep, PointerType::getUnqual(Type::getInt64Ty(C)));
-        auto gepWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), gepWordPtr, w);
-        auto gepVal = B.CreateLoad(Type::getInt64Ty(C), gepWordGep);
-
-        auto valWordPtr = B.CreatePointerCast(val, PointerType::getUnqual(Type::getInt64Ty(C)));
-        auto valWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), valWordPtr, w);
-        auto valVal = B.CreateLoad(Type::getInt64Ty(C), valWordGep);
-
-        auto fmt1 = B.CreateGlobalStringPtr("FixupJuliaCallConv: preCallReplacements word %lu of %lu bytes: old=%016lx, new=%016lx\n");
-        B.CreateCall(printfFunc, {fmt1, B.getInt64(w), B.getInt64(size), valVal, gepVal});
-      }
-
       copyNonJLValueInto(B, ty, ty, gep, {}, ty, val, {}, /*shouldZero*/ true);
     }
 
@@ -1332,26 +1277,6 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     }
 
     for (auto &&[val, gep, ty, jlvalue] : postCallReplacements) {
-      auto &M = *B.GetInsertBlock()->getModule();
-      auto &C = M.getContext();
-      auto printfTy = FunctionType::get(Type::getInt32Ty(C), {PointerType::getUnqual(Type::getInt8Ty(C))}, true);
-      auto printfFunc = M.getOrInsertFunction("printf", printfTy);
-      auto size = M.getDataLayout().getTypeAllocSize(ty);
-
-      auto numWords = (size + 7) / 8;
-      for (size_t w = 0; w < numWords; ++w) {
-        auto gepWordPtr = B.CreatePointerCast(gep, PointerType::getUnqual(Type::getInt64Ty(C)));
-        auto gepWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), gepWordPtr, w);
-        auto gepVal = B.CreateLoad(Type::getInt64Ty(C), gepWordGep);
-
-        auto valWordPtr = B.CreatePointerCast(val, PointerType::getUnqual(Type::getInt64Ty(C)));
-        auto valWordGep = B.CreateConstInBoundsGEP1_32(Type::getInt64Ty(C), valWordPtr, w);
-        auto valVal = B.CreateLoad(Type::getInt64Ty(C), valWordGep);
-
-        auto fmt2 = B.CreateGlobalStringPtr("FixupJuliaCallConv: postCallReplacements word %lu of %lu bytes: new=%016lx, old=%016lx\n");
-        B.CreateCall(printfFunc, {fmt2, B.getInt64(w), B.getInt64(size), gepVal, valVal});
-      }
-
       if (jlvalue) {
         auto ld = B.CreateLoad(ty, gep);
         auto SI = B.CreateStore(ld, val);
