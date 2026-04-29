@@ -402,13 +402,6 @@ enum class ProbProgMode {
   Condition = 2,
 };
 
-enum class MProbProgMode {
-  Call = 0,
-  Simulate = 1,
-  Generate = 2,
-  Regenerate = 3,
-};
-
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis
@@ -2436,7 +2429,48 @@ static inline std::string convertSRetTypeToString(llvm::Type *T) {
   return std::to_string((size_t)T);
 }
 
-static inline llvm::Type *convertSRetTypeFromString(llvm::StringRef str) {
+static inline llvm::Type *
+convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
+  if (str == "test_type") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 1> elts;
+#if LLVM_VERSION_MAJOR >= 17
+    elts.push_back(llvm::PointerType::get(*C, AddressSpace::Tracked));
+#else
+    elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}),
+                                          AddressSpace::Tracked));
+#endif
+    llvm::Type *inner = llvm::StructType::get(*C, elts);
+    llvm::SmallVector<llvm::Type *, 1> innerElts;
+    innerElts.push_back(inner);
+    return llvm::StructType::get(*C, innerElts);
+  }
+  if (str == "test_type2") {
+    assert(C);
+    return llvm::ArrayType::get(llvm::Type::getInt64Ty(*C), 6);
+  }
+  if (str == "test_type3") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 1> elts;
+    elts.push_back(llvm::Type::getDoubleTy(*C));
+    return llvm::StructType::get(*C, elts);
+  }
+  if (str == "test_type4") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 3> elts;
+    elts.push_back(llvm::ArrayType::get(llvm::Type::getDoubleTy(*C), 2));
+    elts.push_back(llvm::Type::getDoubleTy(*C));
+    elts.push_back(llvm::Type::getInt64Ty(*C));
+    return llvm::StructType::get(*C, elts);
+  }
+  if (str == "test_type5") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 3> elts;
+    elts.push_back(llvm::ArrayType::get(llvm::Type::getDoubleTy(*C), 1));
+    elts.push_back(llvm::Type::getDoubleTy(*C));
+    elts.push_back(llvm::Type::getInt64Ty(*C));
+    return llvm::StructType::get(*C, elts);
+  }
   size_t idx;
   bool failed = str.consumeInteger(10, idx);
   (void)failed;

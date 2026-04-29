@@ -244,6 +244,72 @@ struct PointerClonableTypeInterface
   }
 };
 
+class StructTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<StructTypeInterface,
+                                                  LLVM::LLVMStructType> {
+public:
+  mlir::Attribute createNullAttr(mlir::Type self) const {
+    llvm::errs() << " unsupported: createNullAttribute of LLVMStructType\n";
+    return nullptr;
+  }
+
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
+    auto structTy = cast<LLVM::LLVMStructType>(self);
+    Value result = LLVM::PoisonOp::create(builder, loc, structTy);
+    for (auto &&[i, elemTy] : llvm::enumerate(structTy.getBody())) {
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!elemIface) {
+        Value zero = LLVM::ZeroOp::create(builder, loc, elemTy);
+        result = LLVM::InsertValueOp::create(builder, loc, result, zero, i);
+        continue;
+      }
+      Value nullElem = elemIface.createNullValue(builder, loc);
+      result = LLVM::InsertValueOp::create(builder, loc, result, nullElem, i);
+    }
+    return result;
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    auto structTy = cast<LLVM::LLVMStructType>(self);
+    Value result = LLVM::PoisonOp::create(builder, loc, structTy);
+    for (auto &&[i, elemTy] : llvm::enumerate(structTy.getBody())) {
+      Value aElem = LLVM::ExtractValueOp::create(builder, loc, a, i);
+      Value bElem = LLVM::ExtractValueOp::create(builder, loc, b, i);
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      Value sum;
+      if (elemIface) {
+        sum = elemIface.createAddOp(builder, loc, aElem, bElem);
+      } else {
+        sum = aElem;
+      }
+      result = LLVM::InsertValueOp::create(builder, loc, result, sum, i);
+    }
+    return result;
+  }
+
+  Value createConjOp(Type self, OpBuilder &builder, Location loc,
+                     Value a) const {
+    llvm_unreachable("TODO");
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+
+  bool isMutable(Type self) const { return false; }
+
+  LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
+                            Value val) const {
+    return failure();
+  }
+
+  bool isZero(Type self, Value val) const { return false; }
+  bool isZeroAttr(Type self, Attribute attr) const { return false; }
+};
+
 static Value packIntoStruct(ValueRange values, OpBuilder &builder,
                             Location loc) {
   SmallVector<Type> resultTypes =
@@ -303,6 +369,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
     LLVM::LLVMPointerType::attachInterface<PointerClonableTypeInterface>(
         *context);
+    LLVM::LLVMStructType::attachInterface<StructTypeInterface>(*context);
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);

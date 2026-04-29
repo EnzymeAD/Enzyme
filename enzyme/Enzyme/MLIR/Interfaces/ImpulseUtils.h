@@ -1,4 +1,4 @@
-//===- ProbProgUtils.h - Utilities for probprog interfaces -------* C++
+//===- ImpulseUtils.h - Utilities for Impulse dialect passes -----* C++
 //-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_MLIR_INTERFACES_PROBPROG_UTILS_H
-#define ENZYME_MLIR_INTERFACES_PROBPROG_UTILS_H
+#ifndef ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
+#define ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -19,35 +19,42 @@
 #include <functional>
 
 namespace mlir {
-namespace enzyme {
+namespace impulse {
 
-class MProbProgUtils {
+enum class ImpulseMode {
+  Call = 0,
+  Simulate = 1,
+  Generate = 2,
+  Regenerate = 3,
+};
+
+class ImpulseUtils {
 public:
   FunctionOpInterface newFunc;
 
-  MProbProgMode mode;
+  ImpulseMode mode;
   FunctionOpInterface oldFunc;
   IRMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   Block *initializationBlock;
 
-  MProbProgUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
-                 IRMapping &originalToNewFn_,
-                 std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 MProbProgMode mode_)
+  ImpulseUtils(FunctionOpInterface newFunc_, FunctionOpInterface oldFunc_,
+               IRMapping &originalToNewFn_,
+               std::map<Operation *, Operation *> &originalToNewFnOps_,
+               ImpulseMode mode_)
       : newFunc(newFunc_), mode(mode_), oldFunc(oldFunc_),
         originalToNewFn(originalToNewFn_),
         originalToNewFnOps(originalToNewFnOps_),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
-  static MProbProgUtils *CreateFromClone(FunctionOpInterface toeval,
-                                         MProbProgMode mode,
-                                         int64_t positionSize = -1,
-                                         int64_t constraintSize = -1);
+  static ImpulseUtils *CreateFromClone(FunctionOpInterface toeval,
+                                       ImpulseMode mode,
+                                       int64_t positionSize = -1,
+                                       int64_t constraintSize = -1);
 };
 
-} // namespace enzyme
+} // namespace impulse
 } // namespace mlir
 
-#endif // ENZYME_MLIR_INTERFACES_PROBPROG_UTILS_H
+#endif // ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H

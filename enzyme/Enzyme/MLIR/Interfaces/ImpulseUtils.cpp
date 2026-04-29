@@ -1,5 +1,4 @@
-//===- ProbProgUtils.cpp - Utilities for probprog interfaces
-//--------------===//
+//===- ImpulseUtils.cpp - Utilities for Impulse dialect passes ----------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Interfaces/ProbProgUtils.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "Dialect/Ops.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
@@ -24,15 +23,15 @@
 #include "llvm/ADT/BreadthFirstIterator.h"
 
 using namespace mlir;
-using namespace mlir::enzyme;
+using namespace mlir::impulse;
 
-MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
-                                                MProbProgMode mode,
-                                                int64_t positionSize,
-                                                int64_t constraintSize) {
+ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
+                                            ImpulseMode mode,
+                                            int64_t positionSize,
+                                            int64_t constraintSize) {
   if (toeval.getFunctionBody().empty()) {
     llvm::errs() << toeval << "\n";
-    llvm_unreachable("Creating MProbProgUtils from empty function");
+    llvm_unreachable("Creating ImpulseUtils from empty function");
   }
 
   OpBuilder builder(toeval.getContext());
@@ -46,15 +45,15 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   SmallVector<mlir::Type, 4> ResultTypes;
 
   switch (mode) {
-  case MProbProgMode::Call:
+  case ImpulseMode::Call:
     suffix = "call";
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
-  case MProbProgMode::Generate:
+  case ImpulseMode::Generate:
     suffix = "generate";
     if (positionSize <= 0 || constraintSize < 0) {
-      toeval.emitError("ProbProg: Unexpected size parameters");
+      toeval.emitError("Impulse: Unexpected size parameters");
       return nullptr;
     }
     OperandTypes.push_back(
@@ -65,10 +64,10 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
-  case MProbProgMode::Regenerate:
+  case ImpulseMode::Regenerate:
     suffix = "regenerate";
     if (positionSize < 0) {
-      toeval.emitError("ProbProg: Unexpected size parameters");
+      toeval.emitError("Impulse: Unexpected size parameters");
       return nullptr;
     }
     OperandTypes.push_back(
@@ -79,10 +78,10 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.push_back(RankedTensorType::get({}, builder.getF64Type()));
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
-  case MProbProgMode::Simulate:
+  case ImpulseMode::Simulate:
     suffix = "simulate";
     if (positionSize < 0) {
-      toeval.emitError("ProbProg: Unexpected size parameters");
+      toeval.emitError("Impulse: Unexpected size parameters");
       return nullptr;
     }
     OperandTypes.append(originalInputs.begin(), originalInputs.end());
@@ -92,7 +91,7 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
     ResultTypes.append(originalResults.begin(), originalResults.end());
     break;
   default:
-    llvm_unreachable("Invalid MProbProgMode\n");
+    llvm_unreachable("Invalid ImpulseMode\n");
   }
 
   auto FTy = builder.getFunctionType(OperandTypes, ResultTypes);
@@ -109,20 +108,19 @@ MProbProgUtils *MProbProgUtils::CreateFromClone(FunctionOpInterface toeval,
   cloneInto(&toeval.getFunctionBody(), &NewF.getFunctionBody(), originalToNew,
             originalToNewOps);
 
-  if (mode == MProbProgMode::Generate) {
+  if (mode == ImpulseMode::Generate) {
     Block &entry = NewF.getFunctionBody().front();
     entry.insertArgument(
         0u, RankedTensorType::get({1, constraintSize}, builder.getF64Type()),
         toeval.getLoc());
   }
 
-  if (mode == MProbProgMode::Regenerate) {
+  if (mode == ImpulseMode::Regenerate) {
     Block &entry = NewF.getFunctionBody().front();
     entry.insertArgument(
         0u, RankedTensorType::get({1, positionSize}, builder.getF64Type()),
         toeval.getLoc());
   }
 
-  return new MProbProgUtils(NewF, toeval, originalToNew, originalToNewOps,
-                            mode);
+  return new ImpulseUtils(NewF, toeval, originalToNew, originalToNewOps, mode);
 }

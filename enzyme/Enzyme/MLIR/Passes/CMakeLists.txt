@@ -6,7 +6,7 @@ add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 add_mlir_dialect_library(MLIREnzymeTransforms
     LowerAffineAtomicRmwPass.cpp
     EnzymeMLIRPass.cpp
-    ProbProgMLIRPass.cpp
+    ExpandImpulsePass.cpp
     EnzymeBatchPass.cpp
     EnzymeBatchDiffPass.cpp
     EnzymeBatchToTensorPass.cpp
@@ -32,6 +32,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   DEPENDS
   MLIREnzymePassIncGen
   MLIREnzymeEnumsIncGen
+  MLIRImpulseOpsIncGen
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
@@ -55,4 +56,5 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   MLIRTransformUtils
 
   MLIREnzymeAutoDiffInterface
+  MLIRImpulse
 )

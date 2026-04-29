@@ -1,4 +1,5 @@
 #include "CApi.h"
+#include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "Utils.h"
 #include "llvm/ADT/SmallSet.h"
@@ -22,6 +23,10 @@
 
 using namespace llvm;
 
+extern bool
+DetectPointerArgOfFn(llvm::Function &F,
+                     llvm::SmallPtrSetImpl<llvm::Function *> &calls_todo);
+
 bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
                     llvm::Type *SRetType = nullptr) {
   auto Attrs = arg->getParent()->getAttributes();
@@ -31,7 +36,8 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
         Attrs
             .getAttribute(AttributeList::FirstArgIndex + arg->getArgNo(),
                           "enzyme_sret")
-            .getValueAsString());
+            .getValueAsString(),
+        &arg->getContext());
 
   CountTrackedPointers tracked(SRetType);
   if (tracked.count == 0) {
@@ -424,6 +430,107 @@ static bool isOpaque(llvm::Type *T) {
 #endif
 }
 
+static void removeRange(std::vector<std::pair<uint64_t, uint64_t>> &ranges,
+                        uint64_t start, uint64_t end) {
+  std::vector<std::pair<uint64_t, uint64_t>> nextRanges;
+  for (auto &range : ranges) {
+    if (end <= range.first || start >= range.second) {
+      nextRanges.push_back(range);
+    } else {
+      if (start > range.first) {
+        nextRanges.push_back({range.first, start});
+      }
+      if (end < range.second) {
+        nextRanges.push_back({end, range.second});
+      }
+    }
+  }
+  ranges = std::move(nextRanges);
+}
+static bool isReadOnlyNoCapture(Function *F, unsigned argNo) {
+  return F->hasParamAttribute(argNo, Attribute::ReadOnly) &&
+         F->getArg(argNo)->hasNoCaptureAttr();
+}
+
+static bool isGuaranteedToFullyWrite(Function *F, unsigned argNo, Type *T) {
+  if (F->isDeclaration())
+    return false;
+
+  auto &DL = F->getParent()->getDataLayout();
+  auto size = DL.getTypeAllocSize(T);
+
+  std::vector<std::pair<uint64_t, uint64_t>> ranges = {{0, size}};
+  std::vector<std::pair<Value *, uint64_t>> worklist = {{F->getArg(argNo), 0}};
+  std::set<Value *> seen = {F->getArg(argNo)};
+
+  PostDominatorTree PDT(*F);
+
+  while (!worklist.empty()) {
+    auto item = worklist.back();
+    worklist.pop_back();
+    Value *val = item.first;
+    uint64_t offset = item.second;
+
+    for (auto *U : val->users()) {
+      if (auto *BI = dyn_cast<CastInst>(U)) {
+        if (seen.insert(BI).second)
+          worklist.push_back({BI, offset});
+        continue;
+      }
+
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(U)) {
+        APInt gepOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (GEP->accumulateConstantOffset(DL, gepOffset)) {
+          if (seen.insert(GEP).second)
+            worklist.push_back({GEP, offset + gepOffset.getZExtValue()});
+          continue;
+        }
+      }
+
+      if (auto *I = dyn_cast<Instruction>(U)) {
+        if (I->getParent() != &F->getEntryBlock() &&
+            !PDT.dominates(I->getParent(), &F->getEntryBlock()))
+          continue;
+
+        if (auto *SI = dyn_cast<StoreInst>(I)) {
+          if (SI->getPointerOperand() == val) {
+            auto storeSize =
+                DL.getTypeAllocSize(SI->getValueOperand()->getType());
+            removeRange(ranges, offset, offset + storeSize);
+            if (ranges.empty())
+              return true;
+            continue;
+          }
+        }
+
+        if (auto *MSI = dyn_cast<MemSetInst>(I)) {
+          if (MSI->getDest() == val) {
+            if (auto *CI = dyn_cast<ConstantInt>(MSI->getLength())) {
+              removeRange(ranges, offset, offset + CI->getZExtValue());
+              if (ranges.empty())
+                return true;
+              continue;
+            }
+          }
+        }
+
+        if (auto *MCI = dyn_cast<MemCpyInst>(I)) {
+          if (MCI->getDest() == val) {
+            if (auto *CI = dyn_cast<ConstantInt>(MCI->getLength())) {
+              removeRange(ranges, offset, offset + CI->getZExtValue());
+              if (ranges.empty())
+                return true;
+              continue;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return ranges.empty();
+}
+
 // TODO, for sret/sret_v check if it actually stores the jlvalue_t's into the
 // sret If so, confirm that those values are saved elsewhere in a returnroot
 void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
@@ -468,7 +575,8 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
         // Case 3: No jlvalue_t's were stored into the sret.
         llvm::Type *SRetType = convertSRetTypeFromString(
             Attrs.getAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret")
-                .getValueAsString());
+                .getValueAsString(),
+            &F->getContext());
         if (auto count = CountTrackedPointers(SRetType).count) {
           srets_without_stores[i] = count;
           noroot_enzyme_srets.insert(i);
@@ -581,11 +689,19 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
   for (auto idx : enzyme_srets) {
     llvm::Type *SRetType = convertSRetTypeFromString(
         Attrs.getAttribute(AttributeList::FirstArgIndex + idx, "enzyme_sret")
-            .getValueAsString());
+            .getValueAsString(),
+        &F->getContext());
 #if LLVM_VERSION_MAJOR < 17
     if (F->getContext().supportsTypedPointers()) {
       auto T = FT->getParamType(idx)->getPointerElementType();
-      assert(T == SRetType);
+      if (T != SRetType) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Type mismatch in FixupJuliaCallingConvention:\n";
+        ss << " + T: " << *T << "\n";
+        ss << " + SRetType: " << *SRetType << "\n";
+        EmitFailure("TypeMismatch", F->getSubprogram(), F, ss.str());
+      }
     }
 #endif
     Types.push_back(SRetType);
@@ -733,7 +849,11 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
     DestI->setName(I.getName()); // Copy the name over...
     VMap[&I] = &*DestI++;        // Add mapping to VMap
   }
-
+  // Compute the readonly/nocapture/etc properties for analysis use later.
+  {
+    SmallPtrSet<Function *, 1> calls_todo;
+    (void)DetectPointerArgOfFn(*F, calls_todo);
+  }
   SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
   CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                     Returns, "", nullptr);
@@ -942,13 +1062,32 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
       for (size_t i = 0, end = CI->arg_size(); i < end; i++) {
 
         if (enzyme_srets.count(i)) {
-
           auto val = CI->getArgOperand(i);
 
-          IRBuilder<> AIB(cast<Instruction>(val));
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) ||
+              isa<ConstantPointerNull>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported constant argument in "
+                  "FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
+            }
+          }
+
           Value *gep = sret;
           if (ST) {
-            gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+            IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
+            gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
           }
 
           bool handled = false;
@@ -979,10 +1118,20 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                 should_sret = true;
             }
 
-            postCallReplacements.emplace_back(val, gep, Types[sretCount],
-                                              should_sret);
-            if (!isWriteOnly(CI, i))
+            // Don't bother to copy back in if the original function doesn't
+            // store anything.
+            bool copyBack = !isReadOnlyNoCapture(F, i);
+            if (copyBack) {
+              postCallReplacements.emplace_back(val, gep, Types[sretCount],
+                                                should_sret);
+            }
+            // Only copy in the inital value if the function reads, or we are
+            // going to copy back and the function doesn't store all bytes.
+            if (!isWriteOnly(CI, i) ||
+                (copyBack &&
+                 !isGuaranteedToFullyWrite(F, i, Types[sretCount]))) {
               preCallReplacements.emplace_back(val, gep, Types[sretCount]);
+            }
           }
 
           if (roots_AT && reroot_enzyme_srets.count(i)) {
@@ -995,7 +1144,25 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 
         if (rroots.count(i)) {
           auto val = CI->getArgOperand(i);
-          IRBuilder<> AIB(cast<Instruction>(val));
+          if (isa<UndefValue>(val) || isa<PoisonValue>(val) ||
+              isa<ConstantPointerNull>(val)) {
+            std::string s;
+            llvm::raw_string_ostream ss(s);
+            ss << "Unsupported constant argument in "
+                  "FixupJuliaCallingConvention\n";
+            ss << " + val: " << *val << "\n";
+            ss << " + Function being rewritten: " << F->getName() << "\n";
+            ss << " + CI erring: " << *CI << "\n";
+            ss << " + Function containing CI: "
+               << CI->getParent()->getParent()->getName() << "\n";
+            if (CustomErrorHandler) {
+              CustomErrorHandler(s.c_str(), wrap(CI), ErrorType::InternalError,
+                                 nullptr, nullptr, nullptr);
+            } else {
+              EmitFailure("UnsupportedArgument", CI->getDebugLoc(), CI,
+                          ss.str());
+            }
+          }
 
           auto attr = Attrs.getAttribute(AttributeList::FirstArgIndex + i,
                                          "enzymejl_returnRoots");
@@ -1007,14 +1174,15 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
 
           if (roots_AT) {
             assert(roots);
+            IRBuilder<> GEPB(cast<Instruction>(roots)->getNextNode());
             gep = roots;
             if (local_root_count != 0) {
-              gep = AIB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
-                                                   local_root_count);
+              gep = GEPB.CreateConstInBoundsGEP2_32(roots_AT, roots, 0,
+                                                    local_root_count);
             }
 
             if (subCount != numRooting) {
-              gep = AIB.CreatePointerCast(
+              gep = GEPB.CreatePointerCast(
                   gep, getUnqual(ArrayType::get(T_prjlvalue, subCount)));
             }
             local_root_count += subCount;
@@ -1023,9 +1191,10 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           } else {
             assert(reret_roots.count(i));
             assert(sret);
+            IRBuilder<> GEPB(cast<Instruction>(sret)->getNextNode());
             gep = sret;
             if (ST) {
-              gep = AIB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
+              gep = GEPB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount);
             }
             sretCount++;
           }

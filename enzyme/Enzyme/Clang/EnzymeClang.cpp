@@ -505,6 +505,49 @@ struct EnzymeInactiveAttrInfo : public ParsedAttrInfo {
 static ParsedAttrInfoRegistry::Add<EnzymeInactiveAttrInfo> X4("enzyme_inactive",
                                                               "");
 
+struct EnzymeElementwiseReadAttrInfo : public ParsedAttrInfo {
+  EnzymeElementwiseReadAttrInfo() {
+    OptArgs = 1;
+    static constexpr Spelling S[] = {
+      {ParsedAttr::AS_GNU, "enzyme_elementwise_read"},
+#if LLVM_VERSION_MAJOR > 17
+      {ParsedAttr::AS_C23, "enzyme_elementwise_read"},
+#else
+      {ParsedAttr::AS_C2x, "enzyme_elementwise_read"},
+#endif
+      {ParsedAttr::AS_CXX11, "enzyme_elementwise_read"},
+      {ParsedAttr::AS_CXX11, "enzyme::elementwise_read"}
+    };
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    if (isa<FunctionDecl>(D))
+      return true;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+        << Attr << "functions";
+    return false;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    if (Attr.getNumArgs() != 0) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_elementwise_read' attribute requires zero arguments");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme_elementwise_read",
+                                    nullptr, 0, Attr.getRange()));
+    return AttributeApplied;
+  }
+};
+
+static ParsedAttrInfoRegistry::Add<EnzymeElementwiseReadAttrInfo>
+    XElemRead("enzyme_elementwise_read", "");
+
 struct EnzymeNoFreeAttrInfo : public ParsedAttrInfo {
   EnzymeNoFreeAttrInfo() {
     OptArgs = 1;
