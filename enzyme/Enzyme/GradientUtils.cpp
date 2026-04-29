@@ -6334,9 +6334,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       auto rule = [&](Value *val0, Value *val1) {
         Value *args[] = {val0, val1};
-        auto shadow = cast<CallInst>(
-            bb.CreateCall(II->getCalledFunction(), args,
-                          II->getName() + "'ipbi"));
+        auto shadow = cast<CallInst>(bb.CreateCall(
+            II->getCalledFunction(), args, II->getName() + "'ipbi"));
         shadow->setAttributes(II->getAttributes());
         shadow->setCallingConv(II->getCallingConv());
         shadow->setTailCallKind(II->getTailCallKind());
