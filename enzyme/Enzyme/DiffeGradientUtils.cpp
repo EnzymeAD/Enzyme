@@ -361,6 +361,8 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
           right_idx = numElts;
 
         auto maskVec = [&](Value *dsub) -> Value * {
+          if (left_idx == 0 && right_idx == numElts)
+            return dsub;
           Value *masked = Constant::getNullValue(VT);
           for (unsigned i = left_idx; i < right_idx; i++) {
             Value *vidx =
