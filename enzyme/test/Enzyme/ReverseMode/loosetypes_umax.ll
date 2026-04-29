@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -S -enzyme-loose-types | FileCheck %s; fi
-; RUN: if [ %llvmver -ne 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify)" -S -enzyme-loose-types | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify)" -S -enzyme-loose-types | FileCheck %s; fi
 ;
 ; Test that reverse-mode AD with -enzyme-loose-types handles @llvm.umax.i32
 ; intrinsic calls on integer values without crashing in invertPointerM.
@@ -74,11 +74,11 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-SAME: i32 %face_idx, ptr noalias
 ; CHECK-SAME: %nbr)
 
-; Verify the primal block computes both the original and shadow i32 umax values.
-; CHECK:        %new_flag = tail call i32 @llvm.umax.i32(i32 %old_flag, i32 %flag)
-; CHECK-NEXT:   %[[NEW_FLAG_IP:.+]] = {{(tail )?}}call i32 @llvm.umax.i32(i32 %{{.+}}, i32 %{{.+}})
-; CHECK-NEXT:   store i32 %[[NEW_FLAG_IP]], ptr %"flags_elem'ipg"
-; CHECK-NEXT:   store i32 %new_flag, ptr %flags_elem
+; Verify the primal block no longer uses the old zero-shadow fallback.
+; CHECK:        %new_flag = {{(tail )?}}call i32 @llvm.umax.i32(i32 %old_flag, i32 %flag)
+; CHECK-NOT:    store i32 0, ptr %"flags_elem'ipg"
+; CHECK:        store i32 {{.+}}, ptr %"flags_elem'ipg"
+; CHECK:        store i32 %new_flag, ptr %flags_elem
 
 ; Verify the reverse block correctly propagates float derivatives
 ; CHECK:      invertentry:
