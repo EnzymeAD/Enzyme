@@ -2458,6 +2458,22 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
     elts.push_back(llvm::Type::getDoubleTy(*C));
     return llvm::StructType::get(*C, elts);
   }
+  if (str == "test_type4") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 3> elts;
+    elts.push_back(llvm::ArrayType::get(llvm::Type::getDoubleTy(*C), 2));
+    elts.push_back(llvm::Type::getDoubleTy(*C));
+    elts.push_back(llvm::Type::getInt64Ty(*C));
+    return llvm::StructType::get(*C, elts);
+  }
+  if (str == "test_type5") {
+    assert(C);
+    llvm::SmallVector<llvm::Type *, 3> elts;
+    elts.push_back(llvm::ArrayType::get(llvm::Type::getDoubleTy(*C), 1));
+    elts.push_back(llvm::Type::getDoubleTy(*C));
+    elts.push_back(llvm::Type::getInt64Ty(*C));
+    return llvm::StructType::get(*C, elts);
+  }
   size_t idx;
   bool failed = str.consumeInteger(10, idx);
   (void)failed;
