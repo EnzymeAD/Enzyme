@@ -109,20 +109,20 @@ top:
   call fastcc void @augmented_julia_rec_3276({ [1 x double], double, i64 }* nocapture nofree writeonly align 8 "enzyme_sret"="test_type5" %5, { [1 x double], double, i64 }* nocapture nofree align 8 "enzyme_sret"="test_type5" %"'ipc", double %1)
   %memcpy_refined_src4 = getelementptr inbounds { [1 x double], double, i64 }, { [1 x double], double, i64 }* %5, i64 0, i32 2
   %memcpy_refined_src = getelementptr inbounds { [1 x double], double, i64 }, { [1 x double], double, i64 }* %5, i64 0, i32 0, i64 0
-  %9 = load double, double* %memcpy_refined_src, align 8
-  %10 = load i64, i64* %memcpy_refined_src4, align 8
+  %6 = load double, double* %memcpy_refined_src, align 8
+  %7 = load i64, i64* %memcpy_refined_src4, align 8
   %newstruct3.sroa.0.0..sroa_idx = getelementptr inbounds { [2 x double], double, i64 }, { [2 x double], double, i64 }* %0, i64 0, i32 0, i64 0
   store double %1, double* %newstruct3.sroa.0.0..sroa_idx, align 8
   %newstruct3.sroa.2.0..sroa_idx6 = getelementptr inbounds { [2 x double], double, i64 }, { [2 x double], double, i64 }* %0, i64 0, i32 0, i64 1
-  store double %9, double* %newstruct3.sroa.2.0..sroa_idx6, align 8
+  store double %6, double* %newstruct3.sroa.2.0..sroa_idx6, align 8
   %newstruct3.sroa.3.0..sroa_idx7 = getelementptr inbounds { [2 x double], double, i64 }, { [2 x double], double, i64 }* %0, i64 0, i32 1
   store double %1, double* %newstruct3.sroa.3.0..sroa_idx7, align 8
   %"newstruct3.sroa.4.0..sroa_idx8'ipg" = getelementptr inbounds { [2 x double], double, i64 }, { [2 x double], double, i64 }* %"'", i64 0, i32 2
   %newstruct3.sroa.4.0..sroa_idx8 = getelementptr inbounds { [2 x double], double, i64 }, { [2 x double], double, i64 }* %0, i64 0, i32 2
-  store i64 %10, i64* %"newstruct3.sroa.4.0..sroa_idx8'ipg", align 8
-  store i64 %10, i64* %newstruct3.sroa.4.0..sroa_idx8, align 8
-  %11 = load i8*, i8** %2, align 8
-  ret i8* %11
+  store i64 %7, i64* %"newstruct3.sroa.4.0..sroa_idx8'ipg", align 8
+  store i64 %7, i64* %newstruct3.sroa.4.0..sroa_idx8, align 8
+  %8 = load i8*, i8** %2, align 8
+  ret i8* %8
 }
 
 declare i8* @malloc(i64)
