@@ -2441,8 +2441,12 @@ convertSRetTypeFromString(llvm::StringRef str, llvm::LLVMContext *C = nullptr) {
   if (str == "test_type") {
     assert(C);
     llvm::SmallVector<llvm::Type *, 1> elts;
+#if LLVM_VERSION_MAJOR >= 17
+    elts.push_back(llvm::PointerType::get(*C, AddressSpace::Tracked));
+#else
     elts.push_back(llvm::PointerType::get(llvm::StructType::get(*C, {}),
                                           AddressSpace::Tracked));
+#endif
     llvm::Type *inner = llvm::StructType::get(*C, elts);
     llvm::SmallVector<llvm::Type *, 1> innerElts;
     innerElts.push_back(inner);
