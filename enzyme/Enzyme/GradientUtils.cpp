@@ -1758,7 +1758,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (seen.count(B))
             return;
           seen.insert(B);
-          if (B->getTerminator())
+          if (hasTerminator(B))
             for (auto S : successors(B))
               if (!seen.count(S))
                 dfs(S);
