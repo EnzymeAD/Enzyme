@@ -45,3 +45,17 @@ def : MLIRDerivative<"complex", "CreateOp", (Op $re, $im),
                     ]
                   >;
 
+def : MLIRDerivative<"complex", "SqrtOp", (Op $x),
+                    [
+                      (ComplexRsqrt (DiffeRet))
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "RsqrtOp", (Op $x),
+                    [
+                      (ComplexPow
+                        (DiffeRet),
+                        (ConstantFP<"-1.5", "complex", "ConstantOp">)
+                      )
+                    ]
+                  >;
