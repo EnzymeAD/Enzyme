@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::math::MathDialect>();
   registry.insert<mlir::linalg::LinalgDialect>();
   registry.insert<mlir::tensor::TensorDialect>();
+  registry.insert<mlir::ub::UBDialect>();
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();

@@ -102,8 +102,18 @@ public:
     if (!map.contains(canIdx)) {
       assert(Equivalent(forOp.getLowerBound(), otherForOp.getLowerBound()));
       assert(Equivalent(forOp.getStep(), otherForOp.getStep()));
-      map.map(forOp.getBody()->getArgument(0),
-              otherForOp.getBody()->getArgument(0));
+
+      Location loc = forOp.getLoc();
+      // The reverse IV can be computed as (lb + ub - 1 - iv)
+      Value revIV =
+          arith::AddIOp::create(rewriter, loc, otherForOp.getLowerBound(),
+                                otherForOp.getUpperBound());
+      Value c1 = arith::ConstantOp::create(
+          rewriter, loc, IntegerAttr::get(revIV.getType(), 1));
+      revIV = arith::SubIOp::create(rewriter, loc, revIV, c1);
+      revIV = arith::SubIOp::create(rewriter, loc, revIV,
+                                    otherForOp.getBody()->getArgument(0));
+      map.map(forOp.getBody()->getArgument(0), revIV);
     }
     return map;
   }
@@ -167,11 +177,13 @@ public:
     // variable).
 
     auto forOp = cast<scf::ForOp>(op);
+    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
 
     SmallVector<bool> operandsActive(forOp.getNumOperands() - 3, false);
     for (int i = 0, e = operandsActive.size(); i < e; ++i) {
       operandsActive[i] = !gutils->isConstantValue(op->getOperand(i + 3)) ||
-                          !gutils->isConstantValue(op->getResult(i));
+                          !gutils->isConstantValue(op->getResult(i)) ||
+                          !gutils->isConstantValue(yieldOp.getOperand(i));
     }
 
     SmallVector<Value> incomingGradients;
@@ -412,14 +424,23 @@ public:
 
         auto term = oBB.getTerminator();
 
+        for (auto &&[active, operand] :
+             llvm::zip_equal(operandsActive, term->getOperands())) {
+          if (active) {
+            // Zero the diffe at the start of each iteration because it should
+            // not accumulate across iterations. The new gradient is passed as
+            // an iter_arg in the reverse for.
+            gutils->zeroDiffe(operand, bodyBuilder);
+          }
+        }
+
         unsigned argIdx = 1; // Skip over the reversed IV
         for (auto &&[active, operand] :
              llvm::zip_equal(operandsActive, term->getOperands())) {
           if (active) {
-            // Set diffe here, not add because it should not accumulate across
-            // iterations. Instead the new gradient for this operand is passed
-            // in the return of the reverse for body.
-            gutils->setDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
+            // If the same value is yielded multiple times in the original, the
+            // gradients must be accumulated.
+            gutils->addToDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
             argIdx++;
           }
         }
