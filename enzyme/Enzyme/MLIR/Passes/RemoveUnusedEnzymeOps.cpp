@@ -389,7 +389,8 @@ static void annotateReadOnlyLoads(Operation *op) {
     if (failed(solver.initializeAndRun(funcOp))) {
       return;
     }
-    AliasClassLattice modified(nullptr);
+    AliasClassLattice modified(
+        nullptr, DistinctAttr::create(UnitAttr::get(funcOp.getContext())));
     funcOp.walk([&](MemoryEffectOpInterface memory) {
       SmallVector<MemoryEffects::EffectInstance> effects;
       memory.getEffects(effects);
@@ -632,7 +633,7 @@ struct RemoveUnusedEnzymeOpsPass
 
     annotateRegionOpsInLoops(op);
     annotateReadOnlyLoads(op);
-    annotateStackAllocations(op);
+    // annotateStackAllocations(op);
     if (skipWorklist)
       return;
 
