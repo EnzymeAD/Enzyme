@@ -21,10 +21,6 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
-// TODO: We need a way to zero out a memref (which linalg.fill does), but
-// ideally we wouldn't depend on the linalg dialect.
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -275,8 +271,7 @@ public:
     auto MT = cast<MemRefType>(self);
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
       if (!iface.isMutable()) {
-        Value zero = iface.createNullValue(builder, loc);
-        linalg::FillOp::create(builder, loc, zero, val);
+        enzyme::FillZeroOp::create(builder, loc, val);
       }
     } else {
       return failure();

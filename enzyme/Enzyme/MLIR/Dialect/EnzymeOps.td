@@ -335,6 +335,14 @@ def StoreOp : Enzyme_Op<"store",
   }];
 }
 
+def FillZeroOp : Enzyme_Op<"fill_zero", []> {
+  let summary = "Fill memory with zero values";
+  let arguments = (ins Arg<AnyMemRef, "the argument to fill", [MemWrite]>:$memref);
+  let assemblyFormat = [{
+    $memref attr-dict `:` type($memref)
+  }];
+}
+
 def SetOp : Enzyme_Op<"set",
     [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
