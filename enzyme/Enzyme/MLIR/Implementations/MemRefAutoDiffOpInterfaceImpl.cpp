@@ -234,8 +234,8 @@ struct AllocaScopeOpInterfaceReverse
     Block &oldBody = scopeOp.getBodyRegion().front();
     bool valid = true;
 
-    // Values defined in the scoped region cannot be used outside it. Reset their
-    // adjoints before propagating gradients through the scoped body.
+    // Values defined in the scoped region cannot be used outside it. Reset
+    // their adjoints before propagating gradients through the scoped body.
     for (Operation &innerOp : oldBody.getOperations()) {
       for (Value result : innerOp.getResults()) {
         if (!gutils->isConstantValue(result)) {
