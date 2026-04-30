@@ -21,17 +21,20 @@ target triple = "x86_64-unknown-linux-gnu"
 
 declare i32 @llvm.umax.i32(i32, i32)
 
-define void @compute_alpha(ptr noalias %op, i32 %face_idx, ptr noalias %nbr) {
+define void @compute_alpha(i8* noalias %op, i32 %face_idx, i32* noalias %nbr) {
 entry:
-  %out_gep = getelementptr i8, ptr %op, i64 0
-  %out_ptr = load ptr, ptr %out_gep, align 8
-  %flags_gep = getelementptr i8, ptr %op, i64 8
-  %flags_ptr = load ptr, ptr %flags_gep, align 8
-  %clip_gep = getelementptr i8, ptr %op, i64 16
-  %clip_val = load float, ptr %clip_gep, align 4
+  %out_gep = getelementptr i8, i8* %op, i64 0
+  %out_ptr_gep = bitcast i8* %out_gep to float**
+  %out_ptr = load float*, float** %out_ptr_gep, align 8
+  %flags_gep = getelementptr i8, i8* %op, i64 8
+  %flags_ptr_gep = bitcast i8* %flags_gep to i32**
+  %flags_ptr = load i32*, i32** %flags_ptr_gep, align 8
+  %clip_gep = getelementptr i8, i8* %op, i64 16
+  %clip_ptr = bitcast i8* %clip_gep to float*
+  %clip_val = load float, float* %clip_ptr, align 4
   %idx = zext i32 %face_idx to i64
-  %face_gep = getelementptr float, ptr %out_ptr, i64 %idx
-  %face_val = load float, ptr %face_gep, align 4
+  %face_gep = getelementptr float, float* %out_ptr, i64 %idx
+  %face_val = load float, float* %face_gep, align 4
   %dot = fmul float %face_val, %clip_val
   %cmp = fcmp ole float %dot, 0.0
   br i1 %cmp, label %left_handed, label %normal
@@ -45,40 +48,40 @@ normal:
 merge:
   %result = phi float [ %clip_val, %left_handed ], [ %dot, %normal ]
   %flag = phi i32 [ 1, %left_handed ], [ 0, %normal ]
-  store float %result, ptr %face_gep, align 4
-  %n0 = load i32, ptr %nbr, align 4
+  store float %result, float* %face_gep, align 4
+  %n0 = load i32, i32* %nbr, align 4
   %n0_ext = zext i32 %n0 to i64
-  %flags_elem = getelementptr i32, ptr %flags_ptr, i64 %n0_ext
-  %old_flag = load i32, ptr %flags_elem, align 4
+  %flags_elem = getelementptr i32, i32* %flags_ptr, i64 %n0_ext
+  %old_flag = load i32, i32* %flags_elem, align 4
   %new_flag = tail call i32 @llvm.umax.i32(i32 %old_flag, i32 %flag)
-  store i32 %new_flag, ptr %flags_elem, align 4
+  store i32 %new_flag, i32* %flags_elem, align 4
   ret void
 }
 
-define void @caller(ptr %op, ptr %d_op, i32 %face_idx, ptr %nbr) {
+define void @caller(i8* %op, i8* %d_op, i32 %face_idx, i32* %nbr) {
 entry:
   call void (...) @__enzyme_autodiff(
-    ptr @compute_alpha,
-    metadata !"enzyme_dup", ptr %op, ptr %d_op,
+    i8* bitcast (void (i8*, i32, i32*)* @compute_alpha to i8*),
+    metadata !"enzyme_dup", i8* %op, i8* %d_op,
     metadata !"enzyme_const", i32 %face_idx,
-    metadata !"enzyme_const", ptr %nbr
+    metadata !"enzyme_const", i32* %nbr
   )
   ret void
 }
 
 declare void @__enzyme_autodiff(...)
 
-; CHECK: define internal void @diffecompute_alpha(ptr noalias
-; CHECK-SAME: %op, ptr
-; CHECK-SAME: %"op'"
-; CHECK-SAME: i32 %face_idx, ptr noalias
+; CHECK: define internal void @diffecompute_alpha(
+; CHECK-SAME: %op,
+; CHECK-SAME: %"op'",
+; CHECK-SAME: i32 %face_idx,
 ; CHECK-SAME: %nbr)
 
 ; Verify the primal block no longer uses the old zero-shadow fallback.
 ; CHECK:        %new_flag = {{(tail )?}}call i32 @llvm.umax.i32(i32 %old_flag, i32 %flag)
-; CHECK-NOT:    store i32 0, ptr %"flags_elem'ipg"
-; CHECK:        store i32 {{.+}}, ptr %"flags_elem'ipg"
-; CHECK:        store i32 %new_flag, ptr %flags_elem
+; CHECK-NOT:    store i32 0, {{(ptr|i32\*)}} %"flags_elem'ipg"
+; CHECK:        store i32 {{.+}}, {{(ptr|i32\*)}} %"flags_elem'ipg"
+; CHECK:        store i32 %new_flag, {{(ptr|i32\*)}} %flags_elem
 
 ; Verify the reverse block correctly propagates float derivatives
 ; CHECK:      invertentry:
