@@ -144,7 +144,57 @@ struct PrintActivityAnalysisPass
                            ArrayRef<enzyme::Activity> resultActivities,
                            bool print = true) {
     if (config.relative) {
-      enzyme::runActivityAnnotations(callee, argActivities, config);
+      auto activityToDiffe = [](enzyme::Activity actv) {
+        switch (actv) {
+        case enzyme::Activity::enzyme_active:
+        case enzyme::Activity::enzyme_activenoneed:
+          return DIFFE_TYPE::OUT_DIFF;
+        case enzyme::Activity::enzyme_const:
+        case enzyme::Activity::enzyme_constnoneed:
+          return DIFFE_TYPE::CONSTANT;
+        case enzyme::Activity::enzyme_dup:
+          return DIFFE_TYPE::DUP_ARG;
+        case enzyme::Activity::enzyme_dupnoneed:
+          return DIFFE_TYPE::DUP_NONEED;
+        default:
+          llvm_unreachable("unrecognized activity");
+        }
+      };
+      DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+      SmallVector<DIFFE_TYPE> argDiffe(argActivities.size()),
+          retDiffe(resultActivities.size());
+      llvm::transform(argActivities, argDiffe.begin(), activityToDiffe);
+      llvm::transform(resultActivities, retDiffe.begin(), activityToDiffe);
+
+      enzyme::DataFlowActivityAnalyzer analyzer(solver, callee, argDiffe,
+                                                retDiffe);
+
+      MLIRContext *ctx = callee.getContext();
+      callee.walk([&](Operation *op) {
+        for (auto &reg : op->getRegions()) {
+          for (auto &blk : reg.getBlocks()) {
+            for (auto &arg : blk.getArguments()) {
+              bool iav = analyzer.isInactiveValue(arg);
+              if (annotate)
+                op->setAttr("enzyme.arg_icv" +
+                                std::to_string(arg.getArgNumber()),
+                            BoolAttr::get(ctx, iav));
+            }
+          }
+        }
+        bool iai = analyzer.isInactiveOperation(op);
+        if (annotate)
+          op->setAttr("enzyme.ici", BoolAttr::get(ctx, iai));
+
+        for (auto res : op->getResults()) {
+          bool iav = analyzer.isInactiveValue(res);
+          if (annotate)
+            op->setAttr("enzyme.res_icv" +
+                            std::to_string(res.getResultNumber()),
+                        BoolAttr::get(ctx, iav));
+        }
+      });
+      enzyme::removeSummaries(callee);
     } else if (config.dataflow) {
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
                                           /*print=*/true, verbose, annotate);
