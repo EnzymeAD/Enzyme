@@ -200,6 +200,81 @@ struct SubViewOpInterfaceReverse
   }
 };
 
+struct AllocaScopeOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AllocaScopeOpInterfaceReverse, memref::AllocaScopeOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto scopeOp = cast<memref::AllocaScopeOp>(op);
+
+    SmallVector<bool> resultsActive(scopeOp->getNumResults(), false);
+    SmallVector<Value> incomingGradients;
+    incomingGradients.reserve(scopeOp->getNumResults());
+    for (OpResult result : scopeOp->getResults()) {
+      bool active = !gutils->isConstantValue(result);
+      resultsActive[result.getResultNumber()] = active;
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(result, builder));
+        gutils->zeroDiffe(result, builder);
+      }
+    }
+
+    auto revScope =
+        memref::AllocaScopeOp::create(builder, op->getLoc(), TypeRange());
+    Block *revBody = builder.createBlock(&revScope.getBodyRegion());
+    OpBuilder bodyBuilder(revBody, revBody->end());
+    memref::AllocaScopeReturnOp::create(bodyBuilder, op->getLoc(),
+                                        ValueRange());
+    bodyBuilder.setInsertionPoint(revBody->getTerminator());
+
+    Block &oldBody = scopeOp.getBodyRegion().front();
+    bool valid = true;
+
+    // Values defined in the scoped region cannot be used outside it. Reset their
+    // adjoints before propagating gradients through the scoped body.
+    for (Operation &innerOp : oldBody.getOperations()) {
+      for (Value result : innerOp.getResults()) {
+        if (!gutils->isConstantValue(result)) {
+          auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+          if (iface && !iface.isMutable())
+            gutils->zeroDiffe(result, bodyBuilder);
+        }
+      }
+    }
+
+    Operation *term = oldBody.getTerminator();
+    unsigned incomingIdx = 0;
+    for (auto indexedOperand : llvm::enumerate(term->getOperands())) {
+      if (!resultsActive[indexedOperand.index()])
+        continue;
+
+      Value operand = indexedOperand.value();
+      if (!gutils->isConstantValue(operand))
+        gutils->addToDiffe(operand, incomingGradients[incomingIdx],
+                           bodyBuilder);
+      ++incomingIdx;
+    }
+
+    auto first = oldBody.rbegin();
+    ++first;
+
+    for (auto it = first; it != oldBody.rend(); ++it) {
+      valid &= gutils->Logic.visitChild(&*it, bodyBuilder, gutils).succeeded();
+    }
+
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 class MemRefClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<MemRefClonableTypeInterface,
                                                   MemRefType> {
@@ -315,5 +390,7 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
+    memref::AllocaScopeOp::attachInterface<AllocaScopeOpInterfaceReverse>(
+        *context);
   });
 }
