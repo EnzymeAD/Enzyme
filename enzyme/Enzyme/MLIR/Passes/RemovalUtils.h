@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -425,8 +426,10 @@ public:
       ShapedType NT;
 
       bool multiDim = false;
+      bool gpuAlloc = false;
       if (auto ST = dyn_cast<ShapedType>(ET)) {
         auto allocOp = pushedValue.getDefiningOp<memref::AllocOp>();
+        auto gpuAllocOp = pushedValue.getDefiningOp<gpu::AllocOp>();
         if (cacheType == LoopCacheType::MEMREF && allocOp &&
             allocOp.getSymbolOperands().empty() &&
             llvm::all_of(allocOp.getDynamicSizes(), [&](Value dynSize) {
@@ -437,6 +440,17 @@ public:
           dynamicDims.append(allocOp.getDynamicSizes().begin(),
                              allocOp.getDynamicSizes().end());
 
+        } else if (cacheType == LoopCacheType::MEMREF && gpuAllocOp &&
+                   gpuAllocOp.getSymbolOperands().empty() &&
+                   llvm::all_of(gpuAllocOp.getDynamicSizes(),
+                                [&](Value dynSize) {
+                                  return !forOp.getRegion().isAncestor(
+                                      dynSize.getParentRegion());
+                                })) {
+          multiDim = true;
+          gpuAlloc = true;
+          dynamicDims.append(gpuAllocOp.getDynamicSizes().begin(),
+                             gpuAllocOp.getDynamicSizes().end());
         } else if (llvm::all_of(ST.getShape(), [](int64_t dim) {
                      return dim != ShapedType::kDynamic;
                    })) {
@@ -505,9 +519,16 @@ public:
         {
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
-          initValue =
-              memref::AllocOp::create(rewriter, info.initOp->getLoc(),
-                                      cast<MemRefType>(newType), dynamicDims);
+          if (gpuAlloc) {
+            initValue =
+                gpu::AllocOp::create(rewriter, info.initOp.getLoc(),
+                                     cast<MemRefType>(newType), dynamicDims)
+                    .getMemref();
+          } else {
+            initValue =
+                memref::AllocOp::create(rewriter, info.initOp->getLoc(),
+                                        cast<MemRefType>(newType), dynamicDims);
+          }
           newPushValues.push_back(initValue);
         }
 
@@ -802,7 +823,7 @@ public:
 
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
-            if (isa<memref::DeallocOp>(user))
+            if (isa<memref::DeallocOp, gpu::DeallocOp>(user))
               rewriter.eraseOp(user);
           }
         } else {
