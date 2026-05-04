@@ -119,10 +119,10 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
   }
 
   gutils->getNewFromOriginal(inst->getBlock())
-      ->push_back(
-          newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                          newVals, attrs, OpaqueProperties(nullptr),
-                          newInst->getSuccessors(), newInst->getNumRegions()));
+      ->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
+                                  TypeRange(), newVals, attrs,
+                                  mlir::PropertyRef(), newInst->getSuccessors(),
+                                  newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
 }

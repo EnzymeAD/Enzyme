@@ -3122,7 +3122,11 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
 static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR >= 23
+  return getInlineParams(Level.getSpeedupLevel());
+#else
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
+#endif
 }
 
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
@@ -3157,7 +3161,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     bool LTOPreLink = false;
     // First rotate loops that may have been un-rotated by prior passes.
     // Disable header duplication at -Oz.
+#if LLVM_VERSION_MAJOR >= 23
+    LPM.addPass(LoopRotatePass(/*EnableLoopHeaderDuplication=*/true, LTOPreLink,
+                               /*CheckExitCount=*/true));
+#else
     LPM.addPass(LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
+#endif
     // Some loops may have become dead by now. Try to delete them.
     // FIXME: see discussion in https://reviews.llvm.org/D112851,
     //        this may need to be revisited once we run GVN before
@@ -3267,7 +3276,9 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
       // This opens opportunities for globalopt (and inlining) by
       // substituting function pointers passed as arguments to direct uses
       // of functions.
-#if LLVM_VERSION_MAJOR >= 16
+#if LLVM_VERSION_MAJOR >= 23
+      MPM.addPass(IPSCCPPass(IPSCCPOptions(/*AllowFuncSpec=*/true)));
+#elif LLVM_VERSION_MAJOR >= 16
       MPM.addPass(IPSCCPPass(IPSCCPOptions(/*AllowFuncSpec=*/
                                            Level != OptimizationLevel::Os &&
                                            Level != OptimizationLevel::Oz)));

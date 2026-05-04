@@ -53,7 +53,7 @@ struct ArithConstantOpBatchInterface
     }
     auto cop = mlir::Operation::create(
         src->getLoc(), src->getName(), resultTypes, {}, std::move(attrs),
-        OpaqueProperties(nullptr), mlir::BlockRange(), 0);
+        mlir::PropertyRef(), mlir::BlockRange(), 0);
     builder.insert(cop);
     mapper.map(src->getResult(0), cop->getResult(0));
     return success();
