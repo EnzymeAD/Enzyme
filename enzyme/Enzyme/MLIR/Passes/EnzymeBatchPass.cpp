@@ -143,7 +143,7 @@ void batchCloneBlock(
 
     Operation *newOp = Operation::create(
         src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
-        OpaqueProperties(nullptr), successors, src.getNumRegions());
+        mlir::PropertyRef(), successors, src.getNumRegions());
 
     // Clone the regions.
     for (auto &&[oldReg, newReg] :

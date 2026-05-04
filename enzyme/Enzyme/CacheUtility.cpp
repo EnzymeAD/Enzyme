@@ -264,10 +264,17 @@ void RemoveRedundantIVs(
     if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
       if (addrec->getLoop()->getHeader() == Header) {
         if (auto add_or_mul = dyn_cast<BinaryOperator>(NewIV)) {
+#if LLVM_VERSION_MAJOR >= 23
+          if (any(addrec->getNoWrapFlags(llvm::SCEV::FlagNUW)))
+            add_or_mul->setHasNoUnsignedWrap(true);
+          if (any(addrec->getNoWrapFlags(llvm::SCEV::FlagNSW)))
+            add_or_mul->setHasNoSignedWrap(true);
+#else
           if (addrec->getNoWrapFlags(llvm::SCEV::FlagNUW))
             add_or_mul->setHasNoUnsignedWrap(true);
           if (addrec->getNoWrapFlags(llvm::SCEV::FlagNSW))
             add_or_mul->setHasNoSignedWrap(true);
+#endif
         }
       }
     }
