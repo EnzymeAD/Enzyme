@@ -23,9 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [linux-x86-n2-32]
-        # No valid commit until Rust updates llvm
-        commit: []
-        # commit: [b2ee1b333aea9951c3eefa4967098cc763de59ca]
+        commit: [b2ee1b333aea9951c3eefa4967098cc763de59ca]
     
     timeout-minutes: 90
 
