@@ -1,10 +1,5 @@
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s
 
-; ModuleID = '/app/example.ll'
-source_filename = "start"
-target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
-target triple = "arm64-apple-darwin24.0.0"
-
 @_j_str_invalid_GenericMemory_siz____3 = private unnamed_addr constant [108 x i8] c"invalid GenericMemory size: the number of elements is either negative or too large for system address width\00", align 1
 @jl_small_typeof = external local_unnamed_addr constant i8
 @jl_nothing = external local_unnamed_addr constant ptr
