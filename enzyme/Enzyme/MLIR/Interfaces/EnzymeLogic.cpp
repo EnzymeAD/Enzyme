@@ -66,7 +66,7 @@ void createTerminator(MGradientUtils *gutils, mlir::Block *oBB,
 
   nBB->push_back(
       newInst->create(newInst->getLoc(), newInst->getName(), TypeRange(),
-                      retargs, newInst->getAttrs(), OpaqueProperties(nullptr),
+                      retargs, newInst->getAttrs(), mlir::PropertyRef(nullptr),
                       newInst->getSuccessors(), newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
