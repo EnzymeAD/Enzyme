@@ -1,3 +1,5 @@
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s
+
 ; ModuleID = '/app/example.ll'
 source_filename = "start"
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
