@@ -52,9 +52,10 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     return FloatAttr::get(T, apvalue);
   } else if (auto T = cast<ComplexType>(type)) {
     auto F = cast<FloatType>(T.getElementType());
-    return mlir::complex::NumberAttr::get(
-        T, APFloat(F.getFloatSemantics(), value).convertToDouble(),
-        APFloat(F.getFloatSemantics(), "0").convertToDouble());
+    return mlir::ArrayAttr::get({
+      FloatAttr::get(F, APFloat(F.getFloatSemantics(), value)),
+      FloatAttr::get(F, APFloat(F.getFloatSemantics(), "0"));
+    });
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
   }
