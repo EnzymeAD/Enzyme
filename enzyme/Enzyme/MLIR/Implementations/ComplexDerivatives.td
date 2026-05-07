@@ -55,7 +55,7 @@ def : MLIRDerivative<"complex", "RsqrtOp", (Op $x),
                     [
                       (ComplexPow
                         (DiffeRet),
-                        (ConstantFP<"-1.5", "complex", "ConstantOp", "mlir::ArrayAttr">)
+                        (ConstantFP<"-1.5", "complex", "ConstantOp">)
                       )
                     ]
                   >;
