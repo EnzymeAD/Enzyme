@@ -183,9 +183,6 @@ def LlvmExpF : LlvmInst<"ExpOp">;
 def ComplexCreate : ComplexInst<"CreateOp">;
 def ComplexRe : ComplexInst<"ReOp">;
 def ComplexIm : ComplexInst<"ImOp">;
-def ComplexPow : ComplexInst<"PowOp">;
-def ComplexSqrt : ComplexInst<"SqrtOp">;
-def ComplexRsqrt : ComplexInst<"RsqrtOp">;
 
 def CosF : MathInst<"CosOp">;
 def SinF : MathInst<"SinOp">;
