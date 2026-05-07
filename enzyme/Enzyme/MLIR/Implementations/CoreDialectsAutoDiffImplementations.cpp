@@ -60,7 +60,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     //   });
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
-      llvm_unreachable("unsupported eltype");
+    llvm_unreachable("unsupported eltype");
   }
 }
 
