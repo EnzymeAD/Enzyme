@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(Enzyme)
+project(Enzyme LANGUAGES C CXX Fortran)
 
 include(CMakePackageConfigHelpers)
 include(CheckIncludeFile)
@@ -299,6 +299,7 @@ endif()
 if (ENZYME_ENABLE_PLUGINS)
     add_subdirectory(test)
 endif()
+add_subdirectory(Fortran)
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
