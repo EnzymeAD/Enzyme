@@ -33,4 +33,10 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_scalar")    :: enzyme_scalar
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
+
+  ! Bindings for function hooks
+  public :: __enzyme_autodiff
+  public :: __enzyme_fwddiff
+  external :: __enzyme_autodiff
+  external :: __enzyme_fwddiff
 end module enzyme
