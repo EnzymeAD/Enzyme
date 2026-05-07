@@ -46,6 +46,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     } else {
       llvm::errs() << " unsupported eltype: " << T.getElementType()
                    << " of type " << type << "\n";
+      llvm_unreachable("unsupported eltype");
     }
   } else if (auto T = cast<FloatType>(type)) {
     APFloat apvalue(T.getFloatSemantics(), value);
@@ -59,6 +60,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
     //   });
   } else {
     llvm::errs() << " unsupported type: " << type << "\n";
+      llvm_unreachable("unsupported eltype");
   }
 }
 
