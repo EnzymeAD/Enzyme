@@ -4,18 +4,6 @@
 ! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O3 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O3 %t -o %t1 && %t1 | FileCheck %s; fi
 
 module math
-    interface
-        subroutine square__enzyme_autodiff(fn, x, dx)
-        interface
-            real function fn_decal(a)
-                real, intent(in) :: a
-            end function
-        end interface
-        procedure(fn_decal) :: fn
-        real, intent(in) :: x
-        real, intent(inout) :: dx
-        end subroutine
-    end interface
 contains
     real function square( x )
         real, intent(in) :: x
@@ -26,13 +14,14 @@ end module math
 program app
     use math
     implicit none
+    external :: __enzyme_autodiff
     real :: x, dx
 
     x = 3
     print *, square(x)
 
     dx = 0
-    call square__enzyme_autodiff(square, x, dx);
+    call __enzyme_autodiff(square, x, dx);
 
     print *, dx
 end program app
