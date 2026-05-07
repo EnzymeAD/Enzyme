@@ -12,7 +12,8 @@ contains
 end module math
 
 program app
-    use math
+    use enzyme, only: __enzyme_autodiff
+    use math, only: square
     implicit none
     external :: __enzyme_autodiff
     real :: x, dx
