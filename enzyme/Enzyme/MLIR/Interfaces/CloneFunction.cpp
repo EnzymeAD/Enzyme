@@ -1,6 +1,7 @@
 #include "llvm/ADT/APSInt.h"
 
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OperationSupport.h"
 
 #include "CloneFunction.h"
 
