@@ -105,7 +105,7 @@ public:
     if (auto G = dyn_cast<ComplexType>(ET)) {
       if (auto F = dyn_cast<FloatType>(G.getElementType())) {
         APFloat apvalue(F.getFloatSemantics(), 0);
-        std::complex<APFloat> c(apvalue, apvalue);
+	mlir::Complex<APFloat> c(apvalue, apvalue);
         return DenseElementsAttr::get(tenType, c);
       }
     }
