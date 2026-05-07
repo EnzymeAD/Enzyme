@@ -1,4 +1,4 @@
-! ===- enzyme_mod.f90 - Fortran bindings for Enzyme -----------------------=== !
+! ===- enzyme.f90 - Fortran bindings for Enzyme ---------------------------=== !
 !
 !                              Enzyme Project
 !
@@ -20,7 +20,7 @@
 !  This file provides Fortran bindings for Enzyme.
 !
 ! ===----------------------------------------------------------------------=== !
-module enzyme_mod
+module enzyme
   use iso_c_binding, only: c_int
   implicit none
   private
@@ -33,4 +33,4 @@ module enzyme_mod
   integer(c_int), public, bind(C, name="enzyme_scalar")    :: enzyme_scalar
   integer(c_int), public, bind(C, name="enzyme_width")     :: enzyme_width
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
-end module enzyme_mod
+end module enzyme

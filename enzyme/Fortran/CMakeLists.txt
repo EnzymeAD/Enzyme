@@ -1,7 +1,7 @@
 include(FortranCInterface)
 FortranCInterface_VERIFY(QUIET)
 
-add_library(EnzymeFortran enzyme_mod.f90)
+add_library(EnzymeFortran enzyme.f90)
 
 # Install library, create target file
 install(
@@ -21,5 +21,5 @@ if(NOT DEFINED CMAKE_INSTALL_MODULEDIR)
     CACHE STRING "Directory in prefix to install generated module files"
   )
 endif()
-install(FILES "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme_mod.mod"
+install(FILES "${CMAKE_Fortran_MODULE_DIRECTORY}/enzyme.mod"
         DESTINATION "${CMAKE_INSTALL_MODULEDIR}")
