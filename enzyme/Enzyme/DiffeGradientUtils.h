@@ -84,7 +84,8 @@ public:
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool shadowReturnArg, bool diffeReturnArg,
                   llvm::ArrayRef<DIFFE_TYPE> constant_args, bool returnTape,
-                  bool returnPrimal, llvm::Type *additionalArg, bool omp);
+                  bool returnPrimal, llvm::Type *additionalArg, bool omp,
+                  bool profiled = false);
 
   llvm::AllocaInst *getDifferential(llvm::Value *val);
 

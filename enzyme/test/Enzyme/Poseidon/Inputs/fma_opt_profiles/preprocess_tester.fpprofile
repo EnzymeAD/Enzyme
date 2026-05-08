@@ -1,0 +1,20 @@
+0
+	MinRes = 3.0
+	MaxRes = 15.0
+	SumValue = 100.0
+	SumSens = 50.0
+	SumGrad = 25.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 5.0]
+	Operand[1] = [2.0, 10.0]
+1
+	MinRes = 6.0
+	MaxRes = 150.0
+	SumValue = 500.0
+	SumSens = 100.0
+	SumGrad = 50.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [3.0, 15.0]
+	Operand[1] = [0.5, 10.0]

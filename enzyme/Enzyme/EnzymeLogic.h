@@ -174,6 +174,7 @@ struct ReverseCacheKey {
   const FnTypeInfo typeInfo;
   bool runtimeActivity;
   bool strongZero;
+  bool profiled;
 
   ReverseCacheKey replaceTypeInfo(const FnTypeInfo &newTypeInfo) const {
     return {todiff,
@@ -191,7 +192,8 @@ struct ReverseCacheKey {
             forceAnonymousTape,
             newTypeInfo,
             runtimeActivity,
-            strongZero};
+            strongZero,
+            profiled};
   }
   /*
   inline bool operator==(const ReverseCacheKey& rhs) const {
@@ -296,6 +298,11 @@ struct ReverseCacheKey {
     if (strongZero < rhs.strongZero)
       return true;
     if (rhs.strongZero < strongZero)
+      return false;
+
+    if (profiled < rhs.profiled)
+      return true;
+    if (rhs.profiled < profiled)
       return false;
 
     // equal

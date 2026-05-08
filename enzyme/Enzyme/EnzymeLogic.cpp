@@ -3845,7 +3845,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .profiled = key.profiled},
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -3944,7 +3945,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .profiled = key.profiled},
           TA, augmenteddata, omp);
 
       {
@@ -4228,6 +4230,26 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
+  if (key.profiled) {
+    Module *M = key.todiff->getParent();
+    LLVMContext &Ctx = M->getContext();
+
+    Type *DoubleTy = Type::getDoubleTy(Ctx);
+    Type *PtrTy = PointerType::getUnqual(Ctx);
+    Type *Int32Ty = Type::getInt32Ty(Ctx);
+    Type *SizeTy = Type::getInt64Ty(Ctx);
+
+    M->getOrInsertGlobal("ENZYME_FPPROFILE_RUNTIME_VAR", Int32Ty);
+
+    FunctionType *LogValueFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, Int32Ty, PtrTy}, false);
+    M->getOrInsertFunction("enzymeLogValue", LogValueFT);
+
+    FunctionType *LogGradFT = FunctionType::get(
+        Type::getVoidTy(Ctx), {PtrTy, SizeTy, DoubleTy, DoubleTy}, false);
+    M->getOrInsertFunction("enzymeLogGrad", LogGradFT);
+  }
+
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
@@ -4235,7 +4257,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       key.todiff, TLI, TA, oldTypeInfo, key.retType,
       augmenteddata ? augmenteddata->shadowReturnUsed : key.shadowReturnUsed,
       diffeReturnArg, key.constant_args, /*returnTape*/ false, key.returnUsed,
-      key.additionalType, omp);
+      key.additionalType, omp, key.profiled);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;

@@ -11,6 +11,10 @@ add_subdirectory(ProbProg)
 add_subdirectory(JLSimplify)
 add_subdirectory(SimpleGVN)
 
+if(ENABLE_POSEIDON)
+  add_subdirectory(Poseidon)
+endif()
+
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme "Running enzyme regression tests"
     ${CMAKE_CURRENT_BINARY_DIR}

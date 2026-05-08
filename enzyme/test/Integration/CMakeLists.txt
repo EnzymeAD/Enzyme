@@ -6,6 +6,9 @@ add_subdirectory(ReverseMode)
 add_subdirectory(BatchMode)
 add_subdirectory(Sparse)
 add_subdirectory(Truncate)
+if(ENABLE_POSEIDON)
+  add_subdirectory(Poseidon)
+endif()
 
 # Run regression and unit tests
 add_lit_testsuite(check-enzyme-integration "Running enzyme integration tests"

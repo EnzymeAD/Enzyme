@@ -127,6 +127,7 @@ public:
   EnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
+  bool profiled;
   llvm::Function *oldFunc;
   llvm::ValueMap<const llvm::Value *, InvertedPointerVH> invertedPointers;
   llvm::DominatorTree *OrigDT;
