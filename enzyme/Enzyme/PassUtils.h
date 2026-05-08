@@ -29,7 +29,9 @@
 #include "llvm/IR/PassManager.h"
 
 #if LLVM_VERSION_MAJOR >= 23
-using PassParent = llvm::RequiredPassInfoMixin;
+template <typename DerivedT>
+using PassParent = llvm::RequiredPassInfoMixin<DerivedT>;
 #else
-using PassParent = llvm::AnalysisInfoMixin;
+template <typename DerivedT>
+using PassParent = llvm::AnalysisInfoMixin<DerivedT>;
 #endif
