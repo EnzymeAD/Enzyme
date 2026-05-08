@@ -38,8 +38,8 @@ llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
 class PreserveNVVMNewPM final
-    : public llvm::AnalysisInfoMixin<PreserveNVVMNewPM> {
-  friend struct llvm::AnalysisInfoMixin<PreserveNVVMNewPM>;
+    : public llvm::RequiredPassInfoMixin<PreserveNVVMNewPM> {
+  friend struct llvm::RequiredPassInfoMixin<PreserveNVVMNewPM>;
 
 private:
   bool Begin;

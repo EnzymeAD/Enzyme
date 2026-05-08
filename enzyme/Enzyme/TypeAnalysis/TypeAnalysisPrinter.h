@@ -33,8 +33,8 @@ class FunctionPass;
 }
 
 class TypeAnalysisPrinterNewPM final
-    : public llvm::AnalysisInfoMixin<TypeAnalysisPrinterNewPM> {
-  friend struct llvm::AnalysisInfoMixin<TypeAnalysisPrinterNewPM>;
+    : public llvm::RequiredPassInfoMixin<TypeAnalysisPrinterNewPM> {
+  friend struct llvm::RequiredPassInfoMixin<TypeAnalysisPrinterNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

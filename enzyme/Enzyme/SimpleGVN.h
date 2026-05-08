@@ -38,8 +38,9 @@ namespace llvm {
 class FunctionPass;
 }
 
-class SimpleGVNNewPM final : public llvm::AnalysisInfoMixin<SimpleGVNNewPM> {
-  friend struct llvm::AnalysisInfoMixin<SimpleGVNNewPM>;
+class SimpleGVNNewPM final
+    : public llvm::RequiredPassInfoMixin<SimpleGVNNewPM> {
+  friend struct llvm::RequiredPassInfoMixin<SimpleGVNNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

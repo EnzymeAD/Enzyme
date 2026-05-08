@@ -30,8 +30,8 @@ class FunctionPass;
 }
 
 class JLInstSimplifyNewPM final
-    : public llvm::AnalysisInfoMixin<JLInstSimplifyNewPM> {
-  friend struct llvm::AnalysisInfoMixin<JLInstSimplifyNewPM>;
+    : public llvm::RequiredPassInfoMixin<JLInstSimplifyNewPM> {
+  friend struct llvm::RequiredPassInfoMixin<JLInstSimplifyNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
