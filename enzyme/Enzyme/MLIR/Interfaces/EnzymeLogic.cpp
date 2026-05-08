@@ -6,7 +6,6 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-#include "mlir/IR/OperationSupport.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
