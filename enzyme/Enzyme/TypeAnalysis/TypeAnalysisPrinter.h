@@ -35,7 +35,7 @@ class FunctionPass;
 
 class TypeAnalysisPrinterNewPM final
     : public PassParent<TypeAnalysisPrinterNewPM> {
-  friend struct PassParent<TypeAnalysisPrinterNewPM>;
+  friend PassParent<TypeAnalysisPrinterNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

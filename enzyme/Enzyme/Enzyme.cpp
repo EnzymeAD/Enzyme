@@ -3058,7 +3058,7 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
 #endif
 
 class EnzymeNewPM final : public EnzymeBase, public PassParent<EnzymeNewPM> {
-  friend struct PassParent<EnzymeNewPM>;
+  friend PassParent<EnzymeNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

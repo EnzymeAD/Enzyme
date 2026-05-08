@@ -39,7 +39,7 @@ llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
 class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
-  friend struct PassParent<PreserveNVVMNewPM>;
+  friend PassParent<PreserveNVVMNewPM>;
 
 private:
   bool Begin;

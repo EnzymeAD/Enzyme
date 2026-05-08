@@ -37,7 +37,7 @@ class FunctionPass;
 
 class ActivityAnalysisPrinterNewPM final
     : public PassParent<ActivityAnalysisPrinterNewPM> {
-  friend struct PassParent<ActivityAnalysisPrinterNewPM>;
+  friend PassParent<ActivityAnalysisPrinterNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

@@ -31,7 +31,7 @@ class FunctionPass;
 }
 
 class JLInstSimplifyNewPM final : public PassParent<JLInstSimplifyNewPM> {
-  friend struct PassParent<JLInstSimplifyNewPM>;
+  friend PassParent<JLInstSimplifyNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

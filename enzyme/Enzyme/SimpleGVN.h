@@ -40,7 +40,7 @@ class FunctionPass;
 }
 
 class SimpleGVNNewPM final : public PassParent<SimpleGVNNewPM> {
-  friend struct PassParent<SimpleGVNNewPM>;
+  friend PassParent<SimpleGVNNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
