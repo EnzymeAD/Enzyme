@@ -1,4 +1,4 @@
-//===- TypeAnalysisPrinter.h - Printer utility pass for Type Analysis -----===//
+//=- ActivityAnalysisPrinter.h - Printer utility pass for Activity Analysis =//
 //
 //                             Enzyme Project
 //
@@ -18,35 +18,18 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains a utility LLVM pass for printing derived Type Analysis
-// results of a given function.
+// This file contains a utility LLVM definition for making passes compatible
+// across different versions
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
-#define ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
+#pragma once
+#include <llvm/Config/llvm-config.h>
 
-#include "../PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
-namespace llvm {
-class FunctionPass;
-}
-
-class TypeAnalysisPrinterNewPM final
-    : public PassParent<TypeAnalysisPrinterNewPM> {
-  friend struct PassParent<TypeAnalysisPrinterNewPM>;
-
-private:
-  static llvm::AnalysisKey Key;
-
-public:
-  using Result = llvm::PreservedAnalyses;
-  TypeAnalysisPrinterNewPM() {}
-
-  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
-
-  static bool isRequired() { return true; }
-};
-
-#endif // ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
+#if LLVM_VERSION_MAJOR >= 23
+using PassParent = llvm::RequiredPassInfoMixin;
+#else
+using PassParent = llvm::AnalysisInfoMixin;
+#endif

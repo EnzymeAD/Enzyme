@@ -23,15 +23,15 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class FunctionPass;
 }
 
-class JLInstSimplifyNewPM final
-    : public llvm::RequiredPassInfoMixin<JLInstSimplifyNewPM> {
-  friend struct llvm::RequiredPassInfoMixin<JLInstSimplifyNewPM>;
+class JLInstSimplifyNewPM final : public PassParent<JLInstSimplifyNewPM> {
+  friend struct PassParent<JLInstSimplifyNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

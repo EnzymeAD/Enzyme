@@ -27,6 +27,7 @@
 #ifndef ENZYME_PRESERVE_NVVM_H
 #define ENZYME_PRESERVE_NVVM_H
 
+#include "PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
@@ -37,9 +38,8 @@ class FunctionPass;
 llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
-class PreserveNVVMNewPM final
-    : public llvm::RequiredPassInfoMixin<PreserveNVVMNewPM> {
-  friend struct llvm::RequiredPassInfoMixin<PreserveNVVMNewPM>;
+class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
+  friend struct PassParent<PreserveNVVMNewPM>;
 
 private:
   bool Begin;

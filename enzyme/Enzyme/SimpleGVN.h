@@ -32,15 +32,15 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class FunctionPass;
 }
 
-class SimpleGVNNewPM final
-    : public llvm::RequiredPassInfoMixin<SimpleGVNNewPM> {
-  friend struct llvm::RequiredPassInfoMixin<SimpleGVNNewPM>;
+class SimpleGVNNewPM final : public PassParent<SimpleGVNNewPM> {
+  friend struct PassParent<SimpleGVNNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
