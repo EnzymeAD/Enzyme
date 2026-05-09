@@ -40,7 +40,7 @@ mlir::TypedAttr mlir::enzyme::getConstantAttr(mlir::Type type,
       auto ET = cast<FloatType>(CET.getElementType());
       mlir::Complex<APFloat> values[] = {
           mlir::Complex<APFloat>(APFloat(ET.getFloatSemantics(), value),
-                                APFloat(ET.getFloatSemantics(), "0"))};
+                                 APFloat(ET.getFloatSemantics(), "0"))};
       return DenseElementsAttr::get(cast<ShapedType>(type),
                                     ArrayRef<mlir::Complex<APFloat>>(values));
     } else {
