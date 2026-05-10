@@ -217,8 +217,10 @@ struct ExtractValueOpInterfaceReverse
     Value container = evOp.getContainer();
 
     auto containerIface = dyn_cast<AutoDiffTypeInterface>(container.getType());
-    if (!containerIface)
+    if (!containerIface) {
+      gutils->zeroDiffe(evOp, builder);
       return failure();
+    }
 
     if (!gutils->isConstantValue(evOp)) {
       Value gradient = gutils->diffe(evOp, builder);
@@ -256,8 +258,10 @@ struct InsertValueOpInterfaceReverse
     Value value = ivOp.getValue();
 
     auto resultIface = dyn_cast<AutoDiffTypeInterface>(ivOp.getType());
-    if (!resultIface)
+    if (!resultIface) {
+      gutils->zeroDiffe(ivOp, builder);
       return failure();
+    }
 
     if (!gutils->isConstantValue(ivOp)) {
       Value gradient = gutils->diffe(ivOp, builder);
