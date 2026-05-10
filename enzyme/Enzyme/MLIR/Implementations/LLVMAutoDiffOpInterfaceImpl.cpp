@@ -216,19 +216,21 @@ struct ExtractValueOpInterfaceReverse
     auto evOp = cast<LLVM::ExtractValueOp>(op);
     Value container = evOp.getContainer();
 
-    auto containerIface =
-        dyn_cast<AutoDiffTypeInterface>(container.getType());
+    auto containerIface = dyn_cast<AutoDiffTypeInterface>(container.getType());
     if (!containerIface)
       return success();
 
-    if (!gutils->isConstantValue(evOp) && !gutils->isConstantValue(container)) {
+    if (!gutils->isConstantValue(evOp)) {
       Value gradient = gutils->diffe(evOp, builder);
+      gutils->zeroDiffe(evOp, builder);
       // Create a zero aggregate matching the container type, then insert the
       // gradient at the extracted position.
-      Value zero = containerIface.createNullValue(builder, op->getLoc());
-      Value grad = LLVM::InsertValueOp::create(builder, op->getLoc(), zero,
-                                                gradient, evOp.getPosition());
-      gutils->addToDiffe(container, grad, builder);
+      if (!gutils->isConstantValue(container)) {
+        Value zero = containerIface.createNullValue(builder, op->getLoc());
+        Value grad = LLVM::InsertValueOp::create(builder, op->getLoc(), zero,
+                                                 gradient, evOp.getPosition());
+        gutils->addToDiffe(container, grad, builder);
+      }
     }
 
     return success();
@@ -259,6 +261,7 @@ struct InsertValueOpInterfaceReverse
 
     if (!gutils->isConstantValue(ivOp)) {
       Value gradient = gutils->diffe(ivOp, builder);
+      gutils->zeroDiffe(ivOp, builder);
 
       // Propagate gradient to the inserted value: extract from the result
       // gradient at the insertion position.
@@ -272,10 +275,10 @@ struct InsertValueOpInterfaceReverse
       // Propagate gradient to the container: zero out the inserted position
       // in the result gradient, then add to the container gradient.
       if (!gutils->isConstantValue(container)) {
-        Value zeroVal = valIface
-                            ? valIface.createNullValue(builder, op->getLoc())
-                            : LLVM::ZeroOp::create(builder, op->getLoc(),
-                                                    value.getType());
+        Value zeroVal =
+            valIface
+                ? valIface.createNullValue(builder, op->getLoc())
+                : LLVM::ZeroOp::create(builder, op->getLoc(), value.getType());
         Value containerGrad = LLVM::InsertValueOp::create(
             builder, op->getLoc(), gradient, zeroVal, ivOp.getPosition());
         gutils->addToDiffe(container, containerGrad, builder);

@@ -20,9 +20,20 @@ llvm.func @extract(%s: !llvm.struct<(f64, f64)>, %seed: f64)
 
 // CHECK-LABEL: func.func private @diffeextract_to_diff0
 // CHECK-SAME: (%arg0: !llvm.struct<(f64, f64)>, %arg1: f64) -> !llvm.struct<(f64, f64)>
-// CHECK:        llvm.extractvalue
-// CHECK:        llvm.insertvalue
-// CHECK:        return
+// CHECK-DAG:    %[[V0:.+]] = llvm.extractvalue %arg0[0] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[V1:.+]] = llvm.extractvalue %arg0[1] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[V2:.+]] = arith.mulf %[[V1]], %arg1 : f64
+// CHECK-DAG:    %[[V3:.+]] = arith.mulf %[[V0]], %arg1 : f64
+// CHECK-DAG:    %[[Z0:.+]] = llvm.mlir.poison : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[Z1:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-DAG:    %[[IV0:.+]] = llvm.insertvalue %[[Z1]], %[[Z0]][0] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[IV1:.+]] = llvm.insertvalue %[[V2]], %[[IV0]][1] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[Z2:.+]] = llvm.mlir.poison : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[Z3:.+]] = arith.constant 0.000000e+00 : f64
+// CHECK-DAG:    %[[IV2:.+]] = llvm.insertvalue %[[V3]], %[[Z2]][0] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[IV3:.+]] = llvm.insertvalue %[[Z3]], %[[IV2]][1] : !llvm.struct<(f64, f64)>
+// CHECK-DAG:    %[[ADD:.+]] = enzyme.foadd %[[IV1]], %[[IV3]]
+// CHECK:        return %[[ADD]] : !llvm.struct<(f64, f64)>
 
 // -----
 
@@ -46,5 +57,5 @@ llvm.func @insert(%x: f64, %seed: !llvm.struct<(f64, f64)>) -> f64 {
 
 // CHECK-LABEL: func.func private @diffeinsert_to_diff0
 // CHECK-SAME: (%arg0: f64, %arg1: !llvm.struct<(f64, f64)>) -> f64
-// CHECK:        llvm.extractvalue
-// CHECK:        return
+// CHECK-DAG:    %[[EV:.+]] = llvm.extractvalue %arg1[0] : !llvm.struct<(f64, f64)>
+// CHECK:        return %[[EV]] : f64
