@@ -436,6 +436,10 @@ uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
   return gutils->getWidth();
 }
 
+EnzymeLogicRef EnzymeGradientUtilsGetLogic(GradientUtils *gutils) {
+  return (EnzymeLogicRef)&gutils->Logic;
+}
+
 LLVMTypeRef EnzymeGradientUtilsGetShadowType(GradientUtils *gutils,
                                              LLVMTypeRef T) {
   return wrap(gutils->getShadowType(unwrap(T)));
