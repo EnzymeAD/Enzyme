@@ -20,3 +20,26 @@ func.func @dselect(%c: i1, %a: f64, %b: f64, %dr: f64) -> (f64, f64) {
 // CHECK-NEXT:    %[[db:.+]] = arith.select %[[c]], %[[zero]], %[[dr]] : f64
 // CHECK-NEXT:    return %[[da]], %[[db]] : f64, f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @select_tensor_complex(%c: i1, %a: tensor<complex<f64>>, %b: tensor<complex<f64>>) -> tensor<complex<f64>> {
+  %res = arith.select %c, %a, %b : tensor<complex<f64>>
+  return %res : tensor<complex<f64>>
+}
+
+func.func @dselect_tensor_complex(%c: i1, %a: tensor<complex<f64>>, %b: tensor<complex<f64>>, %dr: tensor<complex<f64>>) -> (tensor<complex<f64>>, tensor<complex<f64>>) {
+  %0:2 = enzyme.autodiff @select_tensor_complex(%c, %a, %b, %dr)
+    {
+      activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>],
+      ret_activity=[#enzyme<activity enzyme_activenoneed>]
+    } : (i1, tensor<complex<f64>>, tensor<complex<f64>>, tensor<complex<f64>>) -> (tensor<complex<f64>>, tensor<complex<f64>>)
+  return %0#0, %0#1 : tensor<complex<f64>>, tensor<complex<f64>>
+}
+
+// CHECK: func.func private @diffeselect_tensor_complex(%[[c:.+]]: i1, %[[a:.+]]: tensor<complex<f64>>, %[[b:.+]]: tensor<complex<f64>>, %[[dr:.+]]: tensor<complex<f64>>) -> (tensor<complex<f64>>, tensor<complex<f64>>) {
+// CHECK-NEXT:    %[[zero:.+]] = arith.constant dense<(0.000000e+00,0.000000e+00)> : tensor<complex<f64>>
+// CHECK-NEXT:    %[[da:.+]] = arith.select %[[c]], %[[dr]], %[[zero]] : tensor<complex<f64>>
+// CHECK-NEXT:    %[[db:.+]] = arith.select %[[c]], %[[zero]], %[[dr]] : tensor<complex<f64>>
+// CHECK-NEXT:    return %[[da]], %[[db]] : tensor<complex<f64>>, tensor<complex<f64>>
+// CHECK-NEXT:  }
