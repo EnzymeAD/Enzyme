@@ -150,10 +150,16 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
     StoredVal = Builder.CreateLShr(StoredVal, ShiftBits);
   }
 
-  // Truncate to the load size if needed
+  // Truncate or extend to the load size if needed
   IntegerType *LoadIntTy = Builder.getIntNTy(LoadSize * 8);
   if (StoredVal->getType() != LoadIntTy) {
-    StoredVal = Builder.CreateTrunc(StoredVal, LoadIntTy);
+    unsigned StoredWidth = StoredVal->getType()->getIntegerBitWidth();
+    unsigned LoadWidth = LoadIntTy->getIntegerBitWidth();
+    if (StoredWidth > LoadWidth) {
+      StoredVal = Builder.CreateTrunc(StoredVal, LoadIntTy);
+    } else if (StoredWidth < LoadWidth) {
+      StoredVal = Builder.CreateZExt(StoredVal, LoadIntTy);
+    }
   }
 
   // Bitcast to the final type if needed
