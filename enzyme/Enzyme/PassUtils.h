@@ -1,4 +1,4 @@
-//=- JLInstSimplify.h - Additional instsimplifyrules for julia programs =//
+//=- ActivityAnalysisPrinter.h - Printer utility pass for Activity Analysis =//
 //
 //                             Enzyme Project
 //
@@ -17,32 +17,21 @@
 // }
 //
 //===----------------------------------------------------------------------===//
+//
+// This file contains a utility LLVM definition for making passes compatible
+// across different versions
+//
+//===----------------------------------------------------------------------===//
 
-#ifndef ENZYME_JL_INST_SIMPLIFY_H
-#define ENZYME_JL_INST_SIMPLIFY_H
-
+#pragma once
 #include <llvm/Config/llvm-config.h>
 
-#include "PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
-namespace llvm {
-class FunctionPass;
-}
-
-class JLInstSimplifyNewPM final : public PassParent<JLInstSimplifyNewPM> {
-  friend PassParent<JLInstSimplifyNewPM>;
-
-private:
-  static llvm::AnalysisKey Key;
-
-public:
-  using Result = llvm::PreservedAnalyses;
-  JLInstSimplifyNewPM() {}
-
-  Result run(llvm::Function &M, llvm::FunctionAnalysisManager &MAM);
-
-  static bool isRequired() { return true; }
-};
-
-#endif // ENZYME_JL_INST_SIMPLIFY_H
+#if LLVM_VERSION_MAJOR >= 23
+template <typename DerivedT>
+using PassParent = llvm::RequiredPassInfoMixin<DerivedT>;
+#else
+template <typename DerivedT>
+using PassParent = llvm::AnalysisInfoMixin<DerivedT>;
+#endif

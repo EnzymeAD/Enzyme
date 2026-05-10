@@ -77,6 +77,7 @@
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#include "PassUtils.h"
 #include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "Utils.h"
@@ -3056,9 +3057,8 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
 #include "llvm/Passes/PassPlugin.h"
 #endif
 
-class EnzymeNewPM final : public EnzymeBase,
-                          public AnalysisInfoMixin<EnzymeNewPM> {
-  friend struct llvm::AnalysisInfoMixin<EnzymeNewPM>;
+class EnzymeNewPM final : public EnzymeBase, public PassParent<EnzymeNewPM> {
+  friend PassParent<EnzymeNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
