@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.13)
-project(Enzyme LANGUAGES C CXX Fortran)
+project(Enzyme)
 
 include(CMakePackageConfigHelpers)
 include(CheckIncludeFile)
