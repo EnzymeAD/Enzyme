@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/fortran.yml'
       - 'enzyme/Enzyme/**'
+      - 'enzyme/Fortran/**'
       - 'enzyme/includes/**'
       - 'enzyme/test/**'
       - 'enzyme/tools/**'
@@ -20,6 +21,7 @@ on:
     paths:
       - '.github/workflows/fortran.yml'
       - 'enzyme/Enzyme/**'
+      - 'enzyme/Fortran/**'
       - 'enzyme/includes/**'
       - 'enzyme/test/**'
       - 'enzyme/tools/**'
