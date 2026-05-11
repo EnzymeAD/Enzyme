@@ -227,6 +227,7 @@ bool isInactiveCall(CallBase &CI) {
   // clang-format off
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
+    "_FortranAio",
     "$ss5print",
     "strcpy",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
