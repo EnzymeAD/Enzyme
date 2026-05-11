@@ -2867,14 +2867,15 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   int off = (int)ai.getLimitedValue();
   int size = dl.getTypeSizeInBits(I.getType()) / 8;
 
-  // Seed the result from the LLVM type when it is a uniform-FP aggregate
-  // (or a single FP). extractvalue is fully type-checked, so the LLVM type
-  // is authoritative about leaf float types — there is no type-punning
-  // possible. UP propagation then pushes the type back into the source
-  // aggregate, recovering type info even when the source originated from an
-  // opaque external call (#2630, #2463).
-  if (auto LeafTy = uniformFPLeafType(I.getType())) {
-    updateAnalysis(&I, TypeTree(ConcreteType(LeafTy)).Only(-1, &I), &I);
+  // When looseTypeAnalysis is on, seed the result from the LLVM type if it
+  // is a uniform-FP aggregate (or a single FP). This recovers type info for
+  // extractvalue results whose source aggregate came from an opaque external
+  // call (#2630, #2463). Gated behind looseTypeAnalysis because the LLVM
+  // type is not always authoritative about semantic float-ness.
+  if (looseTypeAnalysis) {
+    if (auto LeafTy = uniformFPLeafType(I.getType())) {
+      updateAnalysis(&I, TypeTree(ConcreteType(LeafTy)).Only(-1, &I), &I);
+    }
   }
 
   if (direction & DOWN)
