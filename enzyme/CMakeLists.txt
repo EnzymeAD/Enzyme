@@ -34,9 +34,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(ENZYME_ENABLE_PLUGINS "Enable Clang/LLD/Opt plugins" ON)
 option(ENZYME_ENABLE_BENCHMARKS "Enable benchmarks" OFF)
 option(ENZYME_BC_LOADER "Enable bitcode loader" ON)
+option(ENZYME_FORTRAN "Build Enzyme Fortran bindings" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
+option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 option(ENZYME_APPLE_DYNAMIC_LOOKUP
@@ -299,7 +301,9 @@ endif()
 if (ENZYME_ENABLE_PLUGINS)
     add_subdirectory(test)
 endif()
-add_subdirectory(Fortran)
+if (ENZYME_FORTRAN)
+    add_subdirectory(Fortran)
+endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
 # Only add the benchmarks if the directory exists.
