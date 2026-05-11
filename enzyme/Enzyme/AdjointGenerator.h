@@ -2642,7 +2642,7 @@ public:
              << " val:" << gutils->isConstantValue(&I)
              << " type: " << TR.query(&I).str() << "\n";
         }
-      ss << "cannot handle unknown binary operator: " << BO << "\n";
+      ss << "derivative of active binary operator not known: " << BO << "\n";
       EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
     }
 
