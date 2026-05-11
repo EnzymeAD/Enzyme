@@ -16,7 +16,11 @@ define void @compute(i64 %opaque) {
 entry:
   %r = call %struct.CV @pre_work(i64 %opaque)
   %a = extractvalue %struct.CV %r, 0
+  %b = extractvalue %struct.CV %r, 1
   %a0 = extractvalue [2 x float] %a, 0
+  %a1 = extractvalue [2 x float] %a, 1
+  %b0 = extractvalue [2 x [3 x float]] %b, 0, 0
+  %b1 = extractvalue [2 x [3 x float]] %b, 1, 2
   ret void
 }
 
@@ -25,5 +29,9 @@ entry:
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:   %r = call %struct.CV @pre_work(i64 %opaque): {[0]:Float@float, [4]:Float@float, [8]:Float@float, [12]:Float@float, [16]:Float@float, [20]:Float@float, [24]:Float@float, [28]:Float@float}
 ; CHECK-NEXT:   %a = extractvalue %struct.CV %r, 0: {[-1]:Float@float}
+; CHECK-NEXT:   %b = extractvalue %struct.CV %r, 1: {[-1]:Float@float}
 ; CHECK-NEXT:   %a0 = extractvalue [2 x float] %a, 0: {[-1]:Float@float}
+; CHECK-NEXT:   %a1 = extractvalue [2 x float] %a, 1: {[-1]:Float@float}
+; CHECK-NEXT:   %b0 = extractvalue [2 x [3 x float]] %b, 0, 0: {[-1]:Float@float}
+; CHECK-NEXT:   %b1 = extractvalue [2 x [3 x float]] %b, 1, 2: {[-1]:Float@float}
 ; CHECK-NEXT:   ret void: {}
