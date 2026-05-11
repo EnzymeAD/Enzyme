@@ -2828,8 +2828,13 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
 static llvm::Type *uniformFPLeafType(llvm::Type *T) {
   if (T->isFloatingPointTy())
     return T;
-  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T))
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return uniformFPLeafType(VT->getElementType());
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    if (AT->getNumElements() == 0)
+      return nullptr;
     return uniformFPLeafType(AT->getElementType());
+  }
   if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
     if (ST->getNumElements() == 0)
       return nullptr;

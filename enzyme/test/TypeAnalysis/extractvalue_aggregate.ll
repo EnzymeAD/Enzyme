@@ -49,3 +49,23 @@ entry:
 ; CHECK-NEXT:   %b12 = extractvalue [2 x [3 x float]] %b, 1, 2: {[-1]:Float@float}
 ; CHECK-NEXT:   %m = fmul float %a0, %seed: {[-1]:Float@float}
 ; CHECK-NEXT:   ret float %m: {}
+
+; Negative test: mixed aggregate (float + i32) must NOT seed Float on the i32 field.
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=compute_mixed -o /dev/null | FileCheck %s --check-prefix=MIXED; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=compute_mixed -S -o /dev/null | FileCheck %s --check-prefix=MIXED
+
+%struct.Mixed = type { float, i32 }
+
+declare %struct.Mixed @opaque_mixed(float)
+
+define float @compute_mixed(float %seed) {
+entry:
+  %r = call %struct.Mixed @opaque_mixed(float %seed)
+  %f = extractvalue %struct.Mixed %r, 0
+  %i = extractvalue %struct.Mixed %r, 1
+  ret float %f
+}
+
+; MIXED: compute_mixed
+; MIXED: %f = extractvalue %struct.Mixed %r, 0: {[-1]:Float@float}
+; MIXED-NOT: %i = extractvalue %struct.Mixed %r, 1: {[-1]:Float@float}
