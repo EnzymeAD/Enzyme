@@ -2884,7 +2884,7 @@ public:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
-      if (looseTypeAnalysis) {
+      if (looseTypeAnalysis || BO.getType()->isIntOrIntVectorTy()) {
         forwardModeInvertedPointerFallback(BO);
         llvm::errs() << "warning: binary operator is integer and constant: "
                      << BO << "\n";
@@ -2912,7 +2912,7 @@ public:
              << " val:" << gutils->isConstantValue(&I)
              << " type: " << TR.query(&I).str() << "\n";
         }
-      ss << "cannot handle unknown binary operator: " << BO << "\n";
+      ss << "derivative of active binary operator not known: " << BO << "\n";
       auto rval = EmitNoDerivativeError(ss.str(), BO, gutils, Builder2);
       if (!rval)
         rval = Constant::getNullValue(gutils->getShadowType(BO.getType()));
