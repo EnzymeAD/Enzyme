@@ -2821,34 +2821,6 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
   }
 }
 
-// Returns the floating-point leaf type if every scalar leaf of T is the same
-// FP type; otherwise nullptr. Used by visitExtractValueInst to seed type info
-// for extractvalue results whose source aggregate has no prior type info
-// (e.g. an opaque external call return) — see EnzymeAD/Enzyme#2630, #2463.
-static llvm::Type *uniformFPLeafType(llvm::Type *T) {
-  if (T->isFloatingPointTy())
-    return T;
-  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
-    return uniformFPLeafType(VT->getElementType());
-  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
-    if (AT->getNumElements() == 0)
-      return nullptr;
-    return uniformFPLeafType(AT->getElementType());
-  }
-  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
-    if (ST->getNumElements() == 0)
-      return nullptr;
-    auto first = uniformFPLeafType(ST->getElementType(0));
-    if (!first)
-      return nullptr;
-    for (unsigned i = 1; i < ST->getNumElements(); ++i)
-      if (uniformFPLeafType(ST->getElementType(i)) != first)
-        return nullptr;
-    return first;
-  }
-  return nullptr;
-}
-
 void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   SmallVector<Value *, 4> vec;
@@ -2866,31 +2838,6 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
 
   int off = (int)ai.getLimitedValue();
   int size = dl.getTypeSizeInBits(I.getType()) / 8;
-
-  // When looseTypeAnalysis is on, seed the result from the LLVM type if it
-  // is a uniform-FP aggregate (or a single FP). This recovers type info for
-  // extractvalue results whose source aggregate came from an opaque external
-  // call (#2630, #2463). Gated behind looseTypeAnalysis because the LLVM
-  // type is not always authoritative about semantic float-ness; emit a
-  // warning so users can spot when this fallback fires.
-  if (looseTypeAnalysis) {
-    if (auto LeafTy = uniformFPLeafType(I.getType())) {
-      if (EnzymeTypeWarning) {
-        std::string s;
-        llvm::raw_string_ostream ss(s);
-        ss << "Enzyme: assuming extractvalue result is "
-           << *LeafTy << " from LLVM type (looseTypeAnalysis): " << I;
-        if (CustomErrorHandler) {
-          CustomErrorHandler(s.c_str(), wrap(&I),
-                             ErrorType::IllegalTypeAnalysis, this, nullptr,
-                             nullptr);
-        } else {
-          llvm::errs() << s << "\n";
-        }
-      }
-      updateAnalysis(&I, TypeTree(ConcreteType(LeafTy)).Only(-1, &I), &I);
-    }
-  }
 
   if (direction & DOWN)
     updateAnalysis(&I,

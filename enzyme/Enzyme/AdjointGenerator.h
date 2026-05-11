@@ -50,6 +50,38 @@
 
 #define DEBUG_TYPE "enzyme"
 
+// Walk an LLVM type and, when every leaf is the same floating-point
+// type, return that leaf. Returns nullptr otherwise (mixed types,
+// non-FP, empty aggregate). Used by the looseTypeAnalysis fallback in
+// visitExtractValueInst to recover type info for aggregates returned
+// by opaque external calls (#2630, #2463). Lives at the consumer site
+// (this header) rather than inside TypeAnalysis itself because
+// looseTypeAnalysis is a consumer-policy override, not a dataflow rule
+// — TypeAnalysis core stays a pure analysis.
+static inline llvm::Type *uniformFPLeafType(llvm::Type *T) {
+  if (T->isFloatingPointTy())
+    return T;
+  if (auto VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return uniformFPLeafType(VT->getElementType());
+  if (auto AT = llvm::dyn_cast<llvm::ArrayType>(T)) {
+    if (AT->getNumElements() == 0)
+      return nullptr;
+    return uniformFPLeafType(AT->getElementType());
+  }
+  if (auto ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    if (ST->getNumElements() == 0)
+      return nullptr;
+    auto first = uniformFPLeafType(ST->getElementType(0));
+    if (!first)
+      return nullptr;
+    for (unsigned i = 1; i < ST->getNumElements(); ++i)
+      if (uniformFPLeafType(ST->getElementType(i)) != first)
+        return nullptr;
+    return first;
+  }
+  return nullptr;
+}
+
 // Helper instruction visitor that generates adjoints
 class AdjointGenerator : public llvm::InstVisitor<AdjointGenerator> {
 private:
@@ -1894,6 +1926,16 @@ public:
             if (looseTypeAnalysis) {
               if (EVI.getType()->isFPOrFPVectorTy()) {
                 dt = ConcreteType(EVI.getType()->getScalarType());
+                found = true;
+              } else if (auto *LeafTy = uniformFPLeafType(EVI.getType())) {
+                // Aggregate-of-uniform-FP (e.g. [2 x float],
+                // [N x [M x float]]): seed from the leaf FP type.
+                // Pre-fix this branch only handled primitive FP/vector
+                // and fell through to EmitNoTypeError for aggregates
+                // (#2630, #2463). Per maintainer review (wsmoses on
+                // PR #2819), the right place for this fallback is here
+                // — at the consumer — not inside TypeAnalysis itself.
+                dt = ConcreteType(LeafTy);
                 found = true;
               } else if (EVI.getType()->isIntOrIntVectorTy() ||
                          EVI.getType()->isPointerTy()) {
