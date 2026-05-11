@@ -35,8 +35,10 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
 
   ! Bindings for function hooks
-  public :: __enzyme_autodiff
-  public :: __enzyme_fwddiff
-  external :: __enzyme_autodiff
-  external :: __enzyme_fwddiff
+  ! NOTE: Leading underscores are not permitted by some Fortran compilers so we
+  !       prepend with 'f' in the Fortran versions of the function hooks.
+  public :: f__enzyme_autodiff
+  public :: f__enzyme_fwddiff
+  external :: f__enzyme_autodiff
+  external :: f__enzyme_fwddiff
 end module enzyme
