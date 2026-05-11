@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=compute -enzyme-loose-types -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=compute -enzyme-loose-types -S -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=compute -enzyme-loose-types -enzyme-type-warning=0 -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=compute -enzyme-loose-types -enzyme-type-warning=0 -S -o /dev/null | FileCheck %s
 
 ; End-to-end check: with loose-types, the full enzyme pass succeeds (no
 ; "Cannot deduce type of extract" diagnostic) and emits a reverse-mode
@@ -7,7 +7,13 @@
 ; aggregates had empty TypeTrees; the AdjointGenerator's loose-types
 ; fallback (AdjointGenerator.h:1894) only handles primitive FP/int and
 ; cannot fill aggregate types.
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-loose-types -enzyme-preopt=false --enzyme-assume-unknown-nofree=1 -S | FileCheck %s --check-prefix=ENZYME
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-loose-types -enzyme-type-warning=0 -enzyme-preopt=false --enzyme-assume-unknown-nofree=1 -S | FileCheck %s --check-prefix=ENZYME
+
+; Warning check: when the LLVM-type fallback fires, an "assuming
+; extractvalue result is..." warning must be emitted (gated on the
+; default-on -enzyme-type-warning) so users can see when this potentially
+; lossy assumption is being made.
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=compute -enzyme-loose-types -S -o /dev/null 2>&1 | FileCheck %s --check-prefix=WARN
 
 ; Regression test for EnzymeAD/Enzyme#2630 (and #2463): with looseTypeAnalysis,
 ; TypeAnalysis seeds float type info for extractvalue results whose source
@@ -73,3 +79,6 @@ define float @caller(float %seed) {
 
 ; ENZYME: define internal {{.*}} @diffead_compute
 ; ENZYME-NOT: Cannot deduce type of extract
+
+; WARN: Enzyme: assuming extractvalue result is float from LLVM type (looseTypeAnalysis):
+; WARN-SAME: %a = extractvalue %struct.CV %r, 0

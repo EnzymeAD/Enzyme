@@ -2871,9 +2871,23 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   // is a uniform-FP aggregate (or a single FP). This recovers type info for
   // extractvalue results whose source aggregate came from an opaque external
   // call (#2630, #2463). Gated behind looseTypeAnalysis because the LLVM
-  // type is not always authoritative about semantic float-ness.
+  // type is not always authoritative about semantic float-ness; emit a
+  // warning so users can spot when this fallback fires.
   if (looseTypeAnalysis) {
     if (auto LeafTy = uniformFPLeafType(I.getType())) {
+      if (EnzymeTypeWarning) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Enzyme: assuming extractvalue result is "
+           << *LeafTy << " from LLVM type (looseTypeAnalysis): " << I;
+        if (CustomErrorHandler) {
+          CustomErrorHandler(s.c_str(), wrap(&I),
+                             ErrorType::IllegalTypeAnalysis, this, nullptr,
+                             nullptr);
+        } else {
+          llvm::errs() << s << "\n";
+        }
+      }
       updateAnalysis(&I, TypeTree(ConcreteType(LeafTy)).Only(-1, &I), &I);
     }
   }
