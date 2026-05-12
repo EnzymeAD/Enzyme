@@ -242,6 +242,7 @@ LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
 
 // TODO: Other API functions that are defined in CApi.cpp for GradientUtils
 void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils);
+void *EnzymeTypeAnalyzerGetExternalContext(void *analyzer);
 EnzymeLogicRef EnzymeGradientUtilsGetLogic(GradientUtils *gutils);
 uint8_t EnzymeGradientUtilsGetAtomicAdd(GradientUtils *gutils);
 
