@@ -274,7 +274,7 @@ public:
     if (!eltIface || eltIface.isMutable())
       return failure();
     Value zero = eltIface.createNullValue(builder, loc);
-    
+
     if (MT.getRank() == 0) {
       memref::StoreOp::create(builder, loc, zero, val, ValueRange{});
       return success();
@@ -287,15 +287,16 @@ public:
     SmallVector<Value> steps(MT.getRank(), c1);
     SmallVector<Value> ubs;
     for (auto [i, d] : llvm::enumerate(MT.getShape())) {
-      ubs.push_back(d == ShapedType::kDynamic
-          ? memref::DimOp::create(builder, loc, val, i).getResult()
-          : arith::ConstantIndexOp::create(builder, loc, d).getResult());
+      ubs.push_back(
+          d == ShapedType::kDynamic
+              ? memref::DimOp::create(builder, loc, val, i).getResult()
+              : arith::ConstantIndexOp::create(builder, loc, d).getResult());
     }
 
     scf::ParallelOp::create(builder, loc, lbs, ubs, steps,
-        [&](OpBuilder &b, Location l, ValueRange ivs) {
-          memref::StoreOp::create(b, l, zero, val, ivs);
-        });
+                            [&](OpBuilder &b, Location l, ValueRange ivs) {
+                              memref::StoreOp::create(b, l, zero, val, ivs);
+                            });
     return success();
   }
 
