@@ -947,9 +947,9 @@ const char *EnzymeTypeAnalyzerToString(void *src) {
   return cstr;
 }
 
-void *EnzymeTypeAnalyzerGetExternalContext(void *src) {
+EnzymeLogicRef EnzymeTypeAnalyzerGetLogic(void *src) {
   auto TA = (TypeAnalyzer *)src;
-  return TA->interprocedural.Logic.ExternalContext;
+  return (EnzymeLogicRef)&TA->interprocedural.Logic;
 }
 
 const char *EnzymeGradientUtilsInvertedPointersToString(GradientUtils *gutils,
