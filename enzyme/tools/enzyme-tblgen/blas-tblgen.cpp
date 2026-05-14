@@ -709,7 +709,7 @@ void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
       os << "    if (byRefFloat) {\n";
       extract_scalar(name, "fpType", os);
       os << "    }\n";
-    } else if (ty == ArgType::trans) {
+    } else if (is_char_arg(ty)) {
       // we are in the byRef branch and trans only exist in lv23.
       // So just unconditionally asume that no layout exist and use i-1
       os << "    if (byRef) {\n";
@@ -951,6 +951,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << "); })";
         return;
       }
+      if (Def->getName() == "Dep") {
+        if (Dag->getNumArgs() != 2)
+          PrintFatalError(pattern.getLoc(), "only 2-arg Dep operands supported");
+        rev_call_arg(forward, Dag, pattern, 1, os, vars);
+        return;
+      }
       if (Def->getName() == "ld") {
         if (Dag->getNumArgs() != 5)
           PrintFatalError(pattern.getLoc(), "only 5-arg ld operands supported");
@@ -963,6 +969,31 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         rev_call_arg(forward, Dag, pattern, 1, os, vars);
         os << ", arg_" << ldName << ", arg_" << dim1Name << ", arg_" << dim2Name
            << ", cache_" << matName << ", byRef, cublas)}";
+        return;
+      }
+      if (Def->getName() == "mat_ld") {
+        if (Dag->getNumArgs() != 3)
+          PrintFatalError(pattern.getLoc(),
+                          "only 3-arg mat_ld operands supported");
+        const auto rowName = Dag->getArgNameStr(1);
+        const auto colName = Dag->getArgNameStr(2);
+        os << "({";
+        os << "    auto rows = load_if_ref(Builder2, intType, arg_" << rowName
+           << ", byRef);\n";
+        os << "    auto cols = load_if_ref(Builder2, intType, arg_" << colName
+           << ", byRef);\n";
+        os << "    Value *res = rows;\n";
+        os << "    if (cblas) {\n";
+        os << "      auto layout = load_if_ref(Builder2, charType, arg_layout, "
+              "byRef);\n";
+        os << "      auto is_row = Builder2.CreateICmpEQ(layout, "
+              "ConstantInt::get(layout->getType(), 101));\n";
+        os << "      res = CreateSelect(Builder2, is_row, cols, rows);\n";
+        os << "    }\n";
+        os << "    SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, "
+              "res, byRef, cublas, julia_decl_type, allocationBuilder, "
+              "\"mat.ld\")};\n";
+        os << "    vals; })";
         return;
       }
       if (Def->getName() == "is_zero") {
@@ -1493,7 +1524,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
-  if (func == "trmv" || func == "trtrs")
+  if (func == "trmv" || func == "trsv" || func == "trtrs")
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
@@ -1544,7 +1575,8 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   auto action = args[1];
   assert(action == "product" || action == "is_normal" ||
          action == "triangular" || action == "vector" ||
-         action == "zerotriangular" || action == "is_left");
+         action == "zerotriangular" || action == "is_left" ||
+         action == "side_square");
   if (action == "product") {
     const auto matName = args[0];
     const auto dim1 = "arg_" + args[2];
@@ -1581,6 +1613,22 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
     os << "    Value *size_" << vecName << " = " << builder
        << ".CreateSelect(is_left(" << builder << ", " << trans
        << ", byRef, cublas), len1, len2);\n";
+  } else if (action == "side_square") {
+    assert(args.size() == 5);
+    const auto matName = args[0];
+    const auto side = "arg_" + args[2];
+    const auto dim1 = "arg_" + args[3];
+    const auto dim2 = "arg_" + args[4];
+    os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
+       << ", byRef);\n"
+       << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
+       << ", byRef);\n";
+    os << "    Value *side_len_" << matName << " = " << builder
+       << ".CreateSelect(is_left(" << builder << ", " << side
+       << ", byRef, cublas), len1, len2);\n";
+    os << "    Value *size_" << matName << " = " << builder
+       << ".CreateMul(side_len_" << matName << ", side_len_" << matName
+       << ");\n";
   } else if (action == "vector") {
     assert(args.size() == 3);
     const auto vecName = args[0];
@@ -1731,6 +1779,18 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
       os << "            EmitNoDerivativeError(ss.str(), call, gutils, "
             "Builder2);\n";
     }
+    return;
+  }
+  if (Def->getName() == "Dep") {
+    if (ruleDag->getNumArgs() != 2)
+      PrintFatalError(pattern.getLoc(), "only 2-arg Dep operands supported");
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
+    emit_dag(forward, resultVarName, cast<DagInit>(ruleDag->getArg(1)),
+             argName + "_dep", os, argName, actArg, pattern, runtimeChecked,
+             vars);
+    if (forward)
+      os << "        }\n";
     return;
   }
   if (Def->isSubClassOf("BlasCall")) {
@@ -1958,6 +2018,56 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
 
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(dmemcpymat, "
        << argPrefix << ", Defs));\n";
+
+    if (!forward && !runtimeChecked)
+      emit_runtime_continue(ruleDag, argName, "        ", "Builder2",
+                            (ty == ArgType::fp), os);
+    os << "        }\n";
+    if (forward)
+      os << "        }\n";
+    return;
+  }
+  if (Def->isSubClassOf("MatAdd")) {
+    assert(ruleDag->getNumArgs() == 5);
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
+    auto ty = ArgType::len;
+    os << "        {\n";
+    if (!forward && !runtimeChecked)
+      emit_runtime_condition(ruleDag, argName, "        ", "Builder2",
+                             (ty == ArgType::fp), os);
+    os << "      // MatAdd\n";
+    for (size_t i = 1; i < ruleDag->getNumArgs(); i++) {
+      os << "        SmallVector<Value*, 2> " << argPrefix << "_" << i
+         << ";\n";
+      os << "        for (auto v : ";
+      rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+      os << ") " << argPrefix << "_" << i << ".push_back(v);\n";
+    }
+
+    os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+       << ValueType_helper(pattern, actArg, ruleDag)
+       << "}, Builder2, /* lookup */ " << (!forward) << ");\n";
+    os << "        Value *layout = cblas ? load_if_ref(Builder2, charType, "
+          "arg_layout, byRef) : ConstantInt::get(charType, 102);\n";
+    os << "        auto layoutType = cast<IntegerType>(layout->getType());\n";
+    os << "        auto M = load_if_ref(Builder2, intType, " << argPrefix
+       << "_1[0], byRef);\n";
+    os << "        auto N = load_if_ref(Builder2, intType, " << argPrefix
+       << "_2[0], byRef);\n";
+    os << "        auto dstLD = load_if_ref(Builder2, intType, " << argPrefix
+       << "_3[1], byRef);\n";
+    os << "        auto srcLD = load_if_ref(Builder2, intType, " << argPrefix
+       << "_4[1], byRef);\n";
+    os << "        auto dmemcpymat = "
+          "getOrInsertDifferentialFloatMemcpyMatLayout(*gutils->oldFunc->"
+          "getParent(), fpType, cast<PointerType>("
+       << argPrefix << "_3[0]->getType()), intType, layoutType, 0, 0, "
+       << Def->getValueAsBit("shouldZero") << ");\n";
+    os << "        Value *matadd_args[] = {layout, M, N, " << argPrefix
+       << "_3[0], dstLD, " << argPrefix << "_4[0], srcLD};\n";
+    os << "        auto cubcall = cast<CallInst>(Builder2.CreateCall("
+          "dmemcpymat, matadd_args, Defs));\n";
 
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2",
@@ -2354,9 +2464,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
-    // trtrs do in reversed arg order.
-    size_t i = (pattern.getName() != "trtrs") ? iteri
-                                              : (activeArgs.size() - 1 - iteri);
+    // TRSV/TRTRS need the solved cotangent before forming dA.
+    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "trsv")
+                   ? iteri
+                   : (activeArgs.size() - 1 - iteri);
     StringRef extraCond;
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];

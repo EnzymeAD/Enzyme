@@ -2068,6 +2068,129 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
   return F;
 }
 
+Function *getOrInsertDifferentialFloatMemcpyMatLayout(
+    Module &Mod, Type *elementType, PointerType *PT, IntegerType *IT,
+    IntegerType *CT, unsigned dstalign, unsigned srcalign, bool zeroSrc) {
+  assert(elementType->isFPOrFPVectorTy());
+#if LLVM_VERSION_MAJOR < 17
+#if LLVM_VERSION_MAJOR >= 15
+  if (Mod.getContext().supportsTypedPointers()) {
+#endif
+#if LLVM_VERSION_MAJOR >= 13
+    if (!PT->isOpaquePointerTy())
+#endif
+      assert(PT->getPointerElementType() == elementType);
+#if LLVM_VERSION_MAJOR >= 15
+  }
+#endif
+#endif
+  std::string name = "__enzyme_dmemcpy_" + tofltstr(elementType) +
+                     "_mat_layout_" +
+                     std::to_string(cast<IntegerType>(CT)->getBitWidth()) +
+                     "_" +
+                     std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
+                     (zeroSrc ? "_zero" : "");
+  FunctionType *FT = FunctionType::get(
+      Type::getVoidTy(Mod.getContext()), {CT, IT, IT, PT, IT, PT, IT}, false);
+
+  Function *F = cast<Function>(Mod.getOrInsertFunction(name, FT).getCallee());
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  F->addParamAttr(3, Attribute::NoAlias);
+  F->addParamAttr(5, Attribute::NoAlias);
+
+  BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(F->getContext(), "init.idx", F);
+  BasicBlock *body = BasicBlock::Create(F->getContext(), "for.body", F);
+  BasicBlock *initend = BasicBlock::Create(F->getContext(), "init.end", F);
+  BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+  auto layout = F->arg_begin();
+  layout->setName("layout");
+  auto M = layout + 1;
+  M->setName("M");
+  auto N = M + 1;
+  N->setName("N");
+  auto dst = N + 1;
+  dst->setName("dst");
+  auto ldst = dst + 1;
+  ldst->setName("ldst");
+  auto src = ldst + 1;
+  src->setName("src");
+  auto lsrc = src + 1;
+  lsrc->setName("lsrc");
+
+  {
+    IRBuilder<> B(entry);
+    Value *l0 = B.CreateICmpEQ(M, ConstantInt::get(IT, 0));
+    Value *l1 = B.CreateICmpEQ(N, ConstantInt::get(IT, 0));
+    B.CreateCondBr(B.CreateOr(l0, l1), end, init);
+  }
+
+  PHINode *j;
+  {
+    IRBuilder<> B(init);
+    j = B.CreatePHI(IT, 2, "j");
+    j->addIncoming(ConstantInt::get(IT, 0), entry);
+    B.CreateBr(body);
+  }
+
+  {
+    IRBuilder<> B(body);
+    PHINode *i = B.CreatePHI(IT, 2, "i");
+    i->addIncoming(ConstantInt::get(IT, 0), init);
+
+    Value *srci = lookup_with_layout(B, elementType, layout, src, lsrc, i, j);
+    Value *dsti = lookup_with_layout(B, elementType, layout, dst, ldst, i, j);
+    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+    LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
+    auto res = B.CreateFAdd(srcl, dstl);
+    StoreInst *dsts = B.CreateStore(res, dsti);
+    StoreInst *srcs = nullptr;
+    if (zeroSrc)
+      srcs = B.CreateStore(Constant::getNullValue(res->getType()), srci);
+    if (dstalign) {
+      dsts->setAlignment(Align(dstalign));
+      dstl->setAlignment(Align(dstalign));
+    }
+    if (srcalign) {
+      if (zeroSrc)
+        srcs->setAlignment(Align(srcalign));
+      srcl->setAlignment(Align(srcalign));
+    }
+
+    Value *nexti =
+        B.CreateAdd(i, ConstantInt::get(IT, 1), "i.next", true, true);
+    i->addIncoming(nexti, body);
+    B.CreateCondBr(B.CreateICmpEQ(nexti, M), initend, body);
+  }
+
+  {
+    IRBuilder<> B(initend);
+    Value *nextj =
+        B.CreateAdd(j, ConstantInt::get(IT, 1), "j.next", true, true);
+    j->addIncoming(nextj, initend);
+    B.CreateCondBr(B.CreateICmpEQ(nextj, N), end, init);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
 // TODO implement differential memmove
 Function *
 getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
@@ -3567,6 +3690,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "trsm",
   };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -4100,7 +4224,11 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
   if (!cublas) {
 
     if (!byRef) {
-      cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+      auto isCblasN =
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+      auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+      auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+      cond = B.CreateOr(isCblasN, B.CreateOr(isN, isn));
     } else {
       auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
       auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
