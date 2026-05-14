@@ -246,7 +246,7 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
 
 void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
   assert(getShadowType(val.getType()) == toset.getType());
-  
+
   if (auto found = invertedPointers.lookupOrNull(val)) {
     if (auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>()) {
       placeholder.replaceAllUsesWith(toset);
