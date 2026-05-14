@@ -2004,20 +2004,34 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
        << ValueType_helper(pattern, actArg, ruleDag)
        << "}, Builder2, /* lookup */ " << (!forward) << ");\n";
 
-    for (int i : {0, 1, 2, 4, 6})
-      os << "        " << argPrefix << "[" << i << "] = load_if_ref(Builder2, "
-         << ((i == 0) ? "charType" : "intType") << ", " << argPrefix << "[" << i
-         << "], byRef);\n";
+    os << "        Value *layout = cblas ? load_if_ref(Builder2, charType, "
+          "arg_layout, byRef) : ConstantInt::get(charType, 102);\n";
+    os << "        unsigned uploOffset = cblas ? 1 : 0;\n";
+    os << "        auto uplo = load_if_ref(Builder2, charType, " << argPrefix
+       << "[uploOffset], byRef);\n";
+    os << "        auto M = load_if_ref(Builder2, intType, " << argPrefix
+       << "[uploOffset + 1], byRef);\n";
+    os << "        auto N = load_if_ref(Builder2, intType, " << argPrefix
+       << "[uploOffset + 2], byRef);\n";
+    os << "        auto dstLD = load_if_ref(Builder2, intType, " << argPrefix
+       << "[uploOffset + 4], byRef);\n";
+    os << "        auto srcLD = load_if_ref(Builder2, intType, " << argPrefix
+       << "[uploOffset + 6], byRef);\n";
 
     os << "        auto dmemcpymat = "
           "getOrInsertDifferentialFloatMemcpyMat(*gutils->oldFunc->getParent(),"
           " fpType, cast<PointerType>("
-       << argPrefix << "[" << argPrefix
-       << ".size() - 2]->getType()), intType, charType, 0, 0, "
+       << argPrefix
+       << "[uploOffset + 3]->getType()), intType, "
+          "cast<IntegerType>(uplo->getType()), "
+          "cast<IntegerType>(layout->getType()), 0, 0, "
        << Def->getValueAsBit("shouldZero") << ");\n";
 
+    os << "        Value *matadd_args[] = {uplo, layout, M, N, " << argPrefix
+       << "[uploOffset + 3], dstLD, " << argPrefix
+       << "[uploOffset + 5], srcLD};\n";
     os << "    auto cubcall = cast<CallInst>(Builder2.CreateCall(dmemcpymat, "
-       << argPrefix << ", Defs));\n";
+          "matadd_args, Defs));\n";
 
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2",
@@ -2059,12 +2073,15 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
        << "_3[1], byRef);\n";
     os << "        auto srcLD = load_if_ref(Builder2, intType, " << argPrefix
        << "_4[1], byRef);\n";
+    os << "        Value *uplo = ConstantInt::get(charType, 'G');\n";
+    os << "        auto uploType = cast<IntegerType>(uplo->getType());\n";
     os << "        auto dmemcpymat = "
-          "getOrInsertDifferentialFloatMemcpyMatLayout(*gutils->oldFunc->"
+          "getOrInsertDifferentialFloatMemcpyMat(*gutils->oldFunc->"
           "getParent(), fpType, cast<PointerType>("
-       << argPrefix << "_3[0]->getType()), intType, layoutType, 0, 0, "
+       << argPrefix
+       << "_3[0]->getType()), intType, uploType, layoutType, 0, 0, "
        << Def->getValueAsBit("shouldZero") << ");\n";
-    os << "        Value *matadd_args[] = {layout, M, N, " << argPrefix
+    os << "        Value *matadd_args[] = {uplo, layout, M, N, " << argPrefix
        << "_3[0], dstLD, " << argPrefix << "_4[0], srcLD};\n";
     os << "        auto cubcall = cast<CallInst>(Builder2.CreateCall("
           "dmemcpymat, matadd_args, Defs));\n";

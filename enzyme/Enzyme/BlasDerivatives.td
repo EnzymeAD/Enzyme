@@ -821,23 +821,23 @@ def trsm: CallBlasPattern<(Op $layout, $side, $uplo, $transa, $diag, $m, $n, $al
 
 def uplo_to_normal : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "122", "0", "'U'", "'u'", "121", "1"],
-    ["'n'", "'N'", "'N'", "'N'", "'T'", "'t'", "'T'", "'T'"]
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'n'", "'N'", "'T'", "'t'"]
     >;
 def uplo_to_trans : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "122", "0", "'U'", "'u'", "121", "1"],
-    ["'t'", "'T'", "'T'", "'T'", "'N'", "'n'", "'N'", "'N'"]
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'t'", "'T'", "'N'", "'n'"]
     >;
 def uplo_to_side : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "122", "0", "'U'", "'u'", "121", "1"],
-    ["'L'", "'L'", "'L'", "'L'", "'R'", "'R'", "'R'", "'R'"]
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'L'", "'L'", "'R'", "'R'"]
     >;
 def uplo_to_rside : IntMatchers<
     "charType", "charType",
-    ["'l'", "'L'", "122", "0", "'U'", "'u'", "121", "1"],
-    ["'R'", "'R'", "'R'", "'R'", "'L'", "'L'", "'L'", "'L'"]
+    ["'l'", "'L'", "'U'", "'u'"],
+    ["'R'", "'R'", "'L'", "'L'"]
     >;
 
 def potrf: CallBlasPattern<(Op $layout, $uplo, $n, $A, $lda, $info),

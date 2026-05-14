@@ -22,7 +22,7 @@ entry:
 ; CHECK-LABEL: define internal void @fwddiffef(
 ; CHECK: call void @cblas_dtrsm
 ; CHECK: icmp eq i32 %layout, 101
-; CHECK: __enzyme_dmemcpy_double_mat_layout_32_32_zero
+; CHECK: __enzyme_dmemcpy_double_mat_8_32_32_zero
 ; CHECK: call void @cblas_dtrsm
 ; CHECK-NOT: call void bitcast
-; CHECK: define internal void @__enzyme_dmemcpy_double_mat_layout_32_32_zero(i32 %layout,
+; CHECK: define internal void @__enzyme_dmemcpy_double_mat_8_32_32_zero(i8 %uplo, i32 %layout,
