@@ -223,8 +223,12 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   }
   assert(!isConstantValue(val));
 
+  bool isMutable = false;
+  if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType()))
+    isMutable = iface.isMutable();
+
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
+      mode == DerivativeMode::ForwardModeSplit || isMutable) {
     setInvertedPointer(val, toset);
   }
   /*
@@ -240,11 +244,13 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
 
 void mlir::enzyme::MGradientUtils::setInvertedPointer(Value val, Value toset) {
   assert(getShadowType(val.getType()) == toset.getType());
-  auto found = invertedPointers.lookupOrNull(val);
-  assert(found != nullptr);
-  auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
-  placeholder.replaceAllUsesWith(toset);
-  erase(placeholder);
+  
+  if (auto found = invertedPointers.lookupOrNull(val)) {
+    if (auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>()) {
+      placeholder.replaceAllUsesWith(toset);
+      erase(placeholder);
+    }
+  }
   invertedPointers.map(val, toset);
 }
 
