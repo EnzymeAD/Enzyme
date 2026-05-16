@@ -575,14 +575,16 @@ public:
       // we can pre initialize all the knownRecomputeHeuristic values to false
       // (not needing) as we may assume that minCutCache already preserves
       // everything it requires.
-      std::map<UsageKey, bool> Seen;
+      std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
       bool primalNeededInReverse = false;
-      for (auto pair : gutils->knownRecomputeHeuristic)
-        if (!pair.second) {
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-          if (pair.first == &I)
+      {        
+        auto found = gutils->knownRecomputeHeuristic.find(&I);
+        if (found != gutils->knownRecomputeHeuristic.end()) {
+          if (!found->second) {
             primalNeededInReverse = true;
+          }
         }
+      }
       auto cacheMode = (Mode == DerivativeMode::ReverseModePrimal)
                            ? DerivativeMode::ReverseModeGradient
                            : Mode;
@@ -5698,17 +5700,16 @@ public:
           if (Mode == DerivativeMode::ReverseModePrimal &&
               !gutils->unnecessaryIntermediates.count(&call)) {
 
-            std::map<UsageKey, bool> Seen;
+            std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
             bool primalNeededInReverse = false;
-            for (auto pair : gutils->knownRecomputeHeuristic)
-              if (!pair.second) {
-                if (pair.first == &call) {
+            {
+              auto found = gutils->knownRecomputeHeuristic.find(&call);
+              if (found != gutils->knownRecomputeHeuristic.end()) {
+                if (!found->second) {
                   primalNeededInReverse = true;
-                  break;
-                } else {
-                  Seen[UsageKey(pair.first, QueryType::Primal)] = false;
                 }
               }
+            }
             if (!primalNeededInReverse) {
 
               auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
@@ -6503,10 +6504,7 @@ public:
         if (gutils->knownRecomputeHeuristic.count(&call)) {
           primalNeededInReverse = !gutils->knownRecomputeHeuristic[&call];
         } else {
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
           primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
@@ -6575,13 +6573,7 @@ public:
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
 
-      std::map<UsageKey, bool> CacheResults;
-      for (auto pair : gutils->knownRecomputeHeuristic) {
-        if (!pair.second || gutils->unnecessaryIntermediates.count(
-                                cast<Instruction>(pair.first))) {
-          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-        }
-      }
+      std::map<UsageKey, bool> CacheResults = gutils->populateSeenFromKnownRecompute();
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
@@ -6688,17 +6680,16 @@ public:
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {
 
-          std::map<UsageKey, bool> Seen;
+          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse = false;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second) {
-              if (pair.first == &call) {
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(&call);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
                 primalNeededInReverse = true;
-                break;
-              } else {
-                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
               }
             }
+          }
           if (!primalNeededInReverse) {
 
             auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)

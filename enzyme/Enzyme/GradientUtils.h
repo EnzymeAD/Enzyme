@@ -320,6 +320,17 @@ public:
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
 
+  std::map<UsageKey, bool> populateSeenFromKnownRecompute() {
+    std::map<UsageKey, bool> Seen;
+    for (auto pair : knownRecomputeHeuristic) {
+      if (!pair.second ||
+          unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+        Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+      }
+    }
+    return Seen;
+  }
+
   bool legalRecompute(const llvm::Value *val,
                       const llvm::ValueToValueMapTy &available,
                       llvm::IRBuilder<> *BuilderM, bool reverse = false,

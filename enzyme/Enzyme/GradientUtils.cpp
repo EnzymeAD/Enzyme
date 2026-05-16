@@ -3158,18 +3158,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   for (auto pair : rematerializableAllocations) {
     if (pair.second.LI &&
         getNewFromOriginal(pair.second.LI->getHeader()) == header) {
-      bool rematerialized = false;
-      std::map<UsageKey, bool> Seen;
-      for (auto pair : knownRecomputeHeuristic)
-        if (!pair.second)
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
-      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(this, pair.first, mode, Seen,
-                                 notForAnalysis)) {
-        rematerialized = true;
-      }
-      if (rematerialized) {
+      if (allocationsToBeRematerialized.count(pair.first)) {
         if (auto inst = dyn_cast<Instruction>(pair.first))
           if (pair.second.LI->contains(inst->getParent())) {
             loopReallocations.insert(inst);
@@ -8656,13 +8645,7 @@ void GradientUtils::computeMinCache() {
         auto found = rematerializableAllocations.find(&I);
         if (found == rematerializableAllocations.end())
           continue;
-        std::map<UsageKey, bool> Seen;
-        for (auto pair : knownRecomputeHeuristic) {
-          if (!pair.second ||
-              unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
-            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-          }
-        }
+        std::map<UsageKey, bool> Seen = populateSeenFromKnownRecompute();
         bool primalNeededInReverse =
             DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(this, &I, mode, Seen, notForAnalysis);

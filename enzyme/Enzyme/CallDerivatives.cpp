@@ -2708,12 +2708,18 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 
       if (!shouldCache && !lrc) {
-        std::map<UsageKey, bool> Seen;
-        for (auto pair : gutils->knownRecomputeHeuristic)
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+        std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
         bool primalNeededInReverse =
             DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+        {
+          auto found = gutils->knownRecomputeHeuristic.find(&call);
+          if (found != gutils->knownRecomputeHeuristic.end()) {
+            if (!found->second) {
+              primalNeededInReverse = true;
+            }
+          }
+        }
         shouldCache = primalNeededInReverse;
       }
 
@@ -2730,12 +2736,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     if (called) {
       if (funcName == "julia.write_barrier" ||
           funcName == "julia.write_barrier_binding") {
-
-        std::map<UsageKey, bool> Seen;
-        for (auto pair : gutils->knownRecomputeHeuristic)
-          if (!pair.second)
-            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
+        std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
         bool backwardsShadow = false;
         bool forwardsShadow = true;
         for (auto pair : gutils->backwardsOnlyShadows) {
@@ -3302,12 +3303,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    std::map<UsageKey, bool> Seen;
-    for (auto pair : gutils->knownRecomputeHeuristic)
-      if (!pair.second || gutils->unnecessaryIntermediates.count(
-                              cast<Instruction>(pair.first))) {
-        Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-      }
+    std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
                 Mode == DerivativeMode::ForwardModeError
@@ -4165,14 +4161,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           return true;
         } else {
           assert(Mode == DerivativeMode::ReverseModeCombined);
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, rmat.first, Mode, Seen,
                                      oldUnreachable);
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(rmat.first);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                primalNeededInReverse = true;
+              }
+            }
+          }
           bool cacheWholeAllocation =
               gutils->needsCacheWholeAllocation(rmat.first);
           if (cacheWholeAllocation) {

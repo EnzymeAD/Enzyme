@@ -1181,14 +1181,7 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           goto doneEscapeCheck;
         }
 
-        std::map<UsageKey, bool> CacheResults;
-        for (auto pair : gutils->knownRecomputeHeuristic) {
-          if (!pair.second || gutils->unnecessaryIntermediates.count(
-                                  cast<Instruction>(pair.first))) {
-            CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-          }
-        }
-
+        std::map<UsageKey, bool> CacheResults = gutils->populateSeenFromKnownRecompute();
         // to avoid an infinite loop, we assume this is needed by
         // marking the query that led us.
         if (val)
