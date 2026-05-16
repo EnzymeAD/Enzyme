@@ -947,6 +947,11 @@ const char *EnzymeTypeAnalyzerToString(void *src) {
   return cstr;
 }
 
+EnzymeLogicRef EnzymeTypeAnalyzerGetLogic(void *src) {
+  auto TA = (TypeAnalyzer *)src;
+  return (EnzymeLogicRef)&TA->interprocedural.Logic;
+}
+
 const char *EnzymeGradientUtilsInvertedPointersToString(GradientUtils *gutils,
                                                         void *src) {
   std::string str;
