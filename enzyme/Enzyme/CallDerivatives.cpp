@@ -3319,7 +3319,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // such.
     {
       auto found = gutils->knownRecomputeHeuristic.find(&call);
-      if (found != gutils->knownRecomputeHeuristic.end() && found->second) {
+      if (found != gutils->knownRecomputeHeuristic.end() && !found->second) {
         primalNeededInReverse = true;
       }
     }
@@ -4127,7 +4127,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     auto callval = call.getCalledOperand();
 
     for (auto rmat : gutils->backwardsOnlyShadows) {
-      if (rmat.second.frees.count(&call)) {
+      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
+          rmat.second.frees.count(&call)) {
         bool shouldFree = false;
         if (rmat.second.primalInitialize) {
           if (Mode == DerivativeMode::ReverseModePrimal)

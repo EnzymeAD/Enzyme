@@ -8654,7 +8654,7 @@ void GradientUtils::computeMinCache() {
 
         {
           auto found = knownRecomputeHeuristic.find(&I);
-          if (found != knownRecomputeHeuristic.end() && found->second) {
+          if (found != knownRecomputeHeuristic.end() && !found->second) {
             primalNeededInReverse = true;
           }
         }
