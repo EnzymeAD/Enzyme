@@ -290,6 +290,7 @@ public:
   };
 
   llvm::ValueMap<llvm::Value *, Rematerializer> rematerializableAllocations;
+  llvm::SmallPtrSet<llvm::Value *, 4> allocationsToBeRematerialized;
 
   /// Only loaded from and stored to (not captured), mapped to the stores (and
   /// memset). Boolean denotes whether the primal initializes the shadow as well

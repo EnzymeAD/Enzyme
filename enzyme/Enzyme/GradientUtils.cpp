@@ -8632,6 +8632,19 @@ void GradientUtils::computeMinCache() {
       }
     }
   }
+  if (rematerializableAllocations.size()) {
+    std::map<UsageKey, bool> Seen;
+    for (auto pair : knownRecomputeHeuristic)
+      Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+    for (auto &pair : rematerializableAllocations) {
+      bool primalNeededInReverse =
+          DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Primal>(this, pair.first, mode, Seen, notForAnalysis);
+      if (primalNeededInReverse && !needsCacheWholeAllocation(pair.first)) {
+        allocationsToBeRematerialized.insert(pair.first);
+      }
+    }
+  }
 }
 
 bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
@@ -8659,23 +8672,32 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      if (CustomErrorHandler) {
+      bool skip = false;
+      assert(isa<Instruction>(pair.second));
+      auto *I = dyn_cast<Instruction>(pair.second);
+      if (!OrigDT->isReachableFromEntry(I->getParent())) {
+        skip = true;
+      }
+      
+      if (!skip) {
         std::string str;
         raw_string_ostream ss(str);
-        ss << "Illegal replace ficticious phi for: " << *pp << " of "
-           << *pair.second;
-        CustomErrorHandler(str.c_str(), wrap(pair.second),
-                           ErrorType::IllegalReplaceFicticiousPHIs, this,
-                           wrap(pp), nullptr);
-      } else {
-        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-        llvm::errs() << "newFunc:" << *newFunc << "\n";
-        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
-        assert(pp->getNumUses() == 0);
+        ss << "Illegal replace ficticious phi for: " << *pp << " of " << *pair.second << "\n";
+        for (auto U : pp->users()) {
+            ss << "  user: " << *U << "\n";
+        }
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(pp),
+                             ErrorType::InternalError, nullptr, nullptr,
+                             nullptr);
+        } else {
+          EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
+        }
       }
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), pp->getType());
+      pp->replaceAllUsesWith(replacement);
     }
-    pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
 }

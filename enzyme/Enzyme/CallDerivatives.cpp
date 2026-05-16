@@ -2788,21 +2788,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           for (const auto &pair : gutils->rematerializableAllocations) {
             if (!pair.second.stores.count(&call))
               continue;
-            bool primalNeededInReverse =
-                Mode == DerivativeMode::ForwardMode ||
-                        Mode == DerivativeMode::ForwardModeError
-                    ? false
-                    : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                          QueryType::Primal>(gutils, pair.first, Mode, Seen,
-                                             oldUnreachable);
-
-            bool cacheWholeAllocation =
-                gutils->needsCacheWholeAllocation(pair.first);
-            if (cacheWholeAllocation) {
-              primalNeededInReverse = true;
-            }
-
-            if (primalNeededInReverse && !cacheWholeAllocation)
+            if (gutils->allocationsToBeRematerialized.count(pair.first))
               // However, if we are rematerailizing the allocation and not
               // inside the loop level rematerialization, we do still need the
               // reverse passes ``fake primal'' store and therefore write
@@ -3438,7 +3424,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (found != gutils->rematerializableAllocations.end()) {
         // If rematerializing (e.g. needed in reverse, but not needing
         //  the whole allocation):
-        if (primalNeededInReverse && !cacheWholeAllocation) {
+        if (gutils->allocationsToBeRematerialized.count(&call)) {
           assert(!unnecessaryValues.count(&call));
           // if rematerialize, don't ever cache and downgrade to stack
           // allocation where possible. Note that for allocations which are
