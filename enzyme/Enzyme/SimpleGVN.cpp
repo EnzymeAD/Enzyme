@@ -165,6 +165,16 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
   // Bitcast to the final type if needed
   if (LoadIntTy != LoadType) {
     if (LoadType->isPointerTy()) {
+      if (cast<PointerType>(LoadType)->getAddressSpace() == 10) {
+        if (CustomErrorHandler) {
+          CustomErrorHandler(
+              "SimpleGVN: attempt to convert integer to GC pointer",
+              wrap(StoredVal), ErrorType::InternalError, nullptr, nullptr,
+              wrap(&Builder));
+        }
+        llvm::report_fatal_error(
+            "SimpleGVN: attempt to convert integer to GC pointer");
+      }
       StoredVal = Builder.CreateIntToPtr(StoredVal, LoadType);
     } else {
       if (!CastInst::castIsValid(Instruction::BitCast, StoredVal->getType(),
