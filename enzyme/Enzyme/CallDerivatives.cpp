@@ -4152,8 +4152,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // If a rematerializable allocation.
     for (auto rmat : gutils->rematerializableAllocations) {
-      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
-          rmat.second.frees.count(&call)) {
+      if (rmat.second.frees.count(&call)) {
         // Leave the original free behavior since this won't be used
         // in the reverse pass in split mode
         if (Mode == DerivativeMode::ReverseModePrimal) {
