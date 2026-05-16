@@ -312,11 +312,13 @@ inline bool is_value_needed_in_reverse(
           // directly say unused by induction instead of checking the final
           // loads.
           if (pair.second.stores.count(user)) {
-            bool allocNeeded = gutils->allocationsToBeRematerialized.count(pair.first);
+            bool allocNeeded =
+                gutils->allocationsToBeRematerialized.count(pair.first);
             if (allocNeeded) {
               if (EnzymePrintDiffUse)
                 llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                              << " in reverse from rematerialized alloc " << *pair.first << "\n";
+                             << " in reverse from rematerialized alloc "
+                             << *pair.first << "\n";
               return seen[idx] = true;
             }
             for (LoadInst *L : pair.second.loads)
@@ -346,8 +348,8 @@ inline bool is_value_needed_in_reverse(
                 llvm::errs()
                     << " Need: " << to_string(VT) << " of " << *inst
                     << " in reverse as rematalloc " << *pair.first << "\n";
-                return seen[idx] = true;
-              }
+              return seen[idx] = true;
+            }
           }
         }
       }

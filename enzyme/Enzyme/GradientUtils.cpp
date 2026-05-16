@@ -8634,8 +8634,8 @@ void GradientUtils::computeMinCache() {
   }
   if (rematerializableAllocations.size()) {
 
-    // We iterate through the instructions here to ensure a consistent order for the analysis
-    // results.
+    // We iterate through the instructions here to ensure a consistent order for
+    // the analysis results.
     for (auto &BB : *oldFunc) {
       for (auto &I : BB) {
         auto found = rematerializableAllocations.find(&I);
@@ -8698,18 +8698,18 @@ void GradientUtils::eraseFictiousPHIs() {
       if (!OrigDT->isReachableFromEntry(I->getParent())) {
         skip = true;
       }
-      
+
       if (!skip) {
         std::string str;
         raw_string_ostream ss(str);
-        ss << "Illegal replace ficticious phi for: " << *pp << " of " << *pair.second << "\n";
+        ss << "Illegal replace ficticious phi for: " << *pp << " of "
+           << *pair.second << "\n";
         for (auto U : pp->users()) {
-            ss << "  user: " << *U << "\n";
+          ss << "  user: " << *U << "\n";
         }
         if (CustomErrorHandler) {
-          CustomErrorHandler(str.c_str(), wrap(pp),
-                             ErrorType::InternalError, nullptr, nullptr,
-                             nullptr);
+          CustomErrorHandler(str.c_str(), wrap(pp), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
         } else {
           EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
         }

@@ -2947,7 +2947,8 @@ public:
     bool forceErase = false;
     if (Mode == DerivativeMode::ReverseModeGradient) {
       for (const auto &pair : gutils->rematerializableAllocations) {
-        if (gutils->allocationsToBeRematerialized.count(pair.first) && pair.second.stores.count(&MS) && pair.second.LI) {
+        if (gutils->allocationsToBeRematerialized.count(pair.first) &&
+            pair.second.stores.count(&MS) && pair.second.LI) {
           forceErase = true;
         }
       }

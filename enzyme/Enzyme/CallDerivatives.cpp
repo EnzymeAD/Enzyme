@@ -3315,7 +3315,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             : DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
 
-    // If we explicitly decided we need this in the reverse pass, mark it as such.
+    // If we explicitly decided we need this in the reverse pass, mark it as
+    // such.
     {
       auto found = gutils->knownRecomputeHeuristic.find(&call);
       if (found != gutils->knownRecomputeHeuristic.end() && found->second) {
@@ -4151,7 +4152,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // If a rematerializable allocation.
     for (auto rmat : gutils->rematerializableAllocations) {
-      if (gutils->allocationsToBeRematerialized.count(rmat.first) && rmat.second.frees.count(&call)) {
+      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
+          rmat.second.frees.count(&call)) {
         // Leave the original free behavior since this won't be used
         // in the reverse pass in split mode
         if (Mode == DerivativeMode::ReverseModePrimal) {
