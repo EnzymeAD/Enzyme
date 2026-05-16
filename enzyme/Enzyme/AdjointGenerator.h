@@ -907,7 +907,8 @@ public:
         // However, if we are rematerailizing the allocationa and not
         // inside the loop level rematerialization, we do still need the
         // reverse passes ``fake primal'' store and therefore write barrier
-        if (pair.second.stores.count(&SI) &&
+        if (gutils->allocationsToBeRematerialized.count(pair.first) &&
+            pair.second.stores.count(&SI) &&
             (!pair.second.LI || !pair.second.LI->contains(&SI))) {
           forceErase = false;
         }
@@ -2946,7 +2947,7 @@ public:
     bool forceErase = false;
     if (Mode == DerivativeMode::ReverseModeGradient) {
       for (const auto &pair : gutils->rematerializableAllocations) {
-        if (pair.second.stores.count(&MS) && pair.second.LI) {
+        if (gutils->allocationsToBeRematerialized.count(pair.first) && pair.second.stores.count(&MS) && pair.second.LI) {
           forceErase = true;
         }
       }

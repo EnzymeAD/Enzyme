@@ -6,9 +6,9 @@ target triple = "arm64-apple-darwin24.0.0"
 ; Function Attrs: allocsize(1)
 declare noalias ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64) #0
 
-define fastcc ptr addrspace(10) @julia_mlogloss_core_3044(ptr addrspace(10) %"pred::Array") {
+define fastcc ptr addrspace(10) @julia_mlogloss_core_3044(ptr addrspace(10) %"pred::Array", ptr %tl) {
 top:
-  %"pred::Array.size.sroa.0.0.copyload" = load i64, ptr addrspace(11) null, align 8
+  %"pred::Array.size.sroa.0.0.copyload" = load i64, ptr %tl, align 8
   %0 = trunc i64 %"pred::Array.size.sroa.0.0.copyload" to i32
   %1 = zext i32 %0 to i64
   %"Memory{Float32}[]" = call ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 %1)

@@ -8643,13 +8643,22 @@ void GradientUtils::computeMinCache() {
           continue;
         std::map<UsageKey, bool> Seen;
         for (auto pair : knownRecomputeHeuristic) {
-          if (!pair.second) {
+          if (!pair.second ||
+              unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
             Seen[UsageKey(pair.first, QueryType::Primal)] = false;
           }
         }
         bool primalNeededInReverse =
             DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(this, &I, mode, Seen, notForAnalysis);
+
+        {
+          auto found = knownRecomputeHeuristic.find(&I);
+          if (found != knownRecomputeHeuristic.end() && found->second) {
+            primalNeededInReverse = true;
+          }
+        }
+
         if (primalNeededInReverse && !needsCacheWholeAllocation(&I)) {
           allocationsToBeRematerialized.insert(&I);
         }
