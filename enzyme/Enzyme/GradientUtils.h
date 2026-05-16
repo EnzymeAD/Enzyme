@@ -93,6 +93,18 @@ extern llvm::StringMap<
 
 constexpr int IndexMappingError = 0x0000fffd;
 
+/// Classification of what type of use is requested
+enum class QueryType {
+  // The original value is needed for the derivative
+  Primal = 0,
+  // The shadow value is needed for the derivative
+  Shadow = 1,
+  // The primal value is needed to stand in for the shadow
+  // value and compute the derivative of an instruction
+  ShadowByConstPrimal = 2
+};
+typedef std::pair<const llvm::Value *, QueryType> UsageKey;
+
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
@@ -320,11 +332,11 @@ public:
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
 
-  std::map<UsageKey, bool> populateSeenFromKnownRecompute() {
+  std::map<UsageKey, bool> populateSeenFromKnownRecompute() const {
     std::map<UsageKey, bool> Seen;
     for (auto pair : knownRecomputeHeuristic) {
-      if (!pair.second ||
-          unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+      if (!pair.second || unnecessaryIntermediates.count(
+                              llvm::cast<llvm::Instruction>(pair.first))) {
         Seen[UsageKey(pair.first, QueryType::Primal)] = false;
       }
     }
