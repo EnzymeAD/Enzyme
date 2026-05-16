@@ -1181,7 +1181,8 @@ bool DifferentialUseAnalysis::callShouldNotUseDerivative(
           goto doneEscapeCheck;
         }
 
-        std::map<UsageKey, bool> CacheResults = gutils->populateSeenFromKnownRecompute();
+        std::map<UsageKey, bool> CacheResults =
+            gutils->populateSeenFromKnownRecompute();
         // to avoid an infinite loop, we assume this is needed by
         // marking the query that led us.
         if (val)

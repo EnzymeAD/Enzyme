@@ -685,7 +685,8 @@ void calculateUnusedValuesInFunction(
     bool returnValue, DerivativeMode mode, GradientUtils *gutils,
     TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
-  std::map<UsageKey, bool> CacheResults = gutils->populateSeenFromKnownRecompute();
+  std::map<UsageKey, bool> CacheResults =
+      gutils->populateSeenFromKnownRecompute();
   std::map<UsageKey, bool> PrimalSeen;
   if (mode == DerivativeMode::ReverseModeGradient) {
     PrimalSeen = CacheResults;

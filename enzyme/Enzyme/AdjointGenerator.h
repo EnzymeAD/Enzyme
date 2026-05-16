@@ -577,7 +577,7 @@ public:
       // everything it requires.
       std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
       bool primalNeededInReverse = false;
-      {        
+      {
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
           if (!found->second) {
@@ -5700,7 +5700,8 @@ public:
           if (Mode == DerivativeMode::ReverseModePrimal &&
               !gutils->unnecessaryIntermediates.count(&call)) {
 
-            std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+            std::map<UsageKey, bool> Seen =
+                gutils->populateSeenFromKnownRecompute();
             bool primalNeededInReverse = false;
             {
               auto found = gutils->knownRecomputeHeuristic.find(&call);
@@ -6504,7 +6505,8 @@ public:
         if (gutils->knownRecomputeHeuristic.count(&call)) {
           primalNeededInReverse = !gutils->knownRecomputeHeuristic[&call];
         } else {
-          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
@@ -6573,7 +6575,8 @@ public:
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
 
-      std::map<UsageKey, bool> CacheResults = gutils->populateSeenFromKnownRecompute();
+      std::map<UsageKey, bool> CacheResults =
+          gutils->populateSeenFromKnownRecompute();
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
@@ -6680,7 +6683,8 @@ public:
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {
 
-          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse = false;
           {
             auto found = gutils->knownRecomputeHeuristic.find(&call);

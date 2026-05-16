@@ -2708,7 +2708,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 
       if (!shouldCache && !lrc) {
-        std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
         bool primalNeededInReverse =
             DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
@@ -2736,7 +2737,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     if (called) {
       if (funcName == "julia.write_barrier" ||
           funcName == "julia.write_barrier_binding") {
-        std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
         bool backwardsShadow = false;
         bool forwardsShadow = true;
         for (auto pair : gutils->backwardsOnlyShadows) {
@@ -4161,7 +4163,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           return true;
         } else {
           assert(Mode == DerivativeMode::ReverseModeCombined);
-          std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, rmat.first, Mode, Seen,
