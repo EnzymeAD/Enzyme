@@ -3305,9 +3305,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
       if (!pair.second ||
-          gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first)))
+          gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
         Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
+      }
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
                 Mode == DerivativeMode::ForwardModeError
@@ -4153,7 +4153,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // If a rematerializable allocation.
     for (auto rmat : gutils->rematerializableAllocations) {
-      if (rmat.second.frees.count(&call)) {
+      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
+          rmat.second.frees.count(&call)) {
         // Leave the original free behavior since this won't be used
         // in the reverse pass in split mode
         if (Mode == DerivativeMode::ReverseModePrimal) {

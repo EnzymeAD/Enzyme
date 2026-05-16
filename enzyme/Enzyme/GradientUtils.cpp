@@ -8573,21 +8573,35 @@ void GradientUtils::computeMinCache() {
                                     *OrigLI, Recomputes, Intermediates,
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
-    for (Value *V : MinReq)
+    for (Value *V : MinReq) {
       NeedGraph.insert(V);
-    for (Value *V : Required)
+    }
+    for (Value *V : Required) {
       todo.push_back(V);
+    }
     while (todo.size()) {
       Value *V = todo.front();
       todo.pop_front();
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      if (auto I = dyn_cast<Instruction>(V))
-        for (auto &V2 : I->operands()) {
-          if (Intermediates.count(V2))
-            todo.push_back(V2);
+      auto I = dyn_cast<Instruction>(V);
+      if (!I) continue;
+      for (auto &V2 : I->operands()) {
+        if (Intermediates.count(V2)) {
+          todo.push_back(V2);
         }
+      }
+      auto found = rematerializableAllocations.find(I);
+      if (found != rematerializableAllocations.end()) {
+        for (auto store : found->second.stores) {
+          for (auto &operand : store->operands()) {
+            if (Intermediates.count(operand)) {
+              todo.push_back(operand);
+            }
+          }
+        }
+      }
     }
 
     for (auto V : Intermediates) {
@@ -8634,8 +8648,8 @@ void GradientUtils::computeMinCache() {
   }
   if (rematerializableAllocations.size()) {
 
-    // We iterate through the instructions here to ensure a consistent order for
-    // the analysis results.
+    // We iterate through the instructions here to ensure a consistent order for the analysis
+    // results.
     for (auto &BB : *oldFunc) {
       for (auto &I : BB) {
         auto found = rematerializableAllocations.find(&I);
@@ -8711,6 +8725,7 @@ void GradientUtils::eraseFictiousPHIs() {
           CustomErrorHandler(str.c_str(), wrap(pp), ErrorType::InternalError,
                              nullptr, nullptr, nullptr);
         } else {
+          ss << " newFunc:\n" << *newFunc << "\n";
           EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
         }
       }

@@ -1150,6 +1150,9 @@ void calculateUnusedValuesInFunction(
         if (found != gutils->knownRecomputeHeuristic.end()) {
           llvm::errs() << " krc=" << (int)found->second;
         }
+        if (gutils->allocationsToBeRematerialized.count(&I)) {
+          llvm::errs() << " allocR";
+        }
         llvm::errs() << "\n";
       }
     llvm::errs() << "unnecessaryValues of " << func.getName()
@@ -1163,6 +1166,9 @@ void calculateUnusedValuesInFunction(
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
         llvm::errs() << " krc=" << (int)found->second;
+      }
+      if (gutils->allocationsToBeRematerialized.count(a)) {
+        llvm::errs() << " allocR";
       }
       llvm::errs() << "\n";
     }
