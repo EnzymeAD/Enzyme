@@ -3304,8 +3304,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
-      if (!pair.second ||
-          gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
+      if (!pair.second || gutils->unnecessaryIntermediates.count(
+                              cast<Instruction>(pair.first))) {
         Seen[UsageKey(pair.first, QueryType::Primal)] = false;
       }
     bool primalNeededInReverse =

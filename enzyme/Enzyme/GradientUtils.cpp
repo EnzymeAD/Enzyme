@@ -8586,7 +8586,8 @@ void GradientUtils::computeMinCache() {
         continue;
       NeedGraph.insert(V);
       auto I = dyn_cast<Instruction>(V);
-      if (!I) continue;
+      if (!I)
+        continue;
       for (auto &V2 : I->operands()) {
         if (Intermediates.count(V2)) {
           todo.push_back(V2);
@@ -8648,8 +8649,8 @@ void GradientUtils::computeMinCache() {
   }
   if (rematerializableAllocations.size()) {
 
-    // We iterate through the instructions here to ensure a consistent order for the analysis
-    // results.
+    // We iterate through the instructions here to ensure a consistent order for
+    // the analysis results.
     for (auto &BB : *oldFunc) {
       for (auto &I : BB) {
         auto found = rematerializableAllocations.find(&I);
