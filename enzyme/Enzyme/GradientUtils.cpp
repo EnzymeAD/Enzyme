@@ -8633,15 +8633,26 @@ void GradientUtils::computeMinCache() {
     }
   }
   if (rematerializableAllocations.size()) {
-    std::map<UsageKey, bool> Seen;
-    for (auto pair : knownRecomputeHeuristic)
-      Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-    for (auto &pair : rematerializableAllocations) {
-      bool primalNeededInReverse =
-          DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(this, pair.first, mode, Seen, notForAnalysis);
-      if (primalNeededInReverse && !needsCacheWholeAllocation(pair.first)) {
-        allocationsToBeRematerialized.insert(pair.first);
+
+    // We iterate through the instructions here to ensure a consistent order for the analysis
+    // results.
+    for (auto &BB : *oldFunc) {
+      for (auto &I : BB) {
+        auto found = rematerializableAllocations.find(&I);
+        if (found == rematerializableAllocations.end())
+          continue;
+        std::map<UsageKey, bool> Seen;
+        for (auto pair : knownRecomputeHeuristic) {
+          if (!pair.second) {
+            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+          }
+        }
+        bool primalNeededInReverse =
+            DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(this, &I, mode, Seen, notForAnalysis);
+        if (primalNeededInReverse && !needsCacheWholeAllocation(&I)) {
+          allocationsToBeRematerialized.insert(&I);
+        }
       }
     }
   }
