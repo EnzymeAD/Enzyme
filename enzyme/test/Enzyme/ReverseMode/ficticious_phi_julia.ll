@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes=enzyme -S -opaque-pointers | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-julia-addr-load -passes=enzyme -S -opaque-pointers | FileCheck %s
 
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128-ni:10:11:12:13"
 target triple = "arm64-apple-darwin24.0.0"
