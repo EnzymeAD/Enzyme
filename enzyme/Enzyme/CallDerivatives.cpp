@@ -2708,12 +2708,19 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       }
 
       if (!shouldCache && !lrc) {
-        std::map<UsageKey, bool> Seen;
-        for (auto pair : gutils->knownRecomputeHeuristic)
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
         bool primalNeededInReverse =
             DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
+        {
+          auto found = gutils->knownRecomputeHeuristic.find(&call);
+          if (found != gutils->knownRecomputeHeuristic.end()) {
+            if (!found->second) {
+              primalNeededInReverse = true;
+            }
+          }
+        }
         shouldCache = primalNeededInReverse;
       }
 
@@ -2730,12 +2737,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     if (called) {
       if (funcName == "julia.write_barrier" ||
           funcName == "julia.write_barrier_binding") {
-
-        std::map<UsageKey, bool> Seen;
-        for (auto pair : gutils->knownRecomputeHeuristic)
-          if (!pair.second)
-            Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
+        std::map<UsageKey, bool> Seen =
+            gutils->populateSeenFromKnownRecompute();
         bool backwardsShadow = false;
         bool forwardsShadow = true;
         for (auto pair : gutils->backwardsOnlyShadows) {
@@ -2788,21 +2791,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           for (const auto &pair : gutils->rematerializableAllocations) {
             if (!pair.second.stores.count(&call))
               continue;
-            bool primalNeededInReverse =
-                Mode == DerivativeMode::ForwardMode ||
-                        Mode == DerivativeMode::ForwardModeError
-                    ? false
-                    : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                          QueryType::Primal>(gutils, pair.first, Mode, Seen,
-                                             oldUnreachable);
-
-            bool cacheWholeAllocation =
-                gutils->needsCacheWholeAllocation(pair.first);
-            if (cacheWholeAllocation) {
-              primalNeededInReverse = true;
-            }
-
-            if (primalNeededInReverse && !cacheWholeAllocation)
+            if (gutils->allocationsToBeRematerialized.count(pair.first))
               // However, if we are rematerailizing the allocation and not
               // inside the loop level rematerialization, we do still need the
               // reverse passes ``fake primal'' store and therefore write
@@ -3316,12 +3305,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    std::map<UsageKey, bool> Seen;
-    for (auto pair : gutils->knownRecomputeHeuristic)
-      if (!pair.second ||
-          gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first)))
-        Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
+    std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode ||
                 Mode == DerivativeMode::ForwardModeError
@@ -3329,6 +3313,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             : DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
 
+    // If we explicitly decided we need this in the reverse pass, mark it as
+    // such.
+    {
+      auto found = gutils->knownRecomputeHeuristic.find(&call);
+      if (found != gutils->knownRecomputeHeuristic.end() && !found->second) {
+        primalNeededInReverse = true;
+      }
+    }
     bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
     if (cacheWholeAllocation) {
       primalNeededInReverse = true;
@@ -3438,7 +3430,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (found != gutils->rematerializableAllocations.end()) {
         // If rematerializing (e.g. needed in reverse, but not needing
         //  the whole allocation):
-        if (primalNeededInReverse && !cacheWholeAllocation) {
+        if (gutils->allocationsToBeRematerialized.count(&call)) {
           assert(!unnecessaryValues.count(&call));
           // if rematerialize, don't ever cache and downgrade to stack
           // allocation where possible. Note that for allocations which are
@@ -4133,7 +4125,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     auto callval = call.getCalledOperand();
 
     for (auto rmat : gutils->backwardsOnlyShadows) {
-      if (rmat.second.frees.count(&call)) {
+      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
+          rmat.second.frees.count(&call)) {
         bool shouldFree = false;
         if (rmat.second.primalInitialize) {
           if (Mode == DerivativeMode::ReverseModePrimal)
@@ -4158,7 +4151,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // If a rematerializable allocation.
     for (auto rmat : gutils->rematerializableAllocations) {
-      if (rmat.second.frees.count(&call)) {
+      if (gutils->allocationsToBeRematerialized.count(rmat.first) &&
+          rmat.second.frees.count(&call)) {
         // Leave the original free behavior since this won't be used
         // in the reverse pass in split mode
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -4169,14 +4163,20 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           return true;
         } else {
           assert(Mode == DerivativeMode::ReverseModeCombined);
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, rmat.first, Mode, Seen,
                                      oldUnreachable);
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(rmat.first);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
+                primalNeededInReverse = true;
+              }
+            }
+          }
           bool cacheWholeAllocation =
               gutils->needsCacheWholeAllocation(rmat.first);
           if (cacheWholeAllocation) {

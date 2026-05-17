@@ -53,17 +53,6 @@ extern llvm::StringMap<
                        const llvm::Value *, bool, DerivativeMode, bool &)>>
     customDiffUseHandlers;
 
-/// Classification of what type of use is requested
-enum class QueryType {
-  // The original value is needed for the derivative
-  Primal = 0,
-  // The shadow value is needed for the derivative
-  Shadow = 1,
-  // The primal value is needed to stand in for the shadow
-  // value and compute the derivative of an instruction
-  ShadowByConstPrimal = 2
-};
-
 static inline std::string to_string(QueryType mode) {
   switch (mode) {
   case QueryType::Primal:
@@ -75,8 +64,6 @@ static inline std::string to_string(QueryType mode) {
   }
   llvm_unreachable("illegal QueryType");
 }
-
-typedef std::pair<const llvm::Value *, QueryType> UsageKey;
 
 namespace DifferentialUseAnalysis {
 
@@ -312,6 +299,15 @@ inline bool is_value_needed_in_reverse(
           // directly say unused by induction instead of checking the final
           // loads.
           if (pair.second.stores.count(user)) {
+            bool allocNeeded =
+                gutils->allocationsToBeRematerialized.count(pair.first);
+            if (allocNeeded) {
+              if (EnzymePrintDiffUse)
+                llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                             << " in reverse from rematerialized alloc "
+                             << *pair.first << "\n";
+              return seen[idx] = true;
+            }
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {

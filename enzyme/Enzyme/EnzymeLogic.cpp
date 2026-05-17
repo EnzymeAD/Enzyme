@@ -685,13 +685,8 @@ void calculateUnusedValuesInFunction(
     bool returnValue, DerivativeMode mode, GradientUtils *gutils,
     TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
-  std::map<UsageKey, bool> CacheResults;
-  for (auto pair : gutils->knownRecomputeHeuristic) {
-    if (!pair.second ||
-        gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
-      CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-    }
-  }
+  std::map<UsageKey, bool> CacheResults =
+      gutils->populateSeenFromKnownRecompute();
   std::map<UsageKey, bool> PrimalSeen;
   if (mode == DerivativeMode::ReverseModeGradient) {
     PrimalSeen = CacheResults;
@@ -1150,6 +1145,9 @@ void calculateUnusedValuesInFunction(
         if (found != gutils->knownRecomputeHeuristic.end()) {
           llvm::errs() << " krc=" << (int)found->second;
         }
+        if (gutils->allocationsToBeRematerialized.count(&I)) {
+          llvm::errs() << " allocR";
+        }
         llvm::errs() << "\n";
       }
     llvm::errs() << "unnecessaryValues of " << func.getName()
@@ -1163,6 +1161,9 @@ void calculateUnusedValuesInFunction(
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
         llvm::errs() << " krc=" << (int)found->second;
+      }
+      if (gutils->allocationsToBeRematerialized.count(a)) {
+        llvm::errs() << " allocR";
       }
       llvm::errs() << "\n";
     }

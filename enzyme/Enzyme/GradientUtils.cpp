@@ -3158,18 +3158,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
   for (auto pair : rematerializableAllocations) {
     if (pair.second.LI &&
         getNewFromOriginal(pair.second.LI->getHeader()) == header) {
-      bool rematerialized = false;
-      std::map<UsageKey, bool> Seen;
-      for (auto pair : knownRecomputeHeuristic)
-        if (!pair.second)
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-
-      if (DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Primal>(this, pair.first, mode, Seen,
-                                 notForAnalysis)) {
-        rematerialized = true;
-      }
-      if (rematerialized) {
+      if (allocationsToBeRematerialized.count(pair.first)) {
         if (auto inst = dyn_cast<Instruction>(pair.first))
           if (pair.second.LI->contains(inst->getParent())) {
             loopReallocations.insert(inst);
@@ -8573,21 +8562,36 @@ void GradientUtils::computeMinCache() {
                                     *OrigLI, Recomputes, Intermediates,
                                     Required, MinReq, this, TLI);
     SmallPtrSet<Value *, 5> NeedGraph;
-    for (Value *V : MinReq)
+    for (Value *V : MinReq) {
       NeedGraph.insert(V);
-    for (Value *V : Required)
+    }
+    for (Value *V : Required) {
       todo.push_back(V);
+    }
     while (todo.size()) {
       Value *V = todo.front();
       todo.pop_front();
       if (NeedGraph.count(V))
         continue;
       NeedGraph.insert(V);
-      if (auto I = dyn_cast<Instruction>(V))
-        for (auto &V2 : I->operands()) {
-          if (Intermediates.count(V2))
-            todo.push_back(V2);
+      auto I = dyn_cast<Instruction>(V);
+      if (!I)
+        continue;
+      for (auto &V2 : I->operands()) {
+        if (Intermediates.count(V2)) {
+          todo.push_back(V2);
         }
+      }
+      auto found = rematerializableAllocations.find(I);
+      if (found != rematerializableAllocations.end()) {
+        for (auto store : found->second.stores) {
+          for (auto &operand : store->operands()) {
+            if (Intermediates.count(operand)) {
+              todo.push_back(operand);
+            }
+          }
+        }
+      }
     }
 
     for (auto V : Intermediates) {
@@ -8632,6 +8636,33 @@ void GradientUtils::computeMinCache() {
       }
     }
   }
+  if (rematerializableAllocations.size()) {
+
+    // We iterate through the instructions here to ensure a consistent order for
+    // the analysis results.
+    for (auto &BB : *oldFunc) {
+      for (auto &I : BB) {
+        auto found = rematerializableAllocations.find(&I);
+        if (found == rematerializableAllocations.end())
+          continue;
+        std::map<UsageKey, bool> Seen = populateSeenFromKnownRecompute();
+        bool primalNeededInReverse =
+            DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(this, &I, mode, Seen, notForAnalysis);
+
+        {
+          auto found = knownRecomputeHeuristic.find(&I);
+          if (found != knownRecomputeHeuristic.end() && !found->second) {
+            primalNeededInReverse = true;
+          }
+        }
+
+        if (primalNeededInReverse && !needsCacheWholeAllocation(&I)) {
+          allocationsToBeRematerialized.insert(&I);
+        }
+      }
+    }
+  }
 }
 
 bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
@@ -8659,23 +8690,33 @@ void GradientUtils::eraseFictiousPHIs() {
   for (auto pair : phis) {
     auto pp = pair.first;
     if (pp->getNumUses() != 0) {
-      if (CustomErrorHandler) {
+      bool skip = false;
+      assert(isa<Instruction>(pair.second));
+      auto *I = dyn_cast<Instruction>(pair.second);
+      if (!OrigDT->isReachableFromEntry(I->getParent())) {
+        skip = true;
+      }
+
+      if (!skip) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Illegal replace ficticious phi for: " << *pp << " of "
-           << *pair.second;
-        CustomErrorHandler(str.c_str(), wrap(pair.second),
-                           ErrorType::IllegalReplaceFicticiousPHIs, this,
-                           wrap(pp), nullptr);
-      } else {
-        llvm::errs() << "mod:" << *oldFunc->getParent() << "\n";
-        llvm::errs() << "oldFunc:" << *oldFunc << "\n";
-        llvm::errs() << "newFunc:" << *newFunc << "\n";
-        llvm::errs() << " pp: " << *pp << " of " << *pair.second << "\n";
-        assert(pp->getNumUses() == 0);
+           << *pair.second << "\n";
+        for (auto U : pp->users()) {
+          ss << "  user: " << *U << "\n";
+        }
+        if (CustomErrorHandler) {
+          CustomErrorHandler(str.c_str(), wrap(pp), ErrorType::InternalError,
+                             nullptr, nullptr, nullptr);
+        } else {
+          ss << " newFunc:\n" << *newFunc << "\n";
+          EmitFailure("IllegalReplacePHI", I->getDebugLoc(), I, str);
+        }
       }
+      Value *replacement =
+          getUndefinedValueForType(*oldFunc->getParent(), pp->getType());
+      pp->replaceAllUsesWith(replacement);
     }
-    pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
     erase(pp);
   }
 }
