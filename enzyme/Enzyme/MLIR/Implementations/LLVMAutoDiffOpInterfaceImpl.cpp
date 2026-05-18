@@ -207,6 +207,96 @@ struct StoreOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct ExtractValueOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          ExtractValueOpInterfaceReverse, LLVM::ExtractValueOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto evOp = cast<LLVM::ExtractValueOp>(op);
+    Value container = evOp.getContainer();
+
+    auto containerIface = dyn_cast<AutoDiffTypeInterface>(container.getType());
+    if (!containerIface)
+      return failure();
+
+    if (!gutils->isConstantValue(evOp)) {
+      Value gradient = gutils->diffe(evOp, builder);
+      gutils->zeroDiffe(evOp, builder);
+      // Create a zero aggregate matching the container type, then insert the
+      // gradient at the extracted position.
+      if (!gutils->isConstantValue(container)) {
+        Value zero = containerIface.createNullValue(builder, op->getLoc());
+        Value grad = LLVM::InsertValueOp::create(builder, op->getLoc(), zero,
+                                                 gradient, evOp.getPosition());
+        gutils->addToDiffe(container, grad, builder);
+      }
+    }
+
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
+struct InsertValueOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          InsertValueOpInterfaceReverse, LLVM::InsertValueOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto ivOp = cast<LLVM::InsertValueOp>(op);
+    Value container = ivOp.getContainer();
+    Value value = ivOp.getValue();
+
+    auto resultIface = dyn_cast<AutoDiffTypeInterface>(ivOp.getType());
+    if (!resultIface)
+      return failure();
+
+    if (!gutils->isConstantValue(ivOp)) {
+      Value gradient = gutils->diffe(ivOp, builder);
+      gutils->zeroDiffe(ivOp, builder);
+
+      // Propagate gradient to the inserted value: extract from the result
+      // gradient at the insertion position.
+      auto valIface = dyn_cast<AutoDiffTypeInterface>(value.getType());
+      if (valIface && !gutils->isConstantValue(value)) {
+        Value valGrad = LLVM::ExtractValueOp::create(
+            builder, op->getLoc(), gradient, ivOp.getPosition());
+        gutils->addToDiffe(value, valGrad, builder);
+      }
+
+      // Propagate gradient to the container: zero out the inserted position
+      // in the result gradient, then add to the container gradient.
+      if (!gutils->isConstantValue(container)) {
+        Value zeroVal =
+            valIface
+                ? valIface.createNullValue(builder, op->getLoc())
+                : LLVM::ZeroOp::create(builder, op->getLoc(), value.getType());
+        Value containerGrad = LLVM::InsertValueOp::create(
+            builder, op->getLoc(), gradient, zeroVal, ivOp.getPosition());
+        gutils->addToDiffe(container, containerGrad, builder);
+      }
+    }
+
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return {};
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 std::optional<Value> findPtrSize(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
     return allocOp.getSize();
@@ -373,6 +463,10 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     LLVM::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     LLVM::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     LLVM::GEPOp::attachInterface<GEPOpInterfaceReverse>(*context);
+    LLVM::ExtractValueOp::attachInterface<ExtractValueOpInterfaceReverse>(
+        *context);
+    LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(
+        *context);
     LLVM::UnreachableOp::template attachInterface<
         detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
     LLVM::LLVMFuncOp::attachInterface<AutoDiffLLVMFuncOpFunctionInterface>(

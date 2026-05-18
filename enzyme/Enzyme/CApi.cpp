@@ -436,6 +436,10 @@ uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
   return gutils->getWidth();
 }
 
+EnzymeLogicRef EnzymeGradientUtilsGetLogic(GradientUtils *gutils) {
+  return (EnzymeLogicRef)&gutils->Logic;
+}
+
 LLVMTypeRef EnzymeGradientUtilsGetShadowType(GradientUtils *gutils,
                                              LLVMTypeRef T) {
   return wrap(gutils->getShadowType(unwrap(T)));
@@ -941,6 +945,11 @@ const char *EnzymeTypeAnalyzerToString(void *src) {
   char *cstr = new char[str.length() + 1];
   std::strcpy(cstr, str.c_str());
   return cstr;
+}
+
+EnzymeLogicRef EnzymeTypeAnalyzerGetLogic(void *src) {
+  auto TA = (TypeAnalyzer *)src;
+  return (EnzymeLogicRef)&TA->interprocedural.Logic;
 }
 
 const char *EnzymeGradientUtilsInvertedPointersToString(GradientUtils *gutils,

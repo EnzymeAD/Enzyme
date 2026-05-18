@@ -26,6 +26,7 @@
 #ifndef ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
 #define ENZYME_TYPE_ANALYSIS_TYPE_ANALYSIS_PRINTER_H
 
+#include "../PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
@@ -33,8 +34,8 @@ class FunctionPass;
 }
 
 class TypeAnalysisPrinterNewPM final
-    : public llvm::AnalysisInfoMixin<TypeAnalysisPrinterNewPM> {
-  friend struct llvm::AnalysisInfoMixin<TypeAnalysisPrinterNewPM>;
+    : public PassParent<TypeAnalysisPrinterNewPM> {
+  friend PassParent<TypeAnalysisPrinterNewPM>;
 
 private:
   static llvm::AnalysisKey Key;
