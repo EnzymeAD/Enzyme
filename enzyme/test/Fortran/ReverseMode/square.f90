@@ -12,7 +12,7 @@ contains
 end module math
 
 program app
-    use enzyme, only: f__enzyme_autodiff
+    use enzyme, only: enzyme_autodiff
     use math, only: square
     implicit none
     real :: x, dx
@@ -21,7 +21,7 @@ program app
     print *, square(x)
 
     dx = 0
-    call f__enzyme_autodiff(square, x, dx);
+    call enzyme_autodiff(square, x, dx);
 
     print *, dx
 end program app

@@ -22,6 +22,8 @@
 ! ===----------------------------------------------------------------------=== !
 module enzyme
   use iso_c_binding, only: c_int
+  use enzyme_function_hooks, only: enzyme_autodiff => f__enzyme_autodiff, &
+                                   enzyme_fwddiff  => f__enzyme_fwddiff
   implicit none
   private
 
@@ -35,10 +37,6 @@ module enzyme
   integer(c_int), public, bind(C, name="enzyme_vector")    :: enzyme_vector
 
   ! Bindings for function hooks
-  ! NOTE: Leading underscores are not permitted by some Fortran compilers so we
-  !       prepend with 'f' in the Fortran versions of the function hooks.
-  public :: f__enzyme_autodiff
-  public :: f__enzyme_fwddiff
-  external :: f__enzyme_autodiff
-  external :: f__enzyme_fwddiff
+  public :: enzyme_autodiff
+  public :: enzyme_fwddiff
 end module enzyme
