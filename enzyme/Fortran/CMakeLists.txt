@@ -4,7 +4,7 @@ enable_language(Fortran)
 include(FortranCInterface)
 FortranCInterface_VERIFY(QUIET)
 
-add_library(EnzymeFortran enzyme.f90)
+add_library(EnzymeFortran SHARED enzyme.f90)
 
 # Install library, create target file
 install(
