@@ -1,3 +1,5 @@
+message("Building Fortran bindings")
+
 enable_language(Fortran)
 include(FortranCInterface)
 FortranCInterface_VERIFY(QUIET)
