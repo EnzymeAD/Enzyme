@@ -39,7 +39,6 @@ option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
-option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 option(ENZYME_APPLE_DYNAMIC_LOOKUP
   "On Apple, link Enzyme shared library with -flat_namespace/-undefined,dynamic_lookup instead of linking LLVM"
