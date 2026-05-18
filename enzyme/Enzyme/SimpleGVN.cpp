@@ -169,8 +169,9 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
         if (CustomErrorHandler) {
           CustomErrorHandler(
               "SimpleGVN: attempt to convert integer to GC pointer",
-              wrap(StoredVal), ErrorType::InternalError, nullptr, nullptr,
+              wrap(StoredVal), ErrorType::ShowInternalError, nullptr, nullptr,
               wrap(&Builder));
+          return nullptr;
         }
         llvm::report_fatal_error(
             "SimpleGVN: attempt to convert integer to GC pointer");
