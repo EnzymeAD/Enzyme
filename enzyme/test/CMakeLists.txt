@@ -20,7 +20,7 @@ add_custom_target(test-cmake COMMAND rm -rf ${CMAKE_CURRENT_BINARY_DIR}/test_cma
 endif()
 endif()
 endif()
-if (ENZYME_FORTRAN AND ENZYME_IFX)
+if (ENZYME_FORTRAN)
     list(APPEND ENZYME_TEST_DEPS EnzymeFortran)
     add_subdirectory(Fortran)
 endif()
