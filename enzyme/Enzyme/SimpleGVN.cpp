@@ -127,11 +127,13 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
         Type *T_prjlvalue = PointerType::get(T_jlvalue, 11); // Derived is 11
         Type *T_pjlvalue = PointerType::get(T_jlvalue, 0);
         FunctionType *FTy = FunctionType::get(T_pjlvalue, {T_prjlvalue}, false);
-        F = Function::Create(FTy, Function::ExternalLinkage, "julia.pointer_from_objref", mod);
+        F = Function::Create(FTy, Function::ExternalLinkage,
+                             "julia.pointer_from_objref", mod);
       }
-      
+
       Type *T_jlvalue = StructType::get(mod->getContext());
-      Value *TrackedVal = Builder.CreateAddrSpaceCast(StoredVal, PointerType::get(T_jlvalue, 11));
+      Value *TrackedVal = Builder.CreateAddrSpaceCast(
+          StoredVal, PointerType::get(T_jlvalue, 11));
       Value *RawPtr = Builder.CreateCall(F, {TrackedVal});
       return Builder.CreatePointerCast(RawPtr, LoadType);
     }
