@@ -126,6 +126,18 @@ public:
   }
 };
 
+static unsigned getSizeInBytes(Type typ) {
+  // TODO: use the dlti interfaces properly?
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(typ)) {
+    return arrayType.getNumElements() *
+           getSizeInBytes(arrayType.getElementType());
+  }
+  if (typ.isIntOrFloat()) {
+    return typ.getIntOrFloatBitWidth() / 8;
+  }
+  return 0;
+}
+
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
