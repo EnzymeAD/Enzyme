@@ -2,7 +2,7 @@
 
 target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128-ni:10:11:12:13"
 
-define i8* @test_pointer_from_objref(i8** %ptr, {} addrspace(10)* %val) {
+define i8* @test_pointer_from_objref(i8** noalias %ptr, {} addrspace(10)* %val) {
 entry:
   %c = bitcast i8** %ptr to {} addrspace(10)**
   store {} addrspace(10)* %val, {} addrspace(10)** %c
@@ -10,7 +10,7 @@ entry:
   ret i8* %loaded
 }
 
-; CHECK: define i8* @test_pointer_from_objref(i8** %ptr, {} addrspace(10)* %val) {
+; CHECK: define i8* @test_pointer_from_objref(i8** noalias %ptr, {} addrspace(10)* %val) {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %c = bitcast i8** %ptr to {} addrspace(10)**
 ; CHECK-NEXT:   store {} addrspace(10)* %val, {} addrspace(10)** %c, align 8
