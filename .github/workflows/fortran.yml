@@ -72,7 +72,7 @@ jobs:
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build
-        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=ifx
     - name: build enzyme
       working-directory: 'build'
       run: ninja LLVMEnzyme-${{ matrix.llvm }}
