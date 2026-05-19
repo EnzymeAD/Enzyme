@@ -11,8 +11,7 @@ show_help() {
   echo "  --debug   | -d      Compile in Debug mode."
   echo "  --fresh   | -f      Create a fresh build before compiling."
   echo "  --std <standard>    Specify the Fortran standard (e.g., f2008, f2018)."
-  echo "  --compiler <family> Specify the compiler family"
-  echo "                      (gnu/intel/nvidia/flang)."
+  echo "  --compiler <family> Specify the Fortran compiler family (intel or flang)."
   echo "  --help    | -h      Show this help message and exit."
 }
 
@@ -61,42 +60,47 @@ fi
 if [ "${FRESH_BUILD}" = true ]; then
   echo "Creating a fresh build..."
   rm -rf "${BUILD_DIR}"
+  # rm -rf "${BUILD_DIR}/Fortran"
+  # rm -rf "${BUILD_DIR}/test/Fortran"
 else
   echo "Rebuilding..."
 fi
 mkdir -p "${BUILD_DIR}"
 
-# Select compiler family
-# TODO: Try lfortran
-if [ "${COMPILER}" == "gnu" ]; then
-  CC=gcc
-  CXX=g++
-  FC=gfortran
-elif [ "${COMPILER}" == "intel" ]; then
-  CC=icx-cc
-  CXX=icx-cl
+# Select compiler
+CC=clang
+CXX=clang++
+ENZYME_FLANG=OFF
+ENZYME_IFX=OFF
+if [ "${COMPILER}" == "intel" ]; then
+  # CC=icx
+  # CXX=icx
   FC=ifx
-elif [ "${COMPILER}" == "nvidia" ]; then
-  CC=nvcc
-  CXX=nvc++
-  FC=nvfortran
+  ENZYME_IFX=ON
 elif [ "${COMPILER}" == "flang" ]; then
-  CC=clang
-  CXX=clang++
   FC=flang
+  ENZYME_FLANG=ON
 else
   echo "Unsupported compiler: ${COMPILER}"
-  echo "Supported compilers are: gnu, intel, nvidia, flang"
+  echo "Supported compilers are: intel or flang"
   exit 1
 fi
 
 # Build Enzyme
+export SPACK_COLOR=false
+LLVM_DIR="$(spack find --format '{prefix}' llvm)"
+export SPACK_COLOR=always
+# cd "${BUILD_DIR}"
+# cmake ../../enzyme -G Ninja \
 cmake -G Ninja -S enzyme -B "${BUILD_DIR}" \
   -DCMAKE_C_COMPILER="${CC}" \
   -DCMAKE_CXX_COMPILER="${CXX}" \
   -DCMAKE_Fortran_COMPILER="${FC}" \
-  -DLLVM_DIR=/home/joe/tools/spack/opt/spack/linux-skylake/llvm-21.1.4-jtiynly3pgjolwfskf7iyjwi43vuoe5i/ \
-  -DLLVM_EXTERNAL_LIT=/home/joe/.virtualenvs/enzyme/bin/lit \
-  -DENZYME_IFX=ON
+  -DLLVM_DIR="${LLVM_DIR}" \
+  -DLLVM_EXTERNAL_LIT="$(which lit)" \
+  -DENZYME_FORTRAN=ON \
+  -DENZYME_FLANG=${ENZYME_FLANG} \
+  -DENZYME_IFX=${ENZYME_IFX} \
+  -DENZYME_ENABLE_PLUGINS=ON
 cd ${BUILD_DIR}
 ninja

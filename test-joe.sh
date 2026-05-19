@@ -9,8 +9,7 @@ show_help() {
   echo
   echo "Options:"
   echo "  --debug   | -d      Run in Debug mode."
-  echo "  --compiler <family> Specify the compiler family"
-  echo "                      (gnu/intel/nvidia/flang)."
+  echo "  --compiler <family> Specify the compiler family (intel or flang)."
   echo "  --help    | -h      Show this help message and exit."
 }
 
@@ -24,7 +23,7 @@ fi
 # Parse command line arguments
 BUILD_DIR="$(pwd)/build"
 BUILD_TYPE=Release
-COMPILER=flang
+COMPILER=intel
 HELP=false
 for arg in "$@"; do
   case $arg in
