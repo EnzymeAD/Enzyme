@@ -117,6 +117,11 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
 
   if (RelativeOffset == 0 && isa<PointerType>(LoadType) &&
       isa<PointerType>(StoreType)) {
+    auto FromAS = cast<PointerType>(StoreType)->getAddressSpace();
+    auto ToAS = cast<PointerType>(FromType)->getAddressSpace();
+    if (FromAS == 10 && ToAS == 0) {
+    // insert pointer_from_objref
+    }
     return Builder.CreatePointerCast(StoredVal, LoadType);
   }
 
