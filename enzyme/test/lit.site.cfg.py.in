@@ -97,6 +97,7 @@ config.substitutions.append(('%OPnewLoadEnzyme', newPMOP))
 config.substitutions.append(('%enzyme', ('-enzyme' if int(config.llvm_ver) < 16 else '-passes="enzyme"')))
 config.substitutions.append(('%simplifycfg', ("simplify-cfg" if int(config.llvm_ver) < 11 else "simplifycfg")))
 config.substitutions.append(('%loopmssa', ("loop" if int(config.llvm_ver) < 11 else "loop-mssa")))
+config.substitutions.append(('%fc', '@Fortran_COMPILER@'))
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
 
 config.substitutions.append(('%loadBC', ''

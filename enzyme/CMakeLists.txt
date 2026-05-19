@@ -48,6 +48,7 @@ option(ENZYME_WARN_COMPILER "Warn if enzyme detects potentially incompatible com
 option(ENZYME_ENABLE_REACTANT "Build support library for Reactant C++ frontend" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+set(Fortran_COMPILER ${CMAKE_Fortran_COMPILER})
 list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
 
 set(LLVM_SHLIBEXT "${CMAKE_SHARED_MODULE_SUFFIX}")
