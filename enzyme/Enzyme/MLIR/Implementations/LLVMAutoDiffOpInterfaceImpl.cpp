@@ -50,6 +50,18 @@ struct SelectActivityInterface
   }
 };
 
+static unsigned getSizeInBytes(Type typ) {
+  // TODO: use the dlti interfaces properly?
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(typ)) {
+    return arrayType.getNumElements() *
+           getSizeInBytes(arrayType.getElementType());
+  }
+  if (typ.isIntOrFloat()) {
+    return typ.getIntOrFloatBitWidth() / 8;
+  }
+  return 0;
+}
+
 class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
@@ -83,7 +95,20 @@ public:
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
-    // TODO inspect val and memset corresponding size
+    // TODO: make this an ZeroableOpInterface
+    if (auto allocaOp = val.getDefiningOp<LLVM::AllocaOp>()) {
+      Value zero =
+          LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
+      unsigned byteSize = getSizeInBytes(allocaOp.getElemType());
+      Value byteValue = LLVM::ConstantOp::create(
+          builder, loc, builder.getI64IntegerAttr(byteSize));
+      Value arraySize = LLVM::SExtOp::create(builder, loc, byteValue.getType(),
+                                             allocaOp.getArraySize());
+      Value size = LLVM::MulOp::create(builder, loc, arraySize, byteValue);
+      LLVM::MemsetOp::create(builder, loc, val, zero, size,
+                             /*isVolatile=*/false);
+      return success();
+    }
     return failure();
   }
 
