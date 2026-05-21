@@ -18,9 +18,12 @@
 #include "Interfaces/GradientUtilsReverse.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
+
+// TODO: We need a way to zero out a memref (which linalg.fill does), but
+// ideally we wouldn't depend on the linalg dialect.
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -270,33 +273,14 @@ public:
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {
     auto MT = cast<MemRefType>(self);
-    auto eltIface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType());
-    if (!eltIface || eltIface.isMutable())
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(MT.getElementType())) {
+      if (!iface.isMutable()) {
+        Value zero = iface.createNullValue(builder, loc);
+        linalg::FillOp::create(builder, loc, zero, val);
+      }
+    } else {
       return failure();
-    Value zero = eltIface.createNullValue(builder, loc);
-
-    if (MT.getRank() == 0) {
-      memref::StoreOp::create(builder, loc, zero, val, ValueRange{});
-      return success();
     }
-
-    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
-    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
-
-    SmallVector<Value> lbs(MT.getRank(), c0);
-    SmallVector<Value> steps(MT.getRank(), c1);
-    SmallVector<Value> ubs;
-    for (auto [i, d] : llvm::enumerate(MT.getShape())) {
-      ubs.push_back(
-          d == ShapedType::kDynamic
-              ? memref::DimOp::create(builder, loc, val, i).getResult()
-              : arith::ConstantIndexOp::create(builder, loc, d).getResult());
-    }
-
-    scf::ParallelOp::create(builder, loc, lbs, ubs, steps,
-                            [&](OpBuilder &b, Location l, ValueRange ivs) {
-                              memref::StoreOp::create(b, l, zero, val, ivs);
-                            });
     return success();
   }
 
