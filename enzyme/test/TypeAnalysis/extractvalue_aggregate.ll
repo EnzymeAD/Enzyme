@@ -16,22 +16,23 @@ target triple = "x86_64-unknown-linux-gnu"
 
 %struct.CV = type { [2 x float], [2 x [3 x float]] }
 
-declare %struct.CV @pre_work(i64) #0
-declare void @opaque_sink(float, float) #1
+; pre_work has a trivial body (returns undef) instead of being an opaque
+; declaration. Enzyme needs its primal struct return available in the reverse
+; pass and can only synthesize the augmented forward pass for a function with
+; a body — a bodyless declaration aborts with "No augmented forward pass found
+; for pre_work", which is orthogonal to the type-deduction path under test.
+; Returning undef keeps the result untyped, so the extractvalue results still
+; have empty TypeTrees and hit the loose-types aggregate fallback. The leaves
+; that are only consumed by the inactive opaque_sink (e.g. %a1, and all but
+; one leaf of %b) stay unconstrained, which is what makes the aggregate type
+; undeducible without the fix.
+define %struct.CV @pre_work(i64 %n) #0 {
+  ret %struct.CV undef
+}
+declare void @opaque_sink(float, float) #0
 declare float @__enzyme_autodiff(...)
 
-; pre_work is readnone/willreturn so the reverse pass can recompute its
-; primal struct return by re-calling it, rather than caching it through an
-; augmented forward pass. An augmented pass cannot be synthesized for an
-; opaque declaration (no body), so without this the enzyme pass aborts with
-; "No augmented forward pass found for pre_work" — orthogonal to the type-
-; deduction path this test exercises. enzyme_inactive keeps the call itself
-; out of differentiation; the opaque return is still untyped, so the
-; extractvalue results hit the loose-types aggregate fallback under test.
-attributes #0 = { "enzyme_inactive" readnone willreturn nounwind }
-; opaque_sink stays side-effecting (no readnone) so %a1 remains live and the
-; [2 x float] aggregate's extractvalue chain is not DCE'd before the pass runs.
-attributes #1 = { "enzyme_inactive" }
+attributes #0 = { "enzyme_inactive" }
 
 ; Active reverse-mode entry. Mirrors #2630's pattern: an opaque struct
 ; return whose elements feed an active fmul. Without the fix the enzyme
