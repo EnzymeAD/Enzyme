@@ -220,19 +220,41 @@ struct AllocaScopeOpInterfaceReverse
       }
     }
 
-    auto revScope =
-        memref::AllocaScopeOp::create(builder, op->getLoc(), TypeRange());
-    Block *revBody = builder.createBlock(&revScope.getBodyRegion());
-    OpBuilder bodyBuilder(revBody, revBody->end());
-    memref::AllocaScopeReturnOp::create(bodyBuilder, op->getLoc(),
-                                        ValueRange());
-    bodyBuilder.setInsertionPoint(revBody->getTerminator());
+    Region &scopeRegion = scopeOp.getBodyRegion();
+    SmallVector<Value> capturedInputs;
+    scopeRegion.walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands()) {
+        Region *defRegion = operand.getParentRegion();
+        if (!defRegion || scopeRegion.isAncestor(defRegion))
+          continue;
+        if (gutils->isConstantValue(operand))
+          continue;
+        auto iface = dyn_cast<AutoDiffTypeInterface>(operand.getType());
+        if (!iface || iface.isMutable())
+          continue;
+        if (!llvm::is_contained(capturedInputs, operand))
+          capturedInputs.push_back(operand);
+      }
+    });
+
+    SmallVector<Value> capturedPre;
+    capturedPre.reserve(capturedInputs.size());
+    for (Value v : capturedInputs) {
+      capturedPre.push_back(gutils->diffe(v, builder));
+      gutils->zeroDiffe(v, builder);
+    }
+
+    auto newScope =
+        cast<memref::AllocaScopeOp>(gutils->getNewFromOriginal(op));
+    newScope->moveBefore(builder.getInsertionBlock(),
+                         builder.getInsertionPoint());
+
+    Block &newBody = newScope.getBodyRegion().front();
+    OpBuilder bodyBuilder(newBody.getTerminator());
 
     Block &oldBody = scopeOp.getBodyRegion().front();
     bool valid = true;
 
-    // Values defined in the scoped region cannot be used outside it. Reset
-    // their adjoints before propagating gradients through the scoped body.
     for (Operation &innerOp : oldBody.getOperations()) {
       for (Value result : innerOp.getResults()) {
         if (!gutils->isConstantValue(result)) {
@@ -253,14 +275,59 @@ struct AllocaScopeOpInterfaceReverse
       if (!gutils->isConstantValue(operand))
         gutils->addToDiffe(operand, incomingGradients[incomingIdx],
                            bodyBuilder);
-      ++incomingIdx;
+      incomingIdx++;
     }
 
     auto first = oldBody.rbegin();
-    ++first;
+    first++;
 
-    for (auto it = first; it != oldBody.rend(); ++it) {
+    for (auto it = first; it != oldBody.rend(); it++) {
       valid &= gutils->Logic.visitChild(&*it, bodyBuilder, gutils).succeeded();
+    }
+
+    if (capturedInputs.empty())
+      return success(valid);
+
+    SmallVector<Value> contributions;
+    contributions.reserve(capturedInputs.size());
+    for (Value v : capturedInputs)
+      contributions.push_back(gutils->diffe(v, bodyBuilder));
+
+    unsigned numPrimal = newScope->getNumResults();
+    Operation *bodyTerm = newBody.getTerminator();
+    SmallVector<Value> retVals(bodyTerm->getOperands().begin(),
+                               bodyTerm->getOperands().end());
+    retVals.append(contributions.begin(), contributions.end());
+
+    SmallVector<Type> newResultTypes(newScope->getResultTypes().begin(),
+                                     newScope->getResultTypes().end());
+    for (Value v : capturedInputs)
+      newResultTypes.push_back(gutils->getShadowType(v.getType()));
+
+    OpBuilder scopeBuilder(newScope);
+    auto extScope = memref::AllocaScopeOp::create(scopeBuilder, op->getLoc(),
+                                                  newResultTypes);
+    extScope.getBodyRegion().takeBody(newScope.getBodyRegion());
+
+    Block &extBody = extScope.getBodyRegion().front();
+    Operation *movedTerm = extBody.getTerminator();
+    OpBuilder termBuilder(movedTerm);
+    memref::AllocaScopeReturnOp::create(termBuilder, movedTerm->getLoc(),
+                                        retVals);
+    gutils->erase(movedTerm);
+
+    for (unsigned i = 0; i < numPrimal; ++i) {
+      newScope->getResult(i).replaceAllUsesWith(extScope.getResult(i));
+      gutils->originalToNewFn.map(scopeOp->getResult(i), extScope.getResult(i));
+    }
+    gutils->erase(newScope);
+
+    builder.setInsertionPointAfter(extScope);
+    for (auto indexed : llvm::enumerate(capturedInputs)) {
+      Value v = indexed.value();
+      gutils->setDiffe(v, capturedPre[indexed.index()], builder);
+      gutils->addToDiffe(v, extScope.getResult(numPrimal + indexed.index()),
+                         builder);
     }
 
     return success(valid);
