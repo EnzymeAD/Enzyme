@@ -244,8 +244,7 @@ struct AllocaScopeOpInterfaceReverse
       gutils->zeroDiffe(v, builder);
     }
 
-    auto newScope =
-        cast<memref::AllocaScopeOp>(gutils->getNewFromOriginal(op));
+    auto newScope = cast<memref::AllocaScopeOp>(gutils->getNewFromOriginal(op));
     newScope->moveBefore(builder.getInsertionBlock(),
                          builder.getInsertionPoint());
 
