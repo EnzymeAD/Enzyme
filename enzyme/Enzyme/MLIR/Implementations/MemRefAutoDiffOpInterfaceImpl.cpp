@@ -203,6 +203,147 @@ struct SubViewOpInterfaceReverse
   }
 };
 
+struct AllocaScopeOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AllocaScopeOpInterfaceReverse, memref::AllocaScopeOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto scopeOp = cast<memref::AllocaScopeOp>(op);
+
+    SmallVector<bool> resultsActive(scopeOp->getNumResults(), false);
+    SmallVector<Value> incomingGradients;
+    incomingGradients.reserve(scopeOp->getNumResults());
+    for (OpResult result : scopeOp->getResults()) {
+      bool active = !gutils->isConstantValue(result);
+      resultsActive[result.getResultNumber()] = active;
+      if (active) {
+        incomingGradients.push_back(gutils->diffe(result, builder));
+        gutils->zeroDiffe(result, builder);
+      }
+    }
+
+    Region &scopeRegion = scopeOp.getBodyRegion();
+    SmallVector<Value> capturedInputs;
+    scopeRegion.walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands()) {
+        Region *defRegion = operand.getParentRegion();
+        if (!defRegion || scopeRegion.isAncestor(defRegion))
+          continue;
+        if (gutils->isConstantValue(operand))
+          continue;
+        auto iface = dyn_cast<AutoDiffTypeInterface>(operand.getType());
+        if (!iface || iface.isMutable())
+          continue;
+        if (!llvm::is_contained(capturedInputs, operand))
+          capturedInputs.push_back(operand);
+      }
+    });
+
+    SmallVector<Value> capturedPre;
+    capturedPre.reserve(capturedInputs.size());
+    for (Value v : capturedInputs) {
+      capturedPre.push_back(gutils->diffe(v, builder));
+      gutils->zeroDiffe(v, builder);
+    }
+
+    auto newScope = cast<memref::AllocaScopeOp>(gutils->getNewFromOriginal(op));
+    newScope->moveBefore(builder.getInsertionBlock(),
+                         builder.getInsertionPoint());
+
+    Block &newBody = newScope.getBodyRegion().front();
+    OpBuilder bodyBuilder(newBody.getTerminator());
+
+    Block &oldBody = scopeOp.getBodyRegion().front();
+    bool valid = true;
+
+    for (Operation &innerOp : oldBody.getOperations()) {
+      for (Value result : innerOp.getResults()) {
+        if (!gutils->isConstantValue(result)) {
+          auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+          if (iface && !iface.isMutable())
+            gutils->zeroDiffe(result, bodyBuilder);
+        }
+      }
+    }
+
+    Operation *term = oldBody.getTerminator();
+    unsigned incomingIdx = 0;
+    for (auto indexedOperand : llvm::enumerate(term->getOperands())) {
+      if (!resultsActive[indexedOperand.index()])
+        continue;
+
+      Value operand = indexedOperand.value();
+      if (!gutils->isConstantValue(operand))
+        gutils->addToDiffe(operand, incomingGradients[incomingIdx],
+                           bodyBuilder);
+      incomingIdx++;
+    }
+
+    auto first = oldBody.rbegin();
+    first++;
+
+    for (auto it = first; it != oldBody.rend(); it++) {
+      valid &= gutils->Logic.visitChild(&*it, bodyBuilder, gutils).succeeded();
+    }
+
+    if (capturedInputs.empty())
+      return success(valid);
+
+    SmallVector<Value> contributions;
+    contributions.reserve(capturedInputs.size());
+    for (Value v : capturedInputs)
+      contributions.push_back(gutils->diffe(v, bodyBuilder));
+
+    unsigned numPrimal = newScope->getNumResults();
+    Operation *bodyTerm = newBody.getTerminator();
+    SmallVector<Value> retVals(bodyTerm->getOperands().begin(),
+                               bodyTerm->getOperands().end());
+    retVals.append(contributions.begin(), contributions.end());
+
+    SmallVector<Type> newResultTypes(newScope->getResultTypes().begin(),
+                                     newScope->getResultTypes().end());
+    for (Value v : capturedInputs)
+      newResultTypes.push_back(gutils->getShadowType(v.getType()));
+
+    OpBuilder scopeBuilder(newScope);
+    auto extScope = memref::AllocaScopeOp::create(scopeBuilder, op->getLoc(),
+                                                  newResultTypes);
+    extScope.getBodyRegion().takeBody(newScope.getBodyRegion());
+
+    Block &extBody = extScope.getBodyRegion().front();
+    Operation *movedTerm = extBody.getTerminator();
+    OpBuilder termBuilder(movedTerm);
+    memref::AllocaScopeReturnOp::create(termBuilder, movedTerm->getLoc(),
+                                        retVals);
+    gutils->erase(movedTerm);
+
+    for (unsigned i = 0; i < numPrimal; ++i) {
+      newScope->getResult(i).replaceAllUsesWith(extScope.getResult(i));
+      gutils->originalToNewFn.map(scopeOp->getResult(i), extScope.getResult(i));
+    }
+    gutils->erase(newScope);
+
+    builder.setInsertionPointAfter(extScope);
+    for (auto indexed : llvm::enumerate(capturedInputs)) {
+      Value v = indexed.value();
+      gutils->setDiffe(v, capturedPre[indexed.index()], builder);
+      gutils->addToDiffe(v, extScope.getResult(numPrimal + indexed.index()),
+                         builder);
+    }
+
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 class MemRefClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<MemRefClonableTypeInterface,
                                                   MemRefType> {
@@ -299,5 +440,7 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
+    memref::AllocaScopeOp::attachInterface<AllocaScopeOpInterfaceReverse>(
+        *context);
   });
 }
