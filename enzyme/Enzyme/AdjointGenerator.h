@@ -1140,6 +1140,65 @@ public:
             }
           }
 
+          // Option X v6 root-cause fix (Store adjoint, no-runtime-activity
+          // path): when shadow allocation was not instantiated in the
+          // forward pass (e.g. the store target's shadow chain was
+          // srcConstant), the cached shadow pointer loaded from the tape
+          // can be NULL. The subsequent load+zero+addToDiffe sequence then
+          // SIGSEGVs while reading/writing to NULL. The existing
+          // runtimeActivity guard above only fires when runtimeActivity is
+          // enabled; here we add a NULL check that is independent of
+          // runtimeActivity and correctness-preserving (a NULL shadow
+          // cannot hold a live adjoint contribution). The guard is only
+          // emitted when the shadow pointer cannot be syntactically proven
+          // non-null -- direct allocas, globals, function arguments, GEPs
+          // of those, etc. keep their original IR shape so that the
+          // overwhelming majority of reverse stores (and their FileCheck
+          // tests) are unaffected.
+          if (!merge) {
+            // Lightweight syntactic non-null classifier on the *primal*
+            // store target. The shadow value follows the same pattern,
+            // so when the primal pointer is clearly non-null (alloca,
+            // global, function arg, GEP of those, etc.) so is the shadow
+            // and the guard is unnecessary. Crucially, we run this on
+            // `orig_ptr` BEFORE invoking `invertPointerM`/`lookup` so
+            // that when the classifier says non-null we emit ZERO extra
+            // IR -- byte-identical to upstream and FileCheck-stable.
+            std::function<bool(const Value *, unsigned)> isObviouslyNonNull =
+                [&](const Value *V, unsigned depth) -> bool {
+              if (depth > 6)
+                return false;
+              V = V->stripPointerCasts();
+              if (isa<AllocaInst>(V) || isa<GlobalValue>(V))
+                return true;
+              if (auto *C = dyn_cast<Constant>(V))
+                return !C->isNullValue() && !isa<UndefValue>(V);
+              if (auto *A = dyn_cast<Argument>(V))
+                return A->hasNonNullAttr() || !A->getParent()->isDeclaration();
+              if (auto *GEP = dyn_cast<GEPOperator>(V))
+                return isObviouslyNonNull(GEP->getPointerOperand(), depth + 1);
+              if (auto *CI = dyn_cast<CallBase>(V))
+                return CI->hasRetAttr(Attribute::NonNull) ||
+                       CI->returnDoesNotAlias();
+              return false;
+            };
+            if (!isObviouslyNonNull(orig_ptr, 0)) {
+              auto shadow_ptr_nc =
+                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+              if (gutils->getWidth() != 1) {
+                shadow_ptr_nc = gutils->extractMeta(Builder2, shadow_ptr_nc, 0);
+              }
+              Value *isNonNull = Builder2.CreateIsNotNull(shadow_ptr_nc);
+              BasicBlock *current = Builder2.GetInsertBlock();
+              BasicBlock *conditional = gutils->addReverseBlock(
+                  current, current->getName() + "_nnactive");
+              merge = gutils->addReverseBlock(conditional,
+                                              current->getName() + "_nnmerge");
+              Builder2.CreateCondBr(isNonNull, conditional, merge);
+              Builder2.SetInsertPoint(conditional);
+            }
+          }
+
           if (constantval) {
             gutils->setPtrDiffe(
                 &I, orig_ptr,

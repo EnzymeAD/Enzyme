@@ -8973,27 +8973,45 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         // Don't zero in forward mode.
         if (mode != DerivativeMode::ForwardModeSplit) {
 
-          Value *args[] = {
-              shadowsLookedUp ? shadow_dst
-                              : gutils->lookupM(shadow_dst, Builder2),
-              ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
-              gutils->lookupM(length, Builder2),
-              ConstantInt::getFalse(MTI->getContext())};
-
-          if (args[0]->getType()->isIntegerTy())
-            args[0] = Builder2.CreateIntToPtr(args[0],
-                                              getInt8PtrTy(MTI->getContext()));
-
-          Type *tys[] = {args[0]->getType(), args[2]->getType()};
-          auto memsetIntr = getIntrinsicDeclaration(
-              MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
-              tys);
-          auto cal = Builder2.CreateCall(memsetIntr, args);
-          cal->setCallingConv(memsetIntr->getCallingConv());
-          if (dstalign != 0) {
-            cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
-                                                             Align(dstalign)));
+          // Option X root-cause fix: in srcConstant mode the shadow_dst
+          // alloca may legitimately hold pointer-typed entries (placed by
+          // visitCommonStore as scratch shadow pointers, or by other
+          // shadow-allocation paths). Upstream Enzyme memsets the byte range
+          // to zero — which clobbers those pointer entries to NULL and
+          // causes downstream reverse-pass loads to dereference NULL.
+          // Instead, copy the primal source bytes into the shadow
+          // (identity-shadow for inactive sources). Aliasing primal data
+          // into the shadow is safe here because the source is srcConstant,
+          // so no adjoint contribution should ever be accumulated through
+          // it; the runtime-activity / NULL-shadow guards in
+          // visitStoreInst suppress any stray write that would otherwise
+          // mutate primal memory.
+          Value *raw_shadow_dst = shadowsLookedUp
+                                      ? shadow_dst
+                                      : gutils->lookupM(shadow_dst, Builder2);
+          // shadow_src in srcConstant mode is the primal source (set by the
+          // caller). Copy primal bytes verbatim into the shadow alloca.
+          Value *raw_shadow_src = shadowsLookedUp
+                                      ? shadow_src
+                                      : gutils->lookupM(shadow_src, Builder2);
+          if (raw_shadow_dst->getType()->isIntegerTy())
+            raw_shadow_dst = Builder2.CreateIntToPtr(
+                raw_shadow_dst, getInt8PtrTy(MTI->getContext()));
+          if (raw_shadow_src->getType()->isIntegerTy())
+            raw_shadow_src = Builder2.CreateIntToPtr(
+                raw_shadow_src, getInt8PtrTy(MTI->getContext()));
+          Value *dstp = raw_shadow_dst;
+          Value *srcp = raw_shadow_src;
+          if (offset != 0) {
+            dstp = Builder2.CreateConstInBoundsGEP1_64(
+                Type::getInt8Ty(MTI->getContext()), dstp, offset);
+            srcp = Builder2.CreateConstInBoundsGEP1_64(
+                Type::getInt8Ty(MTI->getContext()), srcp, offset);
           }
+          MaybeAlign dalign = dstalign ? MaybeAlign(dstalign) : MaybeAlign();
+          MaybeAlign salign = srcalign ? MaybeAlign(srcalign) : MaybeAlign();
+          Builder2.CreateMemCpy(dstp, dalign, srcp, salign,
+                                gutils->lookupM(length, Builder2));
         }
 
       } else {
