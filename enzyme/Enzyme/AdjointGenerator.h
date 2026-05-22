@@ -1140,15 +1140,34 @@ public:
             }
           }
 
-          // Option X v6 root-cause fix lives in
-          // GradientUtils::SubTransferHelper (srcConstant path): instead of
-          // memset-zeroing the shadow alloca (which clobbers pointer entries
-          // to NULL and made downstream reverse-pass loads SIGSEGV), the
-          // primal bytes are copied verbatim into the shadow. With that
-          // upstream-of-here fix in place the cached shadow pointers loaded
-          // by this Store adjoint are never NULL, so no extra runtime guard
-          // is required here -- which keeps every existing FileCheck test
-          // byte-identical to upstream IR.
+          // v6 NULL-shadow guard (restored): Cromwell's
+          // WallFcnMomentumWall<12> reverse-mode adjoint loads a shadow
+          // pointer that may be NULL at runtime when the upstream may-
+          // aliased shadow alloca was skipped, then segfaults on the
+          // following load/setPtrDiffe/addToDiffe sequence. The
+          // SubTransferHelper srcConstant memcpy fix alone is not
+          // sufficient -- restore the runtime IsNotNull branch around
+          // the slice-store body so a NULL shadow short-circuits to the
+          // existing merge epilogue. Reuses the surrounding loop's
+          // `merge` variable so the existing `if (merge)` close at the
+          // end of the storeSize loop emits the join block.
+          if (!merge) {
+            auto shadow_ptr_nc = lookup(
+                gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+            Value *shadow_ptr_v = shadow_ptr_nc;
+            if (gutils->getWidth() != 1) {
+              shadow_ptr_v =
+                  gutils->extractMeta(Builder2, shadow_ptr_v, 0);
+            }
+            Value *notnull = Builder2.CreateIsNotNull(shadow_ptr_v);
+            BasicBlock *current = Builder2.GetInsertBlock();
+            BasicBlock *conditional = gutils->addReverseBlock(
+                current, current->getName() + "_nnactive");
+            merge = gutils->addReverseBlock(
+                conditional, current->getName() + "_nnmerge");
+            Builder2.CreateCondBr(notnull, conditional, merge);
+            Builder2.SetInsertPoint(conditional);
+          }
 
           if (constantval) {
             gutils->setPtrDiffe(
