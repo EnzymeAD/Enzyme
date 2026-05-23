@@ -28,7 +28,7 @@ func.func @dfoo_flat(%x: f64, %dout : f64) -> f64 {
 
 // CHECK:           %[[DBUF:.+]] = memref.alloca() : memref<f64>
 // CHECK:           %[[ZERO_INIT:.+]] = arith.constant 0.000000e+00 : f64
-// CHECK:           memref.store %[[ZERO_INIT]], %[[DBUF]][] : memref<f64>
+// CHECK:           linalg.fill ins(%[[ZERO_INIT]] : f64) outs(%[[DBUF]] : memref<f64>)
 
 // CHECK:           %[[BUF:.+]] = memref.alloca() : memref<f64>
 // CHECK:           "enzyme.push"(%[[CS]], %[[DBUF]]) : (!enzyme.Cache<memref<f64>>, memref<f64>) -> ()
