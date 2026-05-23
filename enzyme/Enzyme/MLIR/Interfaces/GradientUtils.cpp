@@ -231,6 +231,11 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
 
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit || isMutable) {
+    if (isMutable) {
+      auto existing = invertedPointers.lookupOrNull(val);
+      if (existing && !existing.getDefiningOp<enzyme::PlaceholderOp>())
+        return;
+    }
     setInvertedPointer(val, toset);
   }
   /*
