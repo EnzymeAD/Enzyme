@@ -4750,9 +4750,28 @@ llvm::Value *moveSRetToFromRoots(llvm::IRBuilder<> &B, llvm::Type *jltype,
       }
       case SRetRootMovement::SRetValueToRootPointer: {
         Value *outloc = GradientUtils::extractMeta(B, sret, path);
-        outloc = B.CreatePointerCast(
-            outloc, PointerType::get(StructType::get(outloc->getContext(), {}),
-                                     Tracked));
+        if (!outloc->getType()->isPointerTy()) {
+          if (CustomErrorHandler) {
+            std::string str;
+            llvm::raw_string_ostream ss(str);
+            ss << "Illegal unboxed parameter in moveSRetToFromRoots. Expected "
+                  "pointer type, got: "
+               << *outloc->getType();
+            CustomErrorHandler(ss.str().c_str(), wrap(outloc),
+                               ErrorType::InternalError, nullptr, nullptr,
+                               wrap(&B));
+          } else {
+            llvm::errs() << "Illegal unboxed parameter in moveSRetToFromRoots. "
+                            "Expected pointer type, got: "
+                         << *outloc->getType() << "\n";
+            llvm_unreachable("Attempted to root unboxed aggregate element "
+                             "which is an integer instead of pointer");
+          }
+        } else {
+          outloc = B.CreatePointerCast(
+              outloc, PointerType::get(
+                          StructType::get(outloc->getContext(), {}), Tracked));
+        }
         B.CreateStore(outloc, loc);
         break;
       }
