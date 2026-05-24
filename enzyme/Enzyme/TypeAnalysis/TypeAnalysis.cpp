@@ -2839,11 +2839,17 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
   int off = (int)ai.getLimitedValue();
   int size = dl.getTypeSizeInBits(I.getType()) / 8;
 
-  if (direction & DOWN)
-    updateAnalysis(&I,
-                   getAnalysis(I.getOperand(0))
-                       .ShiftIndices(dl, off, size, /*addOffset*/ 0),
-                   &I);
+  if (direction & DOWN) {
+    auto res = getAnalysis(I.getOperand(0))
+                   .ShiftIndices(dl, off, size, /*addOffset*/ 0);
+    // If no type info was propagated from the operand (e.g., the operand is
+    // an opaque call result with no known type info), fall back to using the
+    // LLVM type of the result to generate type info. For extractvalue, the
+    // LLVM type of the extracted field is authoritative.
+    if (!res.isKnown())
+      res = defaultTypeTreeForLLVM(I.getType(), &I, /*intIsPointer*/ false);
+    updateAnalysis(&I, res, &I);
+  }
 
   if (direction & UP)
     updateAnalysis(I.getOperand(0),
