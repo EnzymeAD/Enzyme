@@ -19,6 +19,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     PrintAliasAnalysis.cpp
     EnzymeToMemRef.cpp
     SimplifyMath.cpp
+    SplitMultiResults.cpp
     AddToOpToIndexAndLoad.cpp
     AddToOpToSplit.cpp
     RaiseLLVMExtPass.cpp

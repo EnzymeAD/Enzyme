@@ -135,6 +135,13 @@ def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   ];
 }
 
+def SplitMultiResultsPass : Pass<"split-multi-results"> {
+  let summary = "Split region ops that yield multiple results into separate ops";
+  let dependentDialects = [
+    "scf::SCFDialect"
+  ];
+}
+
 def PrintActivityAnalysisPass : Pass<"print-activity-analysis"> {
   let summary = "Print the results of activity analysis";
   let dependentDialects = [
