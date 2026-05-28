@@ -17,7 +17,9 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -297,6 +299,109 @@ struct InsertValueOpInterfaceReverse
                           MGradientUtilsReverse *gutils) const {}
 };
 
+struct MemcpyOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<MemcpyOpInterfaceReverse,
+                                                       LLVM::MemcpyOp> {
+
+  static Type inferElemType(LLVM::MemcpyOp cp) {
+    if (auto t = cp->getAttrOfType<TypeAttr>("enzyme.elem_type"))
+      return t.getValue();
+    auto walk = [](Value p) -> Type {
+      for (Operation *user : p.getUsers()) {
+        if (auto ld = dyn_cast<LLVM::LoadOp>(user))
+          if (isa<AutoDiffTypeInterface>(ld.getType()))
+            return ld.getType();
+        if (auto st = dyn_cast<LLVM::StoreOp>(user))
+          if (isa<AutoDiffTypeInterface>(st.getValue().getType()))
+            return st.getValue().getType();
+      }
+      return nullptr;
+    };
+    if (Type t = walk(cp.getDst()))
+      return t;
+    if (Type t = walk(cp.getSrc()))
+      return t;
+    return Float64Type::get(cp.getContext());
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto cp = cast<LLVM::MemcpyOp>(op);
+    if (gutils->isConstantValue(cp.getDst()))
+      return {};
+    bool srcActive = !gutils->isConstantValue(cp.getSrc());
+    OpBuilder cb(gutils->getNewFromOriginal(op));
+    SmallVector<Value> caches;
+    caches.push_back(
+        gutils->initAndPushCache(gutils->invertPointerM(cp.getDst(), cb), cb));
+    caches.push_back(gutils->initAndPushCache(
+        srcActive ? gutils->invertPointerM(cp.getSrc(), cb)
+                  : gutils->getNewFromOriginal(cp.getSrc()),
+        cb));
+    caches.push_back(
+        gutils->initAndPushCache(gutils->getNewFromOriginal(cp.getLen()), cb));
+    return caches;
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto cp = cast<LLVM::MemcpyOp>(op);
+    if (gutils->isConstantValue(cp.getDst()))
+      return success();
+    bool srcActive = !gutils->isConstantValue(cp.getSrc());
+
+    Value dDst = gutils->popCache(caches[0], builder);
+    Value dSrc = gutils->popCache(caches[1], builder);
+    Value len = gutils->popCache(caches[2], builder);
+
+    Type elemTy = inferElemType(cp);
+    auto adt = dyn_cast<AutoDiffTypeInterface>(elemTy);
+    if (!adt || !elemTy.isIntOrFloat())
+      return op->emitError()
+             << "memcpy reverse: unsupported element type " << elemTy
+             << " (annotate enzyme.elem_type or lower to scalar stores)";
+
+    Location loc = op->getLoc();
+    unsigned bytes = (elemTy.getIntOrFloatBitWidth() + 7) / 8;
+
+    // n_elements = len / sizeof(elemTy)
+    Value byteSz = LLVM::ConstantOp::create(
+        builder, loc, len.getType(),
+        builder.getIntegerAttr(len.getType(), bytes));
+    Value nInt = LLVM::SDivOp::create(builder, loc, len, byteSz);
+    Value n =
+        arith::IndexCastOp::create(builder, loc, builder.getIndexType(), nInt);
+
+    Value c0 = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(builder, loc, 1);
+    Value zeroElem = adt.createNullValue(builder, loc);
+    Type ptrTy = cp.getDst().getType();
+
+    auto forOp = scf::ForOp::create(builder, loc, c0, n, c1);
+    OpBuilder body(forOp.getBody()->getTerminator());
+    Value ivIdx = forOp.getInductionVar();
+    Value iv = arith::IndexCastOp::create(body, loc, len.getType(), ivIdx);
+
+    Value gDst = LLVM::GEPOp::create(body, loc, ptrTy, elemTy, dDst,
+                                     ArrayRef<LLVM::GEPArg>{iv});
+    Value vDst = LLVM::LoadOp::create(body, loc, elemTy, gDst);
+    if (srcActive) {
+      Value gSrc = LLVM::GEPOp::create(body, loc, ptrTy, elemTy, dSrc,
+                                       ArrayRef<LLVM::GEPArg>{iv});
+      Value vSrc = LLVM::LoadOp::create(body, loc, elemTy, gSrc);
+      Value sum = adt.createAddOp(body, loc, vSrc, vDst);
+      LLVM::StoreOp::create(body, loc, sum, gSrc);
+    }
+    LLVM::StoreOp::create(body, loc, zeroElem, gDst);
+
+    return success();
+  }
+};
+
 std::optional<Value> findPtrSize(Value ptr) {
   if (auto allocOp = ptr.getDefiningOp<llvm_ext::AllocOp>())
     return allocOp.getSize();
@@ -467,6 +572,7 @@ void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
         *context);
     LLVM::InsertValueOp::attachInterface<InsertValueOpInterfaceReverse>(
         *context);
+    LLVM::MemcpyOp::attachInterface<MemcpyOpInterfaceReverse>(*context);
     LLVM::UnreachableOp::template attachInterface<
         detail::NoopRevAutoDiffInterface<LLVM::UnreachableOp>>(*context);
     LLVM::LLVMFuncOp::attachInterface<AutoDiffLLVMFuncOpFunctionInterface>(
