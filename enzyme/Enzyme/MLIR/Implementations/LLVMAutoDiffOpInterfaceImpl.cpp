@@ -369,9 +369,9 @@ struct MemcpyOpInterfaceReverse
     unsigned bytes = (elemTy.getIntOrFloatBitWidth() + 7) / 8;
 
     // n_elements = len / sizeof(elemTy)
-    Value byteSz = LLVM::ConstantOp::create(
-        builder, loc, len.getType(),
-        builder.getIntegerAttr(len.getType(), bytes));
+    Value byteSz =
+        LLVM::ConstantOp::create(builder, loc, len.getType(),
+                                 builder.getIntegerAttr(len.getType(), bytes));
     Value nInt = LLVM::SDivOp::create(builder, loc, len, byteSz);
     Value n =
         arith::IndexCastOp::create(builder, loc, builder.getIndexType(), nInt);
