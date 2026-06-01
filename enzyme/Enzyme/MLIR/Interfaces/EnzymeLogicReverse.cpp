@@ -52,6 +52,19 @@ Create reverse mode adjoint for an operation.
 */
 LogicalResult MEnzymeLogic::visitChild(Operation *op, OpBuilder &builder,
                                        MGradientUtilsReverse *gutils) {
+  // TODO: Make this a proper interface, reverse the activity check
+  if (auto memsetOp = dyn_cast<LLVM::MemsetOp>(op)) {
+    if (!gutils->isConstantValue(memsetOp.getDst())) {
+      Location loc = memsetOp.getLoc();
+      Value zero =
+          LLVM::ConstantOp::create(builder, loc, builder.getI8IntegerAttr(0));
+      // TODO: need to cache this
+      LLVM::MemsetOp::create(
+          builder, loc, gutils->invertPointerM(memsetOp.getDst(), builder),
+          zero, gutils->getNewFromOriginal(memsetOp.getLen()),
+          memsetOp.getIsVolatile());
+    }
+  }
   if ((op->getBlock()->getTerminator() != op) && isFullyInactive(op, gutils)) {
     return success();
   }
