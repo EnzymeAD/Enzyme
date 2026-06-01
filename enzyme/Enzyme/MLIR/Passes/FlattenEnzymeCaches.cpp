@@ -149,34 +149,6 @@ struct FlattenEnzymeCaches
       loadOp.replaceAllUsesWith(flatLoad.getResult());
       loadOp.erase();
     });
-
-    // Trying to get lowering working, remember to delete this
-    llvm::errs() << "***Deleting leftover placeholders***\n";
-
-    // We need to do a toposort to make sure we delete the dependent placeholder
-    // ops in the right order
-    SmallVector<Operation *> reverseToposort;
-    DenseSet<Operation *> permanent, temporary;
-    std::function<void(Operation *)> visit = [&](Operation *op) {
-      if (permanent.contains(op))
-        return;
-      if (temporary.contains(op))
-        llvm_unreachable("unimplemented cycle in placeholder removal");
-
-      temporary.insert(op);
-      for (Operation *user : op->getUsers()) {
-        visit(user);
-      }
-      temporary.erase(op);
-      permanent.insert(op);
-      reverseToposort.push_back(op);
-    };
-
-    getOperation()->walk(
-        [&](enzyme::PlaceholderOp placeholder) { visit(placeholder); });
-    for (Operation *toDelete : reverseToposort) {
-      toDelete->erase();
-    }
   }
 };
 } // namespace
