@@ -309,6 +309,15 @@ def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
 
 def MathematicSimplificationPass : Pass<"enzyme-simplify-math"> {
   let summary = "Simplify basic mathematical operations";
+  let options = [
+    Option<
+      /*C++ variable name=*/"fastmath",
+      /*CLI argument=*/"fastmath",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Set fast-math flags on all compatible operations"
+    >,
+  ];
 }
 
 def AddToOpToIndexAndLoadPass : Pass<"add-to-op-to-index-and-load"> {
