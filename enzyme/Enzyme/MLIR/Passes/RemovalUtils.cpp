@@ -16,6 +16,8 @@
 #include <cassert>
 #include <deque>
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+
 #include "Analysis/DataFlowAliasAnalysis.h"
 #include "mlir/Analysis/DataFlow/Utils.h"
 
@@ -31,6 +33,10 @@ static llvm::cl::opt<bool>
                   llvm::cl::Hidden,
                   llvm::cl::desc("Use with DEBUG_TYPE 'enzyme-mincut' to print "
                                  "the mincut graphs in GraphViz"));
+static llvm::cl::opt<std::string> SubGraphRoot("mincut-subgraph",
+                                               llvm::cl::init(""),
+                                               llvm::cl::Hidden,
+                                               llvm::cl::desc(""));
 
 void mlir::enzyme::localizeGradients(OpBuilder &builder,
                                      MGradientUtilsReverse *gutils,
@@ -170,33 +176,53 @@ struct Graph : public llvm::MapVector<Node, SmallPtrSet<Node, 2>> {
   }
 };
 
-static void dumpGraphviz(Graph &G) {
+static void dumpValue(llvm::raw_ostream &ss, Value v) {
+  if (isa<OpResult>(v)) {
+    auto res = cast<OpResult>(v);
+    ss << "[val](" << res.getResultNumber() << ")";
+    if (res.getOwner()->hasAttr("dbg")) {
+      auto dbg = res.getOwner()->getAttrOfType<StringAttr>("dbg");
+      ss << dbg.getValue();
+    } else {
+      ss << res.getOwner()->getName().getStringRef();
+    }
+  } else {
+    ss << "[val]" << v;
+  }
+}
+
+static void dumpOperation(llvm::raw_ostream &ss, Operation *op) {
+  ss << "[op]";
+  if (op->hasAttr("dbg")) {
+    auto dbg = op->getAttrOfType<StringAttr>("dbg");
+    ss << dbg.getValue();
+  } else {
+    ss << op->getName().getStringRef();
+  }
+}
+
+static std::string getTag(Node n) {
+  std::string tag;
+  llvm::raw_string_ostream ss(tag);
+  if (isa<Operation *>(n)) {
+    dumpOperation(ss, cast<Operation *>(n));
+  } else {
+    dumpValue(ss, cast<Value>(n));
+  }
+  return tag;
+}
+
+static void
+dumpGraphviz(Graph &G, std::optional<SetVector<Value>> roots = std::nullopt,
+             std::optional<SetVector<Operation *>> required = std::nullopt,
+             std::optional<DenseMap<Node, Node>> reachable = std::nullopt) {
   auto serialize = [&](Node n) -> std::string {
     std::string s;
     llvm::raw_string_ostream ss(s);
     if (isa<Value>(n)) {
-      auto v = cast<Value>(n);
-      if (isa<OpResult>(v)) {
-        auto res = cast<OpResult>(v);
-        ss << "[val](" << res.getResultNumber() << ")";
-        if (res.getOwner()->hasAttr("dbg")) {
-          auto dbg = res.getOwner()->getAttrOfType<StringAttr>("dbg");
-          ss << dbg.getValue();
-        } else {
-          ss << res.getOwner()->getName().getStringRef();
-        }
-      } else {
-        ss << "[val]" << v;
-      }
+      dumpValue(ss, cast<Value>(n));
     } else if (isa<Operation *>(n)) {
-      auto op = cast<Operation *>(n);
-      ss << "[op]";
-      if (op->hasAttr("dbg")) {
-        auto dbg = op->getAttrOfType<StringAttr>("dbg");
-        ss << dbg.getValue();
-      } else {
-        ss << op->getName().getStringRef();
-      }
+      dumpOperation(ss, cast<Operation *>(n));
     } else {
       ss << "none";
     }
@@ -205,7 +231,32 @@ static void dumpGraphviz(Graph &G) {
 
   using llvm::errs;
   errs() << "digraph G {\n";
+  // Assuming required won't overlap with roots nor reachable, but
+  // roots will be a subset of reachable
+  if (required.has_value()) {
+    for (auto req : *required) {
+      errs() << "  \"" << serialize(Node(req))
+             << "\"[style=filled fillcolor=\"#B7B1F2\"];\n";
+    }
+  }
+  if (reachable.has_value()) {
+    assert(roots.has_value());
+    for (auto &&[k, _] : *reachable) {
+      errs() << "  \"" << serialize(k)
+             << "\"[style=filled fillcolor=\"#C1E9FF\"";
+      if (isa<Value>(k) && roots->contains(cast<Value>(k))) {
+        errs() << " shape=doubleoctagon";
+      }
+      errs() << "];\n";
+    }
+  }
   for (auto &pair : G) {
+    if (isa<Operation *>(pair.first) &&
+        isa<arith::ConstantOp>(cast<Operation *>(pair.first)))
+      continue;
+    if (isa<Value>(pair.first) &&
+        cast<Value>(pair.first).getDefiningOp<arith::ConstantOp>())
+      continue;
     for (const auto &N : pair.second) {
       errs() << "  \"" << serialize(pair.first) << "\" -> \"" << serialize(N)
              << "\";\n";
@@ -339,6 +390,19 @@ bool isLoadMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
 // Whether or not an operation can be moved from the forward region to the
 // reverse region or vice-versa.
 static inline bool isMovable(const OverwriteAnalyzer &analyzer, Operation *op) {
+  if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+    for (auto &bodyOp : ifOp.getThenRegion().getOps()) {
+      if (!(bodyOp.getNumRegions() == 0 && mlir::isPure(&bodyOp))) {
+        return false;
+      }
+    }
+    for (auto &bodyOp : ifOp.getElseRegion().getOps()) {
+      if (!(bodyOp.getNumRegions() == 0 && mlir::isPure(&bodyOp))) {
+        return false;
+      }
+    }
+    return true;
+  }
   return op->getNumRegions() == 0 && op->getBlock()->getTerminator() != op &&
          (mlir::isPure(op) || isLoadMovable(analyzer, op) ||
           op->hasAttr("enzyme.stack_alloca"));
@@ -428,6 +492,66 @@ static Graph filterGraph(const Graph &Orig, const SetVector<Value> &Roots,
   }
 
   return G;
+}
+
+static Graph getSubGraph(Graph G) {
+  Graph inverted;
+  for (auto &pair : G) {
+    for (auto N : pair.second) {
+      inverted[N].insert(pair.first);
+    }
+  }
+
+  auto getTag = [](Node n) {
+    std::string tag;
+    llvm::raw_string_ostream ss(tag);
+    if (isa<Value>(n)) {
+      dumpValue(ss, cast<Value>(n));
+    } else if (isa<Operation *>(n)) {
+      dumpOperation(ss, cast<Operation *>(n));
+    }
+    return tag;
+  };
+
+  SmallVector<Node> requested;
+  for (auto &&[k, children] : G) {
+    std::string tag = getTag(k);
+    if (StringRef(tag).contains(SubGraphRoot)) {
+      requested.push_back(k);
+    }
+  }
+  Graph subgraph;
+
+  // Traverse backward
+  SmallVector<Node> worklist(requested);
+  DenseSet<Node> visited;
+  while (!worklist.empty()) {
+    Node curr = worklist.pop_back_val();
+    if (!visited.contains(curr)) {
+      visited.insert(curr);
+      for (Node neighbor : inverted[curr]) {
+        subgraph[neighbor].insert(curr);
+        worklist.push_back(neighbor);
+      }
+    }
+  }
+
+  // Walk forward
+  worklist.clear();
+  worklist.append(requested);
+  visited.clear();
+  while (!worklist.empty()) {
+    Node curr = worklist.pop_back_val();
+    if (!visited.contains(curr)) {
+      visited.insert(curr);
+      for (Node neighbor : G[curr]) {
+        subgraph[curr].insert(neighbor);
+        worklist.push_back(neighbor);
+      }
+    }
+  }
+
+  return subgraph;
 }
 
 static int64_t computeSizeOfType(Value val) {
@@ -564,7 +688,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   auto overwriteAnalyzer = OverwriteAnalyzer::analyzeFunc(
       forward->getParent()->getParentOfType<FunctionOpInterface>());
 
-  LLVM_DEBUG(llvm::dbgs() << "trying min/cut\n");
+  LLVM_DEBUG(llvm::dbgs() << "trying min/cut for "
+                          << forward->getParentOp()->getName() << " at "
+                          << forward->getParentOp()->getLoc() << "\n");
   LLVM_DEBUG(
       findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
           ->dump());
@@ -686,11 +812,19 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
     assert(rewriter.getInsertionPoint()->getBlock() == reverse);
 
-    LLVM_DEBUG(llvm::dbgs() << "Required: \n";);
-    LLVM_DEBUG(for (auto R : Required) llvm::dbgs() << " + " << *R << "\n";);
+    LLVM_DEBUG(llvm::dbgs() << "Required: (" << Required.size() << ")\n";);
+    LLVM_DEBUG(for (auto R
+                    : Required) {
+      dumpOperation(llvm::dbgs(), R);
+      llvm::dbgs() << "\n";
+    });
 
-    LLVM_DEBUG(llvm::dbgs() << "Roots: \n";);
-    LLVM_DEBUG(for (auto R : roots) llvm::dbgs() << " + " << R << "\n";);
+    LLVM_DEBUG(llvm::dbgs() << "Roots: (" << roots.size() << ")\n";);
+    LLVM_DEBUG(for (auto R
+                    : roots) {
+      dumpValue(llvm::dbgs(), R);
+      llvm::dbgs() << "\n";
+    });
   }
 
   LLVM_DEBUG(llvm::dbgs() << "pre filter graph: \n";);
@@ -698,6 +832,11 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   G = filterGraph(G, roots, Required);
   LLVM_DEBUG(llvm::dbgs() << "post filter graph: \n";);
   LLVM_DEBUG(dump(G));
+  if (SubGraphRoot != "") {
+    Graph subgraph = getSubGraph(G);
+    LLVM_DEBUG(llvm::dbgs() << "requested subgraph:\n";);
+    LLVM_DEBUG(dump(subgraph));
+  }
 
   Graph Orig = G;
 
@@ -742,6 +881,9 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // Those are the new values to cache
   SetVector<Value> newCaches;
 
+  LLVM_DEBUG(llvm::dbgs() << "reachable nodes:\n");
+  LLVM_DEBUG(dumpGraphviz(Orig, roots, Required, parent));
+
   // All edges that are from a reachable vertex to non-reachable vertex in
   // the original graph are edges for the minimum cut. The set of values to
   // cache are the values transported along those edges (either. Value ->
@@ -777,7 +919,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   LLVM_DEBUG({
     llvm::dbgs() << "initial new caches: \n";
     for (Value v : newCaches) {
-      v.dump();
+      dumpValue(llvm::dbgs(), v);
+      llvm::dbgs() << "\n";
     }
   });
 
@@ -841,7 +984,8 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     LLVM_DEBUG({
       llvm::dbgs() << "refined new caches: \n";
       for (Value v : newCaches) {
-        v.dump();
+        dumpValue(llvm::dbgs(), v);
+        llvm::dbgs() << "\n";
       }
     });
 
@@ -1025,10 +1169,10 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     rewriter.eraseOp(info.initOp);
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "post min/cut\n");
-  LLVM_DEBUG(
-      findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-          ->dump());
+  // LLVM_DEBUG(llvm::dbgs() << "post min/cut\n");
+  // LLVM_DEBUG(
+  //     findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
+  //         ->dump());
 
   // Set new caches
   caches0 = std::move(newCacheInfos);
