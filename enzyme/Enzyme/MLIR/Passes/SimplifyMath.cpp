@@ -49,8 +49,17 @@ struct ApplySimplificationPattern
 struct MathematicSimplification
     : public enzyme::impl::MathematicSimplificationPassBase<
           MathematicSimplification> {
-  void runOnOperation() override {
+  using MathematicSimplificationPassBase::MathematicSimplificationPassBase;
 
+  void runOnOperation() override {
+    if (fastmath) {
+      getOperation()->walk([&](arith::ArithFastMathInterface op) {
+        if (op.getFastMathFlagsAttr().getValue() == arith::FastMathFlags::none)
+          op->setAttr(op.getFastMathAttrName(),
+                      arith::FastMathFlagsAttr::get(
+                          op.getContext(), arith::FastMathFlags::fast));
+      });
+    }
     RewritePatternSet patterns(&getContext());
     patterns.insert<ApplySimplificationPattern>(&getContext());
 
