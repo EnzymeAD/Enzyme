@@ -15,6 +15,8 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #include "Dialect/Dialect.h"
@@ -69,6 +71,14 @@ class LLVMDialect;
 namespace tensor {
 class TensorDialect;
 } // end namespace tensor
+
+namespace linalg {
+class LinalgDialect;
+} // end namespace linalg
+
+namespace memref {
+class MemRefDialect;
+} // end namespace memref
 
 namespace enzyme {
 

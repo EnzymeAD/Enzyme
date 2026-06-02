@@ -53,7 +53,8 @@ struct DifferentiatePass
 
     registry.insert<mlir::arith::ArithDialect, mlir::complex::ComplexDialect,
                     mlir::cf::ControlFlowDialect, mlir::tensor::TensorDialect,
-                    mlir::linalg::LinalgDialect, mlir::enzyme::EnzymeDialect>();
+                    mlir::memref::MemRefDialect, mlir::linalg::LinalgDialect,
+                    mlir::enzyme::EnzymeDialect>();
   }
 
   static std::vector<DIFFE_TYPE> mode_from_fn(FunctionOpInterface fn,
