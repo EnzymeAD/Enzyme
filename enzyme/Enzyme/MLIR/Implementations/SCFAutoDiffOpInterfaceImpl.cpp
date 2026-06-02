@@ -906,7 +906,10 @@ struct IfOpInterfaceReverse
 
     SmallVector<bool> resultsActive(ifOp.getNumResults(), false);
     for (int i = 0, e = resultsActive.size(); i < e; ++i) {
-      resultsActive[i] = !gutils->isConstantValue(ifOp.getResult(i));
+      auto result = ifOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      resultsActive[i] = needsGrad && !gutils->isConstantValue(result);
     }
 
     SmallVector<Value> incomingGradients;
@@ -990,7 +993,71 @@ struct IfOpInterfaceReverse
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+                          MGradientUtilsReverse *gutils) const {
+    // TODO: consider making this generic for RegionBranchOpInterface
+    auto ifOp = cast<scf::IfOp>(op);
+    if (ifOp.getNumResults() == 0)
+      return;
+
+    auto newIf = cast<scf::IfOp>(gutils->getNewFromOriginal(ifOp));
+    SmallVector<Type> newResultTypes;
+    SmallVector<bool> needsShadow(op->getNumResults());
+    for (auto result : op->getResults()) {
+      newResultTypes.push_back(result.getType());
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      if (iface && iface.isMutable() && !gutils->isConstantValue(result)) {
+        newResultTypes.push_back(result.getType());
+        needsShadow[result.getResultNumber()] = true;
+      } else {
+        needsShadow[result.getResultNumber()] = false;
+      }
+    }
+
+    // Replace the new op with an augmented op
+    auto augmentedOp =
+        scf::IfOp::create(builder, op->getLoc(), newResultTypes,
+                          gutils->getNewFromOriginal(ifOp.getCondition()),
+                          /*withElseRegion=*/true);
+
+    for (auto &&[oldReg, newReg, augReg] :
+         llvm::zip(op->getRegions(), newIf->getRegions(),
+                   augmentedOp->getRegions())) {
+      augReg.takeBody(newReg);
+      for (auto &&[oldBlk, augBlk] : llvm::zip(oldReg, augReg)) {
+        Operation *oldYield = oldBlk.getTerminator();
+        Operation *augYield = augBlk.getTerminator();
+
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(augYield);
+        SmallVector<Value> newOperands;
+        for (auto &&[oldOperand, augOperand] :
+             llvm::zip(oldYield->getOpOperands(), augYield->getOpOperands())) {
+          newOperands.push_back(augOperand.get());
+          if (needsShadow[oldOperand.getOperandNumber()]) {
+            newOperands.push_back(
+                gutils->invertPointerM(oldOperand.get(), builder));
+          }
+        }
+
+        scf::YieldOp::create(builder, oldYield->getLoc(), newOperands);
+        augYield->erase();
+      }
+    }
+
+    // Determine which returns correspond to the primal
+    SmallVector<Value> augmentedResults;
+    unsigned resIdx = 0;
+    for (auto res : ifOp.getResults()) {
+      augmentedResults.push_back(augmentedOp.getResult(resIdx));
+      resIdx++;
+      if (needsShadow[res.getResultNumber()]) {
+        gutils->setInvertedPointer(res, augmentedOp.getResult(resIdx));
+        resIdx++;
+      }
+    }
+    newIf.replaceAllUsesWith(augmentedResults);
+    newIf.erase();
+  }
 };
 
 struct ForOpADDataFlow
