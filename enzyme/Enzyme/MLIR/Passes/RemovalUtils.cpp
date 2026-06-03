@@ -280,6 +280,53 @@ static void dump(Graph &G) {
   }
 }
 
+static void pruneCaches(const Graph &G, const SetVector<Value> &sources,
+                        const SetVector<Value> &initialCaches,
+                        SetVector<Value> &caches) {
+  Graph inverted;
+  for (auto &pair : G) {
+    for (auto N : pair.second) {
+      inverted[N].insert(pair.first);
+    }
+  }
+
+  // Determine if there is an inverted path from v to a source that does not
+  // cross through a cached value. e.g. if we have a path s -> c -> v, where s
+  // is a source and c is cached, then we can recompute v using c instead of
+  // caching both c and v.
+  auto pathToSourceExists = [&](Value v) {
+    if (sources.contains(v))
+      return true;
+
+    std::deque<Node> frontier{v};
+    DenseSet<Node> visited{v};
+    while (!frontier.empty()) {
+      Node n = frontier.front();
+      frontier.pop_front();
+
+      if (auto nval = dyn_cast<Value>(n)) {
+        // cached values block the path
+        if (initialCaches.contains(nval))
+          continue;
+        else if (sources.contains(nval))
+          return true;
+      }
+
+      for (Node neighbor : inverted[n])
+        if (!visited.contains(neighbor)) {
+          visited.insert(neighbor);
+          frontier.push_back(neighbor);
+        }
+    }
+    return false;
+  };
+
+  for (Value v : initialCaches) {
+    if (pathToSourceExists(v))
+      caches.insert(v);
+  }
+}
+
 // A node in the compute graph.
 // Operation nodes have outgoing edges to value nodes that they produce and
 // incoming nodes from values they take as operands.
@@ -494,7 +541,7 @@ static Graph filterGraph(const Graph &Orig, const SetVector<Value> &Roots,
   return G;
 }
 
-static Graph getSubGraph(Graph G) {
+static Graph getSubGraph(Graph G, const SetVector<Operation *> &Required) {
   Graph inverted;
   for (auto &pair : G) {
     for (auto N : pair.second) {
@@ -516,7 +563,7 @@ static Graph getSubGraph(Graph G) {
   SmallVector<Node> requested;
   for (auto &&[k, children] : G) {
     std::string tag = getTag(k);
-    if (StringRef(tag).contains(SubGraphRoot)) {
+    if (StringRef(SubGraphRoot).contains(tag)) {
       requested.push_back(k);
     }
   }
@@ -544,6 +591,10 @@ static Graph getSubGraph(Graph G) {
     Node curr = worklist.pop_back_val();
     if (!visited.contains(curr)) {
       visited.insert(curr);
+      if (isa<Operation *>(curr) &&
+          Required.contains(cast<Operation *>(curr))) {
+        continue;
+      }
       for (Node neighbor : G[curr]) {
         subgraph[curr].insert(neighbor);
         worklist.push_back(neighbor);
@@ -833,7 +884,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   LLVM_DEBUG(llvm::dbgs() << "post filter graph: \n";);
   LLVM_DEBUG(dump(G));
   if (SubGraphRoot != "") {
-    Graph subgraph = getSubGraph(G);
+    Graph subgraph = getSubGraph(G, Required);
     LLVM_DEBUG(llvm::dbgs() << "requested subgraph:\n";);
     LLVM_DEBUG(dump(subgraph));
   }
@@ -879,7 +930,7 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   LLVM_DEBUG(dump(G));
 
   // Those are the new values to cache
-  SetVector<Value> newCaches;
+  SetVector<Value> initialCaches;
 
   LLVM_DEBUG(llvm::dbgs() << "reachable nodes:\n");
   LLVM_DEBUG(dumpGraphviz(Orig, roots, Required, parent));
@@ -906,18 +957,28 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
             assert(isa<Value>(N));
             newCache = cast<Value>(N);
           }
-          newCaches.insert(newCache);
+          initialCaches.insert(newCache);
         }
       }
     }
   }
+  LLVM_DEBUG({
+    llvm::dbgs() << "initial new caches: \n";
+    for (Value v : initialCaches) {
+      dumpValue(llvm::dbgs(), v);
+      llvm::dbgs() << "\n";
+    }
+  });
+
+  SetVector<Value> newCaches;
+  pruneCaches(Orig, roots, initialCaches, newCaches);
 
   // compute path from new caches to required
   parent.clear();
   bfs(Orig, newCaches, parent);
 
   LLVM_DEBUG({
-    llvm::dbgs() << "initial new caches: \n";
+    llvm::dbgs() << "pruned new caches: \n";
     for (Value v : newCaches) {
       dumpValue(llvm::dbgs(), v);
       llvm::dbgs() << "\n";
