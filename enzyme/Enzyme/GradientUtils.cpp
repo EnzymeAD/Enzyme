@@ -8951,10 +8951,11 @@ void InvertedPointerVH::deleted() {
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                        Type *secretty, Intrinsic::ID intrinsic,
                        unsigned dstalign, unsigned srcalign, unsigned offset,
-                       bool dstConstant, Value *shadow_dst, bool srcConstant,
-                       Value *shadow_src, Value *length, Value *isVolatile,
-                       llvm::CallInst *MTI, bool allowForward,
-                       bool shadowsLookedUp, bool backwardsShadow) {
+                       bool dstConstant, Value *shadow_dst, Value *primal_dst,
+                       bool srcConstant, Value *shadow_src, Value *primal_src,
+                       Value *length, Value *isVolatile, llvm::CallInst *MTI,
+                       bool allowForward, bool shadowsLookedUp,
+                       bool backwardsShadow) {
   // TODO offset
   if (secretty) {
     // no change to forward pass if represents floats
@@ -9001,6 +9002,14 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                 ? shadow_dst
                 : gutils->lookupM(shadow_dst, Builder2);
+        Value *dst_inactive = nullptr;
+        if (gutils->runtimeActivity) {
+          Value *primal_dsto =
+              (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                  ? primal_dst
+                  : gutils->lookupM(primal_dst, Builder2);
+          dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
+        }
         if (dsto->getType()->isIntegerTy())
           dsto =
               Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
@@ -9014,6 +9023,18 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                 ? shadow_src
                 : gutils->lookupM(shadow_src, Builder2);
+        Value *src_inactive = nullptr;
+        if (gutils->runtimeActivity) {
+          if (srcConstant) {
+            src_inactive = ConstantInt::getTrue(Builder2.getContext());
+          } else {
+            Value *primal_srco =
+                (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                    ? primal_src
+                    : gutils->lookupM(primal_src, Builder2);
+            src_inactive = Builder2.CreateICmpEQ(srco, primal_srco);
+          }
+        }
         if (mode != DerivativeMode::ForwardModeSplit)
           dsto = Builder2.CreatePointerCast(
               dsto, PointerType::get(secretty, dstaddr));
@@ -9044,7 +9065,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
             Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
           }
         } else {
-          Value *args[]{
+          SmallVector<Value *, 5> args = {
               Builder2.CreatePointerCast(dsto,
                                          PointerType::get(secretty, dstaddr)),
               Builder2.CreatePointerCast(srco,
@@ -9059,12 +9080,18 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                                            .getTypeAllocSizeInBits(secretty) /
                                        8))};
 
+          if (gutils->runtimeActivity) {
+            args.push_back(dst_inactive);
+            args.push_back(src_inactive);
+          }
+
           auto dmemcpy = ((intrinsic == Intrinsic::memcpy)
                               ? getOrInsertDifferentialFloatMemcpy
                               : getOrInsertDifferentialFloatMemmove)(
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
               srcalign, dstaddr, srcaddr,
-              cast<IntegerType>(length->getType())->getBitWidth());
+              cast<IntegerType>(length->getType())->getBitWidth(),
+              gutils->runtimeActivity);
           Builder2.CreateCall(dmemcpy, args);
         }
       }
