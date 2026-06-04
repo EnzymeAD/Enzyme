@@ -1089,8 +1089,12 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 
       B.SetInsertPoint(memsetDst);
       auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
-      Value *dst_i8 = B.CreatePointerCast(dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
-      B.CreateMemSet(dst_i8, B.getInt8(0), B.CreateMul(num, ConstantInt::get(num->getType(), elSize), "", /*HasNUW*/ true, /*HasNSW*/ true), MaybeAlign(dstalign));
+      Value *dst_i8 = B.CreatePointerCast(
+          dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
+      B.CreateMemSet(dst_i8, B.getInt8(0),
+                     B.CreateMul(num, ConstantInt::get(num->getType(), elSize),
+                                 "", /*HasNUW*/ true, /*HasNSW*/ true),
+                     MaybeAlign(dstalign));
       B.CreateBr(end);
     } else {
       B.CreateCondBr(cond, end, body);
@@ -1102,7 +1106,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), runtimeActivity ? checkSrc : entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0),
+                     runtimeActivity ? checkSrc : entry);
 
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
@@ -2105,11 +2110,9 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 }
 
 // TODO implement differential memmove
-Function *
-getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
-                                    unsigned srcalign, unsigned dstaddr,
-                                    unsigned srcaddr, unsigned bitwidth,
-                                    bool runtimeActivity) {
+Function *getOrInsertDifferentialFloatMemmove(
+    Module &M, Type *T, unsigned dstalign, unsigned srcalign, unsigned dstaddr,
+    unsigned srcaddr, unsigned bitwidth, bool runtimeActivity) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
