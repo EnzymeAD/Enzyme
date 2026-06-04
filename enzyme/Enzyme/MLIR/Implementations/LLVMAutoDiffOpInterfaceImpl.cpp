@@ -382,21 +382,23 @@ struct MemcpyOpInterfaceReverse
     Type ptrTy = cp.getDst().getType();
 
     auto forOp = scf::ForOp::create(builder, loc, c0, n, c1);
-    OpBuilder body(forOp.getBody()->getTerminator());
-    Value ivIdx = forOp.getInductionVar();
-    Value iv = arith::IndexCastOp::create(body, loc, len.getType(), ivIdx);
 
-    Value gDst = LLVM::GEPOp::create(body, loc, ptrTy, elemTy, dDst,
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(forOp.getBody()->getTerminator());
+    Value ivIdx = forOp.getInductionVar();
+    Value iv = arith::IndexCastOp::create(builder, loc, len.getType(), ivIdx);
+
+    Value gDst = LLVM::GEPOp::create(builder, loc, ptrTy, elemTy, dDst,
                                      ArrayRef<LLVM::GEPArg>{iv});
-    Value vDst = LLVM::LoadOp::create(body, loc, elemTy, gDst);
+    Value vDst = LLVM::LoadOp::create(builder, loc, elemTy, gDst);
     if (srcActive) {
-      Value gSrc = LLVM::GEPOp::create(body, loc, ptrTy, elemTy, dSrc,
+      Value gSrc = LLVM::GEPOp::create(builder, loc, ptrTy, elemTy, dSrc,
                                        ArrayRef<LLVM::GEPArg>{iv});
-      Value vSrc = LLVM::LoadOp::create(body, loc, elemTy, gSrc);
-      Value sum = adt.createAddOp(body, loc, vSrc, vDst);
-      LLVM::StoreOp::create(body, loc, sum, gSrc);
+      Value vSrc = LLVM::LoadOp::create(builder, loc, elemTy, gSrc);
+      Value sum = adt.createAddOp(builder, loc, vSrc, vDst);
+      LLVM::StoreOp::create(builder, loc, sum, gSrc);
     }
-    LLVM::StoreOp::create(body, loc, zeroElem, gDst);
+    LLVM::StoreOp::create(builder, loc, zeroElem, gDst);
 
     return success();
   }
