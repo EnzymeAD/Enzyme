@@ -822,43 +822,43 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %i57_unwrap = addrspacecast { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i to { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)*
 ; CHECK-NEXT:  call fastcc void @diffea1([2 x [1 x double]]* nocapture nofree writeonly align 8 "enzyme_sret"="{{[0-9]+}}" %i4, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" %"i4'ipa", { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)* nocapture readonly align 8 %i57_unwrap)
 ; CHECK-NEXT:  call void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture nofree noundef nonnull writeonly align 8 dereferenceable(16) %i58_unwrap, i8* noundef nonnull align 8 dereferenceable(16) %i59_unwrap, i64 noundef 16, i1 noundef false) #{{[0-9]+}}, !noalias !36
-; CHECK-NEXT:  %7 = load double, double* %"i56'de", align 8
+; CHECK-NEXT:  [[val_i56:%.*]] = load double, double* %"i56'de", align 8
 ; CHECK-NEXT:  store double 0.000000e+00, double* %"i56'de", align 8
-; CHECK-NEXT:  %8 = load double, double* %"arg1'de", align 8
-; CHECK-NEXT:  %9 = fadd fast double %8, %7
-; CHECK-NEXT:  store double %9, double* %"arg1'de", align 8
-; CHECK-NEXT:  %10 = load {} addrspace(10)*, {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group !119
-; CHECK-NEXT:  %"i21'ipc_unwrap" = bitcast {} addrspace(10)* %10 to { i64, {} addrspace(10)** } addrspace(10)*
+; CHECK-NEXT:  [[val_arg1:%.*]] = load double, double* %"arg1'de", align 8
+; CHECK-NEXT:  [[add:%.*]] = fadd fast double [[val_arg1]], [[val_i56]]
+; CHECK-NEXT:  store double [[add]], double* %"arg1'de", align 8
+; CHECK-NEXT:  [[cache_val:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %"i20'ip_phi_cache", align 8, !invariant.group !119
+; CHECK-NEXT:  %"i21'ipc_unwrap" = bitcast {} addrspace(10)* [[cache_val]] to { i64, {} addrspace(10)** } addrspace(10)*
 ; CHECK-NEXT:  %"i22'ipc_unwrap" = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %"i21'ipc_unwrap" to { i64, {} addrspace(10)** } addrspace(11)*
 ; CHECK-NEXT:  %"i23'ipg_unwrap" = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %"i22'ipc_unwrap", i64 0, i32 1
 ; CHECK-NEXT:  %"i24'ipc_unwrap" = bitcast {} addrspace(10)** addrspace(11)* %"i23'ipg_unwrap" to i8* addrspace(11)*
 ; CHECK-NEXT:  %"i25'il_phi_unwrap" = load i8*, i8* addrspace(11)* %"i24'ipc_unwrap", align 8, !tbaa !6, !alias.scope !110, !noalias !113, !nonnull !8
 ; CHECK-NEXT:  %"i35'ipc_unwrap" = bitcast i8* %"i25'il_phi_unwrap" to {} addrspace(10)**
-; CHECK-NEXT:  %11 = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* %10, {} addrspace(10)** %"i35'ipc_unwrap")
-; CHECK-NEXT:  %"i38'ipg_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %11, i64 1
+; CHECK-NEXT:  [[gc_loaded_val:%.*]] = call {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* [[cache_val]], {} addrspace(10)** %"i35'ipc_unwrap")
+; CHECK-NEXT:  %"i38'ipg_unwrap" = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* [[gc_loaded_val]], i64 1
 ; CHECK-NEXT:  %"i39'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %"i38'ipg_unwrap" to double addrspace(13)*
-; CHECK-NEXT:  %12 = load {} addrspace(10)*, {} addrspace(10)** %i20_cache, align 8, !invariant.group !118
-; CHECK-NEXT:  %i21_unwrap = bitcast {} addrspace(10)* %12 to { i64, {} addrspace(10)** } addrspace(10)*
+; CHECK-NEXT:  [[cache_val_unwrap:%.*]] = load {} addrspace(10)*, {} addrspace(10)** %i20_cache, align 8, !invariant.group !118
+; CHECK-NEXT:  %i21_unwrap = bitcast {} addrspace(10)* [[cache_val_unwrap]] to { i64, {} addrspace(10)** } addrspace(10)*
 ; CHECK-NEXT:  %i22_unwrap = addrspacecast { i64, {} addrspace(10)** } addrspace(10)* %i21_unwrap to { i64, {} addrspace(10)** } addrspace(11)*
 ; CHECK-NEXT:  %i23_unwrap = getelementptr inbounds { i64, {} addrspace(10)** }, { i64, {} addrspace(10)** } addrspace(11)* %i22_unwrap, i64 0, i32 1
 ; CHECK-NEXT:  %i24_unwrap = bitcast {} addrspace(10)** addrspace(11)* %i23_unwrap to i8* addrspace(11)*
 ; CHECK-NEXT:  %i25_unwrap = load i8*, i8* addrspace(11)* %i24_unwrap, align 8, !tbaa !6, !alias.scope !115, !noalias !116, !nonnull !8, !invariant.group !117
 ; CHECK-NEXT:  %i35_unwrap = bitcast i8* %i25_unwrap to {} addrspace(10)**
-; CHECK-NEXT:  %13 = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef %12, {} addrspace(10)** noundef %i35_unwrap) #{{[0-9]+}}
-; CHECK-NEXT:  %i38_unwrap = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* %13, i64 1
+; CHECK-NEXT:  [[gc_loaded_val_unwrap:%.*]] = call "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" {} addrspace(10)* addrspace(13)* @julia.gc_loaded({} addrspace(10)* noundef [[cache_val_unwrap]], {} addrspace(10)** noundef %i35_unwrap) #{{[0-9]+}}
+; CHECK-NEXT:  %i38_unwrap = getelementptr inbounds {} addrspace(10)*, {} addrspace(10)* addrspace(13)* [[gc_loaded_val_unwrap]], i64 1
 ; CHECK-NEXT:  %i39_unwrap = bitcast {} addrspace(10)* addrspace(13)* %i38_unwrap to double addrspace(13)*
-; CHECK-NEXT:  %14 = icmp ne double addrspace(13)* %i39_unwrap, %"i39'ipc_unwrap"
-; CHECK-NEXT:  br i1 %14, label %invertbb13_active, label %invertbb13_amerge
+; CHECK-NEXT:  [[icmp_active:%.*]] = icmp ne double addrspace(13)* %i39_unwrap, %"i39'ipc_unwrap"
+; CHECK-NEXT:  br i1 [[icmp_active]], label %invertbb13_active, label %invertbb13_amerge
 
 ; CHECK:invertbb13_active:{{.*}}
 ; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i39'ipc_unwrap", align 8, !tbaa !58, !alias.scope !140, !noalias !141
 ; CHECK-NEXT:  br label %invertbb13_amerge
 
 ; CHECK:invertbb13_amerge:{{.*}}
-; CHECK-NEXT:  %"i37'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %11 to double addrspace(13)*
-; CHECK-NEXT:  %i37_unwrap = bitcast {} addrspace(10)* addrspace(13)* %13 to double addrspace(13)*
-; CHECK-NEXT:  %15 = icmp ne double addrspace(13)* %i37_unwrap, %"i37'ipc_unwrap"
-; CHECK-NEXT:  br i1 %15, label %invertbb13_amerge_active, label %invertbb13_amerge_amerge
+; CHECK-NEXT:  %"i37'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* [[gc_loaded_val]] to double addrspace(13)*
+; CHECK-NEXT:  %i37_unwrap = bitcast {} addrspace(10)* addrspace(13)* [[gc_loaded_val_unwrap]] to double addrspace(13)*
+; CHECK-NEXT:  [[icmp_amerge:%.*]] = icmp ne double addrspace(13)* %i37_unwrap, %"i37'ipc_unwrap"
+; CHECK-NEXT:  br i1 [[icmp_amerge]], label %invertbb13_amerge_active, label %invertbb13_amerge_amerge
 
 ; CHECK:invertbb13_amerge_active:                         ; preds = %invertbb13_amerge
 ; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i37'ipc_unwrap", align 8, !tbaa !58, !alias.scope !140, !noalias !141
