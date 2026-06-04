@@ -62,6 +62,14 @@ struct SplitMultiIf : public mlir::OpRewritePattern<scf::IfOp> {
                      [](OpResult res) { return res.use_empty(); })) {
       return failure();
     }
+    // ignore nested ifs
+    if (llvm::any_of(ifOp.getRegions(), [](Region *region) {
+          return llvm::any_of(region->getOps(), [](Operation &op) {
+            return op.getNumRegions() != 0;
+          });
+        })) {
+      return failure();
+    }
     // all operands should be computed by pure operations.
     if (!(allComputedByPureOps(ifOp.thenYield()) &&
           allComputedByPureOps(ifOp.elseYield()))) {
@@ -88,7 +96,7 @@ struct SplitMultiIf : public mlir::OpRewritePattern<scf::IfOp> {
                   oldBlk.getTerminator()->getOperand(ifRes.getResultNumber())));
         }
       }
-      ifRes.replaceAllUsesWith(newIf.getResult(0));
+      rewriter.replaceAllUsesWith(ifRes, newIf.getResult(0));
     }
     return success();
   }
@@ -97,7 +105,6 @@ struct SplitMultiIf : public mlir::OpRewritePattern<scf::IfOp> {
 struct SplitMultiResultsPass
     : public enzyme::impl::SplitMultiResultsPassBase<SplitMultiResultsPass> {
   void runOnOperation() override {
-
     RewritePatternSet patterns(&getContext());
     patterns.insert<SplitMultiIf>(&getContext());
 
