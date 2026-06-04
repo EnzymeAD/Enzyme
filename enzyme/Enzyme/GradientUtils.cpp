@@ -8951,8 +8951,8 @@ void InvertedPointerVH::deleted() {
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                        Type *secretty, Intrinsic::ID intrinsic,
                        unsigned dstalign, unsigned srcalign, unsigned offset,
-                       bool dstConstant, Value *shadow_dst, Value *orig_dst,
-                       bool srcConstant, Value *shadow_src, Value *orig_src,
+                       bool dstConstant, Value *shadow_dst, Value *primal_dst,
+                       bool srcConstant, Value *shadow_src, Value *primal_src,
                        Value *length, Value *isVolatile, llvm::CallInst *MTI,
                        bool allowForward, bool shadowsLookedUp,
                        bool backwardsShadow) {
@@ -9004,11 +9004,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                 : gutils->lookupM(shadow_dst, Builder2);
         Value *dst_inactive = nullptr;
         if (gutils->runtimeActivity) {
-          Value *primal_dsto = gutils->getNewFromOriginal(orig_dst);
-          primal_dsto =
+          Value *primal_dsto =
               (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
-                  ? primal_dsto
-                  : gutils->lookupM(primal_dsto, Builder2);
+                  ? primal_dst
+                  : gutils->lookupM(primal_dst, Builder2);
           dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
         }
         if (dsto->getType()->isIntegerTy())
@@ -9029,11 +9028,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           if (srcConstant) {
             src_inactive = ConstantInt::getTrue(Builder2.getContext());
           } else {
-            Value *primal_srco = gutils->getNewFromOriginal(orig_src);
-            primal_srco =
+            Value *primal_srco =
                 (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
-                    ? primal_srco
-                    : gutils->lookupM(primal_srco, Builder2);
+                    ? primal_src
+                    : gutils->lookupM(primal_src, Builder2);
             src_inactive = Builder2.CreateICmpEQ(srco, primal_srco);
           }
         }

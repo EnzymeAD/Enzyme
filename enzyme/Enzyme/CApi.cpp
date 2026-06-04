@@ -630,8 +630,8 @@ void EnzymeGradientUtilsDumpTypeResults(GradientUtils *gutils) {
 void EnzymeGradientUtilsSubTransferHelper(
     GradientUtils *gutils, CDerivativeMode mode, LLVMTypeRef secretty,
     uint64_t intrinsic, uint64_t dstAlign, uint64_t srcAlign, uint64_t offset,
-    uint8_t dstConstant, LLVMValueRef shadow_dst, LLVMValueRef orig_dst,
-    uint8_t srcConstant, LLVMValueRef shadow_src, LLVMValueRef orig_src,
+    uint8_t dstConstant, LLVMValueRef shadow_dst, LLVMValueRef primal_dst,
+    uint8_t srcConstant, LLVMValueRef shadow_src, LLVMValueRef primal_src,
     LLVMValueRef length, LLVMValueRef isVolatile, LLVMValueRef MTI,
     uint8_t allowForward, uint8_t shadowsLookedUp) {
   auto orig = unwrap(MTI);
@@ -639,8 +639,8 @@ void EnzymeGradientUtilsSubTransferHelper(
   SubTransferHelper(gutils, (DerivativeMode)mode, unwrap(secretty),
                     (Intrinsic::ID)intrinsic, (unsigned)dstAlign,
                     (unsigned)srcAlign, (unsigned)offset, (bool)dstConstant,
-                    unwrap(shadow_dst), unwrap(orig_dst), (bool)srcConstant,
-                    unwrap(shadow_src), unwrap(orig_src), unwrap(length),
+                    unwrap(shadow_dst), unwrap(primal_dst), (bool)srcConstant,
+                    unwrap(shadow_src), unwrap(primal_src), unwrap(length),
                     unwrap(isVolatile), cast<CallInst>(orig),
                     (bool)allowForward, (bool)shadowsLookedUp);
 }

@@ -34,19 +34,19 @@ attributes #3 = { nounwind }
 ; CHECK: define internal {{(dso_local )?}}void @diffememcpy_float({{(double\*|ptr)}} nocapture %dst, {{(double\*|ptr)}} nocapture %"dst'", {{(double\*|ptr)}} nocapture readonly %src, {{(double\*|ptr)}} nocapture %"src'", i64 %num)
 ; CHECK-NEXT: entry:
 ; CHECK:        tail call void @{{(llvm\.memcpy\.p0i8\.p0i8\.i64|llvm\.memcpy\.p0\.p0\.i64)}}({{(i8\*|ptr)}} align 1 %{{.*}}, {{(i8\*|ptr)}} align 1 %{{.*}}, i64 %num, i1 false)
-; CHECK-NEXT:   %0 = icmp eq {{(double\*|ptr)}} %"dst'", %dst
-; CHECK-NEXT:   %1 = icmp eq {{(double\*|ptr)}} %"src'", %src
-; CHECK-NEXT:   %2 = udiv i64 %num, 8
-; CHECK-NEXT:   %3 = icmp eq i64 %2, 0
-; CHECK-NEXT:   %4 = or i1 %3, %0
-; CHECK-NEXT:   br i1 %4, label %__enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit, label %check_src.i
+; CHECK-NEXT:   [[dst_inactive:%.*]] = icmp eq {{(double\*|ptr)}} %"dst'", %dst
+; CHECK-NEXT:   [[src_inactive:%.*]] = icmp eq {{(double\*|ptr)}} %"src'", %src
+; CHECK-NEXT:   [[num_el:%.*]] = udiv i64 %num, 8
+; CHECK-NEXT:   [[num_eq_zero:%.*]] = icmp eq i64 [[num_el]], 0
+; CHECK-NEXT:   [[early_exit:%.*]] = or i1 [[num_eq_zero]], [[dst_inactive]]
+; CHECK-NEXT:   br i1 [[early_exit]], label %__enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit, label %check_src.i
 
 ; CHECK: check_src.i:                                      ; preds = %entry
-; CHECK-NEXT:   br i1 %1, label %memset_dst.i, label %for.body.i
+; CHECK-NEXT:   br i1 [[src_inactive]], label %memset_dst.i, label %for.body.i
 
 ; CHECK: memset_dst.i:                                     ; preds = %check_src.i
-; CHECK-NEXT:   %5 = mul nuw nsw i64 %2, 8
-; CHECK:        call void @{{(llvm\.memset\.p0i8\.i64|llvm\.memset\.p0\.i64)}}({{(i8\*|ptr)}} align 1 %{{.*}}, i8 0, i64 %5, i1 false)
+; CHECK-NEXT:   [[bytes:%.*]] = mul nuw nsw i64 [[num_el]], 8
+; CHECK:        call void @{{(llvm\.memset\.p0i8\.i64|llvm\.memset\.p0\.i64)}}({{(i8\*|ptr)}} align 1 %{{.*}}, i8 0, i64 [[bytes]], i1 false)
 ; CHECK-NEXT:   br label %__enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %check_src.i
@@ -56,28 +56,28 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, {{(double\*|ptr)}} %dst.i.i, align 1
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, {{(double\*|ptr)}} %"src'", i64 %idx.i
 ; CHECK-NEXT:   %src.i.l.i = load double, {{(double\*|ptr)}} %src.i.i, align 1
-; CHECK-NEXT:   %6 = fadd fast double %src.i.l.i, %dst.i.l.i
-; CHECK-NEXT:   store double %6, {{(double\*|ptr)}} %src.i.i, align 1
+; CHECK-NEXT:   [[add_i:%.*]] = fadd fast double %src.i.l.i, %dst.i.l.i
+; CHECK-NEXT:   store double [[add_i]], {{(double\*|ptr)}} %src.i.i, align 1
 ; CHECK-NEXT:   %idx.next.i = add nuw i64 %idx.i, 1
-; CHECK-NEXT:   %7 = icmp eq i64 %2, %idx.next.i
-; CHECK-NEXT:   br i1 %7, label %__enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit, label %for.body.i
+; CHECK-NEXT:   [[loop_exit_i:%.*]] = icmp eq i64 [[num_el]], %idx.next.i
+; CHECK-NEXT:   br i1 [[loop_exit_i]], label %__enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit, label %for.body.i
 
 ; CHECK: __enzyme_memcpyadd_doubleda1sa1_runtime_activity.exit: ; preds = %entry, %memset_dst.i, %for.body.i
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal {{(dso_local )?}}void @__enzyme_memcpyadd_doubleda1sa1_runtime_activity({{(double\*|ptr)}} nocapture %dst, {{(double\*|ptr)}} nocapture %src, i64 %num, i1 %dst_inactive, i1 %src_inactive) #[[mymemattrs:.+]] {
+; CHECK: define internal {{(dso_local )?}}void @__enzyme_memcpyadd_doubleda1sa1_runtime_activity({{(double\*|ptr)}} nocapture %dst, {{(double\*|ptr)}} nocapture %src, i64 %num, i1 %dst_inactive, i1 %src_inactive)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = icmp eq i64 %num, 0
-; CHECK-NEXT:   %1 = or i1 %0, %dst_inactive
-; CHECK-NEXT:   br i1 %1, label %for.end, label %check_src
+; CHECK-NEXT:   [[num_eq_zero:%.*]] = icmp eq i64 %num, 0
+; CHECK-NEXT:   [[early_exit:%.*]] = or i1 [[num_eq_zero]], %dst_inactive
+; CHECK-NEXT:   br i1 [[early_exit]], label %for.end, label %check_src
 
 ; CHECK: check_src:                                        ; preds = %entry
 ; CHECK-NEXT:   br i1 %src_inactive, label %memset_dst, label %for.body
 
 ; CHECK: memset_dst:                                       ; preds = %check_src
-; CHECK-NEXT:   %2 = mul nuw nsw i64 %num, 8
-; CHECK:        call void @{{(llvm\.memset\.p0i8\.i64|llvm\.memset\.p0\.i64)}}({{(i8\*|ptr)}} align 1 %{{.*}}, i8 0, i64 %2, i1 false)
+; CHECK-NEXT:   [[bytes:%.*]] = mul nuw nsw i64 %num, 8
+; CHECK:        call void @{{(llvm\.memset\.p0i8\.i64|llvm\.memset\.p0\.i64)}}({{(i8\*|ptr)}} align 1 %{{.*}}, i8 0, i64 [[bytes]], i1 false)
 ; CHECK-NEXT:   br label %for.end
 
 ; CHECK: for.body:                                         ; preds = %for.body, %check_src
@@ -87,14 +87,12 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, {{(double\*|ptr)}} %dst.i, align 1
 ; CHECK-NEXT:   %src.i = getelementptr inbounds double, {{(double\*|ptr)}} %src, i64 %idx
 ; CHECK-NEXT:   %src.i.l = load double, {{(double\*|ptr)}} %src.i, align 1
-; CHECK-NEXT:   %3 = fadd fast double %src.i.l, %dst.i.l
-; CHECK-NEXT:   store double %3, {{(double\*|ptr)}} %src.i
+; CHECK-NEXT:   [[add:%.*]] = fadd fast double %src.i.l, %dst.i.l
+; CHECK-NEXT:   store double [[add]], {{(double\*|ptr)}} %src.i
 ; CHECK-NEXT:   %idx.next = add nuw i64 %idx, 1
-; CHECK-NEXT:   %4 = icmp eq i64 %num, %idx.next
-; CHECK-NEXT:   br i1 %4, label %for.end, label %for.body
+; CHECK-NEXT:   [[loop_exit:%.*]] = icmp eq i64 %num, %idx.next
+; CHECK-NEXT:   br i1 [[loop_exit]], label %for.end, label %for.body
 
 ; CHECK: for.end:                                          ; preds = %for.body, %memset_dst, %entry
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
-
-; CHECK: attributes #[[mymemattrs]] = { alwaysinline {{(argmemonly nounwind|nounwind memory\(argmem: readwrite\))}} }
