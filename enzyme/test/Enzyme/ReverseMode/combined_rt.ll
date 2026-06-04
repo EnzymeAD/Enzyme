@@ -821,8 +821,6 @@ attributes #21 = { willreturn }
 ; CHECK:__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit:{{.*}}
 ; CHECK-NEXT:  %i57_unwrap = addrspacecast { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i to { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)*
 ; CHECK-NEXT:  call fastcc void @diffea1([2 x [1 x double]]* nocapture nofree writeonly align 8 "enzyme_sret"="{{[0-9]+}}" %i4, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" %"i4'ipa", { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)* nocapture readonly align 8 %i57_unwrap)
-; CHECK-NEXT:  %i58_unwrap = bitcast [2 x [1 x double]]* %arg to i8*
-; CHECK-NEXT:  %i59_unwrap = bitcast [2 x [1 x double]]* %i4 to i8*
 ; CHECK-NEXT:  call void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture nofree noundef nonnull writeonly align 8 dereferenceable(16) %i58_unwrap, i8* noundef nonnull align 8 dereferenceable(16) %i59_unwrap, i64 noundef 16, i1 noundef false) #{{[0-9]+}}, !noalias !36
 ; CHECK-NEXT:  %7 = load double, double* %"i56'de", align 8
 ; CHECK-NEXT:  store double 0.000000e+00, double* %"i56'de", align 8
