@@ -520,10 +520,12 @@ public:
           OpBuilder::InsertionGuard guard(rewriter);
           rewriter.setInsertionPoint(forOp);
           if (gpuAlloc) {
-            initValue =
-                gpu::AllocOp::create(rewriter, info.initOp.getLoc(),
-                                     cast<MemRefType>(newType), dynamicDims)
-                    .getMemref();
+            initValue = gpu::AllocOp::create(rewriter, info.initOp.getLoc(),
+                                             cast<MemRefType>(newType),
+                                             /*asyncDependencies=*/ValueRange{},
+                                             dynamicDims,
+                                             /*symbolOperands=*/ValueRange{})
+                            .getMemref();
           } else {
             initValue =
                 memref::AllocOp::create(rewriter, info.initOp->getLoc(),
