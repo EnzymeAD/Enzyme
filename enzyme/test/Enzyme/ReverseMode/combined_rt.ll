@@ -818,7 +818,7 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  [[loop_exit_i:%.*]] = icmp eq i64 2, %idx.next.i
 ; CHECK-NEXT:  br i1 [[loop_exit_i]], label %__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit, label %for.body.i
 
-; CHECK:__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit: ; preds = %for.body.i, %memset_dst.i, %invertbb13
+; CHECK:__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit:{{.*}}
 ; CHECK-NEXT:  %i57_unwrap = addrspacecast { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* }* %i to { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)*
 ; CHECK-NEXT:  call fastcc void @diffea1([2 x [1 x double]]* nocapture nofree writeonly align 8 "enzyme_sret"="{{[0-9]+}}" %i4, [2 x [1 x double]]* nocapture nofree align 8 "enzyme_sret"="{{[0-9]+}}" %"i4'ipa", { [1 x [1 x [2 x [1 x double]]]], {} addrspace(10)* } addrspace(11)* nocapture readonly align 8 %i57_unwrap)
 ; CHECK-NEXT:  %i58_unwrap = bitcast [2 x [1 x double]]* %arg to i8*
@@ -852,11 +852,11 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  %14 = icmp ne double addrspace(13)* %i39_unwrap, %"i39'ipc_unwrap"
 ; CHECK-NEXT:  br i1 %14, label %invertbb13_active, label %invertbb13_amerge
 
-; CHECK:invertbb13_active:                                ; preds = %__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit
+; CHECK:invertbb13_active:{{.*}}
 ; CHECK-NEXT:  store double 0.000000e+00, double addrspace(13)* %"i39'ipc_unwrap", align 8, !tbaa !58, !alias.scope !140, !noalias !141
 ; CHECK-NEXT:  br label %invertbb13_amerge
 
-; CHECK:invertbb13_amerge:                                ; preds = %invertbb13_active, %__enzyme_memcpyadd_doubleda8sa8_runtime_activity.exit
+; CHECK:invertbb13_amerge:{{.*}}
 ; CHECK-NEXT:  %"i37'ipc_unwrap" = bitcast {} addrspace(10)* addrspace(13)* %11 to double addrspace(13)*
 ; CHECK-NEXT:  %i37_unwrap = bitcast {} addrspace(10)* addrspace(13)* %13 to double addrspace(13)*
 ; CHECK-NEXT:  %15 = icmp ne double addrspace(13)* %i37_unwrap, %"i37'ipc_unwrap"
