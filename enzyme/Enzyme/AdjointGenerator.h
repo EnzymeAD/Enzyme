@@ -3712,7 +3712,8 @@ public:
             gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
             /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
             gutils->getNewFromOriginal(orig_dst),
-            gutils->isConstantValue(orig_src), shadow_src, gutils->getNewFromOriginal(orig_src),
+            gutils->isConstantValue(orig_src), shadow_src,
+            gutils->getNewFromOriginal(orig_src),
             /*length*/ length, /*volatile*/ isVolatile, &MTI,
             /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
             /*backwardsShadow*/ backwardsShadow);
