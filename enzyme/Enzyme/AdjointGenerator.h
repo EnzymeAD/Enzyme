@@ -3710,8 +3710,8 @@ public:
           shadow_src = gutils->getNewFromOriginal(orig_src);
         SubTransferHelper(
             gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
-            /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
-            gutils->isConstantValue(orig_src), shadow_src,
+            /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst, orig_dst,
+            gutils->isConstantValue(orig_src), shadow_src, orig_src,
             /*length*/ length, /*volatile*/ isVolatile, &MTI,
             /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
             /*backwardsShadow*/ backwardsShadow);

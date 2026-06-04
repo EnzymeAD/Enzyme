@@ -1010,7 +1010,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned dstalign,
                                              unsigned srcalign,
                                              unsigned dstaddr, unsigned srcaddr,
-                                             unsigned bitwidth) {
+                                             unsigned bitwidth,
+                                             bool runtimeActivity) {
   assert(elementType->isFloatingPointTy());
   std::string name = "__enzyme_memcpy";
   if (bitwidth != 64)
@@ -1021,12 +1022,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     name += "dadd" + std::to_string(dstaddr);
   if (srcaddr)
     name += "sadd" + std::to_string(srcaddr);
+  if (runtimeActivity)
+    name += "_runtime_activity";
+  std::vector<Type *> argTys = {PointerType::get(elementType, dstaddr),
+                                PointerType::get(elementType, srcaddr),
+                                IntegerType::get(M.getContext(), bitwidth)};
+  if (runtimeActivity) {
+    argTys.push_back(Type::getInt1Ty(M.getContext())); // dst_inactive
+    argTys.push_back(Type::getInt1Ty(M.getContext())); // src_inactive
+  }
   FunctionType *FT =
-      FunctionType::get(Type::getVoidTy(M.getContext()),
-                        {PointerType::get(elementType, dstaddr),
-                         PointerType::get(elementType, srcaddr),
-                         IntegerType::get(M.getContext(), bitwidth)},
-                        false);
+      FunctionType::get(Type::getVoidTy(M.getContext()), argTys, false);
 
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
 
@@ -1048,17 +1054,47 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
-  auto dst = F->arg_begin();
+  Argument *dst = &*F->arg_begin();
   dst->setName("dst");
-  auto src = dst + 1;
+  Argument *src = dst + 1;
   src->setName("src");
-  auto num = src + 1;
+  Argument *num = src + 1;
   num->setName("num");
+
+  Argument *dst_inactive = nullptr;
+  Argument *src_inactive = nullptr;
+  if (runtimeActivity) {
+    dst_inactive = num + 1;
+    dst_inactive->setName("dst_inactive");
+    src_inactive = dst_inactive + 1;
+    src_inactive->setName("src_inactive");
+  }
+
+  BasicBlock *checkSrc = nullptr;
+  BasicBlock *memsetDst = nullptr;
+  if (runtimeActivity) {
+    checkSrc = BasicBlock::Create(M.getContext(), "check_src", F, body);
+    memsetDst = BasicBlock::Create(M.getContext(), "memset_dst", F, body);
+  }
 
   {
     IRBuilder<> B(entry);
-    B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
-                   end, body);
+    Value *cond = B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0));
+    if (runtimeActivity) {
+      cond = B.CreateOr(cond, dst_inactive);
+      B.CreateCondBr(cond, end, checkSrc);
+
+      B.SetInsertPoint(checkSrc);
+      B.CreateCondBr(src_inactive, memsetDst, body);
+
+      B.SetInsertPoint(memsetDst);
+      auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
+      Value *dst_i8 = B.CreatePointerCast(dst, PointerType::get(Type::getInt8Ty(M.getContext()), dstaddr));
+      B.CreateMemSet(dst_i8, B.getInt8(0), B.CreateMul(num, ConstantInt::get(num->getType(), elSize), "", /*HasNUW*/ true, /*HasNSW*/ true), MaybeAlign(dstalign));
+      B.CreateBr(end);
+    } else {
+      B.CreateCondBr(cond, end, body);
+    }
   }
 
   auto elSize = (M.getDataLayout().getTypeSizeInBits(elementType) + 7) / 8;
@@ -1066,7 +1102,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0), runtimeActivity ? checkSrc : entry);
 
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(elementType, dsti, "dst.i.l");
@@ -2072,13 +2108,14 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 Function *
 getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
                                     unsigned srcalign, unsigned dstaddr,
-                                    unsigned srcaddr, unsigned bitwidth) {
+                                    unsigned srcaddr, unsigned bitwidth,
+                                    bool runtimeActivity) {
   if (EnzymeMemmoveWarning)
     llvm::errs()
         << "warning: didn't implement memmove, using memcpy as fallback "
            "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr, bitwidth);
+                                            srcaddr, bitwidth, runtimeActivity);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
