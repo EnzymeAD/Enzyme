@@ -380,50 +380,48 @@ static void annotateRegionOpsInLoops(Operation *op) {
   });
 }
 
-static void annotateReadOnlyLoads(Operation *op) {
-  op->walk([](FunctionOpInterface funcOp) {
-    DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-    dataflow::loadBaselineAnalyses(solver);
-    solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
-    solver.load<enzyme::PointsToPointerAnalysis>();
-    if (failed(solver.initializeAndRun(funcOp))) {
-      return;
-    }
-    AliasClassLattice modified(
-        nullptr, DistinctAttr::create(UnitAttr::get(funcOp.getContext())));
-    funcOp.walk([&](MemoryEffectOpInterface memory) {
-      SmallVector<MemoryEffects::EffectInstance> effects;
-      memory.getEffects(effects);
-      for (const auto &effect : effects) {
-        if (isa<MemoryEffects::Write>(effect.getEffect())) {
-          Value val = effect.getValue();
-          if (val) {
-            (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
-          } else {
-            (void)modified.markUnknown();
-          }
+static void annotateReadOnlyLoads(FunctionOpInterface funcOp) {
+  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
+  dataflow::loadBaselineAnalyses(solver);
+  solver.load<enzyme::AliasAnalysis>(funcOp.getContext(), /*relative=*/false);
+  solver.load<enzyme::PointsToPointerAnalysis>();
+  if (failed(solver.initializeAndRun(funcOp))) {
+    return;
+  }
+  AliasClassLattice modified(
+      nullptr, DistinctAttr::create(UnitAttr::get(funcOp.getContext())));
+  funcOp.walk([&](MemoryEffectOpInterface memory) {
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    for (const auto &effect : effects) {
+      if (isa<MemoryEffects::Write>(effect.getEffect())) {
+        Value val = effect.getValue();
+        if (val) {
+          (void)modified.join(*solver.lookupState<AliasClassLattice>(val));
+        } else {
+          (void)modified.markUnknown();
         }
       }
-    });
+    }
+  });
 
-    funcOp.walk([&](MemoryEffectOpInterface memory) {
-      if (!hasSingleEffect<MemoryEffects::Read>(memory)) {
-        return;
-      }
-      SmallVector<MemoryEffects::EffectInstance> effects;
-      memory.getEffects(effects);
-      assert(effects.size() == 1 &&
-             isa<MemoryEffects::Read>(effects.front().getEffect()));
-      Value ptr = effects.front().getValue();
+  funcOp.walk([&](MemoryEffectOpInterface memory) {
+    if (!hasSingleEffect<MemoryEffects::Read>(memory)) {
+      return;
+    }
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    memory.getEffects(effects);
+    assert(effects.size() == 1 &&
+           isa<MemoryEffects::Read>(effects.front().getEffect()));
+    Value ptr = effects.front().getValue();
 
-      // The load can be re-done if the pointer's contents are never modified
-      // by the function.
+    // The load can be re-done if the pointer's contents are never modified
+    // by the function.
 
-      auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
-      if (ptrClass->alias(modified).isNo()) {
-        memory->setAttr("enzyme.readonly", UnitAttr::get(memory.getContext()));
-      }
-    });
+    auto *ptrClass = solver.lookupState<AliasClassLattice>(ptr);
+    if (ptrClass->alias(modified).isNo()) {
+      memory->setAttr("enzyme.readonly", UnitAttr::get(memory.getContext()));
+    }
   });
 }
 
@@ -631,9 +629,6 @@ struct RemoveUnusedEnzymeOpsPass
 
     applyPatterns(op);
 
-    annotateRegionOpsInLoops(op);
-    annotateReadOnlyLoads(op);
-    // annotateStackAllocations(op);
     if (skipWorklist)
       return;
 
@@ -642,6 +637,9 @@ struct RemoveUnusedEnzymeOpsPass
       if (!containsInitOps(func)) {
         return;
       }
+      annotateRegionOpsInLoops(func);
+      annotateReadOnlyLoads(func);
+      // annotateStackAllocations(func);
       PostOrderWalkDriver driver(func);
       driver.initializeWorklist();
       failed |= driver.processWorklist().failed();
