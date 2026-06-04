@@ -463,6 +463,13 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // RAJA
     "RAJA::util::Registry<RAJA::util::PluginStrategy>",
+
+    // Kokkos
+    "Kokkos::Serial::Serial",
+    "Kokkos::Serial::~Serial",
+    "Kokkos::Tools::endParallelFor",
+    "Kokkos::Tools::beginParallelFor",
+
 };
   // clang-format on
 
