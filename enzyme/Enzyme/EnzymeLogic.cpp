@@ -2959,10 +2959,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         tapeMemory = ib.CreateGEP(RetType, ret, Idxs, "");
         cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
       }
-      if (EnzymeZeroCache) {
-        ZeroMemory(ib, tapeType, tapeMemory,
-                   /*isTape*/ true);
-      }
+      ZeroMemory(ib, tapeType, tapeMemory,
+                 /*isTape*/ true);
     }
 
     unsigned i = 0;
