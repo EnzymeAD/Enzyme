@@ -337,15 +337,14 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // add the shadow as operand.
   auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
   if (!regionBranchOp) {
-    op->emitError() << " RegionBranchOpInterface not implemented for " << *op
-                    << "\n";
-    return failure();
+    return op->emitError() << " RegionBranchOpInterface not implemented for "
+                           << *op << "\n";
   }
   auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
   if (!iface) {
-    op->emitError() << " ControlFlowAutoDiffOpInterface not implemented for "
-                    << *op << "\n";
-    return failure();
+    return op->emitError()
+           << " ControlFlowAutoDiffOpInterface not implemented for " << *op
+           << "\n";
   }
 
   // TODO: we may need to record, for every successor, which of its inputs
@@ -371,8 +370,37 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
     // operands.
     for (auto &&[i, regionValue, operand] :
          llvm::enumerate(targetValues, operandRange)) {
-      if (gutils->isConstantValue(regionValue))
-        continue;
+
+      // if all the possible predecessors for this value are also const, then
+      // we can skip creating a shadow. Else we need to create a shadow for
+      // activity correctness
+      if (gutils->isConstantValue(regionValue)) {
+        SmallVector<Value> possibleActivePreds;
+        SmallVector<RegionBranchPoint> predecessors;
+        regionBranchOp.getPredecessors(successor, predecessors);
+        for (RegionBranchPoint predecessor : predecessors) {
+          if (predecessor.isParent()) {
+            // if the predecessor is the parent itself, then it's just
+            // `operand`
+            possibleActivePreds.push_back(operand);
+            continue;
+          }
+          auto terminator = predecessor.getTerminatorPredecessorOrNull();
+          auto predecessorOperands = terminator.getSuccessorOperands(successor);
+          if (i < predecessorOperands.size())
+            possibleActivePreds.push_back(predecessorOperands[i]);
+        }
+
+        bool skipOpShadow = true;
+        for (auto pv : possibleActivePreds) {
+          if (!skipOpShadow)
+            break;
+          skipOpShadow = skipOpShadow && gutils->isConstantValue(pv);
+        };
+        if (skipOpShadow)
+          continue;
+        // if there's any possible active predecessor, we create a shadow for it
+      }
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
       if (successor.isParent())
         resultPositionsToShadow.insert(i);
@@ -407,19 +435,80 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       continue;
     auto typeIface = dyn_cast<AutoDiffTypeInterface>(result.getType());
     if (!typeIface) {
-      op->emitError() << " AutoDiffTypeInterface not implemented for "
-                      << result.getType() << "\n";
-      return failure();
+      return op->emitError() << " AutoDiffTypeInterface not implemented for "
+                             << result.getType() << "\n";
     }
     newOpResultTypes.push_back(typeIface.getShadowType(gutils->width));
   }
 
   SmallVector<Value> newOperands;
   newOperands.reserve(op->getNumOperands() + operandPositionsToShadow.size());
+
+  auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
+  if (!iface) {
+    return op->emitError()
+           << " ControlFlowAutoDiffOpInterface not implemented for " << *op
+           << "\n";
+  }
+
+  auto regionBranchOp = cast<RegionBranchOpInterface>(op);
+  SmallVector<RegionSuccessor> entrySuccessors;
+  regionBranchOp.getEntrySuccessorRegions(
+      SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+      entrySuccessors);
   for (OpOperand &operand : op->getOpOperands()) {
     newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
-    if (operandPositionsToShadow.contains(operand.getOperandNumber()))
-      newOperands.push_back(gutils->invertPointerM(operand.get(), builder));
+    if (operandPositionsToShadow.contains(operand.getOperandNumber())) {
+      Value shadowValue = nullptr;
+      if (!gutils->isConstantValue(operand.get()))
+        shadowValue = gutils->invertPointerM(operand.get(), builder);
+      else {
+        auto Ty = operand.get().getType();
+        auto shadowType =
+            cast<AutoDiffTypeInterface>(Ty).getShadowType(gutils->width);
+        shadowValue = cast<AutoDiffTypeInterface>(shadowType)
+                          .createNullValue(builder, operand.get().getLoc());
+
+        // modify block arguments for entry successors to newOp, since
+        // forceAugmentedReturns will not shadow const operands. No need to add
+        // to the invertPointers map since `operand` is const (the shadow will
+        // be unused)
+        for (const RegionSuccessor &successor : entrySuccessors) {
+          if (successor.isParent())
+            continue;
+          auto &newOpRegion =
+              newOp->getRegion(successor.getSuccessor()->getRegionNumber());
+          OperandRange succOperands =
+              iface.getSuccessorOperands(regionBranchOp, successor);
+          ValueRange succInputs = regionBranchOp.getSuccessorInputs(successor);
+
+          if (succOperands.empty())
+            continue;
+
+          auto succInputPos =
+              operand.getOperandNumber() - succOperands.getBeginOperandIndex();
+
+          if (succInputPos >= 0 && succInputPos < succInputs.size()) {
+            auto oldRegionInput =
+                dyn_cast<BlockArgument>(succInputs[succInputPos]);
+            if (!oldRegionInput)
+              continue;
+            if (gutils->invertedPointers.contains(oldRegionInput))
+              continue;
+            auto newOpBlockVal =
+                cast<BlockArgument>(gutils->getNewFromOriginal(oldRegionInput));
+            auto i = newOpBlockVal.getArgNumber();
+            if (i == newOpRegion.getNumArguments() - 1) {
+              newOpRegion.addArgument(shadowType, newOpBlockVal.getLoc());
+            } else {
+              newOpRegion.insertArgument(newOpRegion.args_begin() + i + 1,
+                                         shadowType, newOpBlockVal.getLoc());
+            }
+          }
+        }
+      }
+      newOperands.push_back(shadowValue);
+    }
   }
   // We are assuming the op can forward additional operands, listed
   // immediately after the original operands, to the same regions.
@@ -427,13 +516,6 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
   // Our interface guarantees this.
   // We also assume that the region-holding op returns all of the values
   // yielded by terminators, and only those values.
-
-  auto iface = dyn_cast<ControlFlowAutoDiffOpInterface>(op);
-  if (!iface) {
-    op->emitError() << " ControlFlowAutoDiffOpInterface not implemented for "
-                    << *op << "\n";
-    return failure();
-  }
   Operation *replacement = iface.createWithShadows(
       builder, gutils, op, newOperands, newOpResultTypes);
   assert(replacement->getNumResults() == newOpResultTypes.size());
