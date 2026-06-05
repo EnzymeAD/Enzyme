@@ -56,7 +56,7 @@ declare dso_local double @__enzyme_autodiff(i8*, i1 zeroext, double*, double*)
 ; CHECK-NEXT:   br label %if.end
 
 ; CHECK: if.end:                                           ; preds = %if.then, %entry
-; CHECK-NEXT:   %[[val:.+]] = phi double [ %0, %if.then ], [ undef, %entry ]
+; CHECK-NEXT:   %[[val:.+]] = phi double [ %0, %if.then ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   ret double %[[val]]
 ; CHECK-NEXT: }
 
