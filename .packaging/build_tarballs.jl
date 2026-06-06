@@ -114,14 +114,18 @@ CMAKE_FLAGS+=(-DLLVM_LINK_LLVM_DYLIB=ON)
 CMAKE_FLAGS+=(-DBUILD_SHARED_LIBS=ON)
 
 if [[ "${bb_full_target}" == x86_64-apple-darwin* && "${LLVM_MAJ_VER}" -ge "15" ]]; then
-if [[ "${target}" == x86_64-apple* ]]; then
-  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.14)
-fi
+    if [[ "${target}" == x86_64-apple* ]]; then
+        CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.14)
+        CMAKE_FLAGS+=(-DCMAKE_EXE_LINKER_FLAGS="-L${libdir}")
+        CMAKE_FLAGS+=(-DCMAKE_SHARED_LINKER_FLAGS="-L${libdir}")
+        CMAKE_FLAGS+=(-DCMAKE_MODULE_LINKER_FLAGS="-L${libdir}")
+    fi
 else
-if [[ "${target}" == x86_64-apple* ]]; then
-  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.12)
+    if [[ "${target}" == x86_64-apple* ]]; then
+        CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.12)
+    fi
 fi
-fi
+
 if [[ "${target}" == *mingw* ]]; then
     CMAKE_FLAGS+=(-DCMAKE_CPP_FLAGS=-pthread)
     CMAKE_FLAGS+=(-DCMAKE_C_FLAGS=-pthread)
@@ -160,6 +164,9 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
     # enzyme-tblgen
     if llvm_version >= v"20"
         push!(dependencies, HostBuildDependency("Zstd_jll")) # for debuginfo
+        # libLLVM is linked against libzstd; make it available on the target too
+        # so the plugins can resolve it at link time.
+        push!(dependencies, BuildDependency("Zstd_jll"))
     end
 
     # The products that we will ensure are always built
