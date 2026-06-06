@@ -1051,8 +1051,14 @@ def : IntrPattern<(Op $x, $y),
                   [["pow"]],
                   [
                     (CheckedMul (DiffeRet), (FMul $y, (Call<(SameFunc)> $x, (FSub $y, (ConstantFP<"1"> $y))))),
-                    (CheckedMul (DiffeRet), (FMul (Call<(SameFunc)> $x, $y), (Intrinsic<"log"> $x)
-                    ))
+                    (CheckedMul (DiffeRet),
+                      (Select
+                        (And (FCmpOEQ $x, (ConstantFP<"0"> $x)),
+                             (FCmpOLT (ConstantFP<"0"> $y), $y)),
+                        (ConstantFP<"0"> $x),
+                        (FMul (Call<(SameFunc)> $x, $y), (Intrinsic<"log"> $x))
+                      )
+                    )
                   ],
                   (ForwardFromSummedReverse)
                  >;
