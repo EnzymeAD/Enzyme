@@ -6582,6 +6582,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::~basic_ostream()",
       "std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>::__init(unsigned long, char)",
       "std::__1::basic_ostream<char, std::__1::char_traits<char>>::write(char const*, long)",
+
+      // Kokkos
+      "Kokkos::is_initialized()",
+      "Kokkos::is_finalized()",
+      "Kokkos::Serial::Serial()",
+      "Kokkos::Serial::~Serial()",
+      "Kokkos::Tools::endParallelFor(unsigned long)",
+      "Kokkos::Tools::beginParallelFor(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char>> const&, unsigned int, unsigned long*)",
   };
   const char* NoFreeDemanglesStartsWith[] = {
       "std::__u::basic_streambuf<char, std::__u::char_traits<char>>::sputn",
