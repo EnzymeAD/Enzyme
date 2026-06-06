@@ -19,3 +19,4 @@ set_target_properties(enzyme-tblgen PROPERTIES FOLDER "Tablegenning")
 target_link_libraries(enzyme-tblgen
   PRIVATE)
 set(Enzyme_CONFIG_TABLEGEN_EXE enzyme-tblgen)
+set(Enzyme_TABLEGEN_EXE "$<TARGET_FILE:enzyme-tblgen>" PARENT_SCOPE)
