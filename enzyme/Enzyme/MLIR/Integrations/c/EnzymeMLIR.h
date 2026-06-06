@@ -12,6 +12,44 @@ extern "C" {
 #endif
 
 //===----------------------------------------------------------------------===//
+// Dialect
+//===----------------------------------------------------------------------===//
+
+MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme);
+
+//===----------------------------------------------------------------------===//
+// Activity attribute
+//===----------------------------------------------------------------------===//
+
+typedef enum {
+  EnzymeActivity_enzyme_active = 0,
+  EnzymeActivity_enzyme_dup = 1,
+  EnzymeActivity_enzyme_const = 2,
+  EnzymeActivity_enzyme_dupnoneed = 3,
+  EnzymeActivity_enzyme_activenoneed = 4,
+  EnzymeActivity_enzyme_constnoneed = 5,
+} EnzymeActivity;
+
+MLIR_CAPI_EXPORTED MlirAttribute enzymeActivityAttrGet(MlirContext ctx,
+                                                       EnzymeActivity activity);
+
+//===----------------------------------------------------------------------===//
+// Core AD ops
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED MlirOperation enzymeAutoDiffOpCreate(
+    MlirContext ctx, MlirStringRef fn, MlirType *resultTypes, intptr_t nResults,
+    MlirValue *inputs, intptr_t nInputs, MlirAttribute *activity,
+    intptr_t nActivity, MlirAttribute *retActivity, intptr_t nRetActivity,
+    int64_t width, bool strongZero, MlirLocation loc);
+
+MLIR_CAPI_EXPORTED MlirOperation enzymeForwardDiffOpCreate(
+    MlirContext ctx, MlirStringRef fn, MlirType *resultTypes, intptr_t nResults,
+    MlirValue *inputs, intptr_t nInputs, MlirAttribute *activity,
+    intptr_t nActivity, MlirAttribute *retActivity, intptr_t nRetActivity,
+    int64_t width, bool strongZero, MlirLocation loc);
+
+//===----------------------------------------------------------------------===//
 // Probabilistic Programming Ops
 //===----------------------------------------------------------------------===//
 
