@@ -27,12 +27,10 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[newpowdret:.+]] = fmul fast double %y, %[[newpow]]
 ; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %differeturn, %[[newpowdret]]
 ; CHECK-NEXT:   %[[isxzero:.+]] = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %[[isypos:.+]] = fcmp fast olt double 0.000000e+00, %y
-; CHECK-NEXT:   %[[guard:.+]] = and i1 %[[isxzero]], %[[isypos]]
 ; CHECK-NEXT:   %[[origpow:.+]] = call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-NEXT:   %[[logy:.+]] = call fast double @llvm.log.f64(double %x)
 ; CHECK-NEXT:   %[[origpowdret:.+]] = fmul fast double %[[origpow]], %[[logy]]
-; CHECK-NEXT:   %[[guardeddy:.+]] = select fast i1 %[[guard]], double 0.000000e+00, double %[[origpowdret]]
+; CHECK-NEXT:   %[[guardeddy:.+]] = select fast i1 %[[isxzero]], double 0.000000e+00, double %[[origpowdret]]
 ; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %differeturn, %[[guardeddy]]
 ; CHECK-NEXT:   %[[interres:.+]] = insertvalue { double, double } undef, double %[[dx:.+]], 0
 ; CHECK-NEXT:   %[[finalres:.+]] = insertvalue { double, double } %[[interres]], double %[[dy:.+]], 1

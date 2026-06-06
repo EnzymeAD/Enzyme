@@ -1053,8 +1053,7 @@ def : IntrPattern<(Op $x, $y),
                     (CheckedMul (DiffeRet), (FMul $y, (Call<(SameFunc)> $x, (FSub $y, (ConstantFP<"1"> $y))))),
                     (CheckedMul (DiffeRet),
                       (Select
-                        (And (FCmpOEQ $x, (ConstantFP<"0"> $x)),
-                             (FCmpOLT (ConstantFP<"0"> $y), $y)),
+                        (FCmpOEQ $x, (ConstantFP<"0"> $x)),
                         (ConstantFP<"0"> $x),
                         (FMul (Call<(SameFunc)> $x, $y), (Intrinsic<"log"> $x))
                       )

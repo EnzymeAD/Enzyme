@@ -27,12 +27,10 @@ declare double @__enzyme_fwdsplit(double (double, double)*, ...)
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %y, %[[i1]]
 ; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %"x'", %[[i2]]
 ; CHECK-NEXT:   %[[iszero:.+]] = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %[[ispos:.+]] = fcmp fast olt double 0.000000e+00, %y
-; CHECK-NEXT:   %[[guard:.+]] = and i1 %[[iszero]], %[[ispos]]
 ; CHECK-NEXT:   %[[i3:.+]] = call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-NEXT:   %[[i4:.+]] = call fast double @llvm.log.f64(double %x)
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i3]], %[[i4]]
-; CHECK-NEXT:   %[[guardeddy:.+]] = select fast i1 %[[guard]], double 0.000000e+00, double %[[i5]]
+; CHECK-NEXT:   %[[guardeddy:.+]] = select fast i1 %[[iszero]], double 0.000000e+00, double %[[i5]]
 ; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %"y'", %[[guardeddy]]
 ; CHECK-NEXT:   %[[i6:.+]] = fadd fast double %[[dx]], %[[dy]]
 ; CHECK-NEXT:   ret double %[[i6]]
