@@ -9004,11 +9004,15 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                 : gutils->lookupM(shadow_dst, Builder2);
         Value *dst_inactive = nullptr;
         if (gutils->runtimeActivity) {
-          Value *primal_dsto =
-              (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
-                  ? primal_dst
-                  : gutils->lookupM(primal_dst, Builder2);
-          dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
+          if (primal_dst) {
+            Value *primal_dsto =
+                (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                    ? primal_dst
+                    : gutils->lookupM(primal_dst, Builder2);
+            dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
+          } else {
+            dst_inactive = ConstantInt::getFalse(Builder2.getContext());
+          }
         }
         if (dsto->getType()->isIntegerTy())
           dsto =
