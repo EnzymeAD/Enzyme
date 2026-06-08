@@ -1,103 +1,190 @@
+//===- EnzymeMLIR.cpp - C API for Enzyme MLIR dialect ---------------------===//
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "EnzymeMLIR.h"
 
 #include "mlir/CAPI/IR.h"
+#include "mlir/CAPI/Pass.h"
 #include "mlir/CAPI/Registration.h"
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Passes/Passes.h"
+#include "llvm/Support/ErrorHandling.h"
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
-MlirAttribute enzymeActivityAttrGet(MlirContext ctx, EnzymeActivity activity) {
+MLIR_CAPI_EXPORTED void enzymeRegisterPasses(void) {
+  mlir::enzyme::registerDifferentiatePass();
+  mlir::enzyme::registerExpandImpulsePass();
+  mlir::enzyme::registerBatchPass();
+  mlir::enzyme::registerBatchDiffPass();
+  mlir::enzyme::registerDifferentiateWrapperPass();
+  mlir::enzyme::registerInlineEnzymeIntoRegionPass();
+  mlir::enzyme::registerOutlineEnzymeFromRegionPass();
+  mlir::enzyme::registerPrintActivityAnalysisPass();
+  mlir::enzyme::registerPrintAliasAnalysisPass();
+  mlir::enzyme::registerRemoveUnusedEnzymeOpsPass();
+}
+
+MLIR_CAPI_EXPORTED void
+enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
+  mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePass(void) {
+  return wrap(mlir::enzyme::createDifferentiatePass().release());
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePassWithOptions(
+    MlirStringRef postpasses, bool verifyPostPasses) {
+  mlir::enzyme::DifferentiatePassOptions opts;
+  opts.postpasses = std::string(postpasses.data, postpasses.length);
+  opts.verifyPostPasses = verifyPostPasses;
+  return wrap(mlir::enzyme::createDifferentiatePass(opts).release());
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateConvertEnzymeToMemRefPass(void) {
+  return wrap(mlir::enzyme::createEnzymeOpsToMemRefPass().release());
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchPass(void) {
+  return wrap(mlir::enzyme::createBatchPass().release());
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchDiffPass(void) {
+  return wrap(mlir::enzyme::createBatchDiffPass().release());
+}
+
+MLIR_CAPI_EXPORTED MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
+  return wrap(mlir::enzyme::createRemoveUnusedEnzymeOpsPass().release());
+}
+
+MLIR_CAPI_EXPORTED MlirAttribute enzymeActivityAttrGet(MlirContext ctx,
+                                                       uint32_t activity) {
   mlir::enzyme::Activity act;
   switch (activity) {
-  case EnzymeActivity_enzyme_active:
+  case 0:
     act = mlir::enzyme::Activity::enzyme_active;
     break;
-  case EnzymeActivity_enzyme_dup:
+  case 1:
     act = mlir::enzyme::Activity::enzyme_dup;
     break;
-  case EnzymeActivity_enzyme_const:
+  case 2:
     act = mlir::enzyme::Activity::enzyme_const;
     break;
-  case EnzymeActivity_enzyme_dupnoneed:
+  case 3:
     act = mlir::enzyme::Activity::enzyme_dupnoneed;
     break;
-  case EnzymeActivity_enzyme_activenoneed:
+  case 4:
     act = mlir::enzyme::Activity::enzyme_activenoneed;
     break;
-  case EnzymeActivity_enzyme_constnoneed:
+  case 5:
     act = mlir::enzyme::Activity::enzyme_constnoneed;
     break;
+  default:
+    llvm_unreachable("invalid Enzyme activity");
   }
   return wrap(mlir::enzyme::ActivityAttr::get(unwrap(ctx), act));
 }
 
-static mlir::ArrayAttr activityArrayAttr(MlirContext ctx,
-                                         MlirAttribute *activity, intptr_t n) {
-  llvm::SmallVector<mlir::Attribute> attrs;
-  attrs.reserve(n);
-  for (intptr_t i = 0; i < n; ++i)
-    attrs.push_back(unwrap(activity[i]));
-  return mlir::ArrayAttr::get(unwrap(ctx), attrs);
+static mlir::ArrayAttr
+activityArrayAttr(MlirContext ctx, const MlirAttribute *activity, intptr_t n) {
+  return mlir::ArrayAttr::get(
+      unwrap(ctx), llvm::ArrayRef<mlir::Attribute>(
+                       reinterpret_cast<const mlir::Attribute *>(activity), n));
 }
 
-static void collectTypes(MlirType *src, intptr_t n,
-                         llvm::SmallVectorImpl<mlir::Type> &out) {
-  out.reserve(n);
-  for (intptr_t i = 0; i < n; ++i)
-    out.push_back(unwrap(src[i]));
-}
-
-static void collectValues(MlirValue *src, intptr_t n,
-                          llvm::SmallVectorImpl<mlir::Value> &out) {
-  out.reserve(n);
-  for (intptr_t i = 0; i < n; ++i)
-    out.push_back(unwrap(src[i]));
-}
-
-MlirOperation
-enzymeAutoDiffOpCreate(MlirContext ctx, MlirStringRef fn, MlirType *resultTypes,
-                       intptr_t nResults, MlirValue *inputs, intptr_t nInputs,
-                       MlirAttribute *activity, intptr_t nActivity,
-                       MlirAttribute *retActivity, intptr_t nRetActivity,
-                       int64_t width, bool strongZero, MlirLocation loc) {
-  auto *mlirCtx = unwrap(ctx);
-  llvm::SmallVector<mlir::Type> results;
-  collectTypes(resultTypes, nResults, results);
-  llvm::SmallVector<mlir::Value> operands;
-  collectValues(inputs, nInputs, operands);
-  auto op = mlir::OpBuilder(mlirCtx).create<mlir::enzyme::AutoDiffOp>(
-      unwrap(loc), mlir::TypeRange(results),
-      llvm::StringRef(fn.data, fn.length), mlir::ValueRange(operands),
-      activityArrayAttr(ctx, activity, nActivity),
-      activityArrayAttr(ctx, retActivity, nRetActivity), (uint64_t)width,
-      strongZero);
+MLIR_CAPI_EXPORTED MlirOperation enzymeAutoDiffOpCreate(
+    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
+    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
+    const MlirAttribute *activity, intptr_t nActivity,
+    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
+    bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::AutoDiffOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
   return wrap(op.getOperation());
 }
 
-MlirOperation enzymeForwardDiffOpCreate(
-    MlirContext ctx, MlirStringRef fn, MlirType *resultTypes, intptr_t nResults,
-    MlirValue *inputs, intptr_t nInputs, MlirAttribute *activity,
-    intptr_t nActivity, MlirAttribute *retActivity, intptr_t nRetActivity,
-    int64_t width, bool strongZero, MlirLocation loc) {
-  auto *mlirCtx = unwrap(ctx);
-  llvm::SmallVector<mlir::Type> results;
-  collectTypes(resultTypes, nResults, results);
-  llvm::SmallVector<mlir::Value> operands;
-  collectValues(inputs, nInputs, operands);
-  auto op = mlir::OpBuilder(mlirCtx).create<mlir::enzyme::ForwardDiffOp>(
-      unwrap(loc), mlir::TypeRange(results),
-      llvm::StringRef(fn.data, fn.length), mlir::ValueRange(operands),
-      activityArrayAttr(ctx, activity, nActivity),
-      activityArrayAttr(ctx, retActivity, nRetActivity), (uint64_t)width,
-      strongZero);
+MLIR_CAPI_EXPORTED MlirOperation enzymeForwardDiffOpCreate(
+    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
+    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
+    const MlirAttribute *activity, intptr_t nActivity,
+    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
+    bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::ForwardDiffOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
   return wrap(op.getOperation());
 }
 
-MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
-                                           EnzymeRngDistribution dist) {
+MLIR_CAPI_EXPORTED MlirOperation enzymeJacobianOpCreate(
+    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
+    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
+    const MlirAttribute *activity, intptr_t nActivity,
+    const MlirAttribute *retActivity, intptr_t nRetActivity, int64_t width,
+    bool strongZero, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::JacobianOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              activityArrayAttr(ctx, activity, nActivity),
+              activityArrayAttr(ctx, retActivity, nRetActivity),
+              (uint64_t)width, strongZero);
+  return wrap(op.getOperation());
+}
+
+MLIR_CAPI_EXPORTED MlirOperation enzymeBatchOpCreate(
+    MlirContext ctx, MlirStringRef fn, const MlirType *resultTypes,
+    intptr_t nResults, const MlirValue *inputs, intptr_t nInputs,
+    const int64_t *batchShape, intptr_t nBatchShape, MlirLocation loc) {
+  auto op =
+      mlir::OpBuilder(unwrap(ctx))
+          .create<mlir::enzyme::BatchOp>(
+              unwrap(loc),
+              mlir::TypeRange(llvm::ArrayRef<mlir::Type>(
+                  reinterpret_cast<const mlir::Type *>(resultTypes), nResults)),
+              llvm::StringRef(fn.data, fn.length),
+              mlir::ValueRange(llvm::ArrayRef<mlir::Value>(
+                  reinterpret_cast<const mlir::Value *>(inputs), nInputs)),
+              llvm::ArrayRef<int64_t>(batchShape, nBatchShape));
+  return wrap(op.getOperation());
+}
+
+MLIR_CAPI_EXPORTED MlirAttribute
+enzymeRngDistributionAttrGet(MlirContext ctx, EnzymeRngDistribution dist) {
   mlir::impulse::RngDistribution rngDist;
   switch (dist) {
   case EnzymeRngDistribution_Uniform:
@@ -113,9 +200,9 @@ MlirAttribute enzymeRngDistributionAttrGet(MlirContext ctx,
   return wrap(mlir::impulse::RngDistributionAttr::get(unwrap(ctx), rngDist));
 }
 
-MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
-                                   bool hasLowerBound, double lowerBound,
-                                   bool hasUpperBound, double upperBound) {
+MLIR_CAPI_EXPORTED MlirAttribute enzymeSupportAttrGet(
+    MlirContext ctx, EnzymeSupportKind kind, bool hasLowerBound,
+    double lowerBound, bool hasUpperBound, double upperBound) {
   auto *mlirCtx = unwrap(ctx);
 
   mlir::impulse::SupportKind supportKind;
@@ -154,8 +241,10 @@ MlirAttribute enzymeSupportAttrGet(MlirContext ctx, EnzymeSupportKind kind,
                                               upperAttr));
 }
 
-MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
-                                     bool adaptStepSize, bool adaptMassMatrix) {
+MLIR_CAPI_EXPORTED MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx,
+                                                        double trajectoryLength,
+                                                        bool adaptStepSize,
+                                                        bool adaptMassMatrix) {
   auto *mlirCtx = unwrap(ctx);
   auto trajectoryLengthAttr =
       mlir::FloatAttr::get(mlir::Float64Type::get(mlirCtx), trajectoryLength);
@@ -164,10 +253,9 @@ MlirAttribute enzymeHMCConfigAttrGet(MlirContext ctx, double trajectoryLength,
       mlirCtx, trajectoryLengthAttr, adaptStepSize, adaptMassMatrix));
 }
 
-MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
-                                      bool hasMaxDeltaEnergy,
-                                      double maxDeltaEnergy, bool adaptStepSize,
-                                      bool adaptMassMatrix) {
+MLIR_CAPI_EXPORTED MlirAttribute enzymeNUTSConfigAttrGet(
+    MlirContext ctx, int64_t maxTreeDepth, bool hasMaxDeltaEnergy,
+    double maxDeltaEnergy, bool adaptStepSize, bool adaptMassMatrix) {
   auto *mlirCtx = unwrap(ctx);
 
   mlir::FloatAttr maxDeltaEnergyAttr;
@@ -180,6 +268,7 @@ MlirAttribute enzymeNUTSConfigAttrGet(MlirContext ctx, int64_t maxTreeDepth,
       adaptMassMatrix));
 }
 
-MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
+MLIR_CAPI_EXPORTED MlirAttribute enzymeSymbolAttrGet(MlirContext ctx,
+                                                     uint64_t ptr) {
   return wrap(mlir::impulse::SymbolAttr::get(unwrap(ctx), ptr));
 }
