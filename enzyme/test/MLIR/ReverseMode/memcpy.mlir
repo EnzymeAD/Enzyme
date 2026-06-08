@@ -1,7 +1,10 @@
 // RUN: %eopt --enzyme %s | FileCheck %s
 
 func.func @copy1(%dst: !llvm.ptr, %src: !llvm.ptr, %n: i64) {
-  "llvm.intr.memcpy"(%dst, %src, %n)
+  %c0 = llvm.mlir.constant(0 : i64) : i64
+  %dst_p = llvm.getelementptr %dst[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
+  %src_p = llvm.getelementptr %src[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
+  "llvm.intr.memcpy"(%dst_p, %src_p, %n)
       <{arg_attrs = [{llvm.align = 8 : i64}], isVolatile = false}>
       : (!llvm.ptr, !llvm.ptr, i64) -> ()
   return
@@ -19,7 +22,10 @@ func.func @dcopy1(%dst: !llvm.ptr, %ddst: !llvm.ptr,
 }
 
 func.func @copy2(%dst: !llvm.ptr, %src: !llvm.ptr, %n: i64) {
-  "llvm.intr.memcpy"(%dst, %src, %n)
+  %c0 = llvm.mlir.constant(0 : i64) : i64
+  %dst_p = llvm.getelementptr %dst[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
+  %src_p = llvm.getelementptr %src[%c0] : (!llvm.ptr, i64) -> !llvm.ptr, f64
+  "llvm.intr.memcpy"(%dst_p, %src_p, %n)
       <{arg_attrs = [{llvm.align = 8 : i64}, {llvm.align = 8 : i64}, {}],
         isVolatile = false}>
       : (!llvm.ptr, !llvm.ptr, i64) -> ()

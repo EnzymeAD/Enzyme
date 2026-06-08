@@ -303,9 +303,30 @@ struct MemcpyOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<MemcpyOpInterfaceReverse,
                                                        LLVM::MemcpyOp> {
 
+  // Light-weight "type analysis" for memcpy's opaque pointer operands. The
+  // priority is:
+  //   1. an explicit `enzyme.elem_type` TypeAttr on the memcpy op,
+  //   2. the producing `LLVM::AllocaOp` / `LLVM::GEPOp` of dst/src — both ops
+  //      carry an explicit `elemType` in the opaque-pointer LLVM dialect, so
+  //      they are the most reliable in-IR source of the element type,
+  //   3. a neighboring typed `LLVM::LoadOp` / `LLVM::StoreOp` on dst/src,
+  //   4. give up (return a null Type — the caller emits a diagnostic).
   static Type inferElemType(LLVM::MemcpyOp cp) {
     if (auto t = cp->getAttrOfType<TypeAttr>("enzyme.elem_type"))
       return t.getValue();
+
+    auto fromDef = [](Value p) -> Type {
+      if (auto alloca = p.getDefiningOp<LLVM::AllocaOp>())
+        return alloca.getElemType();
+      if (auto gep = p.getDefiningOp<LLVM::GEPOp>())
+        return gep.getElemType();
+      return nullptr;
+    };
+    if (Type t = fromDef(cp.getDst()))
+      return t;
+    if (Type t = fromDef(cp.getSrc()))
+      return t;
+
     auto walk = [](Value p) -> Type {
       for (Operation *user : p.getUsers()) {
         if (auto ld = dyn_cast<LLVM::LoadOp>(user))
@@ -321,7 +342,8 @@ struct MemcpyOpInterfaceReverse
       return t;
     if (Type t = walk(cp.getSrc()))
       return t;
-    return Float64Type::get(cp.getContext());
+
+    return Type();
   }
 
   SmallVector<Value> cacheValues(Operation *op,
@@ -359,11 +381,16 @@ struct MemcpyOpInterfaceReverse
     Value len = gutils->popCache(caches[2], builder);
 
     Type elemTy = inferElemType(cp);
+    if (!elemTy)
+      return op->emitError()
+             << "memcpy reverse: cannot infer element type "
+                "(annotate enzyme.elem_type or lower to scalar stores)";
+                
     auto adt = dyn_cast<AutoDiffTypeInterface>(elemTy);
     if (!adt || !elemTy.isIntOrFloat())
       return op->emitError()
-             << "memcpy reverse: unsupported element type " << elemTy
-             << " (annotate enzyme.elem_type or lower to scalar stores)";
+             << "memcpy reverse: element type " << elemTy
+             << " is not a supported scalar";
 
     Location loc = op->getLoc();
     unsigned bytes = (elemTy.getIntOrFloatBitWidth() + 7) / 8;
