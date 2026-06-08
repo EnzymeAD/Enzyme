@@ -1092,9 +1092,8 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
-  bool preventAnythingOverwrite = !isa<Constant>(Val);
   bool Changed =
-      analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr, preventAnythingOverwrite);
+      analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 
   // Print the update being made, if requested
   if (EnzymePrintType) {

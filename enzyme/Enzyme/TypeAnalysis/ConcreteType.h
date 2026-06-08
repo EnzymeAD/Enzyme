@@ -199,12 +199,11 @@ public:
   /// Set this to the logical or of itself and CT, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
-  bool checkedOrIn(const ConcreteType CT, bool PointerIntSame, bool &LegalOr, bool preventAnythingOverwrite = false) {
+  bool checkedOrIn(const ConcreteType CT, bool PointerIntSame, bool &LegalOr) {
     if (SubTypeEnum == BaseType::Anything) {
       return false;
     }
     if (CT.SubTypeEnum == BaseType::Anything) {
-      if (preventAnythingOverwrite) return false;
       return *this = CT;
     }
     if (SubTypeEnum == BaseType::Unknown) {

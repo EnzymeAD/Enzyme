@@ -1159,11 +1159,11 @@ public:
   }
 
   bool checkedOrIn(const std::vector<int> &Seq, ConcreteType RHS,
-                   bool PointerIntSame, bool &LegalOr, bool preventAnythingOverwrite = false) {
+                   bool PointerIntSame, bool &LegalOr) {
     assert(RHS != BaseType::Unknown);
     ConcreteType CT = operator[](Seq);
 
-    bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr, preventAnythingOverwrite);
+    bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr);
     if (!subchanged)
       return false;
     if (!LegalOr)
@@ -1293,12 +1293,12 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
-  bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr, bool preventAnythingOverwrite = false) {
+  bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr) {
     // TODO detect recursive merge and simplify
 
     bool changed = false;
     for (auto &pair : RHS.mapping) {
-      changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr, preventAnythingOverwrite);
+      changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr);
     }
     return changed;
   }
