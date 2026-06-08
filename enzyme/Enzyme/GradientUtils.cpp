@@ -5437,57 +5437,57 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   // Nulling the shadow for a constant is only necessary if any of the data
   // could contain a float (e.g. should not be applied to pointers).
   if (shouldNullShadow) {
-      size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
-      if (TT.anyFloat(oval, DL)) {
-        if (TT.IsAllFloat(size, DL))
-          return Constant::getNullValue(getShadowType(oval->getType()));
-          else {
-            IRBuilder<> bb(inversionAllocs);
-            if (auto arg = dyn_cast<Instruction>(oval)) {
-              arg = getNewFromOriginal(arg);
-              // Go one after since otherwise we won't be able
-              // to use in the store.
-              arg = arg->getNextNode();
-              while (auto PN = dyn_cast<PHINode>(arg)) {
-                if (PN->getNumIncomingValues() == 0)
-                  break;
-                arg = PN->getNextNode();
-              }
-              bb.SetInsertPoint(arg);
-            }
-            auto alloc = bb.CreateAlloca(oval->getType());
-            auto AT = ArrayType::get(bb.getInt8Ty(), size);
-            bb.CreateStore(getNewFromOriginal(oval), alloc);
-            Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
-            size_t i = 0;
-            assert(size > 0);
-            for (; i < size;) {
-              auto CT2 = TT[{(int)i}];
-              if (CT2 == BaseType::Pointer) {
-                i += DL.getPointerSize(0);
-                continue;
-              } else if (auto flt = CT2.isFloat()) {
-                auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
-                ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
-                bb.CreateStore(Constant::getNullValue(flt), ptr);
-                size_t chunk = DL.getTypeSizeInBits(flt) / 8;
-                i += chunk;
-              } else if (CT2 != BaseType::Integer) {
-                auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
-                bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
-                i++;
-              } else {
-                i++;
-              }
-            }
-            auto res = bb.CreateLoad(oval->getType(), alloc);
-            auto rule = [&res]() { return res; };
-            auto res2 = applyChainRule(oval->getType(), BuilderM, rule);
-            invertedPointers.insert(std::make_pair(
-                (const Value *)oval, InvertedPointerVH(this, res2)));
-            return res2;
+    size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
+    if (TT.anyFloat(oval, DL)) {
+      if (TT.IsAllFloat(size, DL))
+        return Constant::getNullValue(getShadowType(oval->getType()));
+      else {
+        IRBuilder<> bb(inversionAllocs);
+        if (auto arg = dyn_cast<Instruction>(oval)) {
+          arg = getNewFromOriginal(arg);
+          // Go one after since otherwise we won't be able
+          // to use in the store.
+          arg = arg->getNextNode();
+          while (auto PN = dyn_cast<PHINode>(arg)) {
+            if (PN->getNumIncomingValues() == 0)
+              break;
+            arg = PN->getNextNode();
+          }
+          bb.SetInsertPoint(arg);
+        }
+        auto alloc = bb.CreateAlloca(oval->getType());
+        auto AT = ArrayType::get(bb.getInt8Ty(), size);
+        bb.CreateStore(getNewFromOriginal(oval), alloc);
+        Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
+        size_t i = 0;
+        assert(size > 0);
+        for (; i < size;) {
+          auto CT2 = TT[{(int)i}];
+          if (CT2 == BaseType::Pointer) {
+            i += DL.getPointerSize(0);
+            continue;
+          } else if (auto flt = CT2.isFloat()) {
+            auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+            ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
+            bb.CreateStore(Constant::getNullValue(flt), ptr);
+            size_t chunk = DL.getTypeSizeInBits(flt) / 8;
+            i += chunk;
+          } else if (CT2 != BaseType::Integer) {
+            auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+            bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+            i++;
+          } else {
+            i++;
           }
         }
+        auto res = bb.CreateLoad(oval->getType(), alloc);
+        auto rule = [&res]() { return res; };
+        auto res2 = applyChainRule(oval->getType(), BuilderM, rule);
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, res2)));
+        return res2;
+      }
+    }
 
     if (isa<ConstantExpr>(oval) || isa<GlobalValue>(oval)) {
       auto rule = [&oval]() { return oval; };
