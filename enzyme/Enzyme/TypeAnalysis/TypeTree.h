@@ -885,8 +885,6 @@ public:
     return false;
   }
 
-
-
   /// Replace mappings in the range in [offset, offset+maxSize] with those in
   // [addOffset, addOffset + maxSize]. In other words, select all mappings in
   // [offset, offset+maxSize] then add `addOffset`

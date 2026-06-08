@@ -1140,7 +1140,8 @@ public:
       TypeTree dt;
       bool parsed = false;
       if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type")) {
-        auto attr = fn->getAttributes().getParamAttr(a.getArgNo(), "enzyme_type");
+        auto attr =
+            fn->getAttributes().getParamAttr(a.getArgNo(), "enzyme_type");
         dt = TypeTree::parse(attr.getValueAsString(), fn->getContext());
         parsed = true;
       } else if (a.getType()->isFPOrFPVectorTy()) {
@@ -1160,8 +1161,8 @@ public:
       } else if (a.getType()->isIntOrIntVectorTy()) {
         dt = ConcreteType(BaseType::Integer);
       }
-      type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, parsed ? dt : dt.Only(-1, nullptr)));
+      type_args.Arguments.insert(std::pair<Argument *, TypeTree>(
+          &a, parsed ? dt : dt.Only(-1, nullptr)));
       // TODO note that here we do NOT propagate constants in type info (and
       // should consider whether we should)
       type_args.KnownValues.insert(
@@ -1170,7 +1171,8 @@ public:
     TypeTree dt;
     bool parsed = false;
     if (fn->getAttributes().hasRetAttr("enzyme_type")) {
-      auto attr = fn->getAttributes().getAttribute(AttributeList::ReturnIndex, "enzyme_type");
+      auto attr = fn->getAttributes().getAttribute(AttributeList::ReturnIndex,
+                                                   "enzyme_type");
       dt = TypeTree::parse(attr.getValueAsString(), fn->getContext());
       parsed = true;
     } else if (fn->getReturnType()->isFPOrFPVectorTy()) {

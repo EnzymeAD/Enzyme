@@ -5342,7 +5342,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   bool nullShadow = true;
   auto &DL = oldFunc->getParent()->getDataLayout();
-  if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) || isa<ConstantInt>(oval)) {
+  if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
+      isa<ConstantInt>(oval)) {
     if (TT.anyFloat(oval, DL))
       return Constant::getNullValue(getShadowType(oval->getType()));
     else
@@ -5388,8 +5389,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto Off = Layout->getElementOffset(i);
       auto ObjSize = (DL.getTypeSizeInBits(el->getType()) + 7) / 8;
       TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
-      Vals.push_back(cast<Constant>(
-          invertPointerM(el, BuilderM, subTT)));
+      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5404,8 +5404,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto el = CD->getOperand(i);
       auto Off = i * ObjSize;
       TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
-      Vals.push_back(cast<Constant>(
-          invertPointerM(el, BuilderM, subTT)));
+      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
@@ -5413,7 +5412,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     };
 
     return applyChainRule(CD->getType(), Vals, BuilderM, rule);
-  } else if (isa<ConstantData>(oval) && TT.IsAllFloat((DL.getTypeSizeInBits(oval->getType()) + 7) / 8, DL)) {
+  } else if (isa<ConstantData>(oval) &&
+             TT.IsAllFloat((DL.getTypeSizeInBits(oval->getType()) + 7) / 8,
+                           DL)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
@@ -5710,7 +5711,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         }
 
         if (arg->hasInitializer()) {
-          size_t tsize = (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) / 8;
+          size_t tsize =
+              (DL.getTypeSizeInBits(arg->getInitializer()->getType()) + 7) / 8;
           applyChainRule(
               BuilderM,
               [&](Value *shadow, Value *ip) {
@@ -5718,7 +5720,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                     cast<Constant>(ip));
               },
               shadow,
-              invertPointerM(arg->getInitializer(), B, TR.query(oval).Lookup(tsize, DL)));
+              invertPointerM(arg->getInitializer(), B,
+                             TR.query(oval).Lookup(tsize, DL)));
         }
 
         invertedPointers.insert(std::make_pair(
@@ -5997,7 +6000,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
         if (isConstantValue(op)) {
-          if (subTT.anyPointer(op, DL) && subTT[{-1, -1}] != BaseType::Integer) {
+          if (subTT.anyPointer(op, DL) &&
+              subTT[{-1, -1}] != BaseType::Integer) {
             if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
               std::string str;
               raw_string_ostream ss(str);
