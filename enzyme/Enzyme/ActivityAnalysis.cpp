@@ -303,6 +303,9 @@ const StringSet<> KnownInactiveFunctions = {
     "__ubsan_vptr_type_cache",
     "llvm.enzyme.lifetime_start",
     "llvm.enzyme.lifetime_end",
+    "__cudaPushCallConfiguration",
+    "__cudaPopCallConfiguration",
+    "cudaGetLastError",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -463,6 +466,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // RAJA
     "RAJA::util::Registry<RAJA::util::PluginStrategy>",
+
+    // mfem
+    "mfem::mfem_cuda_error",
 };
   // clang-format on
 
