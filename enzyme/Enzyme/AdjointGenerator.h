@@ -1032,7 +1032,7 @@ public:
               if (diff)
                 needs_writebarrier = true;
             } else
-              EmitWarning("MixedActivityError",x I, ss.str());
+              EmitWarning("MixedActivityError", I, ss.str());
           }
         }
       }
