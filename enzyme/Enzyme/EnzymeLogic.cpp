@@ -6648,6 +6648,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "cudaRuntimeGetVersion",                         
                         "llvm.enzyme.lifetime_start",
                         "llvm.enzyme.lifetime_end",
+			"__cudaPushCallConfiguration",
+			"__cudaPopCallConfiguration",
   };
   // clang-format on
 
