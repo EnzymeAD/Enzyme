@@ -45,7 +45,7 @@ program app
   print *, y(n)
 
   dx(:) = 0.0
-  call norm_enzyme_autodiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call norm__enzyme_autodiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
   print *, dy(n)
 end program app
 
