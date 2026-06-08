@@ -5437,29 +5437,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   // Nulling the shadow for a constant is only necessary if any of the data
   // could contain a float (e.g. should not be applied to pointers).
   if (shouldNullShadow) {
-      auto ty = TT;
-        size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
-        auto CT = ty[{-1}];
-        bool couldContainFloat = CT.isFloat();
-        bool allFloat = CT.isFloat();
-        if (!CT.isKnown()) {
-          size_t i = 0;
-          for (; i < size;) {
-            auto CT2 = ty[{(int)i}];
-            if (CT2.isFloat() || !CT2.isKnown()) {
-              couldContainFloat = true;
-              break;
-            }
-            if (CT2 == BaseType::Pointer) {
-              i += dl.getPointerSizeInBits() / 8;
-              continue;
-            }
-            i++;
-          }
-        }
-        if (TT.anyFloat()) {
-          if (TT.allFloat(oval, DL))
-            return Constant::getNullValue(getShadowType(oval->getType()));
+      size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
+      if (TT.anyFloat(oval, DL)) {
+        if (TT.IsAllFloat(size, DL))
+          return Constant::getNullValue(getShadowType(oval->getType()));
           else {
             IRBuilder<> bb(inversionAllocs);
             if (auto arg = dyn_cast<Instruction>(oval)) {
@@ -5481,15 +5462,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             size_t i = 0;
             assert(size > 0);
             for (; i < size;) {
-              auto CT2 = ty[{(int)i}];
+              auto CT2 = TT[{(int)i}];
               if (CT2 == BaseType::Pointer) {
-                i += dl.getPointerSizeInBits() / 8;
+                i += DL.getPointerSize(0);
                 continue;
               } else if (auto flt = CT2.isFloat()) {
                 auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
                 ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
                 bb.CreateStore(Constant::getNullValue(flt), ptr);
-                size_t chunk = dl.getTypeSizeInBits(flt) / 8;
+                size_t chunk = DL.getTypeSizeInBits(flt) / 8;
                 i += chunk;
               } else if (CT2 != BaseType::Integer) {
                 auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
@@ -5507,7 +5488,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             return res2;
           }
         }
-      }
 
     if (isa<ConstantExpr>(oval) || isa<GlobalValue>(oval)) {
       auto rule = [&oval]() { return oval; };
@@ -6239,7 +6219,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient:
-      if (TT.isAllFloat(arg, DL)) {
+      if (TT.IsAllFloat((DL.getTypeSizeInBits(arg->getType()) + 7) / 8, DL)) {
         return Constant::getNullValue(getShadowType(arg->getType()));
       }
       break;
