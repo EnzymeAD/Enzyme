@@ -385,12 +385,11 @@ struct MemcpyOpInterfaceReverse
       return op->emitError()
              << "memcpy reverse: cannot infer element type "
                 "(annotate enzyme.elem_type or lower to scalar stores)";
-                
+
     auto adt = dyn_cast<AutoDiffTypeInterface>(elemTy);
     if (!adt || !elemTy.isIntOrFloat())
-      return op->emitError()
-             << "memcpy reverse: element type " << elemTy
-             << " is not a supported scalar";
+      return op->emitError() << "memcpy reverse: element type " << elemTy
+                             << " is not a supported scalar";
 
     Location loc = op->getLoc();
     unsigned bytes = (elemTy.getIntOrFloatBitWidth() + 7) / 8;
