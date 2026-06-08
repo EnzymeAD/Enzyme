@@ -17,7 +17,7 @@ module AD
     !       has been addressed
     subroutine selectFirst(n, x, y)
         integer, intent(in) :: n
-        real, allocatable, intent(in) :: x(n)
+        real, intent(in) :: x(n)
         real, intent(inout) :: y
         y = x(1)
     end subroutine
@@ -25,7 +25,7 @@ end module
 
 program app
     use AD, only: selectFirst
-    use enzyme, only: enzyme_autodiff
+    use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
     implicit none
     integer :: n
     real, allocatable :: x(:), dx(:)
@@ -40,7 +40,8 @@ program app
     y = 0
     dy = 1
 
-    call enzyme_autodiff(selectFirst, n, x, dx, y, dy)
+    call enzyme_autodiff(selectFirst, enzyme_const, n, &
+                         enzyme_dup, x, dx, enzyme_dup, y, dy)
 
     print *, int(y)
     print *, int(dx(1))
