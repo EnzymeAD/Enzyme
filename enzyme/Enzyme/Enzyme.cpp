@@ -1138,7 +1138,12 @@ public:
     FnTypeInfo type_args(fn);
     for (auto &a : type_args.Function->args()) {
       TypeTree dt;
-      if (a.getType()->isFPOrFPVectorTy()) {
+      bool parsed = false;
+      if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type")) {
+        auto attr = fn->getAttributes().getParamAttr(a.getArgNo(), "enzyme_type");
+        dt = TypeTree::parse(attr.getValueAsString(), fn->getContext());
+        parsed = true;
+      } else if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR < 17
@@ -1156,17 +1161,22 @@ public:
         dt = ConcreteType(BaseType::Integer);
       }
       type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1, nullptr)));
+          std::pair<Argument *, TypeTree>(&a, parsed ? dt : dt.Only(-1, nullptr)));
       // TODO note that here we do NOT propagate constants in type info (and
       // should consider whether we should)
       type_args.KnownValues.insert(
           std::pair<Argument *, std::set<int64_t>>(&a, {}));
     }
     TypeTree dt;
-    if (fn->getReturnType()->isFPOrFPVectorTy()) {
+    bool parsed = false;
+    if (fn->getAttributes().hasRetAttr("enzyme_type")) {
+      auto attr = fn->getAttributes().getAttribute(AttributeList::ReturnIndex, "enzyme_type");
+      dt = TypeTree::parse(attr.getValueAsString(), fn->getContext());
+      parsed = true;
+    } else if (fn->getReturnType()->isFPOrFPVectorTy()) {
       dt = ConcreteType(fn->getReturnType()->getScalarType());
     }
-    type_args.Return = dt.Only(-1, nullptr);
+    type_args.Return = parsed ? dt : dt.Only(-1, nullptr);
 
     type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
     return type_args;

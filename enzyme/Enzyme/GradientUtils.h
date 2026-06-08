@@ -501,7 +501,6 @@ public:
   bool isConstantInstruction(const llvm::Instruction *inst) const;
 
   bool getContext(llvm::BasicBlock *BB, LoopContext &lc);
-
   void forceAugmentedReturns();
 
 private:
@@ -534,8 +533,9 @@ public:
                        bool tryLegalRecomputeCheck = true,
                        llvm::BasicBlock *scope = nullptr) override;
 
+  llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM);
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
-                              bool nullShadow = false);
+                              TypeTree look);
 
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,

@@ -833,6 +833,59 @@ public:
       return nullptr;
     }
   }
+  bool anyFloat(llvm::Value *val, const llvm::DataLayout &dl) const {
+    auto dt = operator[]({-1});
+    if (dt != BaseType::Anything && dt != BaseType::Unknown)
+      return dt.isFloat();
+
+    if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+      return false;
+
+    size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+    for (size_t i = 0; i < ObjSize;) {
+      dt = operator[]({(int)i});
+      if (dt == BaseType::Integer) {
+        i++;
+        continue;
+      }
+      if (dt == BaseType::Pointer) {
+        i += dl.getPointerSize(0);
+        continue;
+      }
+      if (dt.isFloat())
+        return true;
+      if (dt == BaseType::Anything)
+        return true;
+      i++;
+    }
+    return false;
+  }
+  bool anyPointer(llvm::Value *val, const llvm::DataLayout &dl) const {
+    auto dt = operator[]({-1});
+    if (dt != BaseType::Anything && dt != BaseType::Unknown)
+      return dt == BaseType::Pointer;
+
+    if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+      return false;
+
+    size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+    for (size_t i = 0; i < ObjSize;) {
+      dt = operator[]({(int)i});
+      if (dt == BaseType::Integer) {
+        i++;
+        continue;
+      }
+      if (dt == BaseType::Pointer) {
+        return true;
+      }
+      if (dt == BaseType::Anything)
+        return true;
+      i++;
+    }
+    return false;
+  }
+
+
 
   /// Replace mappings in the range in [offset, offset+maxSize] with those in
   // [addOffset, addOffset + maxSize]. In other words, select all mappings in
@@ -1106,11 +1159,11 @@ public:
   }
 
   bool checkedOrIn(const std::vector<int> &Seq, ConcreteType RHS,
-                   bool PointerIntSame, bool &LegalOr) {
+                   bool PointerIntSame, bool &LegalOr, bool preventAnythingOverwrite = false) {
     assert(RHS != BaseType::Unknown);
     ConcreteType CT = operator[](Seq);
 
-    bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr);
+    bool subchanged = CT.checkedOrIn(RHS, PointerIntSame, LegalOr, preventAnythingOverwrite);
     if (!subchanged)
       return false;
     if (!LegalOr)
@@ -1240,12 +1293,12 @@ public:
   /// Set this to the logical or of itself and RHS, returning whether this value
   /// changed Setting `PointerIntSame` considers pointers and integers as
   /// equivalent If this is an illegal operation, `LegalOr` will be set to false
-  bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr) {
+  bool checkedOrIn(const TypeTree &RHS, bool PointerIntSame, bool &LegalOr, bool preventAnythingOverwrite = false) {
     // TODO detect recursive merge and simplify
 
     bool changed = false;
     for (auto &pair : RHS.mapping) {
-      changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr);
+      changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr, preventAnythingOverwrite);
     }
     return changed;
   }
