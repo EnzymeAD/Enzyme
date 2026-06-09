@@ -5416,7 +5416,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return applyChainRule(CD->getType(), Vals, BuilderM, rule);
   } else if (isa<ConstantData>(oval) &&
-             TT.allFloat(oval, DL)) {
+             TT.allFloat(oval, DL, /*anythingIsFloat*/true)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
@@ -5442,7 +5442,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (shouldNullShadow) {
     size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
     if (TT.anyFloat(oval, DL)) {
-      if (TT.allFloat(oval, DL))
+      if (TT.allFloat(oval, DL, /*anythingIsFloat*/true))
         return Constant::getNullValue(getShadowType(oval->getType()));
       else {
         IRBuilder<> bb(inversionAllocs);
