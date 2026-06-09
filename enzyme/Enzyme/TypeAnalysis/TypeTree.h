@@ -811,12 +811,13 @@ public:
     return dat;
   }
 
-  llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl, bool anythingIsFloat=false) const {
+  llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl,
+                       bool anythingIsFloat = false) const {
     auto dt = operator[]({-1});
     if (dt != BaseType::Anything && dt != BaseType::Unknown)
       return dt.isFloat();
     if (anythingIsFloat && dt == BaseType::Anything)
-      return (llvm::Type*)0x123;
+      return (llvm::Type *)0x123;
 
     if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
       return nullptr;
@@ -849,7 +850,7 @@ public:
     }
 
     if (!flt && anythingIsFloat) {
-      return (llvm::Type*)0x123;
+      return (llvm::Type *)0x123;
     }
     return flt;
   }
