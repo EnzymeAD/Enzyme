@@ -5438,8 +5438,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   // Nulling the shadow for a constant is only necessary if any of the data
   // could contain a float (e.g. should not be applied to pointers).
   if (shouldNullShadow) {
-    if (oval->getType()->isFPOrFPVectorTy())
-      return Constant::getNullValue(getShadowType(oval->getType()));
     size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
     if (TT.anyFloat(oval, DL)) {
       if (TT.IsAllFloat(size, DL))
@@ -6626,15 +6624,8 @@ end:;
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
 
-  if (oval->getType()->isFPOrFPVectorTy()) {
-    switch (mode) {
-    case DerivativeMode::ReverseModePrimal:
-    case DerivativeMode::ReverseModeCombined:
-    case DerivativeMode::ReverseModeGradient:
-      return Constant::getNullValue(getShadowType(oval->getType()));
-    default:
-      break;
-    }
+  if (isa<CallBase>(oval) && TT[{-1}].isFloat()) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
   if (CustomErrorHandler) {
