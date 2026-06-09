@@ -230,9 +230,7 @@ public:
     }
   }
 
-  void remove(const std::vector<int> Seq) {
-    mapping.erase(Seq);
-  }
+  void remove(const std::vector<int> Seq) { mapping.erase(Seq); }
 
   /// Return if changed
   bool insert(const std::vector<int> Seq, ConcreteType CT,
