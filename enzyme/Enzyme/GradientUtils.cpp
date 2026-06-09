@@ -5340,7 +5340,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 #endif
 
-  bool nullShadow = true;
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
       isa<ConstantInt>(oval)) {
@@ -5355,7 +5354,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
       auto el = CD->getElementAsConstant(i);
       auto Off = i * ObjSize;
-      TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
+      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, DL);
       Value *val = invertPointerM(el, BuilderM, subTT);
       Vals.push_back(cast<Constant>(val));
     }
@@ -5370,7 +5370,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       auto el = CD->getOperand(i);
       auto Off = i * ObjSize;
-      TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
+      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, DL);
       Value *val = invertPointerM(el, BuilderM, subTT);
       Vals.push_back(cast<Constant>(val));
     }
@@ -5388,7 +5389,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto el = CD->getOperand(i);
       auto Off = Layout->getElementOffset(i);
       auto ObjSize = (DL.getTypeSizeInBits(el->getType()) + 7) / 8;
-      TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
+      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, DL);
       Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
     }
 
@@ -5403,7 +5405,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       auto el = CD->getOperand(i);
       auto Off = i * ObjSize;
-      TypeTree subTT = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
+      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+      subTT.CanonicalizeInPlace(ObjSize, DL);
       Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
     }
 
@@ -5514,8 +5517,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   if (mode != DerivativeMode::ForwardMode &&
       mode != DerivativeMode::ForwardModeError &&
-      mode != DerivativeMode::ForwardModeSplit && nullShadow) {
-    if (TT[{-1}].isFloat()) {
+      mode != DerivativeMode::ForwardModeSplit) {
+    size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
+    if (TT.IsAllFloat(size, DL)) {
       return Constant::getNullValue(getShadowType(oval->getType()));
     }
   }
@@ -5828,7 +5832,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (mode == DerivativeMode::ReverseModeCombined ||
         mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeGradient) {
-      if (TT[{-1}].isFloat()) {
+      size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
+      if (TT.IsAllFloat(size, DL)) {
         return Constant::getNullValue(getShadowType(oval->getType()));
       }
     }
@@ -5953,6 +5958,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (TT.isKnown()) {
       agg_look = agg_look.Clear(Off, Off + ObjSize, AggSize);
       agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
+      agg_look.CanonicalizeInPlace(AggSize, DL);
     }
 
     auto ip = invertPointerM(arg->getOperand(0), bb, agg_look);
@@ -5996,6 +6002,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         subTT = TT;
       } else {
         subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+        subTT.CanonicalizeInPlace(ObjSize, DL);
       }
 
       if (!runtimeActivity && !isa<InsertValueInst>(op)) {
@@ -6046,6 +6053,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (TT.isKnown()) {
         vec_look = vec_look.Clear(Off, Off + ObjSize, VecSize);
         vec_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
+        vec_look.CanonicalizeInPlace(VecSize, DL);
       }
     }
 
@@ -6074,7 +6082,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     TypeTree subTT1 = TT;
     if (auto CI = dyn_cast<ConstantInt>(op2)) {
       unsigned Off = (CI->getZExtValue() * DL.getTypeSizeInBits(ElTy)) / 8;
-      subTT1 = TT.isKnown() ? TT.ShiftIndices(DL, Off, ObjSize, 0) : TT;
+      subTT1 = TT.ShiftIndices(DL, Off, ObjSize, 0);
+      subTT1.CanonicalizeInPlace(ObjSize, DL);
     }
     auto ip0 = invertPointerM(op0, bb, TT);
     auto ip1 = invertPointerM(op1, bb, subTT1);
@@ -6609,7 +6618,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       case DerivativeMode::ReverseModePrimal:
       case DerivativeMode::ReverseModeCombined:
       case DerivativeMode::ReverseModeGradient:
-        if (TT[{-1}].isFloat()) {
+        size_t size = (DL.getTypeSizeInBits(FPMO->getType()) + 7) / 8;
+        if (TT.IsAllFloat(size, DL)) {
           return Constant::getNullValue(getShadowType(FPMO->getType()));
         }
         break;
@@ -6624,7 +6634,8 @@ end:;
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
 
-  if (isa<CallBase>(oval) && TT[{-1}].isFloat()) {
+  size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
+  if (isa<CallBase>(oval) && TT.IsAllFloat(size, DL)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
