@@ -115,6 +115,8 @@ struct FlattenEnzymeCaches
       assert(alloc && alloc->getNumResults() == 1);
       MemRefType oldType = storeOp.getMemref().getType();
 
+      if (!hasEffect<MemoryEffects::Allocate>(alloc))
+        return;
       if (alloc->getNumOperands() == 0)
         return;
       if (oldType.getRank() == 0)
