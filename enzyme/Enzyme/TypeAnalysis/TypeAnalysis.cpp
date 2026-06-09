@@ -3066,7 +3066,6 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     if (direction & DOWN)
       Ret |= TypeTree(dt).Only(-1, nullptr);
   } else {
-    auto size = (dl.getTypeSizeInBits(T) + 7) / 8;
     auto AnalysisLHS = LHS.Data0();
     auto AnalysisRHS = RHS.Data0();
     auto AnalysisRet = Ret.Data0();
