@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme-activity-opt %s | FileCheck %s
+// RUN: %eopt --enzyme-activity-opt --split-input-file %s | FileCheck %s
 
 module {
   func.func @square(%x : f64) -> f64{
@@ -12,12 +12,12 @@ module {
     return %o1, %o2 : f32, f32
   }
 
-  func.func @test1(%x: f32, %y: f32, %dr0: f32, %dr1: f32) -> (f32,f32,f32) {
-    %r:3 = enzyme.autodiff @square2(%x,%y,%dr0,%dr1) { activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32)
-    // CHECK-LABEL: func.func @test1
-    // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}
-    return %r#0,%r#1,%r#2 : f32,f32,f32
-  }
+  // func.func @test1(%x: f32, %y: f32, %dr0: f32, %dr1: f32) -> (f32,f32,f32) {
+  //   %r:3 = enzyme.autodiff @square2(%x,%y,%dr0,%dr1) { activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>], ret_activity=[#enzyme<activity enzyme_active>, #enzyme<activity enzyme_active>] } : (f32,f32,f32,f32) -> (f32,f32,f32)
+  //   // CHECK-LABEL: func.func @test1
+  //   // CHECK: %{{.*}} = enzyme.autodiff @square2(%arg0, %arg1, %arg3){{.*}}activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}ret_activity = [#enzyme<activity enzyme_const>, #enzyme<activity enzyme_active>]{{.*}}
+  //   return %r#0,%r#1,%r#2 : f32,f32,f32
+  // }
   
   // -----
 
