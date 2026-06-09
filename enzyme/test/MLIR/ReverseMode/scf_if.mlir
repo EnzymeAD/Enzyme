@@ -195,3 +195,61 @@ func.func @dif_overwrite(%cond: i1, %x: !llvm.ptr, %dx: !llvm.ptr, %dres: f32) {
 // CHECK:           }
 // CHECK:           return
 // CHECK:         }
+
+// -----
+
+func.func private @if_mincut(%cond: i1, %x: memref<f32>) {
+  scf.if %cond {
+    %val = memref.load %x[] : memref<f32>
+    // the sin and cos ops should be recomputed
+    %sin = math.sin %val : f32
+    %cos = math.cos %val : f32
+    %mul = arith.mulf %sin, %cos : f32
+    memref.store %mul, %x[] : memref<f32>
+  }
+  return
+}
+
+func.func @dif_overwrite(%cond: i1, %x: memref<f32>, %dx: memref<f32>) {
+  enzyme.autodiff @if_mincut(%cond, %x, %dx) {
+    activity=[#enzyme<activity enzyme_const>, #enzyme<activity enzyme_dup>],
+    ret_activity=[]
+  } : (i1, memref<f32>, memref<f32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffeif_mincut(
+// CHECK-SAME:      %[[ARG0:.*]]: i1,
+// CHECK-SAME:      %[[ARG1:.*]]: memref<f32>,
+// CHECK-SAME:      %[[ARG2:.*]]: memref<f32>) {
+// CHECK:           %[[CONSTANT_0:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK:           %[[IF_0:.*]] = scf.if %[[ARG0]] -> (f32) {
+// CHECK:             %[[LOAD_0:.*]] = memref.load %[[ARG1]][] : memref<f32>
+// CHECK:             %[[SIN_0:.*]] = math.sin %[[LOAD_0]] : f32
+// CHECK:             %[[COS_0:.*]] = math.cos %[[LOAD_0]] : f32
+// CHECK:             %[[MULF_0:.*]] = arith.mulf %[[SIN_0]], %[[COS_0]] : f32
+// CHECK:             memref.store %[[MULF_0]], %[[ARG1]][] : memref<f32>
+// CHECK:             scf.yield %[[LOAD_0]] : f32
+// CHECK:           } else {
+// CHECK:             scf.yield %[[CONSTANT_0]] : f32
+// CHECK:           }
+// CHECK:           scf.if %[[ARG0]] {
+// CHECK:             %[[SIN_1:.*]] = math.sin %[[IF_0]] : f32
+// CHECK:             %[[COS_1:.*]] = math.cos %[[IF_0]] : f32
+// CHECK:             %[[LOAD_1:.*]] = memref.load %[[ARG2]][] : memref<f32>
+// CHECK:             memref.store %[[CONSTANT_0]], %[[ARG2]][] : memref<f32>
+// CHECK:             %[[MULF_1:.*]] = arith.mulf %[[LOAD_1]], %[[COS_1]] : f32
+// CHECK:             %[[MULF_2:.*]] = arith.mulf %[[LOAD_1]], %[[SIN_1]] : f32
+// CHECK:             %[[SIN_2:.*]] = math.sin %[[IF_0]] : f32
+// CHECK:             %[[NEGF_0:.*]] = arith.negf %[[SIN_2]] : f32
+// CHECK:             %[[MULF_3:.*]] = arith.mulf %[[MULF_2]], %[[NEGF_0]] : f32
+// CHECK:             %[[COS_2:.*]] = math.cos %[[IF_0]] : f32
+// CHECK:             %[[MULF_4:.*]] = arith.mulf %[[MULF_1]], %[[COS_2]] : f32
+// CHECK:             %[[ADDF_0:.*]] = arith.addf %[[MULF_3]], %[[MULF_4]] : f32
+// CHECK:             %[[LOAD_2:.*]] = memref.load %[[ARG2]][] : memref<f32>
+// CHECK:             %[[ADDF_1:.*]] = arith.addf %[[LOAD_2]], %[[ADDF_0]] : f32
+// CHECK:             memref.store %[[ADDF_1]], %[[ARG2]][] : memref<f32>
+// CHECK:           } else {
+// CHECK:           }
+// CHECK:           return
+// CHECK:         }
