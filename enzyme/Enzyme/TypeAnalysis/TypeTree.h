@@ -811,10 +811,12 @@ public:
     return dat;
   }
 
-  llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl) const {
+  llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl, bool anythingIsFloat=false) const {
     auto dt = operator[]({-1});
     if (dt != BaseType::Anything && dt != BaseType::Unknown)
       return dt.isFloat();
+    if (anythingIsFloat && dt == BaseType::Anything)
+      return (llvm::Type*)0x123;
 
     if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
       return nullptr;
@@ -823,20 +825,33 @@ public:
 
     auto m0 = TypeTree::operator[]({0});
 
-    if (auto flt = m0.isFloat()) {
-      size_t chunk = dl.getTypeSizeInBits(flt) / 8;
-      for (size_t i = chunk; i < size; i += chunk) {
-        auto mx = TypeTree::operator[]({(int)i});
-        if (auto f2 = mx.isFloat()) {
-          if (f2 != flt)
-            return nullptr;
-        } else
-          return nullptr;
+    llvm::Type *flt = m0.isFloat();
+    if (!flt) {
+      if (!(anythingIsFloat && m0 == BaseType::Anything)) {
+        return nullptr;
       }
-      return flt;
-    } else {
-      return nullptr;
     }
+    size_t chunk = dl.getTypeSizeInBits(flt) / 8;
+    for (size_t i = chunk; i < size; i += chunk) {
+      auto mx = TypeTree::operator[]({(int)i});
+      if (auto f2 = mx.isFloat()) {
+        if (f2 != flt) {
+          if (anythingIsFloat && !flt) {
+            flt = f2;
+            continue;
+          }
+          return nullptr;
+        }
+      } else if (anythingIsFloat && mx == BaseType::Anything) {
+        continue;
+      } else
+        return nullptr;
+    }
+
+    if (!flt && anythingIsFloat) {
+      return (llvm::Type*)0x123;
+    }
+    return flt;
   }
   bool anyFloat(llvm::Value *val, const llvm::DataLayout &dl) const {
     auto dt = operator[]({-1});
