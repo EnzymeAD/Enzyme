@@ -811,10 +811,15 @@ public:
     return dat;
   }
 
-  llvm::Type *IsAllFloat(const size_t size, const llvm::DataLayout &dl) const {
-    auto m1 = TypeTree::operator[]({-1});
-    if (auto FT = m1.isFloat())
-      return FT;
+  llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl) const {
+    auto dt = operator[]({-1});
+    if (dt != BaseType::Anything && dt != BaseType::Unknown)
+      return dt.isFloat();
+
+    if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+      return nullptr;
+
+    size_t size = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
 
     auto m0 = TypeTree::operator[]({0});
 

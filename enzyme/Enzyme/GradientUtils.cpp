@@ -5416,8 +5416,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return applyChainRule(CD->getType(), Vals, BuilderM, rule);
   } else if (isa<ConstantData>(oval) &&
-             TT.IsAllFloat((DL.getTypeSizeInBits(oval->getType()) + 7) / 8,
-                           DL)) {
+             TT.allFloat(oval, DL)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
@@ -5443,7 +5442,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (shouldNullShadow) {
     size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
     if (TT.anyFloat(oval, DL)) {
-      if (TT.IsAllFloat(size, DL))
+      if (TT.allFloat(oval, DL))
         return Constant::getNullValue(getShadowType(oval->getType()));
       else {
         IRBuilder<> bb(inversionAllocs);
@@ -5518,8 +5517,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (mode != DerivativeMode::ForwardMode &&
       mode != DerivativeMode::ForwardModeError &&
       mode != DerivativeMode::ForwardModeSplit) {
-    size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
-    if (TT.IsAllFloat(size, DL)) {
+    if (TT.allFloat(oval, DL)) {
       return Constant::getNullValue(getShadowType(oval->getType()));
     }
   }
@@ -5832,8 +5830,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (mode == DerivativeMode::ReverseModeCombined ||
         mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeGradient) {
-      size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
-      if (TT.IsAllFloat(size, DL)) {
+      if (TT.allFloat(oval, DL)) {
         return Constant::getNullValue(getShadowType(oval->getType()));
       }
     }
@@ -6228,16 +6225,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return li;
 
   } else if (auto arg = dyn_cast<BinaryOperator>(oval)) {
-    switch (mode) {
-    case DerivativeMode::ReverseModePrimal:
-    case DerivativeMode::ReverseModeCombined:
-    case DerivativeMode::ReverseModeGradient:
-      if (TT.IsAllFloat((DL.getTypeSizeInBits(arg->getType()) + 7) / 8, DL)) {
+    if (mode == DerivativeMode::ReverseModePrimal ||
+        mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ReverseModeGradient) {
+      if (TT.allFloat(arg, DL)) {
         return Constant::getNullValue(getShadowType(arg->getType()));
       }
-      break;
-    default:
-      break;
     }
 
     if (!arg->getType()->isIntOrIntVectorTy()) {
@@ -6614,17 +6607,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   } else if (auto FPMO = dyn_cast<FPMathOperator>(oval)) {
     if (FPMO->getOpcode() == Instruction::FNeg) {
-      switch (mode) {
-      case DerivativeMode::ReverseModePrimal:
-      case DerivativeMode::ReverseModeCombined:
-      case DerivativeMode::ReverseModeGradient:
-        size_t size = (DL.getTypeSizeInBits(FPMO->getType()) + 7) / 8;
-        if (TT.IsAllFloat(size, DL)) {
+      if (mode == DerivativeMode::ReverseModePrimal ||
+          mode == DerivativeMode::ReverseModeCombined ||
+          mode == DerivativeMode::ReverseModeGradient) {
+        if (TT.allFloat(FPMO, DL)) {
           return Constant::getNullValue(getShadowType(FPMO->getType()));
         }
-        break;
-      default:
-        break;
       }
     }
   }
@@ -6634,8 +6622,7 @@ end:;
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
 
-  size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
-  if (isa<CallBase>(oval) && TT.IsAllFloat(size, DL)) {
+  if (isa<CallBase>(oval) && TT.allFloat(oval, DL)) {
     return Constant::getNullValue(getShadowType(oval->getType()));
   }
 
