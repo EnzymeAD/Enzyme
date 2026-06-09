@@ -303,14 +303,6 @@ struct MemcpyOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<MemcpyOpInterfaceReverse,
                                                        LLVM::MemcpyOp> {
 
-  // Light-weight "type analysis" for memcpy's opaque pointer operands. The
-  // priority is:
-  //   1. an explicit `enzyme.elem_type` TypeAttr on the memcpy op,
-  //   2. the producing `LLVM::AllocaOp` / `LLVM::GEPOp` of dst/src — both ops
-  //      carry an explicit `elemType` in the opaque-pointer LLVM dialect, so
-  //      they are the most reliable in-IR source of the element type,
-  //   3. a neighboring typed `LLVM::LoadOp` / `LLVM::StoreOp` on dst/src,
-  //   4. give up (return a null Type — the caller emits a diagnostic).
   static Type inferElemType(LLVM::MemcpyOp cp) {
     if (auto t = cp->getAttrOfType<TypeAttr>("enzyme.elem_type"))
       return t.getValue();
