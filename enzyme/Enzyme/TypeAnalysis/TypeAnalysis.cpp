@@ -927,6 +927,14 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     return TypeTree(BaseType::Integer).Only(-1, nullptr);
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
+    if (EnzymeJuliaAddrLoad && C->getType()->isPointerTy()) {
+      unsigned AS = C->getType()->getPointerAddressSpace();
+      if (AS == 10 || AS == 11 || AS == 13) {
+        analysis[C].remove({-1});
+        analysis[C].remove({0});
+        analysis[C].insert({-1}, BaseType::Pointer);
+      }
+    }
     return analysis[Val];
   }
 
@@ -946,6 +954,15 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
       llvm::errs() << " arg: " << *Arg << "\n";
     }
     assert(Arg->getParent() == fntypeinfo.Function);
+  }
+
+  if (EnzymeJuliaAddrLoad && Val->getType()->isPointerTy()) {
+    unsigned AS = Val->getType()->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      analysis[Val].remove({-1});
+      analysis[Val].remove({0});
+      analysis[Val].insert({-1}, BaseType::Pointer);
+    }
   }
 
   // Return current results
