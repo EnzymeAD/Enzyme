@@ -2656,8 +2656,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             }
           }
           if (!invertri)
-            invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
-                                              /*nullShadow*/ true);
+            invertri = gutils->invertPointerM(orig_oldval, BuilderZ);
           invertedRetPs[newri] = invertri;
         }
       }
@@ -3254,15 +3253,16 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     bool floatLike = rt->isFPOrFPVectorTy();
 
     if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      shadow =
-          invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
+      shadow = invertedPtr ? invertedPtr
+                           : gutils->invertPointerM(ret, nBuilder,
+                                                    TR.getReturnAnalysis());
     } else if (!gutils->isConstantValue(ret)) {
       assert(!invertedPtr);
       shadow = gutils->diffe(ret, nBuilder);
     } else {
-      shadow = invertedPtr
-                   ? invertedPtr
-                   : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
+      shadow = invertedPtr ? invertedPtr
+                           : gutils->invertPointerM(ret, nBuilder,
+                                                    TR.getReturnAnalysis());
     }
   }
 

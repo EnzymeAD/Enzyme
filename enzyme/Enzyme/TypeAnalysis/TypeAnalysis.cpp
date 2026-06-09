@@ -927,6 +927,14 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     return TypeTree(BaseType::Integer).Only(-1, nullptr);
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
+    if (EnzymeJuliaAddrLoad && C->getType()->isPointerTy()) {
+      unsigned AS = C->getType()->getPointerAddressSpace();
+      if (AS == 10 || AS == 11 || AS == 13) {
+        analysis[C].remove({-1});
+        analysis[C].remove({0});
+        analysis[C].insert({-1}, BaseType::Pointer);
+      }
+    }
     return analysis[Val];
   }
 
@@ -946,6 +954,15 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
       llvm::errs() << " arg: " << *Arg << "\n";
     }
     assert(Arg->getParent() == fntypeinfo.Function);
+  }
+
+  if (EnzymeJuliaAddrLoad && Val->getType()->isPointerTy()) {
+    unsigned AS = Val->getType()->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      analysis[Val].remove({-1});
+      analysis[Val].remove({0});
+      analysis[Val].insert({-1}, BaseType::Pointer);
+    }
   }
 
   // Return current results
@@ -3066,7 +3083,6 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     if (direction & DOWN)
       Ret |= TypeTree(dt).Only(-1, nullptr);
   } else {
-    auto size = (dl.getTypeSizeInBits(T) + 7) / 8;
     auto AnalysisLHS = LHS.Data0();
     auto AnalysisRHS = RHS.Data0();
     auto AnalysisRet = Ret.Data0();
@@ -3108,7 +3124,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       if (direction & UP)
         for (int i = 0; i < 2; ++i) {
           Type *FT = nullptr;
-          if (!(FT = Ret.IsAllFloat(size, dl)))
+          if (!(FT = Ret.allFloat(origin, dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -3145,7 +3161,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     case BinaryOperator::Or:
       for (int i = 0; i < 2; ++i) {
         Type *FT = nullptr;
-        if (!(FT = Ret.IsAllFloat(size, dl)))
+        if (!(FT = Ret.allFloat(origin, dl)))
           continue;
         // If | against a number only or'ing the exponent, the result is a float
         bool validXor = false;
@@ -3350,7 +3366,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Xor) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size, dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -3361,7 +3377,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Or) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size, dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
             continue;
           // If & against 0b10000000000, the result is a float
           bool validXor = false;
