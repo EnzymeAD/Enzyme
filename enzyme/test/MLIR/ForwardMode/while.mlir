@@ -24,12 +24,12 @@ module {
   }
   // CHECK: @fwddiffewhile
   // CHECK: (%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> f64 {
-  // CHECK-DAG:   %[[TEN:.+]] = arith.constant 1.000000e+01 : f64
-  // CHECK-DAG:   %[[ZERO:.+]] = arith.constant 0.000000e+00 : f64
-  // CHECK-DAG:   %[[c0:.+]] = arith.constant 0 : index
-  // CHECK-DAG:   %[[c1:.+]] = arith.constant 1 : index
-  // CHECK-DAG:   %[[c10:.+]] = arith.constant 10 : index
-  // CHECK:   %[[r0:.+]]:3 = scf.while (%[[arg2:.+]] = %[[c0]], %[[arg3:.+]] = %[[TEN]], %[[arg4:.+]] = %[[ZERO]]) : (index, f64, f64) -> (index, f64, f64) {
+  // CHECK:   %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK:   %[[cst_0:.+]] = arith.constant 1.000000e+01 : f64
+  // CHECK:   %[[c0:.+]] = arith.constant 0 : index
+  // CHECK:   %[[c1:.+]] = arith.constant 1 : index
+  // CHECK:   %[[c10:.+]] = arith.constant 10 : index
+  // CHECK:   %[[r0:.+]]:3 = scf.while (%[[arg2:.+]] = %[[c0]], %[[arg3:.+]] = %[[cst_0]], %[[arg4:.+]] = %[[cst]]) : (index, f64, f64) -> (index, f64, f64) {
   // CHECK:     %[[v1:.+]] = arith.cmpi slt, %[[arg2]], %[[c10]] : index
   // CHECK:     scf.condition(%[[v1]]) %[[arg2]], %[[arg3]], %[[arg4]] : index, f64, f64
   // CHECK:   } do {
