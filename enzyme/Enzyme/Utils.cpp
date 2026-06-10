@@ -1953,7 +1953,8 @@ Function *getOrInsertMemcpyMat(Module &Mod, Type *elementType, PointerType *PT,
 
 Function *getOrInsertDifferentialFloatMemcpyMat(
     Module &Mod, Type *elementType, PointerType *PT, IntegerType *IT,
-    IntegerType *CT, unsigned dstalign, unsigned srcalign, bool zeroSrc) {
+    IntegerType *UT, IntegerType *LT, unsigned dstalign, unsigned srcalign,
+    bool zeroSrc) {
   assert(elementType->isFPOrFPVectorTy());
 #if LLVM_VERSION_MAJOR < 17
 #if LLVM_VERSION_MAJOR >= 15
@@ -1968,10 +1969,13 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 #endif
 #endif
   std::string name = "__enzyme_dmemcpy_" + tofltstr(elementType) + "_mat_" +
+                     std::to_string(cast<IntegerType>(UT)->getBitWidth()) +
+                     "_" + std::to_string(cast<IntegerType>(LT)->getBitWidth()) +
+                     "_" +
                      std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
                      (zeroSrc ? "_zero" : "");
   FunctionType *FT = FunctionType::get(Type::getVoidTy(Mod.getContext()),
-                                       {CT, IT, IT, PT, IT, PT, IT}, false);
+                                       {UT, LT, IT, IT, PT, IT, PT, IT}, false);
 
   Function *F = cast<Function>(Mod.getOrInsertFunction(name, FT).getCallee());
 
@@ -1986,8 +1990,8 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 #endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(3, Attribute::NoAlias);
-  F->addParamAttr(5, Attribute::NoAlias);
+  F->addParamAttr(4, Attribute::NoAlias);
+  F->addParamAttr(6, Attribute::NoAlias);
 
   BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
   BasicBlock *swtch = BasicBlock::Create(F->getContext(), "swtch", F);
@@ -1998,7 +2002,9 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
 
   auto uplo = F->arg_begin();
   uplo->setName("uplo");
-  auto M = uplo + 1;
+  auto layout = uplo + 1;
+  layout->setName("layout");
+  auto M = layout + 1;
   M->setName("M");
   auto N = M + 1;
   N->setName("N");
@@ -2023,8 +2029,8 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
   {
     IRBuilder<> B(swtch);
     auto swtchT = B.CreateSwitch(uplo, Ginit);
-    swtchT->addCase(ConstantInt::get(CT, 'U'), Uinit);
-    swtchT->addCase(ConstantInt::get(CT, 'L'), Linit);
+    swtchT->addCase(ConstantInt::get(UT, 'U'), Uinit);
+    swtchT->addCase(ConstantInt::get(UT, 'L'), Linit);
   }
 
   std::pair<char, BasicBlock *> todo[] = {
@@ -2060,15 +2066,8 @@ Function *getOrInsertDifferentialFloatMemcpyMat(
       PHINode *i = B.CreatePHI(IT, 2, dir + "i");
       i->addIncoming(istart, init);
 
-      Value *srci = B.CreateInBoundsGEP(
-          elementType, src,
-          B.CreateAdd(i, B.CreateMul(j, lsrc, "", true, true), "", true, true),
-          dir + "src.i");
-
-      Value *dsti = B.CreateInBoundsGEP(
-          elementType, dst,
-          B.CreateAdd(i, B.CreateMul(j, ldst, "", true, true), "", true, true),
-          dir + "dst.i");
+      Value *srci = lookup_with_layout(B, elementType, layout, src, lsrc, i, j);
+      Value *dsti = lookup_with_layout(B, elementType, layout, dst, ldst, i, j);
       LoadInst *srcl = B.CreateLoad(elementType, srci, dir + "src.i.l");
       LoadInst *dstl = B.CreateLoad(elementType, dsti, dir + "dst.i.l");
       auto res = B.CreateFAdd(srcl, dstl);
@@ -3607,6 +3606,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
       "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
       "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
       "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "trsm",
   };
   const char *floatType[] = {"s", "d", "c", "z"};
   const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -4140,7 +4140,11 @@ SmallVector<llvm::Value *, 1> get_blas_row(llvm::IRBuilder<> &B,
   if (!cublas) {
 
     if (!byRef) {
-      cond = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+      auto isCblasN =
+          B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 111));
+      auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
+      auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
+      cond = B.CreateOr(isCblasN, B.CreateOr(isN, isn));
     } else {
       auto isn = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'n'));
       auto isN = B.CreateICmpEQ(trans, ConstantInt::get(trans->getType(), 'N'));
