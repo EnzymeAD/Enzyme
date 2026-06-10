@@ -15,9 +15,9 @@ module {
   }
   // CHECK: @fwddiffeloop
   // CHECK: (%[[arg0:.+]]: f64, %[[arg1:.+]]: f64)
-  // CHECK-DAG: %[[TEN:.+]] = arith.constant 1.000000e+01 : f64
-  // CHECK-DAG: %[[ZERO:.+]] = arith.constant 0.000000e+00 : f64
-  // CHECK: %[[r0:.+]]:2 = affine.for %{{.*}} = 0 to 10 iter_args(%[[arg3:.+]] = %[[TEN]], %[[arg4:.+]] = %[[ZERO]]) -> (f64, f64) {
+  // CHECK: %[[cst:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK: %[[cst_0:.+]] = arith.constant 1.000000e+01 : f64
+  // CHECK: %[[r0:.+]]:2 = affine.for %{{.*}} = 0 to 10 iter_args(%[[arg3:.+]] = %[[cst_0]], %[[arg4:.+]] = %[[cst]]) -> (f64, f64) {
   // CHECK:   %[[v1:.+]] = arith.addf %[[arg4]], %[[arg1]] : f64
   // CHECK:   %[[v2:.+]] = arith.addf %[[arg3]], %[[arg0]] : f64
   // CHECK:   affine.yield %[[v2]], %[[v1]] : f64, f64
