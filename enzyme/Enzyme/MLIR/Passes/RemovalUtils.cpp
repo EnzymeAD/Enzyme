@@ -667,6 +667,145 @@ static void annotate_ops(Block *forward, Block *reverse) {
   });
 }
 
+LogicalResult loopInvariantCache(CacheInfo info, LoopLikeOpInterface fwdLoop,
+                                 LoopLikeOpInterface revLoop,
+                                 IRMapping &mapping) {
+  Operation *definingOp = info.pushedValue().getDefiningOp();
+  if (!definingOp)
+    return failure();
+  auto loadOp = dyn_cast<memref::LoadOp>(definingOp);
+  if (!loadOp)
+    return failure();
+  auto alloc = loadOp.getMemRef();
+  auto allocaOp = dyn_cast<memref::AllocaOp>(alloc.getDefiningOp());
+  if (!allocaOp) {
+    return failure();
+  }
+
+  // Check if the allocation is written to inside the loop body
+  // TODO: integrate an alias analysis here?
+  for (Region *region : fwdLoop.getLoopRegions()) {
+    for (Operation &op : region->getOps()) {
+      if (hasEffect<MemoryEffects::Write>(&op, alloc) ||
+          hasUnknownEffects(&op)) {
+        return failure();
+      }
+    }
+  }
+
+  ImplicitLocOpBuilder builder(alloc.getLoc(), info.initOp);
+  // Find the values that are necessary to re-compute the indices
+  SmallVector<Value> pushedValues;
+  SmallVector<Operation *> toCopy;
+  std::queue<Value> worklist;
+  DenseSet<Value> visited;
+  for (Value idx : loadOp.getIndices()) {
+    worklist.push(idx);
+    visited.insert(idx);
+  }
+  while (!worklist.empty()) {
+    Value curr = worklist.front();
+    worklist.pop();
+
+    if (mapping.contains(curr))
+      continue;
+    DominanceInfo dom;
+    // Check if we can just re-use the same value in forward and reverse
+    if (dom.dominates(curr, revLoop))
+      continue;
+
+    if (Operation *definingOp = curr.getDefiningOp()) {
+      // Push values that are defined outside the fwd loop while copying ops
+      // defined inside
+      if (fwdLoop->isProperAncestor(definingOp)) {
+        toCopy.push_back(definingOp);
+        for (Value operand : definingOp->getOperands()) {
+          if (!visited.contains(operand)) {
+            visited.insert(operand);
+            worklist.push(operand);
+          }
+        }
+      } else {
+        pushedValues.push_back(curr);
+      }
+    } else {
+      llvm::errs() << "[lic] reached a block arg that isn't in fwdrevmap: "
+                   << curr << " " << curr.getLoc() << "\n";
+      return failure();
+    }
+  }
+
+  // Make new caches for the values needed to store the indices
+  builder.setInsertionPoint(info.initOp);
+  SmallVector<Value> newInits =
+      llvm::map_to_vector(pushedValues, [&](Value val) -> Value {
+        return enzyme::InitOp::create(
+            builder, CacheType::get(val.getContext(), val.getType()));
+      });
+  builder.setInsertionPoint(fwdLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    enzyme::PushOp::create(builder, cache, val);
+  }
+
+  builder.setInsertionPoint(revLoop);
+  for (auto &&[cache, val] : llvm::zip(newInits, pushedValues)) {
+    Value popped = enzyme::PopOp::create(builder, val.getType(), cache);
+    mapping.map(val, popped);
+  }
+
+  // Clone the ops necessary to re-compute the load indices
+  builder.setInsertionPoint(info.popOp);
+  for (Operation *op : llvm::reverse(toCopy)) {
+    builder.clone(*op, mapping);
+  }
+
+  Value cachedMemRef;
+  if (mapping.contains(alloc)) {
+    cachedMemRef = mapping.lookup(alloc);
+  } else {
+    builder.setInsertionPoint(info.initOp);
+    Value newCache = enzyme::InitOp::create(
+        builder, enzyme::CacheType::get(builder.getContext(), alloc.getType()));
+
+    builder.setInsertionPoint(fwdLoop);
+    Value copyAlloc = memref::AllocOp::create(
+        builder, allocaOp.getType(), allocaOp.getDynamicSizes(),
+        allocaOp.getSymbolOperands(), allocaOp.getAlignmentAttr());
+    // Copy over the contents in a loop so the resulting subview may be folded
+    Value zero = arith::ConstantIndexOp::create(builder, 0);
+    Value one = arith::ConstantIndexOp::create(builder, 1);
+
+    // TODO: consider using linalg.copy?
+    assert(loadOp.getMemRefType().getRank() == 1 &&
+           "todo(lic): handle memrefs of rank > 1");
+    Value ub = memref::DimOp::create(builder, alloc, 0);
+    scf::ForOp::create(
+        builder, zero, ub, one, /*initArgs=*/{},
+        [&](OpBuilder &bodyBuilder, Location loc, Value iv,
+            ValueRange iterArgs) {
+          Value loaded = memref::LoadOp::create(bodyBuilder, loc, alloc, iv);
+          memref::StoreOp::create(bodyBuilder, loc, loaded, copyAlloc, iv);
+          scf::YieldOp::create(bodyBuilder, loc);
+        });
+
+    enzyme::PushOp::create(builder, newCache, copyAlloc);
+
+    builder.setInsertionPoint(revLoop);
+    cachedMemRef = enzyme::PopOp::create(builder, alloc.getType(), newCache);
+    mapping.map(alloc, cachedMemRef);
+  }
+
+  builder.setInsertionPoint(info.popOp);
+  SmallVector<Value> revIndices =
+      llvm::map_to_vector(loadOp.getIndices(), [&](Value idx) -> Value {
+        return mapping.lookupOrDefault(idx);
+      });
+
+  Value newLoad = memref::LoadOp::create(builder, cachedMemRef, revIndices);
+  info.popOp.replaceAllUsesWith(newLoad);
+  return success();
+}
+
 // Given the full forward/backward compute graph, the push/pop can be seen
 // as a special cut of this graph. This function tries to modifies the
 // boundary of the push/pop to minimize the amount of memory that is live
@@ -1230,13 +1369,39 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     rewriter.eraseOp(info.initOp);
   }
 
-  // LLVM_DEBUG(llvm::dbgs() << "post min/cut\n");
-  // LLVM_DEBUG(
-  //     findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
-  //         ->dump());
+  LLVM_DEBUG(llvm::dbgs() << "post min/cut\n");
+  LLVM_DEBUG(
+      findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
+          ->dump());
 
-  // Set new caches
-  caches0 = std::move(newCacheInfos);
+  // TODO: try to do lic here, move it later
+  bool enableLIC = true;
+  if (enableLIC) {
+    SmallVector<CacheInfo> licCaches;
+    if (auto fwdLoop = dyn_cast<LoopLikeOpInterface>(forward->getParentOp())) {
+      auto revLoop = cast<LoopLikeOpInterface>(reverse->getParentOp());
+      for (auto info : newCacheInfos) {
+        if (succeeded(loopInvariantCache(info, fwdLoop, revLoop, mapping))) {
+          info.pushOp->erase();
+          info.popOp->erase();
+          info.initOp->erase();
+        } else {
+          licCaches.push_back(info);
+        }
+      }
+    } else {
+      licCaches.append(newCacheInfos);
+    }
+
+    LLVM_DEBUG(llvm::dbgs() << "after lic\n");
+    LLVM_DEBUG(
+        findCommonAncestor({forward->getParentOp(), reverse->getParentOp()})
+            ->dump());
+    // Set new caches
+    caches0 = std::move(licCaches);
+  } else {
+    caches0 = std::move(newCacheInfos);
+  }
 }
 
 mlir::enzyme::CacheInfo
