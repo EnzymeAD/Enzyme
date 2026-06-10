@@ -4872,6 +4872,25 @@ Function *EnzymeLogic::CreateForwardDiff(
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
+
+      if (!foundcalled->getFunctionType()->isVarArg() &&
+          foundcalled->getFunctionType()->getNumParams() != nextArgs.size()) {
+        llvm::errs() << " foundcalled number of arguments != nextArgs.size()\n";
+        llvm::errs() << " foundcalled: " << *foundcalled << "\n";
+        for (auto arg : nextArgs) {
+          llvm::errs() << " + arg: " << *arg << "\n";
+        }
+      }
+
+      if (foundcalled->getFunctionType()->getNumParams() == nextArgs.size()) {
+        for (size_t i=0; i<nextArgs.size(); i++) {
+          if (nextArgs[i].getType() != foundcalled->getFunctionType()->getParamType(i)) {
+            llvm::errs() << " foundcalled argument type mismatch\n";
+            llvm::errs() << " foundcalled: " << *foundcalled << "\n";
+            llvm::errs() << "arg i=" << i << " (" << nextArgs[i].getType() << " does not match expected " << *foundcalled->getFunctionType() << "\n";
+          }
+        }
+      }
       auto cal = bb.CreateCall(foundcalled, nextArgs);
       cal->setCallingConv(foundcalled->getCallingConv());
 
