@@ -451,24 +451,18 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
            << "\n";
   }
 
-  // Not all users of ControlFlowHandler(...) implement the
-  // RegionBranchOpInterface -- for example stablehlo.while doesn't implement
-  // this. We will still retain creating shadows for constant operands, but only
-  // restrict the behavior to RegionBranchOpInterface.
-  auto regionBranchOp = dyn_cast<RegionBranchOpInterface>(op);
+  auto regionBranchOp = cast<RegionBranchOpInterface>(op);
   SmallVector<RegionSuccessor> entrySuccessors;
-  if (regionBranchOp)
-    regionBranchOp.getEntrySuccessorRegions(
-        SmallVector<Attribute>(op->getNumOperands(), Attribute()),
-        entrySuccessors);
-
+  regionBranchOp.getEntrySuccessorRegions(
+      SmallVector<Attribute>(op->getNumOperands(), Attribute()),
+      entrySuccessors);
   for (OpOperand &operand : op->getOpOperands()) {
     newOperands.push_back(gutils->getNewFromOriginal(operand.get()));
     if (operandPositionsToShadow.contains(operand.getOperandNumber())) {
       Value shadowValue = nullptr;
       if (!gutils->isConstantValue(operand.get()))
         shadowValue = gutils->invertPointerM(operand.get(), builder);
-      else if (regionBranchOp) {
+      else {
         auto Ty = operand.get().getType();
         auto shadowType =
             cast<AutoDiffTypeInterface>(Ty).getShadowType(gutils->width);
@@ -512,15 +506,10 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
             }
           }
         }
-      } else {
-        // TODO: a const operand, but it also has to be shadowed (but the op
-        // doesn't implement the RegionBranchOpInterface). Unimplemented for
-        // now.
       }
       newOperands.push_back(shadowValue);
     }
   }
-
   // We are assuming the op can forward additional operands, listed
   // immediately after the original operands, to the same regions.
   // ^^
