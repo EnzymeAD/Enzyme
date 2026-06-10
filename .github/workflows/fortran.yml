@@ -44,7 +44,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"]
         os: [ubuntu-22.04]
-        llvm: [15]
+        llvm: [15, 17]
         include:
           - llvm: 15
             ifx: 2023.0.0
