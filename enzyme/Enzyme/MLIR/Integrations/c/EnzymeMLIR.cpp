@@ -18,7 +18,7 @@
 #include "Dialect/Ops.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
-#include "llvm/Support/ErrorHandling.h"
+
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
@@ -70,30 +70,8 @@ MLIR_CAPI_EXPORTED MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
 
 MLIR_CAPI_EXPORTED MlirAttribute enzymeActivityAttrGet(MlirContext ctx,
                                                        uint32_t activity) {
-  mlir::enzyme::Activity act;
-  switch (activity) {
-  case 0:
-    act = mlir::enzyme::Activity::enzyme_active;
-    break;
-  case 1:
-    act = mlir::enzyme::Activity::enzyme_dup;
-    break;
-  case 2:
-    act = mlir::enzyme::Activity::enzyme_const;
-    break;
-  case 3:
-    act = mlir::enzyme::Activity::enzyme_dupnoneed;
-    break;
-  case 4:
-    act = mlir::enzyme::Activity::enzyme_activenoneed;
-    break;
-  case 5:
-    act = mlir::enzyme::Activity::enzyme_constnoneed;
-    break;
-  default:
-    llvm_unreachable("invalid Enzyme activity");
-  }
-  return wrap(mlir::enzyme::ActivityAttr::get(unwrap(ctx), act));
+  return wrap(mlir::enzyme::ActivityAttr::get(
+      unwrap(ctx), (mlir::enzyme::Activity)activity));
 }
 
 static mlir::ArrayAttr
