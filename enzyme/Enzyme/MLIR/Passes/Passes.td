@@ -81,6 +81,13 @@ def BatchDiffPass : Pass<"enzyme-diff-batch">{
   ];
 }
 
+def EnzymeActivityOpt : Pass<"enzyme-activity-opt">{
+  let summary = "Optimize activity for differentiation";
+  let dependentDialects = [
+    "enzyme::EnzymeDialect",
+  ];
+}
+
 def DifferentiateWrapperPass : Pass<"enzyme-wrap"> {
   let summary = "Add wrapper function to be differentiated";
   let dependentDialects = [
