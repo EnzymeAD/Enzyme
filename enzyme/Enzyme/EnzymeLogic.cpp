@@ -4884,10 +4884,10 @@ Function *EnzymeLogic::CreateForwardDiff(
 
       if (foundcalled->getFunctionType()->getNumParams() == nextArgs.size()) {
         for (size_t i=0; i<nextArgs.size(); i++) {
-          if (nextArgs[i].getType() != foundcalled->getFunctionType()->getParamType(i)) {
+          if (nextArgs[i]->getType() != foundcalled->getFunctionType()->getParamType(i)) {
             llvm::errs() << " foundcalled argument type mismatch\n";
             llvm::errs() << " foundcalled: " << *foundcalled << "\n";
-            llvm::errs() << "arg i=" << i << " (" << nextArgs[i].getType() << " does not match expected " << *foundcalled->getFunctionType() << "\n";
+            llvm::errs() << "arg i=" << i << " (" << nextArgs[i]->getType() << " does not match expected " << *foundcalled->getFunctionType() << "\n";
           }
         }
       }
