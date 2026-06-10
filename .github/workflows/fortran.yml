@@ -49,6 +49,9 @@ jobs:
           - llvm: 15
             ifx: 2023.0.0
             mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2023.2.0
+            mpi: 2021.7.1
     timeout-minutes: 60 
     steps:
     - name: add llvm
