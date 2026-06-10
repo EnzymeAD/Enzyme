@@ -303,6 +303,9 @@ const StringSet<> KnownInactiveFunctions = {
     "__ubsan_vptr_type_cache",
     "llvm.enzyme.lifetime_start",
     "llvm.enzyme.lifetime_end",
+    "__cudaPushCallConfiguration",
+    "__cudaPopCallConfiguration",
+    "cudaGetLastError",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -463,6 +466,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // RAJA
     "RAJA::util::Registry<RAJA::util::PluginStrategy>",
+
+    // mfem
+    "mfem::mfem_cuda_error",
 };
   // clang-format on
 
@@ -1499,8 +1505,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         auto &DL = BO->getParent()->getParent()->getParent()->getDataLayout();
         for (int i = 0; i < 2; ++i) {
           auto FT = TR.query(BO->getOperand(1 - i))
-                        .IsAllFloat(
-                            (DL.getTypeSizeInBits(BO->getType()) + 7) / 8, DL);
+                        .allFloat(BO->getOperand(1 - i), DL);
           // If ^ against 0b10000000000 and a float the result is a float
           if (FT)
             if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, DL)) {
