@@ -4904,6 +4904,8 @@ Function *EnzymeLogic::CreateForwardDiff(
         bb.CreateRetVoid();
       }
 
+      llvm::errs() << "foundcalled shim: " << *NewF << "\n";
+
       return ForwardCachedFunctions[tup] = NewF;
     }
 
