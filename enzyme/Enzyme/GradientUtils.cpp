@@ -2542,7 +2542,9 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
           (inst->getParent() != &BB && DT.dominates(&BB, inst->getParent()))) {
         // OrigPDT.dominates(isOriginal(inst->getParent()),
         //                  isOriginal(&BB)))) {
-        lcssaFixes[inst][&BB] = UndefValue::get(inst->getType());
+        lcssaFixes[inst][&BB] =
+            getUndefinedValueForType(*oldFunc->getParent(), inst->getType(),
+                                     /*forceZero*/ true);
       }
     }
   }

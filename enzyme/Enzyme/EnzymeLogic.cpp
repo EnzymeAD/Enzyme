@@ -2911,7 +2911,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   AllocaInst *ret = noReturn ? nullptr : ib.CreateAlloca(RetType);
 
   if (!noTape) {
-    Value *tapeMemory;
+    Value *tapeMemory = nullptr;
+    Instruction *directTapeInitInsert = nullptr;
     if (recursive && !omp) {
       auto i64 = Type::getInt64Ty(NewF->getContext());
       auto size =
@@ -2961,9 +2962,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (EnzymeZeroCache) {
         ZeroMemory(ib, tapeType, tapeMemory,
                    /*isTape*/ true);
+      } else {
+        directTapeInitInsert = cast<Instruction>(tapeMemory);
       }
     }
 
+    std::unique_ptr<DominatorTree> NewDT;
+    if (directTapeInitInsert)
+      NewDT = std::make_unique<DominatorTree>(*NewF);
     unsigned i = 0;
     for (auto v : gutils->getTapeValues()) {
       if (!isa<UndefValue>(v)) {
@@ -2972,6 +2978,33 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                        << " ]= " << *VMap[v] << "\n";
         }
         auto inst = cast<Instruction>(VMap[v]);
+        bool needsDefaultStore = false;
+        if (NewDT) {
+          for (ReturnInst *RI : Returns) {
+            if (!NewDT->dominates(inst, RI)) {
+              needsDefaultStore = true;
+              break;
+            }
+          }
+        }
+        // Direct returned tapes are loaded as aggregates, so fields whose
+        // producers do not dominate all exits need defined fallbacks.
+        if (needsDefaultStore) {
+          IRBuilder<> defaultBuilder(directTapeInitInsert->getNextNode());
+          Value *Idxs[] = {defaultBuilder.getInt32(0),
+                           defaultBuilder.getInt32(i)};
+          Value *gep = tapeMemory;
+          if (!removeTapeStruct) {
+            gep = defaultBuilder.CreateGEP(tapeType, tapeMemory, Idxs, "");
+            cast<GetElementPtrInst>(gep)->setIsInBounds(true);
+          }
+          auto defaultStore = defaultBuilder.CreateStore(
+              getUndefinedValueForType(*NewF->getParent(), v->getType(),
+                                       /*forceZero*/ true),
+              gep);
+          auto posts = PostCacheStore(defaultStore, defaultBuilder);
+          directTapeInitInsert = posts.empty() ? defaultStore : posts.back();
+        }
         IRBuilder<> ib(inst->getNextNode());
         if (isa<PHINode>(inst))
           ib.SetInsertPoint(inst->getParent()->getFirstNonPHI());
