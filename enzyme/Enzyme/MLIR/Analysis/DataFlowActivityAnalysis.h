@@ -299,9 +299,10 @@ public:
   DenseBackwardActivityAnalysis(DataFlowSolver &solver,
                                 SymbolTableCollection &symbolTable,
                                 FunctionOpInterface parentOp,
-                                ArrayRef<enzyme::Activity> argumentActivity)
+                                ArrayRef<enzyme::Activity> argumentActivity,
+                                ArrayRef<enzyme::Activity> returnActivity)
       : DenseBackwardDataFlowAnalysis(solver, symbolTable), parentOp(parentOp),
-        argumentActivity(argumentActivity) {}
+        argumentActivity(argumentActivity), returnActivity(returnActivity) {}
 
   LogicalResult visitOperation(Operation *op,
                                const BackwardMemoryActivity &after,
@@ -319,10 +320,12 @@ public:
 private:
   FunctionOpInterface parentOp;
   SmallVector<enzyme::Activity> argumentActivity;
+  SmallVector<enzyme::Activity> returnActivity;
 };
 
 void runDataFlowActivityAnalysis(FunctionOpInterface callee,
                                  ArrayRef<enzyme::Activity> argumentActivity,
+                                 ArrayRef<enzyme::Activity> returnActivity,
                                  bool print = false, bool verbose = false,
                                  bool annotate = false);
 

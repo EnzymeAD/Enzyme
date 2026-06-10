@@ -582,21 +582,28 @@ LogicalResult enzyme::DenseBackwardActivityAnalysis::visitOperation(
       propagateIfChanged(before, changed);
     }
 
+    assert(op->getNumOperands() == returnActivity.size() &&
+           "the number of returned arguments must match the number of return "
+           "activity entries");
+
     // Initialize the return activity of the operands
-    for (Value operand : op->getOperands()) {
-      if (isa<MemRefType, LLVM::LLVMPointerType>(operand.getType())) {
-        auto *retAliasClasses = getOrCreateFor<AliasClassLattice>(
-            getProgramPointBefore(op), operand);
-        ChangeResult changed =
-            retAliasClasses->getAliasClassesObject().foreachElement(
-                [before](DistinctAttr retAliasClass,
-                         enzyme::AliasClassSet::State state) {
-                  if (state == enzyme::AliasClassSet::State::Undefined)
-                    return ChangeResult::NoChange;
-                  return before->setActiveOut(retAliasClass);
-                });
-        propagateIfChanged(before, changed);
-      }
+    for (const auto &[operand, operandActivity] :
+         llvm::zip(op->getOperands(), returnActivity)) {
+      if (operandActivity != enzyme::Activity::enzyme_dup &&
+          operandActivity != enzyme::Activity::enzyme_dupnoneed)
+        continue;
+
+      auto *retAliasClasses =
+          getOrCreateFor<AliasClassLattice>(getProgramPointBefore(op), operand);
+      ChangeResult changed =
+          retAliasClasses->getAliasClassesObject().foreachElement(
+              [before](DistinctAttr retAliasClass,
+                       enzyme::AliasClassSet::State state) {
+                if (state == enzyme::AliasClassSet::State::Undefined)
+                  return ChangeResult::NoChange;
+                return before->setActiveOut(retAliasClass);
+              });
+      propagateIfChanged(before, changed);
     }
   }
 
@@ -906,7 +913,8 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
 
 void enzyme::runDataFlowActivityAnalysis(
     FunctionOpInterface callee, ArrayRef<enzyme::Activity> argumentActivity,
-    bool print, bool verbose, bool annotate) {
+    ArrayRef<enzyme::Activity> returnActivity, bool print, bool verbose,
+    bool annotate) {
   SymbolTableCollection symbolTable;
   DataFlowSolver solver;
 
@@ -917,7 +925,7 @@ void enzyme::runDataFlowActivityAnalysis(
                                             argumentActivity);
   solver.load<SparseBackwardActivityAnalysis>(symbolTable);
   solver.load<DenseBackwardActivityAnalysis>(symbolTable, callee,
-                                             argumentActivity);
+                                             argumentActivity, returnActivity);
 
   // Required for the dataflow framework to traverse region-based control flow
   solver.load<DeadCodeAnalysis>();
