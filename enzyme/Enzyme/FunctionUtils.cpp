@@ -292,7 +292,7 @@ void RecursivelyReplaceAddressSpace(
   SmallVector<StoreInst *, 1> toPostCache;
   // Since MTI may have both source and dest replaced, we keep a list of the ones being replaced
   // to the current dst, src so we can still follow usage chain.
-  DenseMap<MemTransferInst*, std::pair<Value*, Value*>> MTIReplacements
+  DenseMap<MemTransferInst*, std::pair<Value*, Value*>> MTIReplacements;
   while (Todo.size()) {
     auto cur = Todo.back();
     Todo.pop_back();
@@ -558,10 +558,10 @@ void RecursivelyReplaceAddressSpace(
         dstsrc.second = MTI->getArgOperand(1);
       }
       
-      if (nargs[0] == prev)
+      if (MTI->getArgOperand(0) == prev)
         dstsrc.first = rep;
 
-      if (nargs[1] == prev)
+      if (MTI->getArgOperand(1) == prev)
         dstsrc.second = rep;
       continue;
     }
@@ -621,9 +621,9 @@ void RecursivelyReplaceAddressSpace(
   for (auto MTIPair : MTIReplacements) {
     auto MTI = MTIPair.first;
     auto dst = MTIPair.second.first;
-    auto src = MTIPair.second.first;
+    auto src = MTIPair.second.second;
 
-    Value nargs[] = {
+    Value *nargs[] = {
       dst,
       src,
       MTI->getArgOperand(2),
@@ -632,6 +632,7 @@ void RecursivelyReplaceAddressSpace(
 
     Type *tys[] = {dst->getType(), src->getType(), nargs[2]->getType()};
 
+    IRBuilder<> B(MTI);
     auto nMTI = cast<CallInst>(B.CreateCall(
         getIntrinsicDeclaration(MTI->getParent()->getParent()->getParent(),
                                 MTI->getIntrinsicID(), tys),
