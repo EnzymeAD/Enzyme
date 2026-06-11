@@ -51,8 +51,35 @@ jobs:
           - llvm: 15
             ifx: 2023.0.0
             mpi: 2021.7.1
+          - llvm: 15
+            ifx: 2023.1.0
+            mpi: 2021.7.1
           - llvm: 17
             ifx: 2023.2.0
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2024.0.1
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2024.1.0
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2024.2.0
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2025.0.1
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2025.1.1
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2025.2.1
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2025.3.2
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2026.0.0
             mpi: 2021.7.1
     timeout-minutes: 60 
     steps:
