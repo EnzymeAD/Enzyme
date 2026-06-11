@@ -262,7 +262,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
             return true;
           }
       }
-      if (MTI->getArgOperand(2) != val)
+      // we also need the primal of all values if runtime activity is true
+      if (!gutils->runtimeActivity && MTI->getArgOperand(2) != val)
         return false;
       bool res = !gutils->isConstantValue(MTI->getArgOperand(0));
       if (res) {

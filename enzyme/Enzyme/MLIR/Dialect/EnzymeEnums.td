@@ -31,6 +31,10 @@ def Activity : I32EnumAttr<"Activity",
   let cppNamespace = "::mlir::enzyme";
 }
 
-def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
+def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">{
+  let extraClassDeclaration = [{
+    using ValueType = ::mlir::enzyme::Activity;
+  }];
+}
 
 #endif // ENZYME_ENUMS
