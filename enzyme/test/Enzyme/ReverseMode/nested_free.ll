@@ -39,7 +39,7 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NOT: free
 ; CHECK: ret void
 
-; CHECK: define internal { double } @diffeaugmented_inner(double %x, ptr %"ptr'mi")
+; CHECK: define internal { double } @diffeaugmented_inner(double %x, { ptr, ptr } %tapeArg)
 ; CHECK: call void @free
 ; CHECK: ret { double }
 
