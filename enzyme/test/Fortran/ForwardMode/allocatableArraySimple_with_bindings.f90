@@ -25,7 +25,7 @@ end module
 
 program app
     use AD, only: selectFirst
-    use enzyme, only: enzyme_const, enzyme_dup, f__enzyme_fwddiff
+    use enzyme, only: enzyme_const, enzyme_dup, enzyme_fwddiff
     implicit none
     integer :: n
     real, allocatable :: x(:), dx(:)
@@ -40,8 +40,8 @@ program app
     y = 0
     dy = 0
 
-    call f__enzyme_fwddiff(selectFirst, enzyme_const, n, &
-                           enzyme_dup, x, dx, enzyme_dup, y, dy)
+    call enzyme_fwddiff(selectFirst, enzyme_const, n, &
+                        enzyme_dup, x, dx, enzyme_dup, y, dy)
 
     print *, int(y)
     print *, int(dx(1))

@@ -32,7 +32,7 @@ program app
     print *, square(x)
 
     dx = 0
-    call square__enzyme_autodiff(square, x, dx);
+    call square__enzyme_autodiff(square, x, dx)
 
     print *, dx
 end program app
