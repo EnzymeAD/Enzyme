@@ -35,11 +35,11 @@ declare void @__enzyme_autodiff(...)
 ; CHECK:   call void @diffediffeinner
 ; CHECK:   call { double } @diffeaugmented_inner
 
-; CHECK: define internal void @diffediffeinner(ptr %tape, ptr %"tape'")
+; CHECK: define internal void @diffediffeinner({{ptr|i8\*}} %tape, {{ptr|i8\*}} %"tape'")
 ; CHECK-NOT: free
 ; CHECK: ret void
 
-; CHECK: define internal { double } @diffeaugmented_inner(double %x, { ptr, ptr } %tapeArg)
+; CHECK: define internal { double } @diffeaugmented_inner(double %x, { {{ptr|i8\*}}, {{ptr|i8\*}} } %tapeArg)
 ; CHECK: call void @free
 ; CHECK: ret { double }
 
