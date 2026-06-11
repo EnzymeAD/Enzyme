@@ -290,9 +290,10 @@ void RecursivelyReplaceAddressSpace(
     SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> &Todo,
     SmallVector<Instruction *, 1> &toErase, bool legal) {
   SmallVector<StoreInst *, 1> toPostCache;
-  // Since MTI may have both source and dest replaced, we keep a list of the ones being replaced
-  // to the current dst, src so we can still follow usage chain.
-  DenseMap<MemTransferInst*, std::pair<Value*, Value*>> MTIReplacements;
+  // Since MTI may have both source and dest replaced, we keep a list of the
+  // ones being replaced to the current dst, src so we can still follow usage
+  // chain.
+  DenseMap<MemTransferInst *, std::pair<Value *, Value *>> MTIReplacements;
   while (Todo.size()) {
     auto cur = Todo.back();
     Todo.pop_back();
@@ -550,14 +551,14 @@ void RecursivelyReplaceAddressSpace(
       continue;
     }
     if (auto MTI = dyn_cast<MemTransferInst>(inst)) {
-      auto& dstsrc = MTIReplacements[MTI];
+      auto &dstsrc = MTIReplacements[MTI];
       if (!dstsrc.first) {
         dstsrc.first = MTI->getArgOperand(0);
       }
       if (!dstsrc.second) {
         dstsrc.second = MTI->getArgOperand(1);
       }
-      
+
       if (MTI->getArgOperand(0) == prev)
         dstsrc.first = rep;
 
@@ -623,12 +624,7 @@ void RecursivelyReplaceAddressSpace(
     auto dst = MTIPair.second.first;
     auto src = MTIPair.second.second;
 
-    Value *nargs[] = {
-      dst,
-      src,
-      MTI->getArgOperand(2),
-      MTI->getArgOperand(3)
-    };
+    Value *nargs[] = {dst, src, MTI->getArgOperand(2), MTI->getArgOperand(3)};
 
     Type *tys[] = {dst->getType(), src->getType(), nargs[2]->getType()};
 
