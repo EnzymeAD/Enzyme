@@ -4217,11 +4217,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
       if (!hasGuaranteedFree) {
-        if (Mode == DerivativeMode::ReverseModePrimal ||
-            Mode == DerivativeMode::ReverseModeCombined) {
-          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-          return true;
-        }
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
       }
     }
 
@@ -4233,7 +4230,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
 
     // TODO HANDLE FREE
-    llvm::errs() << "freeing without malloc " << *val << "\n";
+    llvm::errs() << "freeing without malloc " << *val << " in " << call <<  "\n";
     eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
   }

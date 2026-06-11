@@ -210,7 +210,13 @@ void emit_free_and_ending(const TGPattern &pattern, raw_ostream &os) {
     if (isVecLikeArg(ty)) {
       auto name = nameVec[i];
       os << "      if (cache_" << name << ") {\n"
-         << "        CreateDealloc(Builder2, free_" << name << ");\n"
+         << "        {\n"
+         << "          CallInst *freecall = CreateDealloc(Builder2, free_" << name << ");\n"
+         << "          if (freecall) {\n"
+         << "            auto ident = MDNode::getDistinct(freecall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(freecall->getContext()))});\n"
+         << "            freecall->setMetadata(\"enzyme_cache_free\", MDNode::get(freecall->getContext(), {ident}));\n"
+         << "          }\n"
+         << "        }\n"
          << "      }\n";
     }
   }
@@ -1530,7 +1536,12 @@ void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
     return;
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
-  os << "    CreateDealloc(" << builder << ", true_" << allocName << ");\n";
+  os << "    {\n"
+     << "      CallInst *freecall = CreateDealloc(" << builder << ", true_" << allocName << ");\n"
+     << "      if (freecall && ident_" << allocName << ") {\n"
+     << "        freecall->setMetadata(\"enzyme_cache_free\", MDNode::get(freecall->getContext(), {ident_" << allocName << "}));\n"
+     << "      }\n"
+     << "    }\n";
 }
 
 void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
@@ -1601,13 +1612,14 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   }
   const auto matName = args[0];
   const auto allocName = "mat_" + matName;
-  if (action == "zerotriangular")
-    os << "    CallInst * malloccall = nullptr;\n";
+  os << "    CallInst * malloccall_" << allocName << " = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
-     << ", fpType, size_" << matName << ", \"" << allocName << "\"";
-  if (action == "zerotriangular")
-    os << ", &malloccall";
-  os << ");\n";
+     << ", fpType, size_" << matName << ", \"" << allocName << "\", &malloccall_" << allocName << ");\n";
+  os << "    MDNode *ident_" << allocName << " = nullptr;\n"
+     << "    if (malloccall_" << allocName << ") {\n"
+     << "      ident_" << allocName << " = MDNode::getDistinct(malloccall_" << allocName << "->getContext(), {ConstantAsMetadata::get(ConstantInt::getTrue(malloccall_" << allocName << "->getContext()))});\n"
+     << "      malloccall_" << allocName << "->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall_" << allocName << "->getContext(), {ident_" << allocName << "}));\n"
+     << "    }\n";
   if (action == "zerotriangular") {
     os << "    {\n";
     os << "    auto &M = *" << builder
@@ -1615,8 +1627,8 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
     os << "    auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(fpType) "
           "/ 8;\n";
     os << "    auto Align = ConstantInt::get(intType, AlignI);\n";
-    os << "    auto PT = cast<PointerType>(malloccall->getType());\n";
-    os << "    Value *tozero = malloccall;\n";
+    os << "    auto PT = cast<PointerType>(malloccall_" << allocName << "->getType());\n";
+    os << "    Value *tozero = malloccall_" << allocName << ";\n";
     os << "\n";
     os << "    bool needsCast = false;\n";
     os << "#if LLVM_VERSION_MAJOR < 17\n";
@@ -1635,10 +1647,10 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
     os << "                                   PT->getAddressSpace()));\n";
     os << "    Value *args[] = {\n";
     os << "        tozero, "
-          "ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),\n";
+          "ConstantInt::get(Type::getInt8Ty(malloccall_" << allocName << "->getContext()), 0),\n";
     os << "        " << builder << ".CreateMul(Align, size_" << args[0]
        << ", \"\", true, true),\n";
-    os << "        ConstantInt::getFalse(malloccall->getContext())};\n";
+    os << "        ConstantInt::getFalse(malloccall_" << allocName << "->getContext())};\n";
     os << "    Type *tys[] = {args[0]->getType(), args[2]->getType()};\n";
     os << "\n";
     os << "    " << builder << ".CreateCall(\n";

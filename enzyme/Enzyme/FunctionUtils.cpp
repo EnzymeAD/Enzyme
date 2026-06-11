@@ -3250,8 +3250,6 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
-        if (auto F2 = CI->getCalledFunction()) {
-          if (F2->getName() == "free") {
             if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
               Metadata *op = MD->getOperand(0);
               if (cast<ConstantInt>(
@@ -3261,8 +3259,6 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
                 frees[op].push_back(CI);
               }
             }
-          }
-        }
       }
     }
   }
