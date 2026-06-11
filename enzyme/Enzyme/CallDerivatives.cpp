@@ -4208,6 +4208,23 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    if (call.getMetadata("enzyme_tape_free")) {
+      bool hasGuaranteedFree = false;
+      for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+        if (pair.second.count(&call)) {
+          hasGuaranteedFree = true;
+          break;
+        }
+      }
+      if (!hasGuaranteedFree) {
+        if (Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return true;
+        }
+      }
+    }
+
     llvm::Value *val = getBaseObject(call.getArgOperand(0));
     if (isa<ConstantPointerNull>(val)) {
       llvm::errs() << "removing free of null pointer\n";

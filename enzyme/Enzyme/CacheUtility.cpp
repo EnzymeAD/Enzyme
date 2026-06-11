@@ -1019,6 +1019,18 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                                 MDNode::get(malloccall->getContext(), {ident}));
         freecall->setMetadata("enzyme_cache_free",
                               MDNode::get(freecall->getContext(), {ident}));
+
+        if (malloccall->getFunction() == freecall->getFunction()) {
+          malloccall->setMetadata("enzyme_tape_allocation",
+                                  MDNode::get(malloccall->getContext(), {ValueAsMetadata::get(freecall)}));
+          freecall->setMetadata("enzyme_tape_free",
+                                MDNode::get(freecall->getContext(), {ValueAsMetadata::get(malloccall)}));
+        } else {
+          malloccall->setMetadata("enzyme_tape_allocation",
+                                  MDNode::get(malloccall->getContext(), {}));
+          freecall->setMetadata("enzyme_tape_free",
+                                MDNode::get(freecall->getContext(), {}));
+        }
       }
     }
 

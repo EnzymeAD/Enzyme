@@ -9800,6 +9800,15 @@ void GradientUtils::computeGuaranteedFrees() {
           }
         }
       }
+      if (auto MD = CI->getMetadata("enzyme_tape_allocation")) {
+        if (MD->getNumOperands() > 0) {
+          if (auto VMD = dyn_cast<ValueAsMetadata>(MD->getOperand(0))) {
+            if (auto otherCI = dyn_cast<CallInst>(VMD->getValue())) {
+              allocationsWithGuaranteedFree[CI].insert(otherCI);
+            }
+          }
+        }
+      }
       if (isAllocationFunction(funcName, TLI)) {
         allocsToPromote.insert(CI);
         if (hasMetadata(CI, "enzyme_fromstack")) {
