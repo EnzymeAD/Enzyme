@@ -4208,7 +4208,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    if (call.getMetadata("enzyme_tape_free")) {
+    if (call.getMetadata("enzyme_cache_free")) {
       bool hasGuaranteedFree = false;
       for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
         if (pair.second.count(&call)) {

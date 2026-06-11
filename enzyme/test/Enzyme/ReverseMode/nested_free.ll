@@ -6,13 +6,13 @@ declare void @free(i8*)
 
 define i8* @augmented_inner(double %x) {
 entry:
-  %ptr = call i8* @malloc(i64 8), !enzyme_tape_allocation !0
+  %ptr = call i8* @malloc(i64 8), !enzyme_cache_alloc !0
   ret i8* %ptr
 }
 
 define void @diffeinner(i8* %tape) {
 entry:
-  call void @free(i8* %tape), !enzyme_tape_free !0
+  call void @free(i8* %tape), !enzyme_cache_free !0
   ret void
 }
 
@@ -39,8 +39,9 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NOT: free
 ; CHECK: ret void
 
-; CHECK: define internal { double } @diffeaugmented_inner(double %x, { ptr, ptr } %tapeArg)
+; CHECK: define internal { double } @diffeaugmented_inner(double %x, ptr %"ptr'mi")
 ; CHECK: call void @free
 ; CHECK: ret { double }
 
-!0 = !{}
+!0 = !{!1}
+!1 = distinct !{i1 false}
