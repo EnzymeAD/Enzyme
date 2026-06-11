@@ -9769,12 +9769,12 @@ int GradientUtils::getIndex(
 void GradientUtils::computeGuaranteedFrees() {
   SmallPtrSet<CallInst *, 2> allocsToPromote;
 
-
   DenseMap<Metadata *, SmallVector<CallInst *>> cache_frees;
   for (auto &BB : *oldFunc) {
     for (auto &I : BB) {
       auto CI = dyn_cast<CallInst>(&I);
-      if (!CI) continue;
+      if (!CI)
+        continue;
       if (auto MD = CI->getMetadata("enzyme_cache_free")) {
         if (MD->getNumOperands() > 0) {
           Metadata *id = MD->getOperand(0);
@@ -9783,7 +9783,6 @@ void GradientUtils::computeGuaranteedFrees() {
       }
     }
   }
-
 
   for (auto &BB : *oldFunc) {
     if (notForAnalysis.count(&BB))
@@ -9820,7 +9819,10 @@ void GradientUtils::computeGuaranteedFrees() {
       if (auto MD = CI->getMetadata("enzyme_cache_alloc")) {
         if (MD->getNumOperands() > 0) {
           Metadata *id = MD->getOperand(0);
-          if (cast<ConstantInt>(cast<ConstantAsMetadata>(cast<MDNode>(id)->getOperand(0))->getValue())->isOne() ) {
+          if (cast<ConstantInt>(
+                  cast<ConstantAsMetadata>(cast<MDNode>(id)->getOperand(0))
+                      ->getValue())
+                  ->isOne()) {
             for (auto otherCI : cache_frees[id]) {
               allocationsWithGuaranteedFree[CI].insert(otherCI);
             }
