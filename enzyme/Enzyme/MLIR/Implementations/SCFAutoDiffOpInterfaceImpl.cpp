@@ -102,8 +102,18 @@ public:
     if (!map.contains(canIdx)) {
       assert(Equivalent(forOp.getLowerBound(), otherForOp.getLowerBound()));
       assert(Equivalent(forOp.getStep(), otherForOp.getStep()));
-      map.map(forOp.getBody()->getArgument(0),
-              otherForOp.getBody()->getArgument(0));
+
+      Location loc = forOp.getLoc();
+      // The reverse IV can be computed as (lb + ub - 1 - iv)
+      Value revIV =
+          arith::AddIOp::create(rewriter, loc, otherForOp.getLowerBound(),
+                                otherForOp.getUpperBound());
+      Value c1 = arith::ConstantOp::create(
+          rewriter, loc, IntegerAttr::get(revIV.getType(), 1));
+      revIV = arith::SubIOp::create(rewriter, loc, revIV, c1);
+      revIV = arith::SubIOp::create(rewriter, loc, revIV,
+                                    otherForOp.getBody()->getArgument(0));
+      map.map(forOp.getBody()->getArgument(0), revIV);
     }
     return map;
   }
@@ -167,11 +177,13 @@ public:
     // variable).
 
     auto forOp = cast<scf::ForOp>(op);
+    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
 
     SmallVector<bool> operandsActive(forOp.getNumOperands() - 3, false);
     for (int i = 0, e = operandsActive.size(); i < e; ++i) {
       operandsActive[i] = !gutils->isConstantValue(op->getOperand(i + 3)) ||
-                          !gutils->isConstantValue(op->getResult(i));
+                          !gutils->isConstantValue(op->getResult(i)) ||
+                          !gutils->isConstantValue(yieldOp.getOperand(i));
     }
 
     SmallVector<Value> incomingGradients;
@@ -412,14 +424,23 @@ public:
 
         auto term = oBB.getTerminator();
 
+        for (auto &&[active, operand] :
+             llvm::zip_equal(operandsActive, term->getOperands())) {
+          if (active) {
+            // Zero the diffe at the start of each iteration because it should
+            // not accumulate across iterations. The new gradient is passed as
+            // an iter_arg in the reverse for.
+            gutils->zeroDiffe(operand, bodyBuilder);
+          }
+        }
+
         unsigned argIdx = 1; // Skip over the reversed IV
         for (auto &&[active, operand] :
              llvm::zip_equal(operandsActive, term->getOperands())) {
           if (active) {
-            // Set diffe here, not add because it should not accumulate across
-            // iterations. Instead the new gradient for this operand is passed
-            // in the return of the reverse for body.
-            gutils->setDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
+            // If the same value is yielded multiple times in the original, the
+            // gradients must be accumulated.
+            gutils->addToDiffe(operand, revBB.getArgument(argIdx), bodyBuilder);
             argIdx++;
           }
         }
@@ -885,7 +906,10 @@ struct IfOpInterfaceReverse
 
     SmallVector<bool> resultsActive(ifOp.getNumResults(), false);
     for (int i = 0, e = resultsActive.size(); i < e; ++i) {
-      resultsActive[i] = !gutils->isConstantValue(ifOp.getResult(i));
+      auto result = ifOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      resultsActive[i] = needsGrad && !gutils->isConstantValue(result);
     }
 
     SmallVector<Value> incomingGradients;
@@ -969,7 +993,71 @@ struct IfOpInterfaceReverse
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) const {}
+                          MGradientUtilsReverse *gutils) const {
+    // TODO: consider making this generic for RegionBranchOpInterface
+    auto ifOp = cast<scf::IfOp>(op);
+    if (ifOp.getNumResults() == 0)
+      return;
+
+    auto newIf = cast<scf::IfOp>(gutils->getNewFromOriginal(ifOp));
+    SmallVector<Type> newResultTypes;
+    SmallVector<bool> needsShadow(op->getNumResults());
+    for (auto result : op->getResults()) {
+      newResultTypes.push_back(result.getType());
+      auto iface = dyn_cast<AutoDiffTypeInterface>(result.getType());
+      if (iface && iface.isMutable() && !gutils->isConstantValue(result)) {
+        newResultTypes.push_back(result.getType());
+        needsShadow[result.getResultNumber()] = true;
+      } else {
+        needsShadow[result.getResultNumber()] = false;
+      }
+    }
+
+    // Replace the new op with an augmented op
+    auto augmentedOp =
+        scf::IfOp::create(builder, op->getLoc(), newResultTypes,
+                          gutils->getNewFromOriginal(ifOp.getCondition()),
+                          /*withElseRegion=*/true);
+
+    for (auto &&[oldReg, newReg, augReg] :
+         llvm::zip(op->getRegions(), newIf->getRegions(),
+                   augmentedOp->getRegions())) {
+      augReg.takeBody(newReg);
+      for (auto &&[oldBlk, augBlk] : llvm::zip(oldReg, augReg)) {
+        Operation *oldYield = oldBlk.getTerminator();
+        Operation *augYield = augBlk.getTerminator();
+
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(augYield);
+        SmallVector<Value> newOperands;
+        for (auto &&[oldOperand, augOperand] :
+             llvm::zip(oldYield->getOpOperands(), augYield->getOpOperands())) {
+          newOperands.push_back(augOperand.get());
+          if (needsShadow[oldOperand.getOperandNumber()]) {
+            newOperands.push_back(
+                gutils->invertPointerM(oldOperand.get(), builder));
+          }
+        }
+
+        scf::YieldOp::create(builder, oldYield->getLoc(), newOperands);
+        augYield->erase();
+      }
+    }
+
+    // Determine which returns correspond to the primal
+    SmallVector<Value> augmentedResults;
+    unsigned resIdx = 0;
+    for (auto res : ifOp.getResults()) {
+      augmentedResults.push_back(augmentedOp.getResult(resIdx));
+      resIdx++;
+      if (needsShadow[res.getResultNumber()]) {
+        gutils->setInvertedPointer(res, augmentedOp.getResult(resIdx));
+        resIdx++;
+      }
+    }
+    newIf.replaceAllUsesWith(augmentedResults);
+    newIf.erase();
+  }
 };
 
 struct ForOpADDataFlow

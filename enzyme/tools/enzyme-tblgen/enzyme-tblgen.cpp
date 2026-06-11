@@ -895,7 +895,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                             resultTree->getAsString());
       os << ", " << builder;
       if (intrinsic != MLIRDerivatives)
-        os << ", /*nullShadow*/true";
+        os << ", TR.query(&" << origName << ")";
       os << ")";
       if (lookup)
         os << ", " << builder << ")";

@@ -79,11 +79,11 @@ entry:
 ; CHECK-NEXT:   call void @dspmv_64_(i8* %uplo, i8* %n_p, i8* %alpha, i8* %AP, i8* %X, i8* %incx_p, i8* %beta, i8* %Y, i8* %incy_p, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"AP'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %AP to double*
-; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope ![[scope:[0-9]+]], !noalias ![[noalias:[0-9]+]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope ![[noalias]], !noalias ![[scope]]
 ; CHECK-NEXT:   %[[i10:.+]] = bitcast double* %cache.ap to i8*
 ; CHECK-NEXT:   %[[i11:.+]] = bitcast double* %cache.y to i8*
 ; CHECK-NEXT:   %[[i12:.+]] = bitcast double* %cache.y to i8*

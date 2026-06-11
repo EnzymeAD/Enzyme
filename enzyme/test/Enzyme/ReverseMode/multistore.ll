@@ -26,7 +26,7 @@ entry:
 ; CHECK-NEXT:   %"ins2'de" = alloca { double, i32 }
 ; CHECK-NEXT:   store { double, i32 } zeroinitializer, { double, i32 }* %"ins2'de"
 ; CHECK-NEXT:   %[[i1:.+]] = alloca { double, i32 }
-; CHECK-NEXT:   %"ins'ipiv" = insertvalue { double, i32 } undef, i32 %z, 1
+; CHECK-NEXT:   %"ins'ipiv" = insertvalue { double, i32 } zeroinitializer, i32 %z, 1
 ; CHECK-NEXT:   %ins = insertvalue { double, i32 } undef, i32 %z, 1
 ; CHECK-NEXT:   %"ins2'ipiv" = insertvalue { double, i32 } %"ins'ipiv", double 0.000000e+00, 0
 ; CHECK-NEXT:   %ins2 = insertvalue { double, i32 } %ins, double %x, 0

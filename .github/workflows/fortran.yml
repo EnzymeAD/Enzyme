@@ -37,17 +37,20 @@ concurrency:
     
 jobs:
   build-and-test-fortran:
-    name: Fortran ${{matrix.build}} ${{matrix.os}}
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ifx ${{matrix.ifx}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
       matrix:
         build: ["Release", "Debug"]
         os: [ubuntu-22.04]
-        llvm: [15]
+        llvm: [15, 17]
         include:
           - llvm: 15
             ifx: 2023.0.0
+            mpi: 2021.7.1
+          - llvm: 17
+            ifx: 2023.2.0
             mpi: 2021.7.1
     timeout-minutes: 60 
     steps:
