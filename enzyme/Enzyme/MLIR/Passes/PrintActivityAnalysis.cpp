@@ -145,6 +145,7 @@ struct PrintActivityAnalysisPass
       enzyme::runActivityAnnotations(callee, argActivities, config);
     } else if (config.dataflow) {
       enzyme::runDataFlowActivityAnalysis(callee, argActivities,
+                                          resultActivities,
                                           /*print=*/true, verbose, annotate);
     } else {
 

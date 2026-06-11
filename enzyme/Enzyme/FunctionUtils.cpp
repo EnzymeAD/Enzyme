@@ -1805,6 +1805,11 @@ bool DetectPointerArgOfFn(llvm::Function &F,
         if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
           arg.removeAttr(Attribute::WriteOnly);
         }
+#if LLVM_VERSION_MAJOR >= 18
+        if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::Writable)) {
+          arg.removeAttr(Attribute::Writable);
+        }
+#endif
         arg.addAttr(Attribute::ReadNone);
         changed = true;
       }
@@ -1813,6 +1818,11 @@ bool DetectPointerArgOfFn(llvm::Function &F,
         arg.addAttr(Attribute::ReadOnly);
         changed = true;
       }
+#if LLVM_VERSION_MAJOR >= 18
+      if (Attrs.hasParamAttr(arg.getArgNo(), Attribute::Writable)) {
+        arg.removeAttr(Attribute::Writable);
+      }
+#endif
     } else if (!read) {
       if (!Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
         arg.addAttr(Attribute::WriteOnly);

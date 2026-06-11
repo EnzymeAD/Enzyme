@@ -501,7 +501,6 @@ public:
   bool isConstantInstruction(const llvm::Instruction *inst) const;
 
   bool getContext(llvm::BasicBlock *BB, LoopContext &lc);
-
   void forceAugmentedReturns();
 
 private:
@@ -534,8 +533,9 @@ public:
                        bool tryLegalRecomputeCheck = true,
                        llvm::BasicBlock *scope = nullptr) override;
 
+  llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM);
   llvm::Value *invertPointerM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
-                              bool nullShadow = false);
+                              TypeTree look);
 
   static llvm::Constant *GetOrCreateShadowConstant(
       RequestContext context, EnzymeLogic &Logic, llvm::TargetLibraryInfo &TLI,
@@ -682,7 +682,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,
                        llvm::Type *secretty, llvm::Intrinsic::ID intrinsic,
                        unsigned dstalign, unsigned srcalign, unsigned offset,
                        bool dstConstant, llvm::Value *shadow_dst,
-                       bool srcConstant, llvm::Value *shadow_src,
+                       llvm::Value *primal_dst, bool srcConstant,
+                       llvm::Value *shadow_src, llvm::Value *primal_src,
                        llvm::Value *length, llvm::Value *isVolatile,
                        llvm::CallInst *MTI, bool allowForward = true,
                        bool shadowsLookedUp = false,

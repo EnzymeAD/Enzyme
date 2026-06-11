@@ -332,7 +332,7 @@ public:
     IRBuilder<> Builder2(&I);
     getForwardBuilder(Builder2);
 
-    auto toset = gutils->invertPointerM(&I, Builder2, /*nullShadow*/ true);
+    auto toset = gutils->invertPointerM(&I, Builder2);
 
     assert(toset != placeholder);
 
@@ -789,7 +789,8 @@ public:
                 : gutils->invertPointerM(I.getPointerOperand(), BuilderZ),
             gutils->isConstantValue(I.getValOperand())
                 ? nullptr
-                : gutils->invertPointerM(I.getValOperand(), BuilderZ));
+                : gutils->invertPointerM(I.getValOperand(), BuilderZ,
+                                         TR.query(&I)));
         if (!gutils->isConstantValue(&I))
           setDiffe(&I, diff, BuilderZ);
         return;
@@ -1039,16 +1040,7 @@ public:
 
       // TODO type analyze
       if (!diff) {
-        if (!constantval)
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
-        else if (orig_val->getType()->isPointerTy() ||
-                 dt == BaseType::Pointer || dt == BaseType::Integer)
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ false);
-        else
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+        diff = gutils->invertPointerM(orig_val, BuilderZ, vd);
       }
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, prevalign, 0, storeSize,
@@ -1228,8 +1220,7 @@ public:
 
           Value *diff = constantval
                             ? Constant::getNullValue(diffeTy)
-                            : gutils->invertPointerM(orig_val, BuilderZ,
-                                                     /*nullShadow*/ true);
+                            : gutils->invertPointerM(orig_val, BuilderZ, vd);
           gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, start, size,
                               isVolatile, ordering, syncScope, mask,
                               prevNoAlias, prevScopes);
@@ -1311,7 +1302,7 @@ public:
               }
             }
           } else {
-            valueop = gutils->invertPointerM(orig_val, BuilderZ);
+            valueop = gutils->invertPointerM(orig_val, BuilderZ, vd);
           }
           gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
                               size, isVolatile, ordering, syncScope, mask,
@@ -2441,9 +2432,8 @@ public:
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2471,9 +2461,8 @@ public:
     }
     case Instruction::Xor: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If ^ against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2509,9 +2498,8 @@ public:
     }
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2538,14 +2526,14 @@ public:
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy()
+                ((eFT->isFloatTy()
 #if LLVM_VERSION_MAJOR > 16
                   && (AP & ~0b01111111100000000000000000000000ULL).isZero()
 #else
                   && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
 #endif
                       ) ||
-                 (FT->isDoubleTy()
+                 (eFT->isDoubleTy()
 #if LLVM_VERSION_MAJOR > 16
                   &&
                   (AP &
@@ -2574,10 +2562,10 @@ public:
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
                 uint64_t num = 0;
-                if (FT->isFloatTy()) {
+                if (eFT->isFloatTy()) {
                   num = 127ULL << 23;
                 } else {
-                  assert(FT->isDoubleTy());
+                  assert(eFT->isDoubleTy());
                   num = 1023ULL << 52;
                 }
                 prev = Builder2.CreateAdd(
@@ -2677,10 +2665,9 @@ public:
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
       Type *diffTy = gutils->getShadowType(BO.getType());
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2706,9 +2693,8 @@ public:
     }
     case Instruction::Xor: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
@@ -2744,12 +2730,11 @@ public:
     }
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2761,6 +2746,7 @@ public:
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2775,14 +2761,14 @@ public:
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy()
+                ((eFT->isFloatTy()
 #if LLVM_VERSION_MAJOR > 16
                   && (AP & ~0b01111111100000000000000000000000ULL).isZero()
 #else
                   && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
 #endif
                       ) ||
-                 (FT->isDoubleTy()
+                 (eFT->isDoubleTy()
 #if LLVM_VERSION_MAJOR > 16
                   &&
                   (AP &
@@ -2804,10 +2790,10 @@ public:
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
                 uint64_t num = 0;
-                if (FT->isFloatTy()) {
+                if (eFT->isFloatTy()) {
                   num = 127ULL << 23;
                 } else {
-                  assert(FT->isDoubleTy());
+                  assert(eFT->isDoubleTy());
                   num = 1023ULL << 52;
                 }
                 prev = Builder2.CreateAdd(
@@ -3710,7 +3696,9 @@ public:
         SubTransferHelper(
             gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
             /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
+            gutils->getNewFromOriginal(orig_dst),
             gutils->isConstantValue(orig_src), shadow_src,
+            gutils->getNewFromOriginal(orig_src),
             /*length*/ length, /*volatile*/ isVolatile, &MTI,
             /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
             /*backwardsShadow*/ backwardsShadow);
