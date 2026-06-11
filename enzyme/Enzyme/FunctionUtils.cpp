@@ -3250,12 +3250,13 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
-        if (auto F2 = CI->getCalledFunction()) {
-          if (F2->getName() == "free") {
-            if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
-              Metadata *op = MD->getOperand(0);
-              frees[op].push_back(CI);
-            }
+        if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
+          Metadata *op = MD->getOperand(0);
+          if (cast<ConstantInt>(
+                  cast<ConstantAsMetadata>(cast<MDNode>(op)->getOperand(0))
+                      ->getValue())
+                  ->isOne()) {
+            frees[op].push_back(CI);
           }
         }
       }
@@ -3283,8 +3284,13 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
             if (!freeCall) {
               if (auto MD = hasMetadata(CI, "enzyme_cache_alloc")) {
                 Metadata *op = MD->getOperand(0);
-                if (frees[op].size() == 1)
-                  freeCall = frees[op][0];
+                if (cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                          cast<MDNode>(op)->getOperand(0))
+                                          ->getValue())
+                        ->isOne()) {
+                  if (frees[op].size() == 1)
+                    freeCall = frees[op][0];
+                }
               }
             }
             if (freeCall)

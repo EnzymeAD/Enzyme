@@ -123,7 +123,7 @@ entry:
 ; CHECK-NEXT:   call void @dgemm_64_(i8* %transa, i8* %transb, i8* %m_p, i8* %n_p, i8* %k_p, i8* %alpha, i8* %A, i8* %lda_p, i8* %B, i8* %ldb_p, i8* %beta, i8* %C, i8* %ldc_p, i64 1, i64 1)
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast i8* %"A'" to double*
 ; CHECK-NEXT:   %ptr = bitcast i8* %A to double*
-; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store double 0.000000e+00, double* %ptr, align 8, !alias.scope ![[scope:[0-9]+]], !noalias ![[noalias:[0-9]+]]
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
@@ -133,7 +133,7 @@ entry:
 
 
 ; CHECK: invertentry_active:  
-; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double 0.000000e+00, double* %"ptr'ipc", align 8, !alias.scope ![[noalias]], !noalias ![[scope]]
 ; CHECK-NEXT:   br label %invertentry_amerge
 
 ; CHECK: invertentry_amerge:

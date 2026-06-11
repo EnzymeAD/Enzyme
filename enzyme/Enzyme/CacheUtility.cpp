@@ -907,6 +907,16 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
             /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
 
+        if (malloccall) {
+          auto ident = MDNode::getDistinct(
+              malloccall->getContext(),
+              {ConstantAsMetadata::get(
+                  ConstantInt::getFalse(malloccall->getContext()))});
+          malloccall->setMetadata(
+              "enzyme_cache_alloc",
+              MDNode::get(malloccall->getContext(), {ident}));
+        }
+
         scopeInstructions[alloc].push_back(malloccall);
         if (firstallocation != malloccall)
           scopeInstructions[alloc].push_back(
@@ -1013,8 +1023,19 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           containedloops.back().first.preheader, sublimits, i, alloc, nextType,
           byteSizeOfType, storeInto,
           CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      if (freecall) {
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getFalse(
+                                    freecall->getContext()))});
+        freecall->setMetadata("enzyme_cache_free",
+                              MDNode::get(freecall->getContext(), {ident}));
+      }
       if (freecall && malloccall) {
-        auto ident = MDNode::getDistinct(malloccall->getContext(), {});
+        auto ident =
+            MDNode::getDistinct(freecall->getContext(),
+                                {ConstantAsMetadata::get(ConstantInt::getTrue(
+                                    freecall->getContext()))});
         malloccall->setMetadata("enzyme_cache_alloc",
                                 MDNode::get(malloccall->getContext(), {ident}));
         freecall->setMetadata("enzyme_cache_free",
