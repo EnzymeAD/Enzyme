@@ -21,7 +21,7 @@ program app
     print *, square(x)
 
     dx = 0
-    call enzyme_autodiff(square, x, dx);
+    call enzyme_autodiff(square, x, dx)
 
     print *, dx
 end program app
