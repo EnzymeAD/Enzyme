@@ -193,8 +193,10 @@ bool needsReRooting(llvm::Argument *arg, bool &anyJLStore,
       for (auto &U : sv->uses()) {
         // If we had a constant originally, it could have been used in another function.
         // We can/should ignore those uses.
-        if (U.getUser()->getParent()->getParent() != arg->getParent()) {
-          continue;
+        if (auto I = dyn_cast<Instruction>(U.getUser())) {
+          if (I->getParent()->getParent() != arg->getParent()) {
+            continue;
+          }
         }
 
         if (auto SI = dyn_cast<StoreInst>(U.getUser())) {
