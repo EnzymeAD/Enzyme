@@ -39,7 +39,6 @@ option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
 option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
-option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 option(ENZYME_APPLE_DYNAMIC_LOOKUP
   "On Apple, link Enzyme shared library with -flat_namespace/-undefined,dynamic_lookup instead of linking LLVM"
@@ -49,6 +48,7 @@ option(ENZYME_WARN_COMPILER "Warn if enzyme detects potentially incompatible com
 option(ENZYME_ENABLE_REACTANT "Build support library for Reactant C++ frontend" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+set(Fortran_COMPILER ${CMAKE_Fortran_COMPILER})
 list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
 
 set(LLVM_SHLIBEXT "${CMAKE_SHARED_MODULE_SUFFIX}")
@@ -298,11 +298,11 @@ add_subdirectory(Enzyme)
 if (ENZYME_BC_LOADER)
     add_subdirectory(BCLoad)
 endif()
-if (ENZYME_ENABLE_PLUGINS)
-    add_subdirectory(test)
-endif()
 if (ENZYME_FORTRAN)
     add_subdirectory(Fortran)
+endif()
+if (ENZYME_ENABLE_PLUGINS)
+    add_subdirectory(test)
 endif()
 
 # The benchmarks data are not in git-exported source archives to minimize size.
