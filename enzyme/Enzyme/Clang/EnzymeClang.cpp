@@ -512,14 +512,15 @@ struct EnzymeInactiveNoblockAttrInfo : public ParsedAttrInfo {
     // GNU-style __attribute__(("example")) and C++/C2x-style [[example]] and
     // [[plugin::example]] supported.
     static constexpr Spelling S[] = {
-        {ParsedAttr::AS_GNU, "enzyme_inactive_noblock"},
+      {ParsedAttr::AS_GNU, "enzyme_inactive_noblock"},
 #if LLVM_VERSION_MAJOR > 17
-        {ParsedAttr::AS_C23, "enzyme_inactive_noblock"},
+      {ParsedAttr::AS_C23, "enzyme_inactive_noblock"},
 #else
-        {ParsedAttr::AS_C2x, "enzyme_inactive_noblock"},
+      {ParsedAttr::AS_C2x, "enzyme_inactive_noblock"},
 #endif
-        {ParsedAttr::AS_CXX11, "enzyme_inactive_noblock"},
-        {ParsedAttr::AS_CXX11, "enzyme::inactive_noblock"}};
+      {ParsedAttr::AS_CXX11, "enzyme_inactive_noblock"},
+      {ParsedAttr::AS_CXX11, "enzyme::inactive_noblock"}
+    };
     Spellings = S;
   }
 
