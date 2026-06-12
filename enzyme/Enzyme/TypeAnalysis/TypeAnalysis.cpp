@@ -4620,6 +4620,83 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // Julia's atomic modify pseudo-intrinsic (introduced in Julia 1.13):
+    //   {old, new} = julia.atomicmodify.iN.pAS(ptr, op, ordering, syncscope,
+    //                                          args...)
+    // which atomically performs old = *ptr; new = op(old, args...);
+    // *ptr = new. Both result elements have the type of the pointee of ptr,
+    // and op is analyzed interprocedurally to relate the forwarded arguments
+    // with the modified memory.
+    if (startsWith(funcName, "julia.atomicmodify.")) {
+      auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+      auto *RT = cast<StructType>(call.getType());
+      auto *SL = DL.getStructLayout(RT);
+      auto LoadSize =
+          (DL.getTypeSizeInBits(RT->getElementType(0)) + 7) / 8;
+      int Off[2] = {(int)SL->getElementOffset(0),
+                    (int)SL->getElementOffset(1)};
+
+      TypeTree Pointee = getAnalysis(call.getArgOperand(0))
+                             .Lookup(LoadSize, DL)
+                             .PurgeAnything();
+      TypeTree Ret = getAnalysis(&call);
+      for (int i = 0; i < 2; i++)
+        Pointee |= Ret.ShiftIndices(DL, Off[i], LoadSize, 0).PurgeAnything();
+
+      Function *op = dyn_cast<Function>(call.getArgOperand(1));
+      if (op && !op->empty() && !op->isVarArg() &&
+          call.arg_size() - 3 == op->getFunctionType()->getNumParams() &&
+          (direction & UP)) {
+        FnTypeInfo typeInfo(op);
+        int argnum = 0;
+        for (auto &arg : op->args()) {
+          std::set<int64_t> bounded;
+          if (argnum == 0) {
+            typeInfo.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&arg, Pointee));
+          } else {
+            typeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(
+                &arg, getAnalysis(call.getArgOperand(argnum + 3))));
+            for (auto v : fntypeinfo.knownIntegralValues(
+                     call.getArgOperand(argnum + 3), DT, intseen, SE)) {
+              if (abs(v) > MaxIntOffset)
+                continue;
+              bounded.insert(v);
+            }
+          }
+          typeInfo.KnownValues.insert(
+              std::pair<Argument *, std::set<int64_t>>(&arg, bounded));
+          ++argnum;
+        }
+        TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+        // The new value stored to *ptr is op's return.
+        Pointee |= STR.getReturnAnalysis().PurgeAnything();
+        argnum = 0;
+        for (auto &arg : op->args()) {
+          if (argnum != 0)
+            updateAnalysis(call.getArgOperand(argnum + 3), STR.query(&arg),
+                           &call);
+          ++argnum;
+        }
+      }
+
+      if (direction & UP) {
+        TypeTree Ptr = Pointee.ShiftIndices(DL, /*start*/ 0, LoadSize,
+                                            /*addOffset*/ 0)
+                           .Only(-1, &call);
+        Ptr.insert({-1}, BaseType::Pointer);
+        updateAnalysis(call.getArgOperand(0), Ptr, &call);
+      }
+
+      if (direction & DOWN) {
+        TypeTree Result;
+        for (int i = 0; i < 2; i++)
+          Result |= Pointee.ShiftIndices(DL, 0, LoadSize, Off[i]);
+        updateAnalysis(&call, Result, &call);
+      }
+      return;
+    }
+
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \
     analyzeFuncTypes(::fn, call, *this);                                       \
