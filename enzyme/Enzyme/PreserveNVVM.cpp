@@ -542,7 +542,12 @@ bool preserveNVVM(bool Begin, Module &M) {
           auto MD = MDNode::get(F->getContext(), {});
           for (auto &BB : *F) {
             for (auto &I : BB) {
-              I.setMetadata("enzyme_inactive", MD);
+              if (auto CB = dyn_cast<CallBase>(&I)) {
+                CB->addFnAttr(
+                    llvm::Attribute::get(F->getContext(), "enzyme_inactive"));
+              } else {
+                I.setMetadata("enzyme_inactive", MD);
+              }
             }
           }
           toErase.push_back(&g);
