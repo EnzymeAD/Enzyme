@@ -53,7 +53,7 @@ jobs:
           - ifx: "2023.0.0"
             llvm: 15
           - ifx: "2023.1.0"
-            llvm: 15
+            llvm: 16
     timeout-minutes: 60 
     steps:
     - name: add llvm
