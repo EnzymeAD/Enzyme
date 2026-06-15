@@ -30,12 +30,12 @@ program app
   dy(:) = 1.0
 
   call norm(n, x, y)
-  print *, y(n)
+  write(*,"(es0.0)") y(n)
 
   dx(:) = 0.0
   call enzyme_autodiff(norm, enzyme_const, n, &
                        enzyme_dup, x, dx, enzyme_dup, y, dy)
-  print *, dy(n)
+  write(*,"(es0.0)") dy(n)
 end program app
 
 ! CHECK: 1.E-06
