@@ -9,7 +9,7 @@
 
 module math
   interface
-    subroutine norm__enzyme_autodiff(fn, x_desc, x, dx, y_desc, y, dy)
+    subroutine norm__enzyme_autodiff(sr, x_desc, x, dx, y_desc, y, dy)
       interface
         subroutine sr_decal(a, b)
           real, dimension(:), intent(in) :: a
