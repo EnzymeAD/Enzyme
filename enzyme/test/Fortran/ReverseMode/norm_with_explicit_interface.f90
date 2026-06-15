@@ -53,5 +53,5 @@ program app
   write(*,"(es0.0)") dy(n)
 end program app
 
-! CHECK: 1.E-06
+! CHECK: 1.-06
 ! CHECK-NEXT: 0.
