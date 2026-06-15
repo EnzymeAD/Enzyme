@@ -40,18 +40,21 @@ program app
   integer, parameter :: n = 1000000
   integer, parameter :: initial_value = 20
   real :: x(n), dx(n)
-  real :: y(n), dy(n)
+  real :: y(n), dy(n), yp
 
   x(:) = initial_value
   dy(:) = 1.0
 
   call norm(x, y)
-  write(*,"(es0.0)") y(n)
+
+  ! Rescale the output to avoid compiler-specific output formatting
+  yp = y(n) * 1.0e+06
+  write(*,"(f6.4)") yp
 
   dx(:) = 0.0
   call norm__enzyme_autodiff(norm, enzyme_dup, x, dx, enzyme_dup, y, dy)
-  write(*,"(es0.0)") dy(n)
+  write(*,"(f6.4)") dy(n)
 end program app
 
-! CHECK: 1.-06
-! CHECK-NEXT: 0.
+! CHECK: 1.0000
+! CHECK-NEXT: 0.0000
