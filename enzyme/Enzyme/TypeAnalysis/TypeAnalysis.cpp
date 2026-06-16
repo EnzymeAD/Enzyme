@@ -1293,7 +1293,7 @@ void TypeAnalyzer::considerTBAA() {
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
             auto argTy = call->getArgOperand(i)->getType();
-            auto RegSize = (DL.getTypeSizeInBits(argTy->getType()) + 7) / 8;
+            auto RegSize = (DL.getTypeSizeInBits(argTy) + 7) / 8;
             for (const auto &pair : TT.getMapping()) {
               if (pair.first[0] != -1) {
                 if ((size_t)pair.first[0] >= RegSize) {
