@@ -1000,7 +1000,8 @@ static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
       g2->accumulateConstantOffset(DL, ai);
       delete g2;
       for (size_t i = 0; i < AT->getNumElements(); i++) {
-        todo.emplace_back(AT->getElementType(), offset + ai.getLimitedValue());
+        todo.emplace_back(AT->getElementType(),
+                          offset + i * ai.getLimitedValue());
       }
 
       continue;
