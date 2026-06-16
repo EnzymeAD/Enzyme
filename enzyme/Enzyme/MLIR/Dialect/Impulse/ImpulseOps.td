@@ -240,6 +240,7 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
   let arguments = (ins
     OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
+    Variadic<AnyRankedTensor>:$adaptation_state_in,
     Optional<AnyRankedTensor>:$original_trace,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$all_addresses,
@@ -247,6 +248,8 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     DefaultValuedAttr<I64Attr, "0">:$num_warmup,
     DefaultValuedAttr<I64Attr, "1">:$num_samples,
     DefaultValuedAttr<I64Attr, "1">:$thinning,
+
+    OptionalAttr<I64Attr>:$total_warmup,
 
     // Algorithm-specific MCMC parameters
     Optional<AnyRankedTensor>:$inverse_mass_matrix,
@@ -263,6 +266,8 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     Optional<AnyRankedTensor>:$initial_gradient,
     Optional<AnyRankedTensor>:$initial_potential_energy,
 
+    Optional<AnyRankedTensor>:$warmup_offset,
+
     OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
@@ -275,7 +280,9 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     AnyRankedTensor:$final_gradient,
     AnyRankedTensor:$final_potential_energy,
     AnyRankedTensor:$final_step_size,
-    AnyRankedTensor:$final_inverse_mass_matrix
+    AnyRankedTensor:$final_inverse_mass_matrix,
+
+    Variadic<AnyRankedTensor>:$adaptation_state_out
   );
 
   let assemblyFormat = [{
@@ -288,6 +295,8 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     (`initial_position` `=` $initial_position^)?
     (`initial_gradient` `=` $initial_gradient^)?
     (`initial_potential_energy` `=` $initial_potential_energy^)?
+    (`warmup_offset` `=` $warmup_offset^)?
+    (`adaptation_state_in` `=` $adaptation_state_in^)?
     attr-dict `:` functional-type(operands, results)
   }];
 
