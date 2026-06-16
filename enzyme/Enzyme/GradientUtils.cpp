@@ -5993,9 +5993,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     TypeTree agg_look = TR.query(arg->getAggregateOperand());
     if (TT.isKnown()) {
       agg_look = agg_look.Clear(Off, Off + ObjSize, AggSize);
-      agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
-      agg_look.CanonicalizeInPlace(AggSize, DL);
     }
+    agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
+    agg_look.CanonicalizeInPlace(AggSize, DL);
 
     auto ip = invertPointerM(arg->getOperand(0), bb, agg_look);
 
