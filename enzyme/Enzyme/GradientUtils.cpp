@@ -6006,7 +6006,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         if (isConstantValue(op)) {
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
+            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op) &&
+                !isa<ConstantAggregateZero>(op)) {
               std::string str;
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
@@ -6121,7 +6122,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto tval = arg->getTrueValue();
       if (!runtimeActivity && TT.anyPointer(tval, DL) &&
           !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-          isConstantValue(tval)) {
+          !isa<ConstantAggregateZero>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -6141,7 +6142,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto fval = arg->getFalseValue();
       if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
           !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-          isConstantValue(fval)) {
+          !isa<ConstantAggregateZero>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
