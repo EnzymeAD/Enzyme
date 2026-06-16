@@ -1292,9 +1292,8 @@ void TypeAnalyzer::considerTBAA() {
             auto attr = call->getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), call->getContext());
-            auto RegSize = I.getType()->isVoidTy()
-                               ? 0
-                               : (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
+            auto argTy = call->getArgOperand(i)->getType();
+            auto RegSize = (DL.getTypeSizeInBits(argTy->getType()) + 7) / 8;
             for (const auto &pair : TT.getMapping()) {
               if (pair.first[0] != -1) {
                 if ((size_t)pair.first[0] >= RegSize) {
