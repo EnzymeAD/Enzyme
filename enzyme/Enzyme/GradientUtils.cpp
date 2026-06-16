@@ -5342,7 +5342,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
-      isa<ConstantInt>(oval)) {
+      isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval)) {
     if (TT.anyFloat(oval, DL))
       return Constant::getNullValue(getShadowType(oval->getType()));
     else
