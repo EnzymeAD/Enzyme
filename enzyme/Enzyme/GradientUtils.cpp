@@ -5343,11 +5343,50 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
       isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval)) {
-    if (TT.anyFloat(oval, DL))
+    if (TT.allFloat(oval, DL))
       return Constant::getNullValue(getShadowType(oval->getType()));
-    else
+    else if (!TT.anyFloat(oval, DL))
       return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-  } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
+  }
+  if (auto CA = dyn_cast<ConstantAggregateZero>(oval)) {
+    auto len = CA->getElementCount().getKnownMinValue();
+    if (auto StructTy = dyn_cast<StructType>(CA->getType())) {
+      SmallVector<Constant *, 1> Vals;
+      const StructLayout *Layout = DL.getStructLayout(StructTy);
+      for (size_t i = 0; i < len; i++) {
+        auto el = CA->getStructElement(i);
+        auto Off = Layout->getElementOffset(i);
+        auto ObjSize = (DL.getTypeSizeInBits(el->getType()) + 7) / 8;
+        TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+        subTT.CanonicalizeInPlace(ObjSize, DL);
+        Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
+      }
+
+      auto rule = [&CA, StructTy](ArrayRef<Constant *> Vals) {
+        return ConstantStruct::get(StructTy, Vals);
+      };
+      return applyChainRule(CA->getType(), Vals, BuilderM, rule);
+    } else {
+      SmallVector<Constant *, 1> Vals;
+      auto el = CA->getSequentialElement();
+      auto ElTy = el->getType();
+      auto ObjSize = (DL.getTypeSizeInBits(ElTy) + 7) / 8;
+      for (size_t i = 0; i < len; i++) {
+        auto Off = i * ObjSize;
+        TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
+        subTT.CanonicalizeInPlace(ObjSize, DL);
+        Value *val = invertPointerM(el, BuilderM, subTT);
+        Vals.push_back(cast<Constant>(val));
+      }
+
+      auto rule = [&CA](ArrayRef<Constant *> Vals) {
+        return ConstantArray::get(cast<ArrayType>(CA->getType()), Vals);
+      };
+
+      return applyChainRule(CA->getType(), Vals, BuilderM, rule);
+    }
+  }
+  if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     auto ElTy = CD->getType()->getElementType();
     auto ObjSize = (DL.getTypeSizeInBits(ElTy) + 7) / 8;
