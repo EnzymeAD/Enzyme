@@ -2651,7 +2651,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             }
           }
           if (!invertri)
-            invertri = gutils->invertPointerM(orig_oldval, BuilderZ);
+            invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                              gutils->TR.getReturnAnalysis());
           invertedRetPs[newri] = invertri;
         }
       }
@@ -2890,7 +2891,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (nf->getAttributes().hasAttributeAtIndex(AttributeList::FunctionIndex,
                                                 attr)) {
       NewF->addFnAttr(
-          nf->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
+          nf->getAttributes().getAttributeAtIndex(AttributeList::FunctionIndex, attr));
     }
 
   for (auto attr :
@@ -2899,7 +2900,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                                 attr)) {
       NewF->addAttribute(
           AttributeList::ReturnIndex,
-          nf->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
+          nf->getAttributes().getAttributeAtIndex(AttributeList::ReturnIndex, attr));
     }
 
   SmallVector<ReturnInst *, 4> Returns;
@@ -4429,7 +4430,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (key.retType == DIFFE_TYPE::DUP_ARG ||
             key.retType == DIFFE_TYPE::DUP_NONEED) {
           if (dretAlloca) {
-            rb.CreateStore(gutils->invertPointerM(orig->getReturnValue(), rb),
+            rb.CreateStore(gutils->invertPointerM(orig->getReturnValue(), rb,
+                                                  gutils->TR.getReturnAnalysis()),
                            dretAlloca);
           }
         } else if (key.retType == DIFFE_TYPE::OUT_DIFF) {
