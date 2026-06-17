@@ -2891,7 +2891,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (nf->getAttributes().hasAttributeAtIndex(AttributeList::FunctionIndex,
                                                 attr)) {
       NewF->addFnAttr(
-          nf->getAttributes().getAttributeAtIndex(AttributeList::FunctionIndex, attr));
+          nf->getAttributes().getAttribute(AttributeList::FunctionIndex, attr));
     }
 
   for (auto attr :
@@ -2900,7 +2900,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                                 attr)) {
       NewF->addAttribute(
           AttributeList::ReturnIndex,
-          nf->getAttributes().getAttributeAtIndex(AttributeList::ReturnIndex, attr));
+          nf->getAttributes().getAttribute(AttributeList::ReturnIndex, attr));
     }
 
   SmallVector<ReturnInst *, 4> Returns;
