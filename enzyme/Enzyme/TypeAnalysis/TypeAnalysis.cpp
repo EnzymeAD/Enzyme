@@ -5880,6 +5880,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 }
 
 TypeTree TypeAnalyzer::getReturnAnalysis() {
+  if (fntypeinfo.Return.isKnown())
+    return fntypeinfo.Return;
   bool set = false;
   TypeTree vd;
   for (BasicBlock &BB : *fntypeinfo.Function) {
