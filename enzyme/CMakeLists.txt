@@ -46,6 +46,15 @@ option(ENZYME_APPLE_DYNAMIC_LOOKUP
 option(ENZYME_STATIC_LIB "Build static library" OFF)
 option(ENZYME_WARN_COMPILER "Warn if enzyme detects potentially incompatible compiler" ON)
 option(ENZYME_ENABLE_REACTANT "Build support library for Reactant C++ frontend" OFF)
+option(
+  ENZYME_DEFAULT_STRICT_ALIASING
+  "Default -enzyme-strict-aliasing to true"
+  ON
+)
+add_compile_definitions(
+  ENZYME_DEFAULT_STRICT_ALIASING=$<BOOL:${ENZYME_DEFAULT_STRICT_ALIASING}>
+)
+
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(Fortran_COMPILER ${CMAKE_Fortran_COMPILER})
