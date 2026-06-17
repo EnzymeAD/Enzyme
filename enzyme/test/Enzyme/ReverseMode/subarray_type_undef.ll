@@ -9,14 +9,14 @@ entry:
   ret %struct.SubArray %val
 }
 
-declare { i8*, %struct.SubArray } @__enzyme_augmentfwd(...)
+declare { i8*, %struct.SubArray, %struct.SubArray } @__enzyme_augmentfwd(...)
 
 define void @test(i8* %p, i8* %dp) {
 entry:
-  %res = call { i8*, %struct.SubArray } (...) @__enzyme_augmentfwd(%struct.SubArray (i8*)* @foo, metadata !"enzyme_dup", i8* %p, i8* %dp)
+  %res = call { i8*, %struct.SubArray, %struct.SubArray } (...) @__enzyme_augmentfwd(metadata !"enzyme_dup", %struct.SubArray (i8*)* @foo, metadata !"enzyme_dup", i8* %p, i8* %dp)
   ret void
 }
 
-; CHECK: define internal { {{(i8\*|ptr)}}, %struct.SubArray } @augmented_foo(i8* %p, i8* %"p'")
+; CHECK: define internal { {{(i8\*|ptr)}}, %struct.SubArray, %struct.SubArray } @augmented_foo(i8* %p, i8* %"p'")
 ; CHECK: entry:
 ; CHECK:   %"val'ipiv" = insertvalue %struct.SubArray { {{(i8\*|ptr)}} null, [1 x [2 x i64]] {{.*}}i64 1, i64 2{{.*}}, i64 0, i64 1 }, {{(i8\*|ptr)}} %"p'", 0
