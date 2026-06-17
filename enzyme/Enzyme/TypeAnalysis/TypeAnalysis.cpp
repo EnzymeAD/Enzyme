@@ -5880,8 +5880,6 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 }
 
 TypeTree TypeAnalyzer::getReturnAnalysis() {
-  if (fntypeinfo.Return.isKnown())
-    return fntypeinfo.Return;
   bool set = false;
   TypeTree vd;
   for (BasicBlock &BB : *fntypeinfo.Function) {
@@ -5902,6 +5900,35 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
       }
     }
   }
+  if (fntypeinfo.Function->getAttributes().hasAttribute(
+          AttributeList::ReturnIndex, "enzyme_type")) {
+    auto attr = fntypeinfo.Function->getAttributes().getAttribute(
+        AttributeList::ReturnIndex, "enzyme_type");
+    auto TT = TypeTree::parse(attr.getValueAsString(),
+                              fntypeinfo.Function->getContext());
+
+    auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
+    for (const auto &pair : TT.getMapping()) {
+      size_t chunk = 1;
+      if (auto flt = pair.second.isFloat()) {
+        chunk = dl.getTypeSizeInBits(flt) / 8;
+      } else if (pair.second == BaseType::Pointer) {
+        chunk = dl.getPointerSizeInBits() / 8;
+      }
+
+      for (size_t i = 0; i < chunk; i++) {
+        auto v2(pair.first);
+        v2.back() += i;
+        auto found = vd.getMapping().find(v2);
+        if (found == vd.getMapping().end())
+          continue;
+        vd.remove(v2);
+      }
+
+      vd.insert(pair.first, pair.second);
+    }
+  }
+
   return vd;
 }
 
