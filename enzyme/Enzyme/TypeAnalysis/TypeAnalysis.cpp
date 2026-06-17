@@ -71,6 +71,11 @@
 
 using namespace llvm;
 
+
+#ifndef ENZYME_DEFAULT_STRICT_ALIASING
+#define ENZYME_DEFAULT_STRICT_ALIASING 1
+#endif
+
 extern "C" {
 /// Maximum offset for type trees to keep
 llvm::cl::opt<int> MaxIntOffset("enzyme-max-int-offset", cl::init(100),
@@ -90,7 +95,8 @@ llvm::cl::opt<bool> RustTypeRules("enzyme-rust-type", cl::init(false),
                                   cl::desc("Enable rust-specific type rules"));
 
 llvm::cl::opt<bool> EnzymeStrictAliasing(
-    "enzyme-strict-aliasing", cl::init(true), cl::Hidden,
+    "enzyme-strict-aliasing",
+    cl::init(ENZYME_DEFAULT_STRICT_ALIASING != 0), cl::Hidden,
     cl::desc("Assume strict aliasing of types / type stability"));
 }
 
