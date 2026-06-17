@@ -17,14 +17,14 @@ top:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %stack_sret = alloca { double, {} addrspace(10)* }, align 8
 ; CHECK-NEXT:   %stack_roots_AT = alloca [1 x {} addrspace(10)*], align 8
-; CHECK-NEXT:   %0 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %sret_box, i64 0, i32 0
-; CHECK-NEXT:   %1 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %stack_sret, i64 0, i32 0
-; CHECK-NEXT:   %2 = load double, double* %0, align 8
-; CHECK-NEXT:   store double %2, double* %1, align 8
+; CHECK-NEXT:   %0 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %stack_sret, i64 0, i32 0
+; CHECK-NEXT:   %1 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %sret_box, i64 0, i32 0
+; CHECK-NEXT:   %2 = load double, double* %1, align 8
+; CHECK-NEXT:   store double %2, double* %0, align 8
 ; CHECK-NEXT:   %3 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %stack_sret, i64 0, i32 1
-; CHECK-NEXT:   store {} addrspace(10)* null, {} addrspace(10)** %3, align 8
-; CHECK-NEXT:   %4 = getelementptr inbounds [1 x {} addrspace(10)*], [1 x {} addrspace(10)*]* %stack_roots_AT, i64 0, i64 0
-; CHECK-NEXT:   store {} addrspace(10)* null, {} addrspace(10)** %4, align 8
+; CHECK-NEXT:   store {} addrspace(10)* undef, {} addrspace(10)** %3, align 8
+; CHECK-NEXT:   %4 = getelementptr inbounds [1 x {} addrspace(10)*], [1 x {} addrspace(10)*]* %stack_roots_AT, i64 0, i32 0
+; CHECK-NEXT:   store {} addrspace(10)* undef, {} addrspace(10)** %4, align 8
 ; CHECK-NEXT:   call void @callee({ double, {} addrspace(10)* }* sret({ double, {} addrspace(10)* }) %stack_sret, [1 x {} addrspace(10)*]* "enzymejl_returnRoots"="1" %stack_roots_AT, double %arg)
 ; CHECK-NEXT:   %5 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %sret_box, i64 0, i32 0
 ; CHECK-NEXT:   %6 = getelementptr inbounds { double, {} addrspace(10)* }, { double, {} addrspace(10)* }* %stack_sret, i64 0, i32 0
