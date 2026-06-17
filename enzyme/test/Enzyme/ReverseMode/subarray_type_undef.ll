@@ -17,6 +17,6 @@ entry:
   ret void
 }
 
-; CHECK: define internal {{(i8\*|ptr)}} @augmented_foo(i8* %p, i8* %"p'")
+; CHECK: define internal { {{(i8\*|ptr)}}, %struct.SubArray } @augmented_foo(i8* %p, i8* %"p'")
 ; CHECK: entry:
 ; CHECK:   %"val'ipiv" = insertvalue %struct.SubArray { {{(i8\*|ptr)}} null, [1 x [2 x i64]] {{.*}}i64 1, i64 2{{.*}}, i64 0, i64 1 }, {{(i8\*|ptr)}} %"p'", 0
