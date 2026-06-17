@@ -3,7 +3,7 @@
 
 %struct.SubArray = type { i8*, [1 x [2 x i64]], i64, i64 }
 
-define void @foo(i8* %p, %struct.SubArray* "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,32]:Integer}" %out) {
+define void @foo(i8* %p, %struct.SubArray* "enzyme_type"="{[-1]:Pointer, [-1,0]:Pointer, [-1,8]:Float@double, [-1,16]:Float@double, [-1,24]:Integer, [-1,25]:Integer, [-1,26]:Integer, [-1,27]:Integer, [-1,28]:Integer, [-1,29]:Integer, [-1,30]:Integer, [-1,31]:Integer, [-1,32]:Integer, [-1,33]:Integer, [-1,34]:Integer, [-1,35]:Integer, [-1,36]:Integer, [-1,37]:Integer, [-1,38]:Integer, [-1,39]:Integer}" %out) {
 entry:
   %val = insertvalue %struct.SubArray { i8* null, [1 x [2 x i64]] [[2 x i64] [i64 1, i64 2]], i64 0, i64 1 }, i8* %p, 0
   store %struct.SubArray %val, %struct.SubArray* %out, align 8

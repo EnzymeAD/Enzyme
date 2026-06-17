@@ -919,6 +919,111 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   return;
 }
 
+static bool AllJuliaTypes(Type *T) {
+  if (auto PT = dyn_cast<PointerType>(T)) {
+    unsigned AS = PT->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      return true;
+    }
+  }
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    return AllJuliaTypes(AT->getElementType());
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto len = ST->getNumElements();
+    if (len != 0) {
+      for (size_t i = 0; i < len; i++) {
+        if (!AllJuliaTypes(ST->getElementType(i)))
+          return false;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool AnyJuliaTypes(Type *T) {
+  if (auto PT = dyn_cast<PointerType>(T)) {
+    unsigned AS = PT->getPointerAddressSpace();
+    if (AS == 10 || AS == 11 || AS == 13) {
+      return true;
+    }
+  }
+  if (auto AT = dyn_cast<ArrayType>(T)) {
+    return AnyJuliaTypes(AT->getElementType());
+  }
+  if (auto ST = dyn_cast<StructType>(T)) {
+    auto len = ST->getNumElements();
+    for (size_t i = 0; i < len; i++) {
+      if (AnyJuliaTypes(ST->getElementType(i)))
+        return true;
+    }
+  }
+  return false;
+}
+
+static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
+                                       const DataLayout &DL) {
+  if (AllJuliaTypes(T)) {
+    TT.remove({-1});
+    TT.remove({0});
+    TT.insert({-1}, BaseType::Pointer);
+    return;
+  }
+  if (!AnyJuliaTypes(T))
+    return;
+  auto outAll = TT[{-1}];
+  if (outAll != BaseType::Unknown)
+    return;
+
+  std::vector<std::pair<Type *, size_t>> todo;
+  todo.emplace_back(T, 0);
+  while (!todo.empty()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    T = cur.first;
+    auto offset = cur.second;
+    if (!AnyJuliaTypes(T))
+      continue;
+    if (isa<PointerType>(T)) {
+      TT.remove(std::vector<int>{(int)offset});
+      TT.insert(std::vector<int>{(int)offset}, BaseType::Pointer);
+      continue;
+    }
+    if (auto AT = dyn_cast<ArrayType>(T)) {
+      SmallVector<Value *, 4> vec;
+      vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
+      vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), 1));
+      auto ud = UndefValue::get(getUnqual(AT));
+      auto g2 = GetElementPtrInst::Create(T, ud, vec);
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+      g2->accumulateConstantOffset(DL, ai);
+      delete g2;
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
+        todo.emplace_back(AT->getElementType(),
+                          offset + i * ai.getLimitedValue());
+      }
+
+      continue;
+    }
+    if (auto ST = dyn_cast<StructType>(T)) {
+      auto ud = UndefValue::get(getUnqual(ST));
+      for (size_t i = 0; i < ST->getNumElements(); i++) {
+        SmallVector<Value *, 4> vec;
+        vec.push_back(ConstantInt::get(Type::getInt64Ty(T->getContext()), 0));
+        vec.push_back(ConstantInt::get(Type::getInt32Ty(T->getContext()), i));
+        auto g2 = GetElementPtrInst::Create(T, ud, vec);
+        APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+        g2->accumulateConstantOffset(DL, ai);
+        delete g2;
+        todo.emplace_back(ST->getElementType(i), offset + ai.getLimitedValue());
+      }
+
+      continue;
+    }
+  }
+}
+
 TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
   // Integers with fewer than 16 bits (size of half)
   // must be integral, since it cannot possibly represent a float or pointer
@@ -927,14 +1032,10 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     return TypeTree(BaseType::Integer).Only(-1, nullptr);
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
-    if (EnzymeJuliaAddrLoad && C->getType()->isPointerTy()) {
-      unsigned AS = C->getType()->getPointerAddressSpace();
-      if (AS == 10 || AS == 11 || AS == 13) {
-        analysis[C].remove({-1});
-        analysis[C].remove({0});
-        analysis[C].insert({-1}, BaseType::Pointer);
-      }
-    }
+    if (EnzymeJuliaAddrLoad)
+      AugmentWithJuliaObjectType(
+          analysis[Val], Val->getType(),
+          fntypeinfo.Function->getParent()->getDataLayout());
     return analysis[Val];
   }
 
@@ -956,14 +1057,10 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
     assert(Arg->getParent() == fntypeinfo.Function);
   }
 
-  if (EnzymeJuliaAddrLoad && Val->getType()->isPointerTy()) {
-    unsigned AS = Val->getType()->getPointerAddressSpace();
-    if (AS == 10 || AS == 11 || AS == 13) {
-      analysis[Val].remove({-1});
-      analysis[Val].remove({0});
-      analysis[Val].insert({-1}, BaseType::Pointer);
-    }
-  }
+  if (EnzymeJuliaAddrLoad)
+    AugmentWithJuliaObjectType(
+        analysis[Val], Val->getType(),
+        fntypeinfo.Function->getParent()->getDataLayout());
 
   // Return current results
   if (isa<Argument>(Val) || isa<Instruction>(Val))

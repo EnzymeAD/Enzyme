@@ -2623,11 +2623,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   auto nf = gutils->newFunc;
 
-  while (gutils->inversionAllocs->size() > 0) {
-    gutils->inversionAllocs->back().moveBefore(
-        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-  }
-
   //! Keep track of inverted pointers we may need to return
   ValueToValueMapTy invertedRetPs;
   if (shadowReturnUsed) {
@@ -2661,6 +2656,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         }
       }
     }
+  }
+
+  while (gutils->inversionAllocs->size() > 0) {
+    gutils->inversionAllocs->back().moveBefore(
+        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
