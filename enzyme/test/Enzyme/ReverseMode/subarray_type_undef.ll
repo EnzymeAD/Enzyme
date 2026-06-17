@@ -13,7 +13,7 @@ declare { i8*, %struct.SubArray, %struct.SubArray } @__enzyme_augmentfwd(...)
 
 define void @test(i8* %p, i8* %dp) {
 entry:
-  %res = call { i8*, %struct.SubArray, %struct.SubArray } (...) @__enzyme_augmentfwd(metadata !"enzyme_dup", %struct.SubArray (i8*)* @foo, metadata !"enzyme_dup", i8* %p, i8* %dp)
+  %res = call { i8*, %struct.SubArray, %struct.SubArray } (...) @__enzyme_augmentfwd(%struct.SubArray (i8*)* @foo, metadata !"enzyme_dup_return", metadata !"enzyme_dup", i8* %p, i8* %dp)
   ret void
 }
 
