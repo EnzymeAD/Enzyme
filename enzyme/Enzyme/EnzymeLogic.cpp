@@ -2651,7 +2651,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             }
           }
           if (!invertri)
-            invertri = gutils->invertPointerM(orig_oldval, BuilderZ);
+            invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                              gutils->TR.getReturnAnalysis());
           invertedRetPs[newri] = invertri;
         }
       }
@@ -4429,8 +4430,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (key.retType == DIFFE_TYPE::DUP_ARG ||
             key.retType == DIFFE_TYPE::DUP_NONEED) {
           if (dretAlloca) {
-            rb.CreateStore(gutils->invertPointerM(orig->getReturnValue(), rb),
-                           dretAlloca);
+            rb.CreateStore(
+                gutils->invertPointerM(orig->getReturnValue(), rb,
+                                       gutils->TR.getReturnAnalysis()),
+                dretAlloca);
           }
         } else if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           assert(orig->getReturnValue());
