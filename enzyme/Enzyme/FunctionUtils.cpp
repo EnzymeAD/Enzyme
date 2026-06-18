@@ -1080,17 +1080,19 @@ void simplifyExtractions(Function *NewF) {
 
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
   simplifyExtractions(NewF);
-  SmallVector<Instruction *, 1> Todo;
+  SmallVector<Instruction *, 1> InitialTodo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (hasMetadata(&I, "enzyme_backstack")) {
-        Todo.push_back(&I);
+        InitialTodo.push_back(&I);
         // TODO
         // I.eraseMetadata("enzyme_backstack");
       }
     }
   }
-  for (auto T : Todo) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  SmallVector<Instruction *, 1> toErase;
+  for (auto T : InitialTodo) {
     auto T0 = T->getOperand(0);
     if (auto CI = dyn_cast<BitCastInst>(T0))
       T0 = CI->getOperand(0);
@@ -1107,8 +1109,16 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
 #endif
-    RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
+    for (auto U : T->users()) {
+      Todo.push_back(
+          std::make_tuple((Value *)AIV, (Value *)T, cast<Instruction>(U)));
+    }
+    if (auto I = dyn_cast<Instruction>(T)) {
+      assert(I);
+      toErase.push_back(I);
+    }
   }
+  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ true);
 
 #if LLVM_VERSION_MAJOR >= 22
   {
