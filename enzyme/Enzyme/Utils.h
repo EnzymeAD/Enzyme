@@ -89,6 +89,7 @@ enum class ErrorType {
   GCRewrite = 11,
   NaNError = 12,
   ShowInternalError = 12,
+  NoAccumulate = 13,
 };
 
 extern "C" {
