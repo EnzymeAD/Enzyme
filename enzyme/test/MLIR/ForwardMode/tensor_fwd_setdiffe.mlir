@@ -17,9 +17,8 @@ module {
 // CHECK-NEXT:     %[[dsin:.+]] = arith.mulf %arg1, %[[cos0]] : tensor<2xf64>
 // CHECK-NEXT:     %[[sin0:.+]] = math.sin %arg0 : tensor<2xf64>
 // CHECK-NEXT:     %[[sin1:.+]] = math.sin %[[sin0]] : tensor<2xf64>
-// CHECK-NEXT:     %[[dcos0:.+]] = arith.mulf %[[dsin]], %[[sin1]] : tensor<2xf64>
-// CHECK-NEXT:     %[[cst:.+]] = arith.constant dense<-1.000000e+00> : tensor<2xf64>
-// CHECK-NEXT:     %[[dcos1:.+]] = arith.mulf %[[dcos0]], %[[cst]] : tensor<2xf64>
+// CHECK-NEXT:     %[[negsin:.+]] = arith.negf %[[sin1]] : tensor<2xf64>
+// CHECK-NEXT:     %[[dcos:.+]] = arith.mulf %[[dsin]], %[[negsin]] : tensor<2xf64>
 // CHECK-NEXT:     %[[cos1:.+]] = math.cos %[[sin0]] : tensor<2xf64>
-// CHECK-NEXT:     return %[[dcos1]] : tensor<2xf64>
+// CHECK-NEXT:     return %[[dcos]] : tensor<2xf64>
 // CHECK-NEXT:   }
