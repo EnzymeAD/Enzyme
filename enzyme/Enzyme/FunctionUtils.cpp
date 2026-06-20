@@ -599,6 +599,26 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
+    if (auto cmp = dyn_cast<CmpInst>(inst)) {
+      IRBuilder<> B(cmp);
+      Value *op0 = cmp->getOperand(0);
+      Value *op1 = cmp->getOperand(1);
+      if (op0 == prev && isa<Constant>(op1)) {
+        cmp->setOperand(0, rep);
+        cmp->setOperand(1, B.CreateAddrSpaceCast(op1, rep->getType()));
+      } else if (op1 == prev && isa<Constant>(op0)) {
+        cmp->setOperand(0, B.CreateAddrSpaceCast(op0, rep->getType()));
+        cmp->setOperand(1, rep);
+      } else {
+        auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
+        for (size_t i = 0; i < cmp->getNumOperands(); i++) {
+          if (cmp->getOperand(i) == prev) {
+            cmp->setOperand(i, Addr);
+          }
+        }
+      }
+      continue;
+    }
 
     std::string s;
     llvm::raw_string_ostream ss(s);
