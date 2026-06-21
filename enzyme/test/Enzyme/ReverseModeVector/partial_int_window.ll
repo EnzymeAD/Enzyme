@@ -3,47 +3,41 @@
 source_filename = "partial_int_window"
 target triple = "x86_64-pc-linux-gnu"
 
-%struct.Gradients = type { [2 x float] }
-%ret2v = type { <2 x float>, <2 x float> }
-
-declare %struct.Gradients @__enzyme_autodiff(float (float)*, ...)
-
-define %ret2v @make(float %x) {
+define void @tester(i64* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %src, i64* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %dst) {
 entry:
-  %v0 = insertelement <2 x float> zeroinitializer, float %x, i32 0
-  %r0 = insertvalue %ret2v undef, <2 x float> %v0, 0
-  %r1 = insertvalue %ret2v %r0, <2 x float> zeroinitializer, 1
-  ret %ret2v %r1
+  %val = load i64, i64* %src, align 8
+  store i64 %val, i64* %dst, align 8
+  ret void
 }
 
-define float @tester(float %x) {
+define void @test_derivative(i64* %src, i64* %dsrc1, i64* %dsrc2, i64* %dst, i64* %ddst1, i64* %ddst2) {
 entry:
-  %call = call %ret2v @make(float %x)
-  %vec  = extractvalue %ret2v %call, 0
-  %val  = bitcast <2 x float> %vec to i64
-
-  ; Force "partial" use: only the first 4 bytes of the i64
-  %tmp = alloca i64, align 8
-  store i64 %val, i64* %tmp, align 8
-  %fp  = bitcast i64* %tmp to float*
-  %a   = load float, float* %fp, align 4
-
-  ret float %a
+  call void (void (i64*, i64*)*, ...) @__enzyme_autodiff(void (i64*, i64*)* @tester, metadata !"enzyme_width", i64 2, metadata !"enzyme_dup", i64* %src, i64* %dsrc1, i64* %dsrc2, metadata !"enzyme_dup", i64* %dst, i64* %ddst1, i64* %ddst2)
+  ret void
 }
 
-define %struct.Gradients @test_derivative(float %x) {
-entry:
-  %d = call %struct.Gradients (float (float)*, ...) @__enzyme_autodiff(float (float)* @tester, metadata !"enzyme_width", i64 2, float %x)
-  ret %struct.Gradients %d
-}
+declare void @__enzyme_autodiff(void (i64*, i64*)*, ...)
 
-; CHECK: define internal { [2 x float] } @diffe2tester(float %x, [2 x float] %differeturn)
+; CHECK: define internal void @diffe2tester(ptr nocapture readonly "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %src, [2 x ptr] "enzyme_type_v"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %"src'", ptr nocapture writeonly "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %dst, [2 x ptr] "enzyme_type_v"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %"dst'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call_augmented = call [2 x %ret2v] @augmented_make(float %x)
-; CHECK-NEXT:   %0 = call { [2 x float] } @diffe2make(float %x)
-; CHECK-NEXT:   %1 = extractvalue { [2 x float] } %0, 0, 0
-; CHECK-NEXT:   %2 = extractvalue { [2 x float] } %0, 0, 1
-; CHECK-NEXT:   %.fca.0.insert = insertvalue [2 x float] poison, float %1, 0
-; CHECK-NEXT:   %.fca.1.insert = insertvalue [2 x float] %.fca.0.insert, float %2, 1
-; CHECK-NEXT:   %3 = insertvalue { [2 x float] } undef, [2 x float] %.fca.1.insert, 0
-; CHECK-NEXT:   ret { [2 x float] } %3
+; CHECK-NEXT:   %0 = extractvalue [2 x ptr] %"src'", 0
+; CHECK-NEXT:   %"val'ipl" = load i64, ptr %0, align 8
+; CHECK-NEXT:   %1 = extractvalue [2 x ptr] %"src'", 1
+; CHECK-NEXT:   %"val'ipl1" = load i64, ptr %1, align 8
+; CHECK-NEXT:   %val = load i64, ptr %src, align 8
+; CHECK-NEXT:   %2 = extractvalue [2 x ptr] %"dst'", 0
+; CHECK-NEXT:   %.sroa.14.0.extract.shift = lshr i64 %"val'ipl", 32
+; CHECK-NEXT:   %.sroa.14.0.extract.trunc = trunc i64 %.sroa.14.0.extract.shift to i32
+; CHECK-NEXT:   %3 = getelementptr inbounds i8, ptr %2, i64 4
+; CHECK-NEXT:   store i32 %.sroa.14.0.extract.trunc, ptr %3, align 1
+; CHECK-NEXT:   %4 = extractvalue [2 x ptr] %"dst'", 1
+; CHECK-NEXT:   %.sroa.1.0.extract.shift = lshr i64 %"val'ipl1", 32
+; CHECK-NEXT:   %.sroa.1.0.extract.trunc = trunc i64 %.sroa.1.0.extract.shift to i32
+; CHECK-NEXT:   %5 = getelementptr inbounds i8, ptr %4, i64 4
+; CHECK-NEXT:   store i32 %.sroa.1.0.extract.trunc, ptr %5, align 1
+; CHECK-NEXT:   store i64 %val, ptr %dst, align 8
+; CHECK-NEXT:   store i32 0, ptr %2, align 8
+; CHECK-NEXT:   store i32 0, ptr %4, align 8
+; CHECK-NEXT:   store float poison, ptr %0, align 8
+; CHECK-NEXT:   store float poison, ptr %1, align 8
+; CHECK-NEXT:   ret void

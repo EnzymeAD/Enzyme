@@ -3,43 +3,30 @@
 source_filename = "partial_int_window"
 target triple = "x86_64-pc-linux-gnu"
 
-%ret2v = type { <2 x float>, <2 x float> }
-
-define %ret2v @make(float %x) {
+define void @tester(i64* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %src, i64* "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %dst) {
 entry:
-  %v0 = insertelement <2 x float> zeroinitializer, float %x, i32 0
-  %r0 = insertvalue %ret2v undef, <2 x float> %v0, 0
-  %r1 = insertvalue %ret2v %r0, <2 x float> zeroinitializer, 1
-  ret %ret2v %r1
+  %val = load i64, i64* %src, align 8
+  store i64 %val, i64* %dst, align 8
+  ret void
 }
 
-define float @tester(float %x) {
+define void @test_derivative(i64* %src, i64* %dsrc, i64* %dst, i64* %ddst) {
 entry:
-  %call = call %ret2v @make(float %x)
-  %vec  = extractvalue %ret2v %call, 0
-  %val  = bitcast <2 x float> %vec to i64
-
-  ; Force "partial" use: only the first 4 bytes of the i64
-  %tmp = alloca i64, align 8
-  store i64 %val, i64* %tmp, align 8
-  %fp  = bitcast i64* %tmp to float*
-  %a   = load float, float* %fp, align 4
-
-  ret float %a
+  call void (void (i64*, i64*)*, ...) @__enzyme_autodiff(void (i64*, i64*)* @tester, metadata !"enzyme_dup", i64* %src, i64* %dsrc, metadata !"enzyme_dup", i64* %dst, i64* %ddst)
+  ret void
 }
 
-define float @test_derivative(float %x) {
-entry:
-  %d = call float (float (float)*, ...) @__enzyme_autodiff(float (float)* @tester, float %x)
-  ret float %d
-}
+declare void @__enzyme_autodiff(void (i64*, i64*)*, ...)
 
-declare float @__enzyme_autodiff(float (float)*, ...)
-
-; CHECK: define internal { float } @diffetester(float %x, float %differeturn)
+; CHECK: define internal void @diffetester(ptr nocapture readonly "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %src, ptr nocapture "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %"src'", ptr nocapture writeonly "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %dst, ptr nocapture "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Integer}" %"dst'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call_augmented = call %ret2v @augmented_make(float %x)
-; CHECK-NEXT:   %0 = call { float } @diffemake(float %x)
-; CHECK-NEXT:   %1 = extractvalue { float } %0, 0
-; CHECK-NEXT:   %2 = insertvalue { float } undef, float %1, 0
-; CHECK-NEXT:   ret { float } %2
+; CHECK-NEXT:   %"val'ipl" = load i64, ptr %"src'", align 8
+; CHECK-NEXT:   %val = load i64, ptr %src, align 8
+; CHECK-NEXT:   %.sroa.1.0.extract.shift = lshr i64 %"val'ipl", 32
+; CHECK-NEXT:   %.sroa.1.0.extract.trunc = trunc i64 %.sroa.1.0.extract.shift to i32
+; CHECK-NEXT:   %0 = getelementptr inbounds i8, ptr %"dst'", i64 4
+; CHECK-NEXT:   store i32 %.sroa.1.0.extract.trunc, ptr %0, align 1
+; CHECK-NEXT:   store i64 %val, ptr %dst, align 8
+; CHECK-NEXT:   store i32 0, ptr %"dst'", align 8
+; CHECK-NEXT:   store float poison, ptr %"src'", align 8
+; CHECK-NEXT:   ret void
