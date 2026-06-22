@@ -847,7 +847,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
                                           /*forceZero*/ false);
   if (!isa<UndefValue>(undef_v))
-    scopeInstructions[alloc].push_back(entryBuilder.CreateStore(undef_v, alloc));
+    scopeInstructions[alloc].push_back(
+        entryBuilder.CreateStore(undef_v, alloc));
 
   Value *storeInto = alloc;
 
