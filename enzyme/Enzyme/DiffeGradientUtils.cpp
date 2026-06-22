@@ -453,40 +453,45 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
       Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
       return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs, mask, idxs.size());
     } else {
-      SmallVector<SelectInst *, 4> res;
-      for (unsigned j = 0; j < getWidth(); j++) {
-        SmallVector<Value *, 1> lidxs;
-        SmallVector<unsigned, 1> eidxs = {(unsigned)j};
-        lidxs.push_back(
-            ConstantInt::get(Type::getInt32Ty(val->getContext()), j));
-        for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
-          eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
-        }
-        for (auto idx : idxs) {
-          lidxs.push_back(idx);
-        }
-        Value *subdif = extractMeta(BuilderM, dif, eidxs);
-        IRBuilder<> A(inversionAllocs);
-        auto Al = A.CreateAlloca(subdif->getType());
-        BuilderM.CreateStore(subdif, Al);
-        if (start > 0) {
+      SmallVector<unsigned, 1> eidxs;
+      for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
+        eidxs.push_back((unsigned)cast<ConstantInt>(idx)->getZExtValue());
+      }
+      Value *subdif = extractMeta(BuilderM, dif, eidxs);
+      IRBuilder<> A(inversionAllocs);
+      auto Al = A.CreateAlloca(subdif->getType());
+      BuilderM.CreateStore(subdif, Al);
+      if (start > 0) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
           Value *ptr_i8 = BuilderM.CreatePointerCast(
-              Al, getUnqual(Type::getInt8Ty(val->getContext())));
-          BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start, MaybeAlign(1));
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
+          BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                                MaybeAlign(1));
         }
-        if (storeSize > start + size) {
+      }
+      if (storeSize > start + size) {
+        for (unsigned j = 0; j < getWidth(); j++) {
+          Value *Idxs[] = {
+              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
+          Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
           Value *ptr_i8 = BuilderM.CreatePointerCast(
-              Al, getUnqual(Type::getInt8Ty(val->getContext())));
+              Alj, getUnqual(Type::getInt8Ty(val->getContext())));
           Value *gep = BuilderM.CreateInBoundsGEP(
               Type::getInt8Ty(val->getContext()), ptr_i8,
-              ConstantInt::get(Type::getInt64Ty(val->getContext()), start + size));
-          BuilderM.CreateMemSet(gep, BuilderM.getInt8(0), storeSize - start - size, MaybeAlign(1));
+              ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                               start + size));
+          BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                                storeSize - start - size, MaybeAlign(1));
         }
-        Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
-        for (auto v : addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, lidxs, mask, lidxs.size()))
-          res.push_back(v);
       }
-      return res;
+      Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
     }
   }
 
