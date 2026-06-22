@@ -440,18 +440,22 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
       if (start > 0) {
         Value *ptr_i8 = BuilderM.CreatePointerCast(
             Al, getUnqual(Type::getInt8Ty(val->getContext())));
-        BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start, MaybeAlign(1));
+        BuilderM.CreateMemSet(ptr_i8, BuilderM.getInt8(0), start,
+                              MaybeAlign(1));
       }
       if (storeSize > start + size) {
         Value *ptr_i8 = BuilderM.CreatePointerCast(
             Al, getUnqual(Type::getInt8Ty(val->getContext())));
         Value *gep = BuilderM.CreateInBoundsGEP(
             Type::getInt8Ty(val->getContext()), ptr_i8,
-            ConstantInt::get(Type::getInt64Ty(val->getContext()), start + size));
-        BuilderM.CreateMemSet(gep, BuilderM.getInt8(0), storeSize - start - size, MaybeAlign(1));
+            ConstantInt::get(Type::getInt64Ty(val->getContext()),
+                             start + size));
+        BuilderM.CreateMemSet(gep, BuilderM.getInt8(0),
+                              storeSize - start - size, MaybeAlign(1));
       }
       Value *new_dif = BuilderM.CreateLoad(subdif->getType(), Al);
-      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs, mask, idxs.size());
+      return addToDiffe(val, new_dif, BuilderM, addingType, 0, storeSize, idxs,
+                        mask, idxs.size());
     } else {
       SmallVector<unsigned, 1> eidxs;
       for (auto idx : idxs.slice(ignoreFirstSlicesOfDif)) {
@@ -1075,7 +1079,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
           BuilderM.CreateStore(dif, Al);
           dif = BuilderM.CreateLoad(
-              addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)), "cast.load");
+              addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
+              "cast.load");
         }
       }
       return dif;
