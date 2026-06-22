@@ -835,6 +835,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   entryBuilder.setFastMathFlags(getFast());
   AllocaInst *alloc =
       entryBuilder.CreateAlloca(types.back(), nullptr, name + "_cache");
+  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+                                          /*forceZero*/false);
+  if (!isa<UndefValue>(undef_v)) {
+    entryBuilder.CreateStore(undef_v, alloc);
+  }
   {
     ConstantInt *byteSizeOfType = ConstantInt::get(
         i64, newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
