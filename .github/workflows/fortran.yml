@@ -70,7 +70,7 @@ jobs:
           - ifx: "2025.3"
             llvm: 18
           - ifx: "2026.0"
-            llvm: 18
+            llvm: 19
     timeout-minutes: 60
     steps:
     - name: add llvm
