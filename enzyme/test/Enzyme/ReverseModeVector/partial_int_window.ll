@@ -57,11 +57,11 @@ declare void @__enzyme_autodiff(void (i64*, i64*)*, ...)
 ; CHECK-NEXT:   %"val'de.sroa.7.0.extract.trunc" = trunc i64 %"val'de.sroa.7.0.extract.shift" to i8
 ; CHECK-NEXT:   %"val'de.sroa.8.0.extract.shift" = lshr i64 %.sroa.0.4.insert.mask, 32
 ; CHECK-NEXT:   %"val'de.sroa.8.0.extract.trunc" = trunc i64 %"val'de.sroa.8.0.extract.shift" to i32
-; CHECK-NEXT:   %"val'de.sroa.8.0.insert.ext27" = zext i32 %"val'de.sroa.8.0.extract.trunc" to i64
-; CHECK-NEXT:   %"val'de.sroa.8.0.insert.shift28" = shl i64 %"val'de.sroa.8.0.insert.ext27", 32
+; CHECK-NEXT:   %"val'de.sroa.8.0.insert.ext29" = zext i32 %"val'de.sroa.8.0.extract.trunc" to i64
+; CHECK-NEXT:   %"val'de.sroa.8.0.insert.shift30" = shl i64 %"val'de.sroa.8.0.insert.ext29", 32
 ; CHECK-NEXT:   %"val'de.sroa.7.0.insert.ext22" = zext i8 %"val'de.sroa.7.0.extract.trunc" to i64
 ; CHECK-NEXT:   %"val'de.sroa.7.0.insert.shift23" = shl i64 %"val'de.sroa.7.0.insert.ext22", 24
-; CHECK-NEXT:   %"val'de.sroa.7.0.insert.insert25" = or i64 %"val'de.sroa.8.0.insert.shift28", %"val'de.sroa.7.0.insert.shift23"
+; CHECK-NEXT:   %"val'de.sroa.7.0.insert.insert25" = or i64 %"val'de.sroa.8.0.insert.shift30", %"val'de.sroa.7.0.insert.shift23"
 ; CHECK-NEXT:   %"val'de.sroa.6.0.insert.ext18" = zext i8 %"val'de.sroa.6.0.extract.trunc" to i64
 ; CHECK-NEXT:   %"val'de.sroa.6.0.insert.shift19" = shl i64 %"val'de.sroa.6.0.insert.ext18", 16
 ; CHECK-NEXT:   %"val'de.sroa.6.0.insert.insert21" = or i64 %"val'de.sroa.7.0.insert.insert25", %"val'de.sroa.6.0.insert.shift19"
