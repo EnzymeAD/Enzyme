@@ -90,6 +90,9 @@ if int(config.llvm_ver) == 16:
   newPM += " -opaque-pointers=0"
   oldPM += " -opaque-pointers=0"
 
+if int(config.llvm_ver) >= 13:
+    config.available_features.add('fortran')
+
 config.substitutions.append(('%loadEnzyme', oldPM if int(config.llvm_ver) < 16 else newPM))
 config.substitutions.append(('%newLoadEnzyme', newPM))
 config.substitutions.append(('%OPloadEnzyme', oldPMOP if int(config.llvm_ver) < 16 else newPMOP))
