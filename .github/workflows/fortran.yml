@@ -46,15 +46,31 @@ jobs:
       matrix:
         build: ["Release", "Debug"]
         os: [ubuntu-22.04]
-        ifx: ["2023.0.0", "2023.1.0", "2023.2.4", "2024.0", "2024.1", "2024.2", "2025.0", "2025.1", "2025.2", "2025.3", "2026.0"]
+        mpi: ["2021.7.1"]
         include:
-          - llvm: 17
-            mpi: 2021.7.1
           - ifx: "2023.0.0"
             llvm: 15
           - ifx: "2023.1.0"
             llvm: 16
-    timeout-minutes: 60 
+          - ifx: "2023.2.4"
+            llvm: 17
+          - ifx: "2024.0"
+            llvm: 17
+          - ifx: "2024.1"
+            llvm: 17
+          - ifx: "2024.2"
+            llvm: 17
+          - ifx: "2025.0"
+            llvm: 18
+          - ifx: "2025.1"
+            llvm: 18
+          - ifx: "2025.2"
+            llvm: 18
+          - ifx: "2025.3"
+            llvm: 18
+          - ifx: "2026.0"
+            llvm: 18
+    timeout-minutes: 60
     steps:
     - name: add llvm
       run: |
