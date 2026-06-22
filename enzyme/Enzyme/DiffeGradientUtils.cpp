@@ -425,12 +425,27 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
     }
   }
 
-  llvm::errs() << " VT: " << *VT << " idxs:{";
+  std::string s;
+  llvm::raw_string_ostream ss(s);
+  ss << "Unhandled accumulate with partial sizes:\n";
+  ss << " val: " << *val << "\n";
+  ss << " VT: " << *VT << " idxs:{";
   for (auto idx : idxs)
-    llvm::errs() << *idx << ",";
-  llvm::errs() << "} start=" << start << " size=" << size
-               << " storeSize=" << storeSize << " val=" << *val << "\n";
-  assert(0 && "unhandled accumulate with partial sizes");
+    ss << *idx << ",";
+  ss << "} start=" << start << " size=" << size << " storeSize=" << storeSize
+     << " val=" << *val << "\n";
+  if (CustomErrorHandler) {
+    CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
+                       nullptr, nullptr, wrap(&BuilderM));
+  } else {
+    DebugLoc loc;
+    if (auto inst = dyn_cast<Instruction>(val))
+      EmitFailure("UnhandledAccumulate", inst->getDebugLoc(), inst, ss.str());
+    else {
+      llvm::errs() << ss.str() << "\n";
+      llvm_unreachable("UnhandledAccumulate");
+    }
+  }
   return {};
 }
 

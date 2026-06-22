@@ -875,11 +875,7 @@ public:
         i += dl.getPointerSize(0);
         continue;
       }
-      if (dt.isFloat())
-        return true;
-      if (dt == BaseType::Anything)
-        return true;
-      i++;
+      return true;
     }
     return false;
   }
@@ -898,12 +894,11 @@ public:
         i++;
         continue;
       }
-      if (dt == BaseType::Pointer) {
-        return true;
+      if (auto FT = dt.isFloat()) {
+        i += (dl.getTypeSizeInBits(FT) + 7) / 8;
+        continue;
       }
-      if (dt == BaseType::Anything)
-        return true;
-      i++;
+      return true;
     }
     return false;
   }
