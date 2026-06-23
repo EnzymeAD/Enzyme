@@ -922,7 +922,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         shadow =
             Builder2.CreateIntToPtr(shadow, getInt8PtrTy(call.getContext()));
 
-      ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call, &Builder2);
+      ConcreteType CT =
+          TR.firstPointer(1, call.getOperand(0), &call, &Builder2);
       auto MPI_OP_type = getInt8PtrTy(call.getContext());
       Type *MPI_OP_Ptr_type = getUnqual(MPI_OP_type);
 

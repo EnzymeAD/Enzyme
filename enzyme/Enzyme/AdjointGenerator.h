@@ -1969,7 +1969,8 @@ public:
                  iv->getInsertedValueOperand()->getType()) +
              7) /
             8;
-      auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, /*err*/nullptr);
+      auto it =
+          TR.intType(size0, iv->getInsertedValueOperand(), iv, /*err*/ nullptr);
       if (it.isFloat() || !it.isKnown()) {
         floatingInsertion = true;
         break;
