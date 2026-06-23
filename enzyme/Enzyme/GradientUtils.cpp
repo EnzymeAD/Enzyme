@@ -3452,7 +3452,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                                   /*pointerIntSame*/ true);
                 }
               } else {
-                FT = TR.firstPointer(storeSize, orig_ptr, &I, gutils,
+                FT = TR.firstPointer(storeSize, orig_ptr, &I, this,
                                      /*errifnotfound*/ &NB,
                                      /*pointerIntSame*/ true)
                          .isFloat();
