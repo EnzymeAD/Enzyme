@@ -2623,11 +2623,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   auto nf = gutils->newFunc;
 
-  while (gutils->inversionAllocs->size() > 0) {
-    gutils->inversionAllocs->back().moveBefore(
-        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-  }
-
   //! Keep track of inverted pointers we may need to return
   ValueToValueMapTy invertedRetPs;
   if (shadowReturnUsed) {
@@ -2656,11 +2651,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
             }
           }
           if (!invertri)
-            invertri = gutils->invertPointerM(orig_oldval, BuilderZ);
+            invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                              gutils->TR.getReturnAnalysis());
           invertedRetPs[newri] = invertri;
         }
       }
     }
+  }
+
+  while (gutils->inversionAllocs->size() > 0) {
+    gutils->inversionAllocs->back().moveBefore(
+        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -4429,8 +4430,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (key.retType == DIFFE_TYPE::DUP_ARG ||
             key.retType == DIFFE_TYPE::DUP_NONEED) {
           if (dretAlloca) {
-            rb.CreateStore(gutils->invertPointerM(orig->getReturnValue(), rb),
-                           dretAlloca);
+            rb.CreateStore(
+                gutils->invertPointerM(orig->getReturnValue(), rb,
+                                       gutils->TR.getReturnAnalysis()),
+                dretAlloca);
           }
         } else if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           assert(orig->getReturnValue());

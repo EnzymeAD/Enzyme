@@ -5342,12 +5342,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
-      isa<ConstantInt>(oval)) {
-    if (TT.anyFloat(oval, DL))
+      isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval) ||
+      isa<PoisonValue>(oval)) {
+    if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
+        isa<PoisonValue>(oval) || isa<ConstantAggregateZero>(oval) ||
+        (isa<ConstantInt>(oval) && cast<ConstantInt>(oval)->isZero()) ||
+        TT.allFloat(oval, DL))
       return Constant::getNullValue(getShadowType(oval->getType()));
-    else
+    else if (!TT.anyFloat(oval, DL))
       return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-  } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
+  }
+  if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     auto ElTy = CD->getType()->getElementType();
     auto ObjSize = (DL.getTypeSizeInBits(ElTy) + 7) / 8;
@@ -5954,9 +5959,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     TypeTree agg_look = TR.query(arg->getAggregateOperand());
     if (TT.isKnown()) {
       agg_look = agg_look.Clear(Off, Off + ObjSize, AggSize);
-      agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
-      agg_look.CanonicalizeInPlace(AggSize, DL);
     }
+    agg_look |= TT.ShiftIndices(DL, 0, ObjSize, Off);
+    agg_look.CanonicalizeInPlace(AggSize, DL);
 
     auto ip = invertPointerM(arg->getOperand(0), bb, agg_look);
 
@@ -6006,7 +6011,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         if (isConstantValue(op)) {
           if (subTT.anyPointer(op, DL) &&
               subTT[{-1, -1}] != BaseType::Integer) {
-            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op)) {
+            if (!isa<UndefValue>(op) && !isa<ConstantPointerNull>(op) &&
+                !isa<ConstantAggregateZero>(op)) {
               std::string str;
               raw_string_ostream ss(str);
               ss << "Mismatched activity for: " << *arg
@@ -6121,7 +6127,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto tval = arg->getTrueValue();
       if (!runtimeActivity && TT.anyPointer(tval, DL) &&
           !isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
-          isConstantValue(tval)) {
+          !isa<ConstantAggregateZero>(tval) && isConstantValue(tval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
@@ -6141,7 +6147,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto fval = arg->getFalseValue();
       if (!runtimeActivity && TT[{-1}].isPossiblePointer() &&
           !isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
-          isConstantValue(fval)) {
+          !isa<ConstantAggregateZero>(fval) && isConstantValue(fval)) {
         std::string str;
         raw_string_ostream ss(str);
         ss << "Mismatched activity for: " << *arg << " const val: " << *fval;

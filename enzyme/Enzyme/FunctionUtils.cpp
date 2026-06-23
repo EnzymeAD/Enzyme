@@ -599,6 +599,26 @@ void RecursivelyReplaceAddressSpace(
         continue;
       }
     }
+    if (auto cmp = dyn_cast<CmpInst>(inst)) {
+      IRBuilder<> B(cmp);
+      Value *op0 = cmp->getOperand(0);
+      Value *op1 = cmp->getOperand(1);
+      if (op0 == prev && isa<Constant>(op1)) {
+        cmp->setOperand(0, rep);
+        cmp->setOperand(1, B.CreateAddrSpaceCast(op1, rep->getType()));
+      } else if (op1 == prev && isa<Constant>(op0)) {
+        cmp->setOperand(0, B.CreateAddrSpaceCast(op0, rep->getType()));
+        cmp->setOperand(1, rep);
+      } else {
+        auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
+        for (size_t i = 0; i < cmp->getNumOperands(); i++) {
+          if (cmp->getOperand(i) == prev) {
+            cmp->setOperand(i, Addr);
+          }
+        }
+      }
+      continue;
+    }
 
     std::string s;
     llvm::raw_string_ostream ss(s);
@@ -1080,17 +1100,19 @@ void simplifyExtractions(Function *NewF) {
 
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
   simplifyExtractions(NewF);
-  SmallVector<Instruction *, 1> Todo;
+  SmallVector<Instruction *, 1> InitialTodo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (hasMetadata(&I, "enzyme_backstack")) {
-        Todo.push_back(&I);
+        InitialTodo.push_back(&I);
         // TODO
         // I.eraseMetadata("enzyme_backstack");
       }
     }
   }
-  for (auto T : Todo) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  SmallVector<Instruction *, 1> toErase;
+  for (auto T : InitialTodo) {
     auto T0 = T->getOperand(0);
     if (auto CI = dyn_cast<BitCastInst>(T0))
       T0 = CI->getOperand(0);
@@ -1107,8 +1129,16 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
 #endif
-    RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
+    for (auto U : T->users()) {
+      Todo.push_back(
+          std::make_tuple((Value *)AIV, (Value *)T, cast<Instruction>(U)));
+    }
+    if (auto I = dyn_cast<Instruction>(T)) {
+      assert(I);
+      toErase.push_back(I);
+    }
   }
+  RecursivelyReplaceAddressSpace(Todo, toErase, /*legal*/ true);
 
 #if LLVM_VERSION_MAJOR >= 22
   {
