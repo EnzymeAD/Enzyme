@@ -225,8 +225,17 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   }
   assert(!isConstantValue(val));
 
+  bool isMutable = false;
+  if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType()))
+    isMutable = iface.isMutable();
+
   if (mode == DerivativeMode::ForwardMode ||
-      mode == DerivativeMode::ForwardModeSplit) {
+      mode == DerivativeMode::ForwardModeSplit || isMutable) {
+    if (isMutable) {
+      auto existing = invertedPointers.lookupOrNull(val);
+      if (existing && !existing.getDefiningOp<enzyme::PlaceholderOp>())
+        return;
+    }
     setInvertedPointer(val, toset);
   }
   /*
