@@ -30,10 +30,9 @@ CXX=clang++-$CLANG cmake .. \
 -DMFEM_USE_ENZYME=ON \
 -DENZYME_DIR=$CLANGENZYME
 
-# make -j `nprocs`
 echo $PWD
-make -j 4
+make -j `nprocs`
 
 echo $PWD
 cd tests
-make -j 4 -C .. punit_tests && ./unit/punit_tests "[dFEM]"
+make -j `nprocs` -C .. punit_tests && ./unit/punit_tests "[dFEM]"
