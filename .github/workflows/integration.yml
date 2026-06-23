@@ -23,7 +23,7 @@ concurrency:
 jobs:
   integration:
     timeout-minutes: 45
-    name: Integration Tests - ${{ matrix.package }} - LLVM ${{ matrix.version }}
+    name: ${{ matrix.package }} - LLVM ${{ matrix.llvm }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     container:
       image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images_24.04@sha256:2d3132895ab3c3a593cb494fad4ce1e17f4c145771a92809f070805d0250ac71' ) || '' }}
@@ -34,6 +34,7 @@ jobs:
         build: ["Release"]
         os:
           - linux-x86-n2-32
+          - linux-x86-a2-48-a100-4gpu
         package:
           - mfem
     steps:
