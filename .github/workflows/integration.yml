@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: add llvm 
         run: |
-            wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+            curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
             sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
             sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
             sudo python3 -m pip install --upgrade pip lit
