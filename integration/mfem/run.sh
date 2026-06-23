@@ -8,7 +8,7 @@ NPROCS=$3
 
 echo "$CLANG" "$CLANGENZYME"
 
-apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev
+apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
 
 git clone -b dfem-dev --single-branch https://github.com/mfem/mfem.git
 cd mfem
@@ -28,7 +28,6 @@ CXX=clang++-$CLANG cmake .. \
 -DMFEM_USE_MPI=ON \
 -DHYPRE_INCLUDE_DIR=/usr/include/hypre \
 -DMETIS_INCLUDE_DIR=/usr/include \
--DMETIS_LIB_DIR=/usr/lib/`uname -m`-linux-gnu \
 -DMFEM_USE_ENZYME=ON \
 -DENZYME_DIR=$CLANGENZYME
 
