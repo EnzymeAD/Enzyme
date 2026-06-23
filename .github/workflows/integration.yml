@@ -26,7 +26,7 @@ jobs:
     name: Integration Tests - ${{ matrix.package }} - LLVM ${{ matrix.version }}
     runs-on: ${{ matrix.os }}
     container:
-      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:cd45d851f5ea544f88d042eafefa53d948c229fffcab6189019324e3b02b505a' ) || '' }}
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images_24.04@sha256:2d3132895ab3c3a593cb494fad4ce1e17f4c145771a92809f070805d0250ac71' ) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,9 +41,9 @@ jobs:
       - name: add llvm 
         run: |
             curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
-            sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-            sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
-            sudo python3 -m pip install --upgrade pip lit
+            apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+            apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
+            python3 -m pip install --upgrade pip lit
       - uses: actions/checkout@v4
       - name: mkdir
         run: rm -rf build && mkdir build
