@@ -2,11 +2,11 @@
 
 echo "Running MFEM integration tests"
 
-CLANG=$1
+CLANGV=$1
 CLANGENZYME=$2
 NPROC=$3
 
-echo "$CLANG" "$CLANGENZYME" "$NPROC"
+echo "$CLANGV" "$CLANGENZYME" "$NPROC"
 
 nvidia-smi >/dev/null
 USE_CUDA=0
@@ -25,7 +25,7 @@ echo $PWD
 mkdir build
 cd build
 if [[ "$USE_CUDA" -eq 0 ]]; then
-    CXX=clang++-$CLANG cmake .. \
+    CXX=clang++-$CLANGV cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_CXX_STANDARD_REQUIRED=ON \
@@ -35,7 +35,7 @@ if [[ "$USE_CUDA" -eq 0 ]]; then
     -DMFEM_USE_ENZYME=ON \
     -DENZYME_DIR=$CLANGENZYME
 else
-    CXX=clang++-$CLANG cmake .. \
+    CXX=clang++-$CLANGV cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_CXX_STANDARD_REQUIRED=ON \
@@ -45,7 +45,8 @@ else
     -DMFEM_USE_ENZYME=ON \
     -DENZYME_DIR=$CLANGENZYME \
     -DMFEM_USE_CUDA=ON \
-    -DCUDA_ARCH=$COMPUTE_CAP
+    -DCUDA_ARCH=$COMPUTE_CAP \
+    -DCMAKE_CUDA_COMPILER=clang++-$CLANGV
 fi
 
 echo $PWD
