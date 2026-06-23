@@ -27,7 +27,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     container:
       image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:cd45d851f5ea544f88d042eafefa53d948c229fffcab6189019324e3b02b505a' ) || '' }}
-    env:
     strategy:
       fail-fast: false
       matrix:
