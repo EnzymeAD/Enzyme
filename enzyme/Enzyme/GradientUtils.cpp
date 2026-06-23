@@ -3435,7 +3435,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             } else if (!valType->isPointerTy()) {
               if (looseTypeAnalysis) {
                 auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
-                                          /*errifnotfound*/ false,
+                                          /*errifnotfound*/ nullptr,
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
                   FT = fp.isFloat();
@@ -3448,14 +3448,14 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                   FT = nullptr;
                 } else {
                   TR.firstPointer(storeSize, orig_ptr, &I,
-                                  /*errifnotfound*/ true,
+                                  /*errifnotfound*/ &NB,
                                   /*pointerIntSame*/ true);
                   llvm::errs() << "cannot deduce type of store " << I << "\n";
                   assert(0 && "cannot deduce");
                 }
               } else {
                 FT = TR.firstPointer(storeSize, orig_ptr, &I,
-                                     /*errifnotfound*/ true,
+                                     /*errifnotfound*/ &NB,
                                      /*pointerIntSame*/ true)
                          .isFloat();
               }
