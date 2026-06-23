@@ -2078,7 +2078,8 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
                            sendlen_arg, "mpireduce_malloccache");
 
-      ConcreteType CT = TR.firstPointer(1, orig_sendbuf, &call, gutils, &Builder2);
+      ConcreteType CT =
+          TR.firstPointer(1, orig_sendbuf, &call, gutils, &Builder2);
       auto MPI_OP_type = getInt8PtrTy(call.getContext());
       Type *MPI_OP_Ptr_type = getUnqual(MPI_OP_type);
 

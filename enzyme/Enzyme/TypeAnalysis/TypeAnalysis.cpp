@@ -6375,7 +6375,7 @@ bool TypeResults::anyPointer(Value *val) const {
 void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer->dump(ss); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
-				  GradientUtils *gutils,
+                                  GradientUtils *gutils,
                                   llvm::IRBuilder<> *BuilderIfShouldErr,
                                   bool pointerIntSame) const {
   assert(val);
@@ -6425,7 +6425,7 @@ Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
 }
 
 ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
-				       GradientUtils *gutils,
+                                       GradientUtils *gutils,
                                        llvm::IRBuilder<> *BuilderIfShouldErr,
                                        bool pointerIntSame) const {
   assert(val);

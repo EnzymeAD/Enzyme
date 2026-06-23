@@ -844,8 +844,7 @@ public:
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       auto valType = I.getValOperand()->getType();
       auto storeSize = DL.getTypeSizeInBits(valType) / 8;
-      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I,
-		      		gutils,
+      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I, gutils,
                                 /*errifnotfound*/ nullptr,
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
@@ -1970,8 +1969,8 @@ public:
                  iv->getInsertedValueOperand()->getType()) +
              7) /
             8;
-      auto it =
-          TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils, /*err*/ nullptr);
+      auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
+                           /*err*/ nullptr);
       if (it.isFloat() || !it.isKnown()) {
         floatingInsertion = true;
         break;

@@ -186,7 +186,7 @@ public:
   TypeResults(std::nullptr_t);
   TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, llvm::Instruction *I,
-		       GradientUtils *gutils = nullptr,
+                       GradientUtils *gutils = nullptr,
                        llvm::IRBuilder<> *BuilderIfShouldErr = nullptr,
                        bool pointerIntSame = false) const;
   llvm::Type *addingType(size_t num, llvm::Value *val, size_t start = 0) const;
@@ -195,7 +195,7 @@ public:
   /// none If pointerIntSame is set to true, then consider either as the same
   /// (and thus mergable)
   ConcreteType firstPointer(size_t num, llvm::Value *val, llvm::Instruction *I,
-		  	    GradientUtils *gutils = nullptr,
+                            GradientUtils *gutils = nullptr,
                             llvm::IRBuilder<> *BuilderIfShouldErr = nullptr,
                             bool pointerIntSame = false) const;
 

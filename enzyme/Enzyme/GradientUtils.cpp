@@ -3434,8 +3434,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
               FT = valType->getScalarType();
             } else if (!valType->isPointerTy()) {
               if (looseTypeAnalysis) {
-                auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
-					  this,
+                auto fp = TR.firstPointer(storeSize, orig_ptr, &I, this,
                                           /*errifnotfound*/ nullptr,
                                           /*pointerIntSame*/ true);
                 if (fp.isKnown()) {
@@ -3448,14 +3447,12 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                       << "assuming type as integral for store: " << I << "\n";
                   FT = nullptr;
                 } else {
-                  TR.firstPointer(storeSize, orig_ptr, &I,
-				  this,
+                  TR.firstPointer(storeSize, orig_ptr, &I, this,
                                   /*errifnotfound*/ &NB,
                                   /*pointerIntSame*/ true);
                 }
               } else {
-                FT = TR.firstPointer(storeSize, orig_ptr, &I,
-			             gutils,
+                FT = TR.firstPointer(storeSize, orig_ptr, &I, gutils,
                                      /*errifnotfound*/ &NB,
                                      /*pointerIntSame*/ true)
                          .isFloat();
