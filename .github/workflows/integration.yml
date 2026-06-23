@@ -38,10 +38,6 @@ jobs:
           - mfem
     steps:
       - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: ${{ matrix.version }}
-
       - name: add llvm 
         run: |
             wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
