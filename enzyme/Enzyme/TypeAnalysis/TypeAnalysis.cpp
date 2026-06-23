@@ -6396,7 +6396,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
   if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
     std::string str;
     raw_string_ostream ss(str);
-    ss << "Cannot deduce type of integer " << *val << " num:" << num
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I << "\n  num:" << num
        << " q:" << q.str() << " \n";
 
     ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
@@ -6459,7 +6459,7 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
     std::string str;
     raw_string_ostream ss(str);
-    ss << "Cannot deduce type of integer " << *val << " num:" << num
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I << "\n  num:" << num
        << " q:" << q.str() << " \n";
 
     ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
