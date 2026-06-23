@@ -27,7 +27,7 @@ CXX=clang++-$CLANG cmake .. \
 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
 -DMFEM_USE_MPI=ON \
 -DHYPRE_INCLUDE_DIR=/usr/include/hypre \
--METIS_DIR=/usr/include \
+-DMETIS_DIR=/usr/include \
 -DMFEM_USE_ENZYME=ON \
 -DENZYME_DIR=$CLANGENZYME
 
