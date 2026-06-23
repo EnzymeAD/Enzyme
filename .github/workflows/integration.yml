@@ -43,13 +43,12 @@ jobs:
             curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
             apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
             apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
-            python3 -m pip install --upgrade pip lit
       - uses: actions/checkout@v4
       - name: mkdir
         run: rm -rf build && mkdir build
       - name: cmake
         working-directory: build
-        run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+        run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
       - name: make
         working-directory: build
         run: make -j `nproc`
