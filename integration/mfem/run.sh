@@ -12,7 +12,7 @@ apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-d
 
 git clone -b dfem-dev --single-branch https://github.com/mfem/mfem.git
 cd mfem
-git apply --check integration/mfem/mfem.patch
+git apply --check ../integration/mfem/mfem.patch
 
 # if [ -d "build" ]; then
 #     rm -rf build
