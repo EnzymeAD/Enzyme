@@ -48,7 +48,7 @@ jobs:
         run: rm -rf build && mkdir build
       - name: cmake
         working-directory: build
-        run: CXX=clang-${{ matrix.llvm }} cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+        run: CXX=clang++-${{ matrix.llvm }} cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
       - name: make
         working-directory: build
         run: make -j `nproc`
