@@ -55,6 +55,8 @@ jobs:
         working-directory: build
         run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
       - name: make
+        working-directory: build
+        run: make -j `nproc`
       - name: "Run tests"
         run: |
             bash integration/${{ matrix.package }}/run.sh clang-${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so
