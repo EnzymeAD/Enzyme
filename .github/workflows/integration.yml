@@ -2,17 +2,17 @@ name: Integration
 on:
   pull_request:
     paths:
-      - '.github/workflows/integration.yml'
-      - 'enzyme/**'
-      - 'integration/**'
+      - ".github/workflows/integration.yml"
+      - "enzyme/**"
+      - "integration/**"
   push:
     branches:
       - main
     paths:
-      - '.github/workflows/integration.yml'
-      - 'enzyme/**'
-      - 'integration/**'
-    tags: '*'
+      - ".github/workflows/integration.yml"
+      - "enzyme/**"
+      - "integration/**"
+    tags: "*"
 
 concurrency:
   # Skip intermediate builds: always.
@@ -38,21 +38,21 @@ jobs:
           - mfem
     steps:
       - uses: actions/checkout@v7
-      - name: add llvm 
+      - name: add llvm
         run: |
-            curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
-            apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-            apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm-snapshot.gpg
+          apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          apt-get install -y cmake gcc g++ clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev llvm-${{ matrix.llvm }}-dev libzstd-dev
       - uses: actions/checkout@v4
       - name: mkdir
         run: rm -rf build && mkdir build
       - name: cmake
         working-directory: build
-        run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+        run: CXX=clang-${{ matrix.llvm }} cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
       - name: make
         working-directory: build
         run: make -j `nproc`
       - name: "Run tests"
         run: |
-            bash integration/${{ matrix.package }}/run.sh clang-${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so
+          bash integration/${{ matrix.package }}/run.sh clang-${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so
         shell: bash
