@@ -14,7 +14,7 @@ COMPUTE_CAP=0
 if [[ "$?" -eq 0 ]]; then
     USE_CUDA=1
     COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap | sed -n '2s/\.//p')
-    ls /usr/local/cuda
+    find / -type d -name "*cuda*" 2>/dev/null
 fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
