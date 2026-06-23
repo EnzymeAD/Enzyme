@@ -54,5 +54,5 @@ jobs:
         run: make -j `nproc`
       - name: "Run tests"
         run: |
-          bash integration/${{ matrix.package }}/run.sh clang-${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so
+          bash integration/${{ matrix.package }}/run.sh ${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so `nproc`
         shell: bash

@@ -4,6 +4,7 @@ echo "Running MFEM integration tests"
 
 CLANG=$1
 CLANGENZYME=$2
+NPROCS=$3
 
 echo "$CLANG" "$CLANGENZYME"
 
@@ -31,8 +32,8 @@ CXX=clang++-$CLANG cmake .. \
 -DENZYME_DIR=$CLANGENZYME
 
 echo $PWD
-make -j `nprocs`
+make -j $NPROCS
 
 echo $PWD
 cd tests
-make -j `nprocs` -C .. punit_tests && ./unit/punit_tests "[dFEM]"
+make -j $NPROCS -C .. punit_tests && ./unit/punit_tests "[dFEM]"
