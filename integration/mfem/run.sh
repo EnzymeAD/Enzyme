@@ -4,15 +4,15 @@ echo "Running MFEM integration tests"
 
 CLANG=$1
 CLANGENZYME=$2
-NPROCS=$3
+NPROC=$3
 
-echo "$CLANG" "$CLANGENZYME"
+echo "$CLANG" "$CLANGENZYME" "$NPROC"
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
 
 git clone -b dfem-dev --single-branch https://github.com/mfem/mfem.git
 cd mfem
-git apply --check ../Enzyme/integration/mfem/mfem.patch
+git apply --check integration/mfem/mfem.patch
 
 # if [ -d "build" ]; then
 #     rm -rf build
@@ -32,8 +32,8 @@ CXX=clang++-$CLANG cmake .. \
 -DENZYME_DIR=$CLANGENZYME
 
 echo $PWD
-make -j $NPROCS
+make -j $NPROC
 
 echo $PWD
 cd tests
-make -j $NPROCS -C .. punit_tests && ./unit/punit_tests "[dFEM]"
+make -C .. -j $NPROC punit_tests && ./unit/punit_tests "[dFEM]"
