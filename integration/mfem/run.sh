@@ -45,6 +45,7 @@ else
     -DMFEM_USE_ENZYME=ON \
     -DENZYME_DIR=$CLANGENZYME \
     -DMFEM_USE_CUDA=ON \
+    -DCUDA_DIR=/usr/local/cuda \
     -DCUDA_ARCH=$COMPUTE_CAP \
     -DCMAKE_CUDA_COMPILER=clang++-$CLANGV
 fi
