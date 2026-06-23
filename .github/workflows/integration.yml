@@ -1,0 +1,62 @@
+name: Integration
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'enzyme/**'
+      - 'integration/**'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'enzyme/**'
+      - 'integration/**'
+    tags: '*'
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  integration:
+    timeout-minutes: 45
+    name: Integration Tests - ${{ matrix.package }} - LLVM ${{ matrix.version }}
+    runs-on: ${{ matrix.os }}
+    container:
+      image: ${{ (contains(matrix.os, 'linux') && 'ghcr.io/enzymead/reactant-docker-images@sha256:cd45d851f5ea544f88d042eafefa53d948c229fffcab6189019324e3b02b505a' ) || '' }}
+    env:
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["18"]
+        build: ["Release"]
+        os:
+          - linux-x86-n2-32
+        package:
+          - mfem
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+
+      - name: add llvm 
+        run: |
+            wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+            sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+            sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev libzstd-dev
+            sudo python3 -m pip install --upgrade pip lit
+      - uses: actions/checkout@v4
+      - name: mkdir
+        run: rm -rf build && mkdir build
+      - name: cmake
+        working-directory: build
+        run: cmake ../enzyme -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+      - name: make
+      - name: "Run tests"
+        run: |
+            bash integration/${{ matrix.package }}/run.sh clang-${{ matrix.llvm }} enzyme/build/ClangEnzyme-$${ matrix.llvm }}.so
+        shell: bash
