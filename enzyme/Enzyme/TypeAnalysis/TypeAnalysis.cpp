@@ -6392,7 +6392,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
     dt.orIn(q[{(int)i}], pointerIntSame);
   }
 
-  if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
+  if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
     std::string str;
     raw_string_ostream ss(str);
     ss << "Cannot deduce type of integer " << *val << " num:" << num << " q:" << q.str() << " \n";
