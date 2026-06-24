@@ -546,67 +546,69 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL, AAResults
         }
       }
 
-      // Step 7: BFS backwards from LI's parent block
-      SmallPtrSet<BasicBlock *, 32> Visited;
-      SmallVector<BasicBlock *, 16> Worklist;
-      StoreInst *Candidate = nullptr;
-      APInt CandidateOffset = ZeroOffset;
+      if (isNoAlias) {
+        // Step 7: BFS backwards from LI's parent block
+        SmallPtrSet<BasicBlock *, 32> Visited;
+        SmallVector<BasicBlock *, 16> Worklist;
+        StoreInst *Candidate = nullptr;
+        APInt CandidateOffset = ZeroOffset;
 
-      // Start with predecessors of LI's block
-      for (BasicBlock *Pred : predecessors(LIBlock)) {
-        if (Visited.insert(Pred).second)
-          Worklist.push_back(Pred);
-      }
-
-      while (!Worklist.empty()) {
-        BasicBlock *BB = Worklist.pop_back_val();
-
-        auto It = LastStoreInBlockBeforeLI.find(BB);
-        if (It != LastStoreInBlockBeforeLI.end()) {
-          StoreInst *SI = dyn_cast<StoreInst>(std::get<0>(It->second));
-          APInt StoreOffset = std::get<1>(It->second);
-
-          if (!SI || !dominatesAndCovers(SI, LI, StoreOffset, LoadOffset,
-                                         LoadSize, DL, DT)) {
-            // Non-dominating+covering store on path, bail
-            Candidate = nullptr;
-            break;
-          }
-
-          // Found dominating+covering store
-          if (!Candidate) {
-            Candidate = SI;
-            CandidateOffset = StoreOffset;
-          } else if (Candidate != SI) {
-            // Multiple different candidates, bail
-            Candidate = nullptr;
-            break;
-          }
-        }
-
-        // Continue BFS
-        for (BasicBlock *Pred : predecessors(BB)) {
+        // Start with predecessors of LI's block
+        for (BasicBlock *Pred : predecessors(LIBlock)) {
           if (Visited.insert(Pred).second)
             Worklist.push_back(Pred);
         }
-      }
 
-      // Step 8: If unique candidate found, forward
-      if (Candidate && isNoAlias) {
-        IRBuilder<> Builder(LI);
-        Value *StoredVal = Candidate->getValueOperand();
-        Value *ExtractedVal =
-            extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
-                         CandidateOffset, LoadSize);
+        while (!Worklist.empty()) {
+          BasicBlock *BB = Worklist.pop_back_val();
 
-        if (ExtractedVal) {
-          LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (BFS candidate)\n"
-                            << "  Store: " << *Candidate << "\n"
-                            << "  Load:  " << *LI << "\n");
-          LI->replaceAllUsesWith(ExtractedVal);
-          LI->eraseFromParent();
-          LI = nullptr;
-          Changed = true;
+          auto It = LastStoreInBlockBeforeLI.find(BB);
+          if (It != LastStoreInBlockBeforeLI.end()) {
+            StoreInst *SI = dyn_cast<StoreInst>(std::get<0>(It->second));
+            APInt StoreOffset = std::get<1>(It->second);
+
+            if (!SI || !dominatesAndCovers(SI, LI, StoreOffset, LoadOffset,
+                                           LoadSize, DL, DT)) {
+              // Non-dominating+covering store on path, bail
+              Candidate = nullptr;
+              break;
+            }
+
+            // Found dominating+covering store
+            if (!Candidate) {
+              Candidate = SI;
+              CandidateOffset = StoreOffset;
+            } else if (Candidate != SI) {
+              // Multiple different candidates, bail
+              Candidate = nullptr;
+              break;
+            }
+          }
+
+          // Continue BFS
+          for (BasicBlock *Pred : predecessors(BB)) {
+            if (Visited.insert(Pred).second)
+              Worklist.push_back(Pred);
+          }
+        }
+
+        // Step 8: If unique candidate found, forward
+        if (Candidate) {
+          IRBuilder<> Builder(LI);
+          Value *StoredVal = Candidate->getValueOperand();
+          Value *ExtractedVal =
+              extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
+                           CandidateOffset, LoadSize);
+
+          if (ExtractedVal) {
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (BFS candidate)\n"
+                              << "  Store: " << *Candidate << "\n"
+                              << "  Load:  " << *LI << "\n");
+            LI->replaceAllUsesWith(ExtractedVal);
+            LI->eraseFromParent();
+            LI = nullptr;
+            Changed = true;
+          }
         }
       }
     }
