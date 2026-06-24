@@ -10,7 +10,7 @@ echo "$CLANGV" "$CLANGENZYME" "$NPROC"
 
 USE_CUDA=0
 COMPUTE_CAP=0
-# if nvidia-smi &> /dev/null; then
+if nvidia-smi &> /dev/null; then
     echo "Using CUDA"
     USE_CUDA=1
     COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
@@ -56,7 +56,7 @@ COMPUTE_CAP=0
 
     echo "Installing CUDA Runtime"
     apt install -y cuda-runtime-12-9 cuda-compiler-12-9 cuda-libraries-dev-12-9
-# fi
+fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
 
