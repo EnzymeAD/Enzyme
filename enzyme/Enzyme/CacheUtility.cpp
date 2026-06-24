@@ -844,11 +844,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
     alloc->setAlignment(Align(align));
   }
-  if (sublimits.size() == 0) {
-    auto val = getUndefinedValueForType(*newFunc->getParent(), types.back());
-    if (!isa<UndefValue>(val))
-      scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
-  }
+  auto undef_v = getUndefinedValueForType(*newFunc->getParent(), types.back(),
+                                          /*forceZero*/ false);
+  if (!isa<UndefValue>(undef_v))
+    scopeInstructions[alloc].push_back(
+        entryBuilder.CreateStore(undef_v, alloc));
 
   Value *storeInto = alloc;
 
