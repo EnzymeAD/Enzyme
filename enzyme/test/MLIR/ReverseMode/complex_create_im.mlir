@@ -15,6 +15,8 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @main(
-// CHECK-NOT: arith.negf
-// CHECK: return
+// The reverse-mode cotangent of t must be the seed itself (df/dt = +1).
+// A returned value that traces to -seed means the create-as-consumer path
+// applied an extra Wirtinger conj and flipped the gradient sign.
+// CHECK-LABEL: func.func @main(%arg0: f32, %arg1: f32) -> f32
+// CHECK: return %arg1 : f32
