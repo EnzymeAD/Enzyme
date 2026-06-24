@@ -316,7 +316,8 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
 }
 
 static bool hasInterveningMod(Instruction *Start, Instruction *End,
-                              LoadInst *LI, AAResults &AA, TargetLibraryInfo &TLI) {
+                              LoadInst *LI, AAResults &AA,
+                              TargetLibraryInfo &TLI) {
   assert(Start->getParent() == End->getParent());
   for (Instruction *I = Start->getNextNode(); I != End; I = I->getNextNode()) {
     if (I->mayWriteToMemory()) {
@@ -329,7 +330,8 @@ static bool hasInterveningMod(Instruction *Start, Instruction *End,
 }
 
 // Main optimization function
-bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL, AAResults &AA, TargetLibraryInfo &TLI) {
+bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
+                 AAResults &AA, TargetLibraryInfo &TLI) {
   bool Changed = false;
 
   // Find candidates (noalias arguments, allocas, and call returns)
@@ -359,7 +361,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL, AAResults
   for (auto &pair : CandidateArgs) {
     Value *Arg = pair.first;
     bool isNoAlias = pair.second;
-    
+
     // Collect all stores and loads to this argument with offsets
     SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
