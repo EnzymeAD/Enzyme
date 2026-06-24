@@ -4031,10 +4031,14 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {
-        SmallVector<Value *, 1> args = {};
-        auto cal = cast<CallInst>(
-            Builder2.CreateCall(getIntrinsicDeclaration(M, ID), args));
-        cal->setCallingConv(getIntrinsicDeclaration(M, ID)->getCallingConv());
+        auto &Call = cast<CallBase>(I);
+        SmallVector<Value *, 4> args;
+        args.reserve(Call.arg_size());
+        for (unsigned i = 0; i < Call.arg_size(); ++i)
+          args.push_back(gutils->getNewFromOriginal(Call.getArgOperand(i)));
+        auto *Fn = getIntrinsicDeclaration(M, ID);
+        auto cal = cast<CallInst>(Builder2.CreateCall(Fn, args));
+        cal->setCallingConv(Fn->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
