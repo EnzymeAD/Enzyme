@@ -1733,6 +1733,8 @@ public:
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
+    if (CI->hasFnAttr(Attribute::NoInline))
+      diffretc->addFnAttr(Attribute::NoInline);
 
     for (auto &&[attr, ty] : byVal) {
       diffretc->addParamAttr(
@@ -2566,6 +2568,9 @@ public:
         fn = B.CreatePointerCast(fn, getUnqual(FT));
       }
       auto Rep = B.CreateCall(FT, fn, Args);
+      Rep->setDebugLoc(CI->getDebugLoc());
+      if (CI->hasFnAttr(Attribute::NoInline))
+        Rep->addFnAttr(Attribute::NoInline);
       Rep->addAttribute(AttributeList::FunctionIndex,
                         Attribute::get(Rep->getContext(), "enzyme_inactive"));
       CI->replaceAllUsesWith(Rep);
