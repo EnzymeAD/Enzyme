@@ -3654,6 +3654,10 @@ public:
       }
     }
 
+    if (size != 0) {
+      toIterate.emplace_back(nullptr, 0, size);
+    }
+
     for (auto &&[floatTy_ref, seg_start_ref, seg_size_ref] : toIterate) {
       auto floatTy = floatTy_ref;
       auto seg_start = seg_start_ref;
