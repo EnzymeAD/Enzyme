@@ -34,7 +34,7 @@ if nvidia-smi &> /dev/null; then
 
     echo "Installing CUDA Toolkit and Runtime"
     # Installs the full toolkit including runtime libraries
-    apt install -y cuda-toolkit
+    apt install -y cuda-toolkit-12-9
 fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
@@ -66,6 +66,7 @@ else
     -DMFEM_USE_ENZYME=ON \
     -DENZYME_DIR=$CLANGENZYME \
     -DMFEM_USE_CUDA=ON \
+    -DCMAKE_CUDA_ARCHITECTURES="$COMPUTE_CAP" \
     -DCUDAToolkit_ROOT=/usr/local/cuda \
     -DCUDA_ARCH=$COMPUTE_CAP \
     -DCMAKE_CUDA_COMPILER=clang++-$CLANGV
