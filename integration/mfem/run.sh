@@ -55,7 +55,7 @@ if nvidia-smi &> /dev/null; then
     apt update
 
     echo "Installing CUDA Runtime"
-    apt install -y cuda-runtime-12-9 cuda-compiler-12-9 cuda-libraries-dev-12-9
+    apt install -y cuda-compiler-12-9 ccuda-libraries-12-9 uda-libraries-dev-12-9
 fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
