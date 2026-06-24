@@ -14,6 +14,27 @@ if nvidia-smi &> /dev/null; then
     echo "Using CUDA"
     USE_CUDA=1
     COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap | sed -n '2s/\.//p')
+
+    echo "Updating system and installing dependencies"
+    apt update && apt install -y wget gnupg2 curl g++ freeglut3-dev libxmu-dev libxi-dev
+
+    echo "Setting up NVIDIA repository pinning"
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
+    mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600
+
+    echo "Fetching repository keys"
+    # Fetches the latest keyring to ensure proper package verification
+    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub
+
+    echo "Adding CUDA network repository"
+    add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" -y
+
+    echo "Updating package lists"
+    apt update
+
+    echo "Installing CUDA Toolkit and Runtime"
+    # Installs the full toolkit including runtime libraries
+    apt install -y cuda-toolkit
 fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
