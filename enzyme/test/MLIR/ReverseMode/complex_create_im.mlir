@@ -15,8 +15,9 @@ module {
   }
 }
 
-// The reverse-mode cotangent of t must be the seed itself (df/dt = +1).
-// A returned value that traces to -seed means the create-as-consumer path
-// applied an extra Wirtinger conj and flipped the gradient sign.
+// f(t) = im(create(0, t)) = t, so df/dt must be +1. The fix negates the
+// complex.im result, undoing the conj the reverse wrap applies to create's
+// incoming cotangent; without it the returned cotangent traces to -seed.
 // CHECK-LABEL: func.func @main(%arg0: f32, %arg1: f32) -> f32
-// CHECK: return %arg1 : f32
+// CHECK: %[[IM:.+]] = complex.im
+// CHECK: arith.negf %[[IM]]
