@@ -8,13 +8,12 @@ NPROC=$3
 
 echo "$CLANGV" "$CLANGENZYME" "$NPROC"
 
-nvidia-smi >/dev/null
 USE_CUDA=0
 COMPUTE_CAP=0
-if [[ "$?" -eq 0 ]]; then
+if nvidia-smi &> /dev/null; then
+    echo "Using CUDA"
     USE_CUDA=1
     COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap | sed -n '2s/\.//p')
-    find / -type d -name "*cuda*" 2>/dev/null
 fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
