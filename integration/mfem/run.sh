@@ -10,32 +10,53 @@ echo "$CLANGV" "$CLANGENZYME" "$NPROC"
 
 USE_CUDA=0
 COMPUTE_CAP=0
-if nvidia-smi &> /dev/null; then
+# if nvidia-smi &> /dev/null; then
     echo "Using CUDA"
     USE_CUDA=1
-    COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap | sed -n '2s/\.//p')
+    COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')
+
+    if [ -z "$COMPUTE_CAP" ] || [ "$COMPUTE_CAP" = "0" ]; then
+        COMPUTE_CAP=80
+    fi
 
     echo "Updating system and installing dependencies"
-    apt update && apt install -y wget gnupg2 curl g++ freeglut3-dev libxmu-dev libxi-dev
+    apt update && apt install -y wget curl g++ freeglut3-dev libxmu-dev libxi-dev
+
+    echo "Detecting Ubuntu version and architecture"
+    UBUNTU_VERSION="$(. /etc/os-release && echo "${VERSION_ID//./}")"
+    DEB_ARCH="$(dpkg --print-architecture)"
+
+    case "$DEB_ARCH" in
+        amd64)
+            NVIDIA_ARCH="x86_64"
+            ;;
+        arm64)
+            NVIDIA_ARCH="sbsa"
+            ;;
+        *)
+            echo "Unsupported architecture for CUDA repo: $DEB_ARCH" >&2
+            exit 1
+            ;;
+    esac
+
+    CUDA_REPO_BASE="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VERSION}/${NVIDIA_ARCH}"
+
+    echo "Using CUDA repo: $CUDA_REPO_BASE"
 
     echo "Setting up NVIDIA repository pinning"
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
-    mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600
+    wget "${CUDA_REPO_BASE}/cuda-ubuntu${UBUNTU_VERSION}.pin"
+    mv "cuda-ubuntu${UBUNTU_VERSION}.pin" /etc/apt/preferences.d/cuda-repository-pin-600
 
-    echo "Fetching repository keys"
-    # Fetches the latest keyring to ensure proper package verification
-    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/3bf863cc.pub
-
-    echo "Adding CUDA network repository"
-    add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/ /" -y
+    echo "Installing NVIDIA CUDA keyring"
+    wget "${CUDA_REPO_BASE}/cuda-keyring_1.1-1_all.deb"
+    dpkg -i cuda-keyring_1.1-1_all.deb
 
     echo "Updating package lists"
     apt update
 
-    echo "Installing CUDA Toolkit and Runtime"
-    # Installs the full toolkit including runtime libraries
-    apt install -y cuda-toolkit-12-9
-fi
+    echo "Installing CUDA Runtime"
+    apt install -y cuda-runtime-12-9 cuda-compiler-12-9 cuda-libraries-dev-12-9
+# fi
 
 apt install -y openmpi-bin openmpi-common libopenmpi-dev libhypre-dev libmetis-dev
 
@@ -66,10 +87,11 @@ else
     -DMFEM_USE_ENZYME=ON \
     -DENZYME_DIR=$CLANGENZYME \
     -DMFEM_USE_CUDA=ON \
-    -DCMAKE_CUDA_ARCHITECTURES="$COMPUTE_CAP" \
     -DCUDAToolkit_ROOT=/usr/local/cuda \
     -DCUDA_ARCH=$COMPUTE_CAP \
-    -DCMAKE_CUDA_COMPILER=clang++-$CLANGV
+    -DCMAKE_CUDA_ARCHITECTURES="$COMPUTE_CAP" \
+    -DCMAKE_CUDA_COMPILER=clang++-$CLANGV \
+    -DCMAKE_CUDA_FLAGS="-Wno-unknown-cuda-version"
 fi
 
 echo $PWD
