@@ -89,16 +89,16 @@ int main() {
         double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(intrinsics, FROM, TO)(a, b), FROM, TO);
         APPROX_EQ(trunc, truth, 1e-5);
     }
+    {
+        double a = 2;
+        double b = 3;
+        double truth = constt(a, b);
+        a = __enzyme_truncate_mem_value(a, FROM, TO);
+        b = __enzyme_truncate_mem_value(b, FROM, TO);
+        double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(constt, FROM, TO)(a, b), FROM, TO);
+        APPROX_EQ(trunc, truth, 1e-5);
+    }
     #endif
-    // {
-    //     double a = 2;
-    //     double b = 3;
-    //     double truth = intrinsics(a, b);
-    //     a = __enzyme_truncate_mem_value(a, FROM, TO);
-    //     b = __enzyme_truncate_mem_value(b, FROM, TO);
-    //     double trunc = __enzyme_expand_mem_value(__enzyme_truncate_mem_func(constt, FROM, TO)(a, b), FROM, TO);
-    //     APPROX_EQ(trunc, truth, 1e-5);
-    // }
 
     #ifdef TRUNC_OP
     {
