@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefixes=CHECK,CHECK; else %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-detect-readthrow=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s --check-prefixes=CHECK,CHECK; fi
 
 @g = constant i8* null, align 8
 
@@ -28,6 +28,7 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-NEXT:   store void ()* null, void ()** %"ai2'ipa", align 8
 ; CHECK-NEXT:   %ai2 = alloca void ()*, align 8
 ; CHECK-NEXT:   call void @diffe_Z3barv(void ()** %ai2, void ()** %"ai2'ipa")
+; CHECK-NEXT:   call void @nofree__Z3barv(void ()** %ai2)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 

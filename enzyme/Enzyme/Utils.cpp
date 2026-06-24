@@ -146,6 +146,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
       }
     }
   }
+  if (F.getName() == "__kmpc_end_reduce_nowait") {
+    F.addFnAttr(Attribute::NoFree);
+  }
   if (F.getName() == "memcmp") {
     changed = true;
 #if LLVM_VERSION_MAJOR >= 16
