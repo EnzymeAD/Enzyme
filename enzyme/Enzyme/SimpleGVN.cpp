@@ -359,6 +359,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL, AAResults
   for (auto &pair : CandidateArgs) {
     Value *Arg = pair.first;
     bool isNoAlias = pair.second;
+    
     // Collect all stores and loads to this argument with offsets
     SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
@@ -512,8 +513,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL, AAResults
             }
           }
         }
-        if (LI == nullptr)
-          continue;
+        continue;
       } else {
         for (auto &&[DCS, StoreOffset, StoredVal] : DominatingCoveringStores) {
           if (DCS->getParent() == LI->getParent()) {
