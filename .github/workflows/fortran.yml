@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   build-and-test-fortran:
-    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.version}}
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.version}} llvm ${{matrix.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
