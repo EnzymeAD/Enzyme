@@ -126,10 +126,6 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
-# LLVM 16 defaults to opaque pointer mode; IFX versions paired with LLVM 16
-# (e.g. ifx 2023.1.0) use an older LLVM backend that cannot parse `ptr`-typed IR.
-# Pass -opaque-pointers=0 to keep typed-pointer IR when optimising after Enzyme.
-config.substitutions.append(('%oflags', ('-opaque-pointers=0' if int(config.llvm_ver) == 16 else '')))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
