@@ -9,7 +9,7 @@
 !       For it to work with the flang compiler we will need to address
 !       https://github.com/EnzymeAD/Enzyme/issues/2820
 
-module AD
+module allocatableArraySimple_explicitInterface_AD
     implicit none
     interface
         subroutine selectFirst__enzyme_autodiff(fnc, x, dx, y, dy)
@@ -37,7 +37,7 @@ module AD
 end module
 
 program app
-    use AD
+    use allocatableArraySimple_explicitInterface_AD
     implicit none
     real, allocatable :: x(:), dx(:)
     real :: y, dy
