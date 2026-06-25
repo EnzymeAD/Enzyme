@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   build-and-test-fortran-flang:
-    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.llvm}}
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
@@ -67,7 +67,7 @@ jobs:
       working-directory: 'build'
       run: ninja check-enzyme-fortran
   build-and-test-fortran-ifx:
-    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} ${{matrix.versions.llvm}}
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
