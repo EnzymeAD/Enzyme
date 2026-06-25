@@ -9,7 +9,7 @@
 !       For it to work with the flang compiler we will need to address
 !       https://github.com/EnzymeAD/Enzyme/issues/2820
 
-module AD
+module selectFirstForward
     implicit none
     interface
         subroutine selectFirst__enzyme_fwddiff(fnc, x, dx, y, dy)
@@ -37,7 +37,7 @@ module AD
 end module
 
 program app
-    use AD
+    use selectFirstForward, only: selectFirst, selectFirst__enzyme_fwddiff
     implicit none
     real, allocatable :: x(:), dx(:)
     real :: y, dy

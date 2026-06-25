@@ -8,17 +8,8 @@
 !       For it to work with the ifx compiler we will need to figure out how to
 !       handle the indirection involved in the enzyme_autodiff binding
 
-module math
-contains
-    real function square( x )
-        real, intent(in) :: x
-        square = x**2
-    end function
-end module math
-
 program app
     use enzyme, only: enzyme_autodiff
-    use math, only: square
     implicit none
     real :: x, dx
 
@@ -29,6 +20,14 @@ program app
     call enzyme_autodiff(square, x, dx)
 
     print *, dx
+
+contains
+
+    real function square( x )
+        real, intent(in) :: x
+        square = x**2
+    end function
+
 end program app
 
 ! CHECK: 9

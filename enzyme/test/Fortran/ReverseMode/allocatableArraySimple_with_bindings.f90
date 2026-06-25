@@ -8,24 +8,7 @@
 !       For it to work with the ifx compiler we will need to figure out how to
 !       handle the indirection involved in the enzyme_autodiff binding
 
-module AD
-    implicit none
-
-    contains
-
-    ! TODO: Switch to assumed shape implementation once
-    !       https://github.com/EnzymeAD/Enzyme/issues/2820
-    !       has been addressed
-    subroutine selectFirst(n, x, y)
-        integer, intent(in) :: n
-        real, intent(in) :: x(n)
-        real, intent(inout) :: y
-        y = x(1)
-    end subroutine
-end module
-
 program app
-    use AD, only: selectFirst
     use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
     implicit none
     integer :: n
@@ -49,6 +32,19 @@ program app
     print *, int(dx(2))
     print *, int(dx(3))
     print *, int(dy)
+
+contains
+
+    ! TODO: Switch to assumed shape implementation once
+    !       https://github.com/EnzymeAD/Enzyme/issues/2820
+    !       has been addressed
+    subroutine selectFirst(n, x, y)
+        integer, intent(in) :: n
+        real, intent(in) :: x(n)
+        real, intent(inout) :: y
+        y = x(1)
+    end subroutine
+
 end program
 
 
