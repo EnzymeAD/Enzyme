@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   build-and-test-fortran:
-    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.version}} llvm ${{matrix.llvm}}
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.name}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
@@ -47,19 +47,23 @@ jobs:
         compiler: [flang, ifx]
         mpi: [2021.7.1]
         include:
-          - compiler: flang
+          - name: flang-21
+            compiler: flang
             FC: flang-21
             llvm: 21
             version: 21
-          - compiler: ifx
+          - name: ifx-2023.0.0
+            compiler: ifx
             FC: ifx
             llvm: 15
             version: 2023.0.0
-          - compiler: ifx
+          - name: ifx-2023.1.0
+            compiler: ifx
             FC: ifx
             llvm: 16
             version: 2023.1.0
-          - compiler: ifx
+          - name: ifx-2023.2.4
+            compiler: ifx
             FC: ifx
             llvm: 17
             version: 2023.2.4
