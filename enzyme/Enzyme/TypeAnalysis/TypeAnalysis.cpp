@@ -6374,7 +6374,9 @@ bool TypeResults::anyPointer(Value *val) const {
 
 void TypeResults::dump(llvm::raw_ostream &ss) const { analyzer->dump(ss); }
 
-ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
+ConcreteType TypeResults::intType(size_t num, Value *val, llvm::Instruction *I,
+                                  GradientUtils *gutils,
+                                  llvm::IRBuilder<> *BuilderIfShouldErr,
                                   bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
@@ -6391,17 +6393,16 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
     dt.orIn(q[{(int)i}], pointerIntSame);
   }
 
-  if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
-      llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : analyzer->analysis) {
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << "\n";
-      }
-    }
-    llvm::errs() << "could not deduce type of integer " << *val << "\n";
-    assert(0 && "could not deduce type of integer");
+  if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
+       << "\n  num:" << num << " q:" << q.str() << " \n";
+
+    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
+    dump(ss);
+
+    EmitNoTypeError(str, *I, nullptr, *BuilderIfShouldErr);
   }
   return dt;
 }
@@ -6424,7 +6425,8 @@ Type *TypeResults::addingType(size_t num, Value *val, size_t start) const {
 }
 
 ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
-                                       bool errIfNotFound,
+                                       GradientUtils *gutils,
+                                       llvm::IRBuilder<> *BuilderIfShouldErr,
                                        bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
@@ -6454,59 +6456,16 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
     }
   }
 
-  if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
-    auto &res = *analyzer;
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
-      llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-        if (auto in = dyn_cast<Instruction>(pair.first)) {
-          if (in->getParent()->getParent() != inst->getParent()->getParent()) {
-            llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
-            llvm::errs() << "instf: " << *inst->getParent()->getParent()
-                         << "\n";
-            llvm::errs() << "in: " << *in << "\n";
-            llvm::errs() << "inst: " << *inst << "\n";
-          }
-          assert(in->getParent()->getParent() ==
-                 inst->getParent()->getParent());
-        }
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
-                     << "\n";
-      }
-    }
-    if (auto arg = dyn_cast<Argument>(val)) {
-      llvm::errs() << *arg->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-#ifndef NDEBUG
-        if (auto in = dyn_cast<Instruction>(pair.first))
-          assert(in->getParent()->getParent() == arg->getParent());
-#endif
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
-                     << "\n";
-      }
-    }
-    llvm::errs() << "fn: " << *analyzer->fntypeinfo.Function << "\n";
-    dump();
-    llvm::errs() << "could not deduce type of integer " << *val
-                 << " num:" << num << " q:" << q.str() << " \n";
+  if (BuilderIfShouldErr && (!dt.isKnown() || dt == BaseType::Anything)) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Cannot deduce type of integer " << *val << "\n  within " << *I
+       << "\n  num:" << num << " q:" << q.str() << " \n";
 
-    llvm::DiagnosticLocation loc =
-        analyzer->fntypeinfo.Function->getSubprogram();
-    Instruction *codeLoc =
-        &*analyzer->fntypeinfo.Function->getEntryBlock().begin();
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      loc = inst->getDebugLoc();
-      codeLoc = inst;
-    }
-    EmitFailure("CannotDeduceType", loc, codeLoc,
-                "failed to deduce type of value ", *val);
+    ss << "fn: " << *analyzer->fntypeinfo.Function << "\n";
+    dump(ss);
 
-    assert(0 && "could not deduce type of integer");
+    EmitNoTypeError(str, *I, gutils, *BuilderIfShouldErr);
   }
   return dt;
 }
