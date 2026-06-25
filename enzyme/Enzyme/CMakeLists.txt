@@ -3,7 +3,7 @@
 #endif()
 
 if ("${Enzyme_TABLEGEN_EXE}" STREQUAL "")
-  set(Enzyme_TABLEGEN_EXE enzyme-tblgen)
+  set(Enzyme_TABLEGEN_EXE $<TARGET_FILE:enzyme-tblgen>)
 endif()
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
