@@ -78,12 +78,12 @@ jobs:
         mpi: [2021.7.1]
         llvm: [15, 16, 17]
         version: [2023.0.0, 2023.1.0, 2023.2.4]
-        include:
-          - llvm: 15
+        exclude:
+          - llvm: [16, 17]
             version: 2023.0.0
-          - llvm: 16
+          - llvm: [15, 17]
             version: 2023.1.0
-          - llvm: 17
+          - llvm: [15, 16]
             version: 2023.2.4
     timeout-minutes: 60
     steps:
