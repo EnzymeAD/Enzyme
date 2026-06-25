@@ -97,10 +97,6 @@ config.substitutions.append(('%OPnewLoadEnzyme', newPMOP))
 config.substitutions.append(('%enzyme', ('-enzyme' if int(config.llvm_ver) < 16 else '-passes="enzyme"')))
 config.substitutions.append(('%simplifycfg', ("simplify-cfg" if int(config.llvm_ver) < 11 else "simplifycfg")))
 config.substitutions.append(('%loopmssa', ("loop" if int(config.llvm_ver) < 11 else "loop-mssa")))
-# LLVM 16 defaults to opaque pointer mode; IFX versions paired with LLVM 16
-# (e.g. ifx 2023.1.0) use an older LLVM backend that cannot parse `ptr`-typed IR.
-# Pass -opaque-pointers=0 to keep typed-pointer IR when optimising after Enzyme.
-config.substitutions.append(('%optflags', ('-opaque-pointers=0' if int(config.llvm_ver) == 16 else '')))
 
 config.substitutions.append(('%loadBC', ''
                                  + ' @ENZYME_BINARY_DIR@/BCLoad/BCPass-' + config.llvm_ver + config.llvm_shlib_ext
@@ -130,6 +126,10 @@ config.substitutions.append(('%fc', config.fc))
 if config.fc == "ifx":
     config.available_features.add('ifx')
 config.substitutions.append(('%loadFortran', '-I@ENZYME_BINARY_DIR@/modules'))
+# LLVM 16 defaults to opaque pointer mode; IFX versions paired with LLVM 16
+# (e.g. ifx 2023.1.0) use an older LLVM backend that cannot parse `ptr`-typed IR.
+# Pass -opaque-pointers=0 to keep typed-pointer IR when optimising after Enzyme.
+config.substitutions.append(('%oflags', ('-opaque-pointers=0' if int(config.llvm_ver) == 16 else '')))
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
