@@ -76,6 +76,8 @@ jobs:
         os: [ubuntu-22.04]
         compiler: [ifx]
         mpi: [2021.7.1]
+        llvm: [15, 16, 17]
+        version: [2023.0.0, 2023.1.0, 2023.2.4]
         include:
           - llvm: 15
             version: 2023.0.0
