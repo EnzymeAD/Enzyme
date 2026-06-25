@@ -4,7 +4,7 @@
 ! RUN: %fc -flto -O2 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O2 %t.ll -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O3 -c %loadFortran %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t.ll && %fc -flto -O3 %t.ll -o %t1 && %t1 | FileCheck %s
 
-module math
+module squareForward
     interface
         subroutine square__enzyme_autodiff(fn, x, dx)
         interface
@@ -22,10 +22,10 @@ contains
         real, intent(in) :: x
         square = x**2
     end function
-end module math
+end module
 
 program app
-    use math
+    use squareForward, only: square, square__enzyme_autodiff
     implicit none
     real :: x, dx
 
