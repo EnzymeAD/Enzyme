@@ -5,6 +5,10 @@
 ! RUN: %fc -flto -O2 -c  %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t && %fc -flto -O2 %t -o %t1 && %t1 | FileCheck %s
 ! RUN: %fc -flto -O3 -c  %s -o /dev/stdout | %opt %loadEnzyme %enzyme -o %t && %fc -flto -O3 %t -o %t1 && %t1 | FileCheck %s
 
+! NOTE: This test is only configured to run with the ifx compiler
+!       For it to work with the flang compiler we will need to address
+!       https://github.com/EnzymeAD/Enzyme/issues/2820
+
 module AD
     implicit none
     interface
