@@ -36,68 +36,78 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
-  build-and-test-fortran:
-    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.version}} llvm ${{matrix.llvm}}
+  build-and-test-fortran-flang:
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.llvm}}
     runs-on: ${{matrix.os}}
     strategy:
       fail-fast: false
       matrix:
         build: [Release, Debug]
         os: [ubuntu-22.04]
-        compiler: [flang, ifx]
-        llvm: [15, 16, 17]
+        compiler: [flang]
+        llvm: [21]
         mpi: [2021.7.1]
-        include:
-          - compiler: flang
-            FC: flang-21
-            llvm: 21
-            version: 21
-          - compiler: ifx
-            FC: ifx
-            llvm: 15
-            version: 2023.0.0
-          - compiler: ifx
-            FC: ifx
-            llvm: 16
-            version: 2023.1.0
-          - compiler: ifx
-            FC: ifx
-            llvm: 17
-            version: 2023.2.4
+    timeout-minutes: 60
+    steps:
+    - name: add llvm with clang and flang
+      run: |
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.llvm }} flang-${{ matrix.llvm }}
+        sudo python3 -m pip install --upgrade pip lit
+    - uses: actions/checkout@v4
+    - name: generate build system
+      run: |
+        rm -rf build && mkdir build && cd build
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}-${{ matrix.llvm }}
+    - name: build enzyme
+      working-directory: 'build'
+      run: ninja LLVMEnzyme-${{ matrix.llvm }}
+    - name: run Fortran tests
+      working-directory: 'build'
+      run: ninja check-enzyme-fortran
+  build-and-test-fortran-ifx:
+    name: Fortran ${{matrix.build}} ${{matrix.os}} ${{matrix.compiler}} ${{matrix.versions.ifx}} llvm ${{matrix.versions.llvm}}
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [Release, Debug]
+        os: [ubuntu-22.04]
+        compiler: [ifx]
+        mpi: [2021.7.1]
+        versions:
+          - llvm: 15
+            ifx: 2023.0.0
+          - llvm: 16
+            ifx: 2023.1.0
+          - llvm: 17
+            ifx: 2023.2.4
     timeout-minutes: 60
     steps:
     - name: add llvm without clang and flang
-      if: ${{ matrix.compiler == 'ifx' }}
       run: |
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
-        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
-        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip
-        sudo python3 -m pip install --upgrade pip lit
-    - name: add llvm with clang and flang
-      if: ${{ matrix.compiler != 'ifx' }}
-      run: |
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
-        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main"
-        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.llvm }}-dev ninja-build pip clang-${{ matrix.version }} flang-${{ matrix.version }}
+        sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.versions.llvm }} main"
+        sudo apt-get update && sudo apt-get install -y cmake gcc g++ llvm-${{ matrix.versions.llvm }}-dev ninja-build pip
         sudo python3 -m pip install --upgrade pip lit
     - name: add intel tools
-      if: ${{ matrix.compiler == 'ifx' }}
       run: |
         wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
         sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
-        sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.version }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
+        sudo apt-get update && sudo apt-get install -y intel-oneapi-compiler-fortran-${{ matrix.versions.ifx }} intel-oneapi-mpi-${{ matrix.mpi }} intel-oneapi-mpi-devel-${{ matrix.mpi }}
         source /opt/intel/oneapi/setvars.sh
         printenv >> $GITHUB_ENV
     - uses: actions/checkout@v4
     - name: generate build system
       run: |
         rm -rf build && mkdir build && cd build
-        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.FC }}
+        cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.versions.llvm }}/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=`which lit` -DENZYME_FORTRAN=ON -DCMAKE_Fortran_COMPILER=${{ matrix.compiler }}
     - name: build enzyme
       working-directory: 'build'
-      run: ninja LLVMEnzyme-${{ matrix.llvm }}
+      run: ninja LLVMEnzyme-${{ matrix.versions.llvm }}
     - name: run Fortran tests
       working-directory: 'build'
       run: ninja check-enzyme-fortran
