@@ -315,22 +315,41 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
   return true;
 }
 
+static bool hasInterveningMod(Instruction *Start, Instruction *End,
+                              LoadInst *LI, AAResults &AA,
+                              TargetLibraryInfo &TLI) {
+  assert(Start->getParent() == End->getParent());
+  for (Instruction *I = Start->getNextNode(); I != End; I = I->getNextNode()) {
+    if (I->mayWriteToMemory()) {
+      if (writesToMemoryReadBy(nullptr, AA, TLI, LI, I)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Main optimization function
-bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
+bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
+                 AAResults &AA, TargetLibraryInfo &TLI) {
   bool Changed = false;
 
-  // Find noalias arguments
-  SmallVector<Value *, 4> CandidateArgs;
+  // Find candidates (noalias arguments, allocas, and call returns)
+  SmallVector<std::pair<Value *, bool>, 4> CandidateArgs;
   for (Argument &Arg : F.args()) {
-    if (Arg.getType()->isPointerTy() && Arg.hasNoAliasAttr()) {
-      CandidateArgs.push_back(&Arg);
+    if (Arg.getType()->isPointerTy()) {
+      CandidateArgs.push_back({&Arg, Arg.hasNoAliasAttr()});
     }
   }
 
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (isa<AllocaInst>(&I)) {
-        CandidateArgs.push_back(&I);
+        CandidateArgs.push_back({&I, true});
+      } else if (auto *CB = dyn_cast<CallBase>(&I)) {
+        if (CB->getType()->isPointerTy()) {
+          CandidateArgs.push_back({CB, CB->hasRetAttr(Attribute::NoAlias)});
+        }
       }
     }
   }
@@ -339,7 +358,10 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
     return false;
 
   // For each candidate argument, collect stores and loads with their offsets
-  for (Value *Arg : CandidateArgs) {
+  for (auto &pair : CandidateArgs) {
+    Value *Arg = pair.first;
+    bool isNoAlias = pair.second;
+
     // Collect all stores and loads to this argument with offsets
     SmallVector<std::pair<StoreInst *, APInt>, 8> Stores;
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
@@ -402,15 +424,26 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                          StoreOffset, LoadSize);
 
         if (ExtractedVal) {
-          LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (single alias)\n"
-                            << "  Store: " << *SI << "\n"
-                            << "  Load:  " << *LI << "\n");
-          LI->replaceAllUsesWith(ExtractedVal);
-          LI->eraseFromParent();
-          LI = nullptr;
-          Changed = true;
+          bool Safe = true;
+          if (!isNoAlias) {
+            if (SI->getParent() != LI->getParent()) {
+              Safe = false;
+            } else {
+              Safe = !hasInterveningMod(SI, LI, LI, AA, TLI);
+            }
+          }
+          if (Safe) {
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (single alias)\n"
+                              << "  Store: " << *SI << "\n"
+                              << "  Load:  " << *LI << "\n");
+            LI->replaceAllUsesWith(ExtractedVal);
+            LI->eraseFromParent();
+            LI = nullptr;
+            Changed = true;
+          }
         }
-        continue;
+        if (LI == nullptr)
+          continue;
       }
 
       for (auto &[LI2, LoadOffset2] : Loads) {
@@ -465,14 +498,20 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                              StoreOffset, LoadSize);
 
             if (ExtractedVal) {
-              LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
-                                << "  Store: " << *DCS << "\n"
-                                << "  Load:  " << *LI << "\n");
-              LI->replaceAllUsesWith(ExtractedVal);
-              LI->eraseFromParent();
-              LI = nullptr;
-              Changed = true;
-              break;
+              bool Safe = true;
+              if (!isNoAlias) {
+                Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
+              }
+              if (Safe) {
+                LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
+                                  << "  Store: " << *DCS << "\n"
+                                  << "  Load:  " << *LI << "\n");
+                LI->replaceAllUsesWith(ExtractedVal);
+                LI->eraseFromParent();
+                LI = nullptr;
+                Changed = true;
+                break;
+              }
             }
           }
         }
@@ -487,14 +526,20 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
                              StoreOffset, LoadSize);
 
             if (ExtractedVal) {
-              LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
-                                << "  Store: " << *DCS << "\n"
-                                << "  Load:  " << *LI << "\n");
-              LI->replaceAllUsesWith(ExtractedVal);
-              LI->eraseFromParent();
-              LI = nullptr;
-              Changed = true;
-              break;
+              bool Safe = true;
+              if (!isNoAlias) {
+                Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
+              }
+              if (Safe) {
+                LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
+                                  << "  Store: " << *DCS << "\n"
+                                  << "  Load:  " << *LI << "\n");
+                LI->replaceAllUsesWith(ExtractedVal);
+                LI->eraseFromParent();
+                LI = nullptr;
+                Changed = true;
+                break;
+              }
             }
           }
         }
@@ -503,67 +548,69 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL) {
         }
       }
 
-      // Step 7: BFS backwards from LI's parent block
-      SmallPtrSet<BasicBlock *, 32> Visited;
-      SmallVector<BasicBlock *, 16> Worklist;
-      StoreInst *Candidate = nullptr;
-      APInt CandidateOffset = ZeroOffset;
+      if (isNoAlias) {
+        // Step 7: BFS backwards from LI's parent block
+        SmallPtrSet<BasicBlock *, 32> Visited;
+        SmallVector<BasicBlock *, 16> Worklist;
+        StoreInst *Candidate = nullptr;
+        APInt CandidateOffset = ZeroOffset;
 
-      // Start with predecessors of LI's block
-      for (BasicBlock *Pred : predecessors(LIBlock)) {
-        if (Visited.insert(Pred).second)
-          Worklist.push_back(Pred);
-      }
-
-      while (!Worklist.empty()) {
-        BasicBlock *BB = Worklist.pop_back_val();
-
-        auto It = LastStoreInBlockBeforeLI.find(BB);
-        if (It != LastStoreInBlockBeforeLI.end()) {
-          StoreInst *SI = dyn_cast<StoreInst>(std::get<0>(It->second));
-          APInt StoreOffset = std::get<1>(It->second);
-
-          if (!SI || !dominatesAndCovers(SI, LI, StoreOffset, LoadOffset,
-                                         LoadSize, DL, DT)) {
-            // Non-dominating+covering store on path, bail
-            Candidate = nullptr;
-            break;
-          }
-
-          // Found dominating+covering store
-          if (!Candidate) {
-            Candidate = SI;
-            CandidateOffset = StoreOffset;
-          } else if (Candidate != SI) {
-            // Multiple different candidates, bail
-            Candidate = nullptr;
-            break;
-          }
-        }
-
-        // Continue BFS
-        for (BasicBlock *Pred : predecessors(BB)) {
+        // Start with predecessors of LI's block
+        for (BasicBlock *Pred : predecessors(LIBlock)) {
           if (Visited.insert(Pred).second)
             Worklist.push_back(Pred);
         }
-      }
 
-      // Step 8: If unique candidate found, forward
-      if (Candidate) {
-        IRBuilder<> Builder(LI);
-        Value *StoredVal = Candidate->getValueOperand();
-        Value *ExtractedVal =
-            extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
-                         CandidateOffset, LoadSize);
+        while (!Worklist.empty()) {
+          BasicBlock *BB = Worklist.pop_back_val();
 
-        if (ExtractedVal) {
-          LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (BFS candidate)\n"
-                            << "  Store: " << *Candidate << "\n"
-                            << "  Load:  " << *LI << "\n");
-          LI->replaceAllUsesWith(ExtractedVal);
-          LI->eraseFromParent();
-          LI = nullptr;
-          Changed = true;
+          auto It = LastStoreInBlockBeforeLI.find(BB);
+          if (It != LastStoreInBlockBeforeLI.end()) {
+            StoreInst *SI = dyn_cast<StoreInst>(std::get<0>(It->second));
+            APInt StoreOffset = std::get<1>(It->second);
+
+            if (!SI || !dominatesAndCovers(SI, LI, StoreOffset, LoadOffset,
+                                           LoadSize, DL, DT)) {
+              // Non-dominating+covering store on path, bail
+              Candidate = nullptr;
+              break;
+            }
+
+            // Found dominating+covering store
+            if (!Candidate) {
+              Candidate = SI;
+              CandidateOffset = StoreOffset;
+            } else if (Candidate != SI) {
+              // Multiple different candidates, bail
+              Candidate = nullptr;
+              break;
+            }
+          }
+
+          // Continue BFS
+          for (BasicBlock *Pred : predecessors(BB)) {
+            if (Visited.insert(Pred).second)
+              Worklist.push_back(Pred);
+          }
+        }
+
+        // Step 8: If unique candidate found, forward
+        if (Candidate) {
+          IRBuilder<> Builder(LI);
+          Value *StoredVal = Candidate->getValueOperand();
+          Value *ExtractedVal =
+              extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
+                           CandidateOffset, LoadSize);
+
+          if (ExtractedVal) {
+            LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (BFS candidate)\n"
+                              << "  Store: " << *Candidate << "\n"
+                              << "  Load:  " << *LI << "\n");
+            LI->replaceAllUsesWith(ExtractedVal);
+            LI->eraseFromParent();
+            LI = nullptr;
+            Changed = true;
+          }
         }
       }
     }
@@ -578,12 +625,16 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<AAResultsWrapperPass>();
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override {
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
     const DataLayout &DL = F.getParent()->getDataLayout();
-    return simplifyGVN(F, DT, DL);
+    return simplifyGVN(F, DT, DL, AA, TLI);
   }
 };
 
@@ -604,7 +655,9 @@ SimpleGVNNewPM::Result SimpleGVNNewPM::run(Function &F,
                                            FunctionAnalysisManager &FAM) {
   bool Changed = false;
   const DataLayout &DL = F.getParent()->getDataLayout();
-  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL);
+  Changed = simplifyGVN(F, FAM.getResult<DominatorTreeAnalysis>(F), DL,
+                        FAM.getResult<AAManager>(F),
+                        FAM.getResult<TargetLibraryAnalysis>(F));
   return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
