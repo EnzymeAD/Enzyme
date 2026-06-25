@@ -45,6 +45,7 @@ jobs:
         build: [Release, Debug]
         os: [ubuntu-22.04]
         compiler: [flang, ifx]
+        llvm: [15, 16, 17]
         mpi: [2021.7.1]
         include:
           - compiler: flang
