@@ -1068,8 +1068,8 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
               block.getTerminator())) {
         // TODO: the interface may also tell us which regions are allowed to
         // yield parent op results, and which only branch to other regions.
-        auto successorOperands = llvm::to_vector(
-            iface.getSuccessorOperands(RegionSuccessor(owner)));
+        auto successorOperands =
+            llvm::to_vector(iface.getSuccessorOperands(RegionSuccessor(owner)));
         // TODO: understand/document the assumption of how operands flow.
 
         if (successorOperands.size() != owner->getNumResults()) {
@@ -3373,8 +3373,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
         if (llvm::all_of(I->getResults(), [&](Value val) {
-              return isa<LLVM::LLVMVoidType, mlir::TokenType>(
-                         val.getType()) ||
+              return isa<LLVM::LLVMVoidType, mlir::TokenType>(val.getType()) ||
                      ConstantValues.count(val);
             })) {
           if (EnzymePrintActivity) {
