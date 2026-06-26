@@ -1337,7 +1337,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
     return true;
 
   // Token values are definitionally inactive
-  if (isa<LLVM::LLVMTokenType>(Val.getType()))
+  if (isa<mlir::TokenType>(Val.getType()))
     return true;
 
   /// If we've already shown this value to be inactive
@@ -3373,7 +3373,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
       }
       if (UA != UseActivity::AllStores && ConstantOperations.count(I)) {
         if (llvm::all_of(I->getResults(), [&](Value val) {
-              return isa<LLVM::LLVMVoidType, LLVM::LLVMTokenType>(
+              return isa<LLVM::LLVMVoidType, mlir::TokenType>(
                          val.getType()) ||
                      ConstantValues.count(val);
             })) {
