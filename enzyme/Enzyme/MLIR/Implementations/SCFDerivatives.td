@@ -51,11 +51,7 @@ def : ControlFlowOp<"scf", "ParallelOp", [{
                                     RegionBranchOpInterface& regionBranchOp,
                                     RegionSuccessor const& successor) const {
     mlir::scf::ParallelOp par_op = dyn_cast<mlir::scf::ParallelOp>(op);
-    #if LLVM_VERSION_MAJOR > 23
     if (successor.isOperation())
-    #else
-    if (successor.isParent())
-    #endif
       return par_op.getInitVals();
     
     return regionBranchOp.getEntrySuccessorOperands(successor);

@@ -299,11 +299,7 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
     for (auto &successor : successors) {
       OperandRange operandRange = termIface.getSuccessorOperands(successor);
       ValueRange targetValues =
-        #if LLVM_VERSION_MAJOR > 23
           successor.isOperation()
-        #else
-          successor.isParent()
-        #endif
               ? parentOp->getResults()
               : regionBranchOp.getSuccessorInputs(successor);
       assert(operandRange.size() == targetValues.size());
@@ -369,13 +365,8 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
         iface.getSuccessorOperands(regionBranchOp, successor);
 
     ValueRange targetValues =
-      #if LLVM_VERSION_MAJOR > 23
-        successor.isOperation()
-      #else
-        successor.isParent()
-      #endif
-          ? op->getResults()
-          : regionBranchOp.getSuccessorInputs(successor);
+        successor.isOperation() ? op->getResults()
+                                : regionBranchOp.getSuccessorInputs(successor);
 
     // Need to know which of the arguments are being forwarded to from
     // operands.
@@ -384,11 +375,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       if (gutils->isConstantValue(regionValue))
         continue;
       operandPositionsToShadow.insert(operandRange.getBeginOperandIndex() + i);
-      #if LLVM_VERSION_MAJOR > 23
       if (successor.isOperation())
-      #else
-      if (successor.isParent())
-      #endif
         resultPositionsToShadow.insert(i);
     }
   }
