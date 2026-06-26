@@ -21,9 +21,10 @@ declare double @__enzyme_autodiff(ptr, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:  %0 = call fast double @llvm.cosh.f64(double %x)
+; CHECK-NEXT:  %0 = call fast double @llvm.tanh.f64(double %x)
 ; CHECK-NEXT:  %1 = fmul fast double %0, %0
-; CHECK-NEXT:  %2 = fdiv fast double %differeturn, %1
-; CHECK-NEXT:  %3 = insertvalue { double } undef, double %2, 0
-; CHECK-NEXT:  ret { double } %3
+; CHECK-NEXT:  %2 = fsub fast double 1.000000e+00, %1
+; CHECK-NEXT:  %3 = fmul fast double %differeturn, %2
+; CHECK-NEXT:  %4 = insertvalue { double } undef, double %3, 0
+; CHECK-NEXT:  ret { double } %4
 ; CHECK-NEXT: }
