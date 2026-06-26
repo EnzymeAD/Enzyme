@@ -310,36 +310,47 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
       llvm_unreachable("unsupported tag");
     }
 
-    // In the future we can reduce the number of roots
-    // we preserve by identifying which operands they
-    // correspond to. For now, fall back and preserve all
-    // primals and shadows
-    // assert(bund.inputs().size() == types.size());
-    bool anyPrimal = false;
-    bool anyShadow = false;
-    for (auto ty : types) {
-      if (ty == ValueType::Primal || ty == ValueType::Both)
-        anyPrimal = true;
-      if (ty == ValueType::Shadow || ty == ValueType::Both)
-        anyShadow = true;
-    }
+    if (tag == "jl_roots") {
+      // In the future we can reduce the number of roots
+      // we preserve by identifying which operands they
+      // correspond to. For now, fall back and preserve all
+      // primals and shadows
+      // assert(bund.inputs().size() == types.size());
+      bool anyPrimal = false;
+      bool anyShadow = false;
+      for (auto ty : types) {
+        if (ty == ValueType::Primal || ty == ValueType::Both)
+          anyPrimal = true;
+        if (ty == ValueType::Shadow || ty == ValueType::Both)
+          anyShadow = true;
+      }
 
-    SmallVector<Value *, 2> bunds;
-    for (auto inp : bund.inputs()) {
-      if (anyPrimal) {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
+        if (anyPrimal) {
+          Value *newv = getNewFromOriginal(inp);
+          if (lookup)
+            newv = lookupM(newv, Builder2, available);
+          bunds.push_back(newv);
+        }
+        if (anyShadow && !isConstantValue(inp)) {
+          Value *shadow = invertPointerM(inp, Builder2);
+          if (lookup)
+            shadow = lookupM(shadow, Builder2);
+          bunds.push_back(shadow);
+        }
+      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
+    } else {
+      SmallVector<Value *, 2> bunds;
+      for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
         if (lookup)
           newv = lookupM(newv, Builder2, available);
         bunds.push_back(newv);
       }
-      if (anyShadow && !isConstantValue(inp)) {
-        Value *shadow = invertPointerM(inp, Builder2);
-        if (lookup)
-          shadow = lookupM(shadow, Builder2);
-        bunds.push_back(shadow);
-      }
+      Defs.push_back(OperandBundleDef(tag.str(), bunds));
     }
-    Defs.push_back(OperandBundleDef(tag.str(), bunds));
   }
   return Defs;
 }
