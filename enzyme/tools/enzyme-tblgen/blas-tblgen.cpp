@@ -962,6 +962,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << "); })";
         return;
       }
+      if (Def->getName() == "Dep") {
+        if (Dag->getNumArgs() != 2)
+          PrintFatalError(pattern.getLoc(), "only 2-arg Dep operands supported");
+        rev_call_arg(forward, Dag, pattern, 1, os, vars);
+        return;
+      }
       if (Def->getName() == "ld") {
         if (Dag->getNumArgs() != 5)
           PrintFatalError(pattern.getLoc(), "only 5-arg ld operands supported");
@@ -1504,7 +1510,7 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
     n = 1;
   if (func == "gemm" || func == "syrk" || func == "syr2k" || func == "symm")
     n = 2;
-  if (func == "trmv" || func == "trtrs")
+  if (func == "trmv" || func == "trsv" || func == "trtrs")
     n = 3;
   if (func == "trmm" || func == "trsm")
     n = 4;
@@ -2384,9 +2390,10 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
 
   os << "      auto bb_name = Builder2.GetInsertBlock()->getName();\n";
   for (size_t iteri = 0; iteri < activeArgs.size(); iteri++) {
-    // trtrs do in reversed arg order.
-    size_t i = (pattern.getName() != "trtrs") ? iteri
-                                              : (activeArgs.size() - 1 - iteri);
+    // trtrs and trsv solve x cotangent before forming dA.
+    size_t i = (pattern.getName() != "trtrs" && pattern.getName() != "trsv")
+                   ? iteri
+                   : (activeArgs.size() - 1 - iteri);
     StringRef extraCond;
     auto rule = rules[i];
     const size_t actArg = activeArgs[i];
