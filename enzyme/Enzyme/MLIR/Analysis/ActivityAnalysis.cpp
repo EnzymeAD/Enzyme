@@ -985,7 +985,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
         OperandRange operandRange = termIface.getSuccessorOperands(successor);
         ValueRange targetValues =
             successor.isOperation() ? parentOp->getResults()
-                                 : regionIface.getSuccessorInputs(successor);
+                                    : regionIface.getSuccessorInputs(successor);
         assert(operandRange.size() == targetValues.size());
         for (auto &&[prev, post] : llvm::zip(operandRange, targetValues)) {
           if (prev == parent) {
@@ -2275,8 +2275,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           bool cop = !Hypothesis->isConstantValue(TR, SI.getValue());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << Val << "\n";
+                         << " - " << *SI << " of " << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
@@ -2285,8 +2284,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           bool cop = !Hypothesis->isConstantValue(TR, SI.getValueToStore());
           if (EnzymePrintActivity)
             llvm::errs() << " -- store potential activity: " << (int)cop
-                         << " - " << *SI << " of "
-                         << " Val=" << Val << "\n";
+                         << " - " << *SI << " of " << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
@@ -2305,8 +2303,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
           auto cop = !Hypothesis->isConstantOperation(TR, op);
           if (EnzymePrintActivity)
             llvm::errs() << " -- unknown store potential activity: " << (int)cop
-                         << " - " << *op << " of "
-                         << " Val=" << Val << "\n";
+                         << " - " << *op << " of " << " Val=" << Val << "\n";
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;

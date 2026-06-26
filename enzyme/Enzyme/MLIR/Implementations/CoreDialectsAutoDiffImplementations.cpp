@@ -280,8 +280,9 @@ void mlir::enzyme::detail::regionTerminatorForwardHandler(
     for (auto &successor : successors) {
       OperandRange operandRange = termIface.getSuccessorOperands(successor);
       ValueRange targetValues =
-          successor.isOperation() ? parentOp->getResults()
-                               : regionBranchOp.getSuccessorInputs(successor);
+          successor.isOperation()
+              ? parentOp->getResults()
+              : regionBranchOp.getSuccessorInputs(successor);
       assert(operandRange.size() == targetValues.size());
       for (auto &&[i, target] : llvm::enumerate(targetValues)) {
         if (!gutils->isConstantValue(target))
@@ -346,7 +347,7 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
     ValueRange targetValues =
         successor.isOperation() ? op->getResults()
-                             : regionBranchOp.getSuccessorInputs(successor);
+                                : regionBranchOp.getSuccessorInputs(successor);
 
     // Need to know which of the arguments are being forwarded to from
     // operands.
