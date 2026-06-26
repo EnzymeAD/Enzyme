@@ -332,7 +332,7 @@ public:
     IRBuilder<> Builder2(&I);
     getForwardBuilder(Builder2);
 
-    auto toset = gutils->invertPointerM(&I, Builder2, /*nullShadow*/ true);
+    auto toset = gutils->invertPointerM(&I, Builder2);
 
     assert(toset != placeholder);
 
@@ -575,14 +575,16 @@ public:
       // we can pre initialize all the knownRecomputeHeuristic values to false
       // (not needing) as we may assume that minCutCache already preserves
       // everything it requires.
-      std::map<UsageKey, bool> Seen;
+      std::map<UsageKey, bool> Seen = gutils->populateSeenFromKnownRecompute();
       bool primalNeededInReverse = false;
-      for (auto pair : gutils->knownRecomputeHeuristic)
-        if (!pair.second) {
-          Seen[UsageKey(pair.first, QueryType::Primal)] = false;
-          if (pair.first == &I)
+      {
+        auto found = gutils->knownRecomputeHeuristic.find(&I);
+        if (found != gutils->knownRecomputeHeuristic.end()) {
+          if (!found->second) {
             primalNeededInReverse = true;
+          }
         }
+      }
       auto cacheMode = (Mode == DerivativeMode::ReverseModePrimal)
                            ? DerivativeMode::ReverseModeGradient
                            : Mode;
@@ -787,7 +789,8 @@ public:
                 : gutils->invertPointerM(I.getPointerOperand(), BuilderZ),
             gutils->isConstantValue(I.getValOperand())
                 ? nullptr
-                : gutils->invertPointerM(I.getValOperand(), BuilderZ));
+                : gutils->invertPointerM(I.getValOperand(), BuilderZ,
+                                         TR.query(&I)));
         if (!gutils->isConstantValue(&I))
           setDiffe(&I, diff, BuilderZ);
         return;
@@ -841,8 +844,8 @@ public:
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       auto valType = I.getValOperand()->getType();
       auto storeSize = DL.getTypeSizeInBits(valType) / 8;
-      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I,
-                                /*errifnotfound*/ false,
+      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I, gutils,
+                                /*errifnotfound*/ nullptr,
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -907,7 +910,8 @@ public:
         // However, if we are rematerailizing the allocationa and not
         // inside the loop level rematerialization, we do still need the
         // reverse passes ``fake primal'' store and therefore write barrier
-        if (pair.second.stores.count(&SI) &&
+        if (gutils->allocationsToBeRematerialized.count(pair.first) &&
+            pair.second.stores.count(&SI) &&
             (!pair.second.LI || !pair.second.LI->contains(&SI))) {
           forceErase = false;
         }
@@ -1036,16 +1040,7 @@ public:
 
       // TODO type analyze
       if (!diff) {
-        if (!constantval)
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
-        else if (orig_val->getType()->isPointerTy() ||
-                 dt == BaseType::Pointer || dt == BaseType::Integer)
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ false);
-        else
-          diff =
-              gutils->invertPointerM(orig_val, BuilderZ, /*nullShadow*/ true);
+        diff = gutils->invertPointerM(orig_val, BuilderZ, vd);
       }
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, prevalign, 0, storeSize,
@@ -1225,8 +1220,7 @@ public:
 
           Value *diff = constantval
                             ? Constant::getNullValue(diffeTy)
-                            : gutils->invertPointerM(orig_val, BuilderZ,
-                                                     /*nullShadow*/ true);
+                            : gutils->invertPointerM(orig_val, BuilderZ, vd);
           gutils->setPtrDiffe(&I, orig_ptr, diff, BuilderZ, align, start, size,
                               isVolatile, ordering, syncScope, mask,
                               prevNoAlias, prevScopes);
@@ -1308,7 +1302,7 @@ public:
               }
             }
           } else {
-            valueop = gutils->invertPointerM(orig_val, BuilderZ);
+            valueop = gutils->invertPointerM(orig_val, BuilderZ, vd);
           }
           gutils->setPtrDiffe(&I, orig_ptr, valueop, BuilderZ, align, start,
                               size, isVolatile, ordering, syncScope, mask,
@@ -1975,7 +1969,8 @@ public:
                  iv->getInsertedValueOperand()->getType()) +
              7) /
             8;
-      auto it = TR.intType(size0, iv->getInsertedValueOperand(), false);
+      auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
+                           /*err*/ nullptr);
       if (it.isFloat() || !it.isKnown()) {
         floatingInsertion = true;
         break;
@@ -2438,9 +2433,8 @@ public:
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2468,9 +2462,8 @@ public:
     }
     case Instruction::Xor: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If ^ against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2506,9 +2499,8 @@ public:
     }
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2535,14 +2527,14 @@ public:
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy()
+                ((eFT->isFloatTy()
 #if LLVM_VERSION_MAJOR > 16
                   && (AP & ~0b01111111100000000000000000000000ULL).isZero()
 #else
                   && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
 #endif
                       ) ||
-                 (FT->isDoubleTy()
+                 (eFT->isDoubleTy()
 #if LLVM_VERSION_MAJOR > 16
                   &&
                   (AP &
@@ -2571,10 +2563,10 @@ public:
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
                 uint64_t num = 0;
-                if (FT->isFloatTy()) {
+                if (eFT->isFloatTy()) {
                   num = 127ULL << 23;
                 } else {
-                  assert(FT->isDoubleTy());
+                  assert(eFT->isDoubleTy());
                   num = 1023ULL << 52;
                 }
                 prev = Builder2.CreateAdd(
@@ -2674,10 +2666,9 @@ public:
     case Instruction::And: {
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
       Type *diffTy = gutils->getShadowType(BO.getType());
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       if (FT)
         for (int i = 0; i < 2; ++i) {
@@ -2703,9 +2694,8 @@ public:
     }
     case Instruction::Xor: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
@@ -2741,12 +2731,11 @@ public:
     }
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
-      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
-      auto FT = TR.query(&BO).IsAllFloat(size, dl);
+      auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
       if (FT)
@@ -2758,6 +2747,7 @@ public:
           }
           if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
             CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
           }
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
@@ -2772,14 +2762,14 @@ public:
               validXor = true;
             } else if (
                 !AP.isNegative() &&
-                ((FT->isFloatTy()
+                ((eFT->isFloatTy()
 #if LLVM_VERSION_MAJOR > 16
                   && (AP & ~0b01111111100000000000000000000000ULL).isZero()
 #else
                   && (AP & ~0b01111111100000000000000000000000ULL).isNullValue()
 #endif
                       ) ||
-                 (FT->isDoubleTy()
+                 (eFT->isDoubleTy()
 #if LLVM_VERSION_MAJOR > 16
                   &&
                   (AP &
@@ -2801,10 +2791,10 @@ public:
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
                 uint64_t num = 0;
-                if (FT->isFloatTy()) {
+                if (eFT->isFloatTy()) {
                   num = 127ULL << 23;
                 } else {
-                  assert(FT->isDoubleTy());
+                  assert(eFT->isDoubleTy());
                   num = 1023ULL << 52;
                 }
                 prev = Builder2.CreateAdd(
@@ -2946,7 +2936,8 @@ public:
     bool forceErase = false;
     if (Mode == DerivativeMode::ReverseModeGradient) {
       for (const auto &pair : gutils->rematerializableAllocations) {
-        if (pair.second.stores.count(&MS) && pair.second.LI) {
+        if (gutils->allocationsToBeRematerialized.count(pair.first) &&
+            pair.second.stores.count(&MS) && pair.second.LI) {
           forceErase = true;
         }
       }
@@ -3706,7 +3697,9 @@ public:
         SubTransferHelper(
             gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
             /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
+            gutils->getNewFromOriginal(orig_dst),
             gutils->isConstantValue(orig_src), shadow_src,
+            gutils->getNewFromOriginal(orig_src),
             /*length*/ length, /*volatile*/ isVolatile, &MTI,
             /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
             /*backwardsShadow*/ backwardsShadow);
@@ -5696,17 +5689,17 @@ public:
           if (Mode == DerivativeMode::ReverseModePrimal &&
               !gutils->unnecessaryIntermediates.count(&call)) {
 
-            std::map<UsageKey, bool> Seen;
+            std::map<UsageKey, bool> Seen =
+                gutils->populateSeenFromKnownRecompute();
             bool primalNeededInReverse = false;
-            for (auto pair : gutils->knownRecomputeHeuristic)
-              if (!pair.second) {
-                if (pair.first == &call) {
+            {
+              auto found = gutils->knownRecomputeHeuristic.find(&call);
+              if (found != gutils->knownRecomputeHeuristic.end()) {
+                if (!found->second) {
                   primalNeededInReverse = true;
-                  break;
-                } else {
-                  Seen[UsageKey(pair.first, QueryType::Primal)] = false;
                 }
               }
+            }
             if (!primalNeededInReverse) {
 
               auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
@@ -6501,10 +6494,8 @@ public:
         if (gutils->knownRecomputeHeuristic.count(&call)) {
           primalNeededInReverse = !gutils->knownRecomputeHeuristic[&call];
         } else {
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, QueryType::Primal)] = false;
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           primalNeededInReverse =
               DifferentialUseAnalysis::is_value_needed_in_reverse<
                   QueryType::Primal>(gutils, &call, Mode, Seen, oldUnreachable);
@@ -6573,13 +6564,8 @@ public:
         noFree |= called->hasFnAttribute(Attribute::NoFree);
       }
 
-      std::map<UsageKey, bool> CacheResults;
-      for (auto pair : gutils->knownRecomputeHeuristic) {
-        if (!pair.second || gutils->unnecessaryIntermediates.count(
-                                cast<Instruction>(pair.first))) {
-          CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-        }
-      }
+      std::map<UsageKey, bool> CacheResults =
+          gutils->populateSeenFromKnownRecompute();
 
       if (!noFree && !EnzymeGlobalActivity) {
         bool mayActiveFree = false;
@@ -6686,17 +6672,17 @@ public:
            !gutils->legalRecompute(&call, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(&call)) {
 
-          std::map<UsageKey, bool> Seen;
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
           bool primalNeededInReverse = false;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second) {
-              if (pair.first == &call) {
+          {
+            auto found = gutils->knownRecomputeHeuristic.find(&call);
+            if (found != gutils->knownRecomputeHeuristic.end()) {
+              if (!found->second) {
                 primalNeededInReverse = true;
-                break;
-              } else {
-                Seen[UsageKey(pair.first, QueryType::Primal)] = false;
               }
             }
+          }
           if (!primalNeededInReverse) {
 
             auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)

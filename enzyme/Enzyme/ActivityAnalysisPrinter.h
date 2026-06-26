@@ -28,6 +28,7 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "PassUtils.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
@@ -35,8 +36,8 @@ class FunctionPass;
 }
 
 class ActivityAnalysisPrinterNewPM final
-    : public llvm::AnalysisInfoMixin<ActivityAnalysisPrinterNewPM> {
-  friend struct llvm::AnalysisInfoMixin<ActivityAnalysisPrinterNewPM>;
+    : public PassParent<ActivityAnalysisPrinterNewPM> {
+  friend PassParent<ActivityAnalysisPrinterNewPM>;
 
 private:
   static llvm::AnalysisKey Key;

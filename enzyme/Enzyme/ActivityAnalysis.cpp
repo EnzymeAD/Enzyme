@@ -303,6 +303,9 @@ const StringSet<> KnownInactiveFunctions = {
     "__ubsan_vptr_type_cache",
     "llvm.enzyme.lifetime_start",
     "llvm.enzyme.lifetime_end",
+    "__cudaPushCallConfiguration",
+    "__cudaPopCallConfiguration",
+    "cudaGetLastError",
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
@@ -463,6 +466,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // RAJA
     "RAJA::util::Registry<RAJA::util::PluginStrategy>",
+
+    // mfem
+    "mfem::mfem_cuda_error",
 };
   // clang-format on
 
@@ -1201,9 +1207,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     if (TR.query(Val)[{-1}] == BaseType::Integer) {
       if (EnzymePrintActivity)
         llvm::errs() << " Value const as integral " << (int)directions << " "
-                     << *Val << " "
-                     << TR.intType(1, Val, /*errIfNotFound*/ false).str()
-                     << "\n";
+                     << *Val << " " << TR.query(Val).str() << "\n";
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -1248,7 +1252,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // TODO use typeInfo for more aggressive activity analysis
   if (val->getType()->isPointerTy() &&
       cast<PointerType>(val->getType())->isIntOrIntVectorTy() &&
-      TR.firstPointer(1, val, /*errifnotfound*/ false).isIntegral()) {
+      TR.firstPointer(1, val, /*I*/nullptr, /*gutils*/nullptr, /*errifnotfound*/ nullptr).isIntegral()) {
     if (EnzymePrintActivity)
       llvm::errs() << " Value const as integral pointer" << (int)directions
                    << " " << *val << "\n";
@@ -1499,8 +1503,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         auto &DL = BO->getParent()->getParent()->getParent()->getDataLayout();
         for (int i = 0; i < 2; ++i) {
           auto FT = TR.query(BO->getOperand(1 - i))
-                        .IsAllFloat(
-                            (DL.getTypeSizeInBits(BO->getType()) + 7) / 8, DL);
+                        .allFloat(BO->getOperand(1 - i), DL);
           // If ^ against 0b10000000000 and a float the result is a float
           if (FT)
             if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, DL)) {

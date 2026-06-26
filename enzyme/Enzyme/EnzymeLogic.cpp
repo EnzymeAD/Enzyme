@@ -685,13 +685,8 @@ void calculateUnusedValuesInFunction(
     bool returnValue, DerivativeMode mode, GradientUtils *gutils,
     TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
-  std::map<UsageKey, bool> CacheResults;
-  for (auto pair : gutils->knownRecomputeHeuristic) {
-    if (!pair.second ||
-        gutils->unnecessaryIntermediates.count(cast<Instruction>(pair.first))) {
-      CacheResults[UsageKey(pair.first, QueryType::Primal)] = false;
-    }
-  }
+  std::map<UsageKey, bool> CacheResults =
+      gutils->populateSeenFromKnownRecompute();
   std::map<UsageKey, bool> PrimalSeen;
   if (mode == DerivativeMode::ReverseModeGradient) {
     PrimalSeen = CacheResults;
@@ -1150,6 +1145,9 @@ void calculateUnusedValuesInFunction(
         if (found != gutils->knownRecomputeHeuristic.end()) {
           llvm::errs() << " krc=" << (int)found->second;
         }
+        if (gutils->allocationsToBeRematerialized.count(&I)) {
+          llvm::errs() << " allocR";
+        }
         llvm::errs() << "\n";
       }
     llvm::errs() << "unnecessaryValues of " << func.getName()
@@ -1163,6 +1161,9 @@ void calculateUnusedValuesInFunction(
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
         llvm::errs() << " krc=" << (int)found->second;
+      }
+      if (gutils->allocationsToBeRematerialized.count(a)) {
+        llvm::errs() << " allocR";
       }
       llvm::errs() << "\n";
     }
@@ -2622,11 +2623,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   auto nf = gutils->newFunc;
 
-  while (gutils->inversionAllocs->size() > 0) {
-    gutils->inversionAllocs->back().moveBefore(
-        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-  }
-
   //! Keep track of inverted pointers we may need to return
   ValueToValueMapTy invertedRetPs;
   if (shadowReturnUsed) {
@@ -2656,11 +2652,16 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           }
           if (!invertri)
             invertri = gutils->invertPointerM(orig_oldval, BuilderZ,
-                                              /*nullShadow*/ true);
+                                              gutils->TR.getReturnAnalysis());
           invertedRetPs[newri] = invertri;
         }
       }
     }
+  }
+
+  while (gutils->inversionAllocs->size() > 0) {
+    gutils->inversionAllocs->back().moveBefore(
+        gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   }
 
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
@@ -3253,15 +3254,16 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     bool floatLike = rt->isFPOrFPVectorTy();
 
     if (!floatLike && TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
-      shadow =
-          invertedPtr ? invertedPtr : gutils->invertPointerM(ret, nBuilder);
+      shadow = invertedPtr ? invertedPtr
+                           : gutils->invertPointerM(ret, nBuilder,
+                                                    TR.getReturnAnalysis());
     } else if (!gutils->isConstantValue(ret)) {
       assert(!invertedPtr);
       shadow = gutils->diffe(ret, nBuilder);
     } else {
-      shadow = invertedPtr
-                   ? invertedPtr
-                   : gutils->invertPointerM(ret, nBuilder, /*nullInit*/ true);
+      shadow = invertedPtr ? invertedPtr
+                           : gutils->invertPointerM(ret, nBuilder,
+                                                    TR.getReturnAnalysis());
     }
   }
 
@@ -4428,8 +4430,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (key.retType == DIFFE_TYPE::DUP_ARG ||
             key.retType == DIFFE_TYPE::DUP_NONEED) {
           if (dretAlloca) {
-            rb.CreateStore(gutils->invertPointerM(orig->getReturnValue(), rb),
-                           dretAlloca);
+            rb.CreateStore(
+                gutils->invertPointerM(orig->getReturnValue(), rb,
+                                       gutils->TR.getReturnAnalysis()),
+                dretAlloca);
           }
         } else if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           assert(orig->getReturnValue());
@@ -6647,6 +6651,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "cudaRuntimeGetVersion",                         
                         "llvm.enzyme.lifetime_start",
                         "llvm.enzyme.lifetime_end",
+			"__cudaPushCallConfiguration",
+			"__cudaPopCallConfiguration",
   };
   // clang-format on
 

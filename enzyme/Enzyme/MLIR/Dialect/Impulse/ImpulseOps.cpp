@@ -140,5 +140,17 @@ LogicalResult InferOp::verify() {
         "custom logpdf mode requires `initial_position` to be provided");
   }
 
+  constexpr unsigned kAdaptationStateSize = 9;
+  unsigned numIn = getAdaptationStateIn().size();
+  if (numIn != 0 && numIn != kAdaptationStateSize) {
+    return emitOpError("`adaptation_state_in` must have either 0 or ")
+           << kAdaptationStateSize << " operands, got " << numIn;
+  }
+  unsigned numOut = getAdaptationStateOut().size();
+  if (numOut != 0 && numOut != kAdaptationStateSize) {
+    return emitOpError("`adaptation_state_out` must have either 0 or ")
+           << kAdaptationStateSize << " results, got " << numOut;
+  }
+
   return success();
 }

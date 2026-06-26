@@ -170,7 +170,12 @@ void emit_vec_like_copy(const TGPattern &pattern, raw_ostream &os) {
 << "      malloc_size = arg_" << nameVec[dimensions[0]] << ";\n"
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << name << "\");\n";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << name << "\", &malloccall);\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n";
 
     os
 << "      Value *margs[] = {malins, arg_" << name << ", malloc_size, llvm::ConstantInt::getFalse(IntegerType::getInt1Ty(call.getContext()))};\n"
@@ -206,9 +211,14 @@ os
 << "      arg_malloc_size = malloc_size;\n"
 << "      malloc_size = load_if_ref(BuilderZ, intType, malloc_size, byRef);\n"
 << "      Instruction *SubZero = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", /*caller*/nullptr";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, malloc_size, \"cache." << vecName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n"
 << "      ValueType valueTypes[] = {" << valueTypes << "};\n"
 << "      valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";
@@ -287,9 +297,14 @@ os
 << "      auto *len2 = load_if_ref(BuilderZ, intType, N, byRef);\n"
 << "      auto *matSize = BuilderZ.CreateMul(len1, len2);\n"
 << "      Instruction *SubZero = nullptr;\n"
-<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", /*caller*/nullptr";
+<< "      CallInst *malloccall = nullptr;\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, matSize, \"cache." << matName << "\", &malloccall";
     if (pattern.getName() == "potrf") os << ", &SubZero";
     os << ");\n"
+<< "      if (malloccall) {\n"
+<< "        auto ident = MDNode::getDistinct(malloccall->getContext(), {ConstantAsMetadata::get(ConstantInt::getFalse(malloccall->getContext()))});\n"
+<< "        malloccall->setMetadata(\"enzyme_cache_alloc\", MDNode::get(malloccall->getContext(), {ident}));\n"
+<< "      }\n"
 << "      SmallVector<ValueType, 7> valueTypes = {" << valueTypes << "};\n"
 <<"       valueTypes[" << argIdx << "] = ValueType::Primal;\n"
 << "      if (byRef) valueTypes[" << argIdx+1 << "] = ValueType::Primal;\n";

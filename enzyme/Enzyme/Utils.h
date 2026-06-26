@@ -88,6 +88,8 @@ enum class ErrorType {
   NoTruncate = 10,
   GCRewrite = 11,
   NaNError = 12,
+  ShowInternalError = 12,
+  NoAccumulate = 13,
 };
 
 extern "C" {
@@ -765,7 +767,8 @@ parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
-    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
+    bool runtimeActivity = false);
 
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
@@ -815,7 +818,8 @@ llvm::Function *getOrInsertDifferentialFloatMemcpyMat(
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemmove(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
-    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth,
+    bool runtimeActivity = false);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
                                        llvm::Type *Type, unsigned width);
