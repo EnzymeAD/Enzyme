@@ -866,7 +866,7 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
             OperandRange operandRange =
                 termIface.getSuccessorOperands(successor);
             ValueRange targetValues =
-                successor.isParent()
+                successor.isOperation()
                     ? parentOp->getResults()
                     : regionIface.getSuccessorInputs(successor);
             assert(operandRange.size() == targetValues.size());
@@ -984,7 +984,7 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
       for (auto &successor : successors) {
         OperandRange operandRange = termIface.getSuccessorOperands(successor);
         ValueRange targetValues =
-            successor.isParent() ? parentOp->getResults()
+            successor.isOperation() ? parentOp->getResults()
                                  : regionIface.getSuccessorInputs(successor);
         assert(operandRange.size() == targetValues.size());
         for (auto &&[prev, post] : llvm::zip(operandRange, targetValues)) {
@@ -1041,7 +1041,7 @@ static SmallVector<Value> getPotentialIncomingValues(OpResult res) {
     SmallVector<RegionSuccessor> successors;
     iface.getSuccessorRegions(RegionBranchPoint::parent(), successors);
     for (auto &succ : successors) {
-      if (!succ.isParent())
+      if (!succ.isOperation())
         continue;
       auto successorOperands =
           llvm::to_vector(iface.getEntrySuccessorOperands(succ));
@@ -1236,7 +1236,7 @@ static void allFollowersOf(Operation *op,
           SmallVector<RegionSuccessor> regionSuccessors;
           iface.getSuccessorRegions(regionBranchPoint, regionSuccessors);
           for (const RegionSuccessor &rs : regionSuccessors) {
-            if (!rs.isParent() && !rs.getSuccessor()->empty())
+            if (!rs.isOperation() && !rs.getSuccessor()->empty())
               todo.push_back(&rs.getSuccessor()->front());
           }
         } else {
