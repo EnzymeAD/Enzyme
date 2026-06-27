@@ -3583,8 +3583,6 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             StringRef funcName = getFuncNameFromCall(orig);
             assert(funcName.size());
 
-            auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
-
             SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14
             for (auto &arg : orig->args())
