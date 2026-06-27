@@ -40,11 +40,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-          - linux-x86-n2-32
-        build:
-          - Release
-        llbuild:
-          - Release
+        build: ["Release"]
+        llbuild: ["Release"]
+        os: [ubuntu-22.04]
     timeout-minutes: 500 
 
     container:
