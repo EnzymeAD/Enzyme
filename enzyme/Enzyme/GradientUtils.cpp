@@ -602,7 +602,11 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
   if (!opt)
     return L;
   assert(opt);
+  #if LLVM_VERSION_MAJOR >= 23
+  return DebugLoc(cast<DILocation>(*opt));
+  #else
   return DebugLoc(cast<MDNode>(*opt));
+  #endif
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
