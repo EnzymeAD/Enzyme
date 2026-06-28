@@ -1714,7 +1714,7 @@ declare void @free(i8* %0)
 ; CHECK-NEXT:   %3 = load i64*, i64** %mdyncache_fromtape_cache, align 8
 ; CHECK-NEXT:   %4 = getelementptr inbounds i64, i64* %3, i64 %iv
 ; CHECK-NEXT:   %a29 = load i64, i64* %4, align 8
-; CHECK-NEXT:   %5 = add nuw i64 %a29, 1
+; CHECK-NEXT:   %5 = add nsw i64 %a29, 1
 ; CHECK-NEXT:   %6 = load i1**, i1*** %mdyncache_fromtape_cache6, align 8
 ; CHECK-NEXT:   %7 = getelementptr inbounds i1*, i1** %6, i64 %iv
 ; CHECK-NEXT:   br label %L86
