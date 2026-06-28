@@ -1289,7 +1289,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           limits[i] = found->second;
         } else {
           limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNUWAdd(
+              allocationBuilder.CreateNSWAdd(
                   limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
         }
       } else {
@@ -1301,7 +1301,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNUWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
       }
     }
   }
