@@ -57,7 +57,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal void @diffef(double* nocapture %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[np1:.+]] = add nuw i64 %n, 1
+; CHECK-NEXT:   %[[np1:.+]] = add nsw i64 %n, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[np1]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %call_malloccache = bitcast i8* %malloccall to double**

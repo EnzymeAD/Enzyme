@@ -85,7 +85,7 @@ exit:                                             ; preds = %end2
 ; CHECK-NEXT:   %1 = getelementptr inbounds { i64, double* }, { i64, double* }* %0, i32 0, i32 0
 ; CHECK-NEXT:   store i64 %rows, i64* %1
 ; CHECK-NEXT:   %[[rowsm2:.+]] = add i64 %rows, -2
-; CHECK-NEXT:   %[[a1:.+]] = add nuw i64 %[[rowsm2]], 1
+; CHECK-NEXT:   %[[a1:.+]] = add nsw i64 %[[rowsm2]], 1
 ; CHECK-NEXT:   %[[m4:.+]] = mul nuw nsw i64 %[[a1]], 4
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[m4]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)

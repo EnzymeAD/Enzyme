@@ -89,7 +89,7 @@ attributes #3 = { nounwind }
 ; TODO-CHECK-NEXT:   %1 = icmp sgt i64 %.020, 10
 ; TODO-CHECK-NEXT:   %smax = select i1 %1, i64 %.020, i64 10
 ; CHECK:   %[[a2:.+]] = sub i64 %smax, %.020
-; CHECK-NEXT:   %[[a3:.+]] = add nuw i64 %[[a2]], 1
+; CHECK-NEXT:   %[[a3:.+]] = add nsw i64 %[[a2]], 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[a3]], 8
 ; CHECK-NEXT:   br label %bb377
 
